@@ -1,0 +1,37 @@
+#!/bin/sh
+# Prune the Ubuntu initramfs down to what fits the X910's 8 MiB init_boot
+# partition.
+#
+# Measured on the first build: 29.6 MiB uncompressed, 9.4 MiB after LZ4, over a
+# budget of 8.0 MiB. The compressor cannot be changed — Samsung's ABL
+# concatenates this ramdisk with the vendor_boot fragment and Linux rejects
+# anything but the stock legacy LZ4 stream — so the content has to shrink.
+#
+# The largest single item was udev's hardware database at 12 MiB, which exists
+# to attach properties to input devices, monitors and the like. The initramfs
+# only has to find and mount the root filesystem, so it never reads it.
+#
+# The name sorts last on purpose: this must run after the udev hook that copies
+# the database in.
+
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case "${1:-}" in
+	prereqs) prereqs; exit 0 ;;
+esac
+
+. /usr/share/initramfs-tools/hook-functions
+
+before=$(du -sk "${DESTDIR}" 2>/dev/null | cut -f1)
+
+# udev hardware database: properties for devices this stage never configures.
+rm -f "${DESTDIR}/usr/lib/udev/hwdb.bin" "${DESTDIR}/lib/udev/hwdb.bin"
+
+# Built-in module metadata. This port compiles every critical provider into the
+# kernel and ships exactly two modules, so nothing in the initramfs resolves a
+# built-in alias.
+rm -f "${DESTDIR}"/usr/lib/modules/*/modules.builtin.alias.bin
+rm -f "${DESTDIR}"/lib/modules/*/modules.builtin.alias.bin
+
+after=$(du -sk "${DESTDIR}" 2>/dev/null | cut -f1)
+echo "gts9u: pruned initramfs from ${before} KiB to ${after} KiB"

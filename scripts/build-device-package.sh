@@ -27,6 +27,10 @@ chown -R root:root "$staging"
 find "$staging" -type d -exec chmod 0755 {} +
 find "$staging" -type f -exec chmod 0644 {} +
 find "$staging/usr/libexec" -type f -exec chmod 0755 {} + 2>/dev/null || true
+# initramfs-tools refuses to run a hook that is not executable, and silently
+# skips it rather than failing the build.
+find "$staging/usr/share/initramfs-tools" -type f -exec chmod 0755 {} + \
+	2>/dev/null || true
 find "$staging/DEBIAN" -type f -name 'p*inst' -exec chmod 0755 {} + 2>/dev/null || true
 find "$staging/DEBIAN" -type f -name 'p*rm' -exec chmod 0755 {} + 2>/dev/null || true
 
