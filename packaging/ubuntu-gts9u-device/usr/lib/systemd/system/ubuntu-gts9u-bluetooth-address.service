@@ -1,20 +1,25 @@
 [Unit]
 Description=Apply the native Samsung Bluetooth address from EFS
 Documentation=https://github.com/agcarbajo/postmarketos-galaxy-tab-s9-ultra
-After=systemd-udev-settle.service
-Before=bluetooth.service
-Wants=systemd-udev-settle.service
+# Deliberately AFTER bluetooth.service, which is the opposite of the reference
+# postmarketOS port.  Measured on Ubuntu with BlueZ 5.72: btmgmt blocks
+# indefinitely when it runs before bluetoothd, and the unit then timed out at
+# 90 s on every boot.  With the daemon already up the same call returns in
+# under a second, the controller goes UP RUNNING, and bluetoothd adopts it with
+# no restart.  Setting the address late is safe because an unconfigured
+# controller is unusable anyway: bluetoothd reports "No default controller
+# available" until this runs.
+After=bluetooth.service
+Wants=bluetooth.service
 ConditionPathExists=/dev/disk/by-partlabel/efs
 
 [Service]
 Type=oneshot
 ExecStart=/usr/libexec/ubuntu-gts9u-bluetooth-address
 RemainAfterExit=yes
-# This unit is ordered before bluetooth.service, so anything that blocks here
-# blocks the whole Bluetooth stack.  An earlier version hung in btmgmt for
-# minutes and left bluetooth.service dead.  The script bounds its own calls;
-# this is the backstop.
-TimeoutStartSec=90
+TimeoutStartSec=120
 
 [Install]
-WantedBy=bluetooth.service
+# multi-user.target, not bluetooth.service: being wanted by the very unit it is
+# ordered after would be a dependency cycle.
+WantedBy=multi-user.target

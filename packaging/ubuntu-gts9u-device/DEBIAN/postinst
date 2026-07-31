@@ -24,7 +24,7 @@ case "$1" in
 			ubuntu-gts9u-grow-rootfs.service:basic.target \
 			ubuntu-gts9u-panel-coldboot-recover.service:multi-user.target \
 			ubuntu-gts9u-adsp-boot.service:multi-user.target \
-			ubuntu-gts9u-bluetooth-address.service:bluetooth.service; do
+			ubuntu-gts9u-bluetooth-address.service:multi-user.target; do
 			name=${unit%%:*}
 			target=${unit##*:}
 			if [ ! -e "/etc/systemd/system/$target.wants/$name" ] && \

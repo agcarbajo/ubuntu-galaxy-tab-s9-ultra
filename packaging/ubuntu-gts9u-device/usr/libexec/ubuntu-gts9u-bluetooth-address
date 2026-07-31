@@ -12,14 +12,17 @@
 # Derived from gts9uwifi-bluetooth-address of the postmarketOS port, with the
 # btmgmt handling rewritten after it wedged the boot on Ubuntu.
 #
-# BlueZ 5.72's btmgmt blocks indefinitely when it runs before the controller is
-# registered with the management interface, which is exactly when this service
-# runs.  Measured on this device: `btmgmt info` sat for over four minutes and,
-# because this unit is ordered before bluetooth.service, took the whole
-# Bluetooth stack down with it.  The same command returns in under a second
-# once the controller is registered.  So: every btmgmt call is bounded by a
-# timeout, and the "is it already done?" probe uses hciconfig, which is an
-# ioctl and answers in about 3 ms.
+# BlueZ 5.72's btmgmt blocks indefinitely when it runs before bluetoothd is up.
+# Measured on this device: `btmgmt info` sat for over four minutes, and the
+# unit timed out at 90 s on every boot.  Run after bluetooth.service instead
+# and the same call returns in under a second.  Everything here is still
+# bounded by a timeout, and the "is it already done?" probe uses hciconfig,
+# which is an ioctl and answers in about 3 ms, so a regression in btmgmt can
+# never wedge the boot again.
+#
+# Applying the address late costs nothing: an unconfigured controller is
+# unusable until it has one, and bluetoothd adopts it immediately afterwards
+# without needing a restart.
 set -u
 
 efs=/dev/disk/by-partlabel/efs
