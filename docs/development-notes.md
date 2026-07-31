@@ -1,0 +1,164 @@
+# Notas de desarrollo
+
+Conclusiones duraderas del port Ubuntu y la lista de cosas que **no hay que
+repetir**. El historial cronológico está en
+[`porting-log.md`](porting-log.md); el estado vigente, en
+[`hardware-status.md`](hardware-status.md).
+
+Este documento arranca heredando el conocimiento del port postmarketOS. Las
+entradas marcadas **[pmOS]** provienen de allí y ya están pagadas con tiempo de
+depuración: repetir esos experimentos es tiempo perdido.
+
+## Objetivo y alcance
+
+Un Ubuntu 24.04 LTS arm64 de escritorio sobre el mismo kernel mainline y el
+mismo hardware validado por postmarketOS v1.71, con rootfs en microSD. A largo
+plazo, compatibilidad con software de escritorio ARM64 y, después,
+Vulkan/Turnip, FEX, Box64 y Proton/Steam **evaluados por separado y con
+evidencia**. Steam no es requisito para aceptar el primer Ubuntu funcional.
+
+El repositorio postmarketOS es una referencia estable y de solo lectura. El
+port Ubuntu no se introduce en él.
+
+## Decisiones de arquitectura
+
+- **Kernel congelado en el primer hito.** Se reutiliza 7.2-rc3 y el DTS
+  probados. Un cambio de distribución y un salto de kernel a la vez impide
+  atribuir regresiones.
+- **Userspace nativo primero.** GDM3, Mutter, PipeWire y systemd de Ubuntu se
+  prueban tal cual. Solo se porta un parche de pmOS cuando reaparezca la
+  regresión concreta que ese parche resolvía, y con la evidencia documentada.
+- **mmdebstrap y no una instalación manual.** Todo cambio definitivo vive en el
+  repositorio como configuración, paquete, driver, parche o script. No se
+  aceptan arreglos aplicados solo a la instalación viva.
+- **Etiquetas de partición nuevas** (`UBTS9U_BOOT`/`UBTS9U_ROOT`) para que un
+  initramfs de postmarketOS y otro de Ubuntu no compitan por la misma tarjeta.
+
+## Entorno de trabajo
+
+- Base de build Ubuntu: `wsl.exe -d Ubuntu-24.04 -u root`, directorio
+  `/root/ubuntu-gts9u`. La base pmOS es `/root/pmos-gts9u` y no se mezcla.
+- La distribución WSL llamada simplemente `Ubuntu` es otro entorno y **no**
+  contiene el toolchain correcto.
+- Las builds pesadas se ejecutan en filesystem Linux y en una ruta sin
+  espacios. Las fuentes versionadas pueden vivir en la carpeta Windows.
+- **[pmOS]** No pasar Bash complejo en línea a través de PowerShell: el quoting
+  se deforma. Escribir el script en `work/` y ejecutarlo como fichero.
+- **[pmOS]** No usar `Set-Content`/`Out-File` de PowerShell para scripts Bash:
+  escriben CRLF o BOM y `set -euo pipefail` falla con `invalid option name`.
+  Usar la herramienta Write (LF) o `dos2unix`.
+- Con Git Bash en Windows, `wsl.exe` sufre conversión de rutas MSYS; exportar
+  `MSYS_NO_PATHCONV=1` antes de invocarlo.
+
+## Trampas del empaquetado ya conocidas
+
+- **[pmOS]** El ramdisk genérico de `init_boot` debe ser **LZ4 legacy**, no
+  gzip. Con gzip, ABL produce un initrd que Linux rechaza por «invalid magic at
+  start of compressed archive» aunque la imagen Android sea válida.
+- **[pmOS]** `APPEND_DTB_TO_KERNEL=1` y `DISABLE_RUNTIME_DTBO=1` son los únicos
+  valores seguros. Los contrarios devuelven a ABL a su fork `ufdt`, que rechaza
+  el DTB base y entra en Odin.
+- **[pmOS]** El overlay temprano va en `/usr/lib/firmware/...`. En el
+  initramfs `lib` es un symlink a `usr/lib`; crear un directorio `/lib` encima
+  provocó un reset antes de journald (v0.69 de pmOS).
+- **[pmOS]** `unzip -p > destino` no aplica los bits POSIX del ZIP, y systemd
+  ignora un fichero regular dentro de un directorio `.wants`: hace falta un
+  symlink real. El manifiesto debe transportar el modo.
+- **[pmOS]** Los salts AVB aleatorios y los timestamps del CPIO rompían la
+  reproducibilidad. Los salts derivan del SHA-256 de la imagen y el ZIP usa
+  época fija para todos sus miembros.
+- **Reproducibilidad del fragmento vendor (hallazgo 2026-07-31).** `cpio
+  --reproducible` normaliza device e inode pero **no** el `mtime`. Como el
+  overlay del initramfs se copia con `install`, cada build sella la hora
+  actual y `vendor_boot.img` cambia de hash aunque su contenido sea idéntico.
+  Al regenerar el ZIP v1.71 de rollback, `boot`, `init_boot`, `dtbo` y `vbmeta`
+  salieron byte a byte iguales y solo `vendor_boot` difirió por esta causa. El
+  pipeline Ubuntu debe fijar `mtime` a 0 en todo el árbol del overlay antes de
+  empaquetarlo.
+
+## Lo que no hay que repetir
+
+Heredado de postmarketOS; cada punto costó al menos una iteración física.
+
+### Kernel y configuración
+
+- **[pmOS]** No dejar en `=m` un proveedor crítico. Este port no autocarga un
+  árbol general de módulos: un símbolo en `=m` normalmente hace que el
+  subsistema no aparezca. `HID_GENERIC`, `INPUT_EVDEV`, `QCOM_FASTRPC`,
+  `POWER_RESET_QCOM_PON` y los pinctrl LPASS-LPI deben ser built-in.
+- **[pmOS]** `CONFIG_GPUCC_SM8550` no existe; el símbolo real es
+  `CONFIG_SM_GPUCC_8550`. `DRM_MSM` no sube a `=y` con `QCOM_LLCC/OCMEM` en
+  `=m`.
+- **[pmOS]** `msm.separate_gpu_kms=1` en la cmdline es obligatorio para que
+  Adreno cree su render node sin un component master del mdss.
+- **[pmOS]** No reactivar `lpass_ag_noc`: provocó bloqueos y el audio funciona
+  sin él.
+- **[pmOS]** No añadir lecturas MMIO/ioremap improvisadas para diagnosticar
+  probes, ni `dev_info` por evento en rutas de alta frecuencia como DWC3.
+
+### Wi-Fi y Bluetooth
+
+- **[pmOS]** No usar la BDF Samsung HMT.2.0 con el amss oficial HMT.1.1: crashea
+  con MHI RDDM. La BDF QRD con envoltorio ELF es la definitiva, y no debe
+  despojarse de ese envoltorio.
+- **[pmOS]** El NVM Bluetooth genérico falla con `-52`; el válido es
+  `hmtnv20.b21`. Su dirección es nula y hay que aplicar la de EFS montada
+  `ro,noload`.
+
+### Pantalla y sensores
+
+- **[pmOS]** El panel necesita un ciclo `pm_test=platform` antes del display
+  manager. `pm_test=devices` **no** lo recupera. No repetir `unbind`/`bind` de
+  `msm_dsi`.
+- **[pmOS]** No usar timers anónimos `systemd-run --on-active` para despertar el
+  display ni para recuperar SSC: se retrasan entre 7 y 16 s y se solapan. Una
+  sola unidad cancelable.
+- **[pmOS]** La vía del ALS STK31610 está agotada: registry, rails, modos de
+  streaming, petición Samsung exacta y comparación con `persist` no producen
+  lux. No instanciarlo como `sensortek,stk3310` ni copiar la configuración del
+  Xiaomi Pad 6. No habilitar los controladores I²C del AP para SE3/SE4: esos
+  buses pertenecen al DSP.
+- **[pmOS]** `ACCEL_MOUNT_MATRIX=0,1,0;-1,0,0;0,0,1` es una medida física
+  validada; conservarla aunque los JSON stock sugieran otra cosa.
+
+### USB, carga y DisplayPort
+
+- **[pmOS]** No dar por resuelto el host USB porque TCPM publique un rol y xHCI
+  cree sus root hubs. La prueba válida es enumeración downstream con `event*`
+  o `hidraw*` reales.
+- **[pmOS]** El MUIC del SM5714 debe encaminar D-/D+ **antes** del boost OTG.
+- **[pmOS]** No forzar `CC_CNTL1=0x49/0x59` ni `CC_CNTL3=0x81` tras una conexión
+  source/host natural: genera un `DETACH` inmediato.
+- **[pmOS]** No resincronizar CC a 250 ms: TCPM sigue en `PORT_RESET_WAIT_OFF`.
+  El valor validado es 1.500 ms.
+- **[pmOS]** El hub `2d79:e001` declara `USB_COMM=false` sin alimentación
+  externa; no seguir tocando VBUS, PTN3222 ni TCPM para ese caso, probar otro
+  adaptador.
+- **[pmOS]** El HPD DisplayPort de un dock presente al arrancar no puede activar
+  el encoder antes del `pm_test=platform` del panel. Debe guardarse y
+  reproducirse después de `PM_POST_SUSPEND`.
+
+### Método
+
+- **[pmOS]** No declarar un componente funcional porque su driver haya
+  sondeado. Hace falta prueba real o confirmación física.
+- **[pmOS]** No identificar un endpoint SSH solo por su IP: varios dispositivos
+  comparten la subred USB `172.16.42.0/24`. Comparar la host key.
+- **[pmOS]** No comparar solo configs y DTS entre builds: verificar también el
+  release del kernel arrancado frente a `/lib/modules/`.
+- **[pmOS]** No dejar montada la raíz de la microSD antes de flashear un ZIP con
+  overlay.
+
+## Seguridad
+
+Reglas innegociables, idénticas a las del port postmarketOS:
+
+- La usuaria flashea manualmente; las herramientas de build nunca escriben en la
+  tablet ni en una tarjeta.
+- Conservar TWRP, Download Mode y Odin.
+- No tocar PIT, EFS, persist, modem/modemst ni calibraciones. EFS solo
+  `ro,noload` cuando sea imprescindible.
+- No reparticionar UFS ni `super` para el primer port Ubuntu.
+- No publicar SSID, contraseñas, IPs, claves privadas, direcciones MAC/Bluetooth
+  ni nombres personales en commits, logs o documentación.
+- No publicar firmware propietario ni imágenes que lo contengan.

@@ -1,0 +1,47 @@
+# Build products, captures and device-specific evidence are regenerable.
+artifacts/*
+!artifacts/.gitkeep
+!artifacts/README.md
+work/*
+!work/.gitkeep
+
+# Images, rootfs tarballs and compiled device tree output.
+*.img
+*.img.xz
+*.img.zst
+*.img.gz
+*.zip
+*.tar
+*.tar.gz
+*.tar.xz
+*.tar.zst
+*.squashfs
+*.dtb
+*.dtbo
+*.deb
+*.ddeb
+*.udeb
+*.buildinfo
+*.changes
+
+# Proprietary Samsung/Qualcomm firmware is never versioned here.  The
+# reproducible source is scripts/stage-stock-*.sh plus their pinned hashes.
+kernel/firmware/
+*.mdt
+*.mbn
+*.b0[0-9]
+*.b[1-9][0-9]
+*.tlv
+*.wmfw
+*.bin.fw
+
+# Local kernel checkouts and build trees.
+kernel/src/
+build/
+__pycache__/
+*.pyc
+
+# Samsung open-source drops (downloaded manually, very large).
+*_Opensource.zip
+Kernel.tar.gz
+Platform.tar.gz
