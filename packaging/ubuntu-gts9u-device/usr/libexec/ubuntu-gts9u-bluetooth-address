@@ -116,12 +116,23 @@ if ! btmgmt_ config | grep -q '^hci0:'; then
 fi
 
 btmgmt_ --index 0 public-addr "$address" >/dev/null
-sleep 1
 
-# Report what the hardware ended up with rather than what btmgmt returned.
+# Setting the address makes the controller re-initialise, so the change is not
+# visible immediately: a single read one second later still reported the old
+# address while the controller was in fact already coming up correctly.  Poll
+# instead of guessing a delay, and judge by what the hardware reports rather
+# than by btmgmt's exit code.
+i=0
+while [ "$i" -lt 15 ]; do
+	now=$(current_address)
+	[ "$now" = "$address" ] && break
+	sleep 1
+	i=$((i + 1))
+done
+
 now=$(current_address)
 if [ "$now" = "$address" ]; then
-	log "applied the native address; hci0 is now $now"
+	log "applied the native address after ${i}s; hci0 is now $now"
 else
 	log "the address did not take; hci0 is still $now"
 fi
