@@ -36,19 +36,23 @@ while [ $# -gt 0 ]; do
 done
 
 sh_() { "$adb" shell "$@" 2>/dev/null | tr -d '\r'; }
+# The Windows adb.exe terminates every line with CRLF, so anything anchored to
+# end-of-line silently fails to match unless the carriage return is stripped.
+adb_() { "$adb" "$@" 2>&1 | tr -d '\r'; }
 
 echo '=== adb ==='
-"$adb" version | head -1
-count=$("$adb" devices | grep -cE '\b(device|recovery)$')
+adb_ version | head -1
+count=$(adb_ devices | grep -cE '[[:space:]](device|recovery)$')
 if [ "$count" -eq 0 ]; then
 	echo 'No device is reachable. Put the tablet in TWRP and connect USB.' >&2
 	exit 1
 fi
 if [ "$count" -gt 1 ]; then
 	echo 'More than one device is attached; refusing to guess.' >&2
-	"$adb" devices
+	adb_ devices
 	exit 1
 fi
+adb_ devices -l | grep -E '[[:space:]](device|recovery)[[:space:]]'
 
 echo
 echo '=== the device must be in TWRP, not in a booted system ==='
@@ -80,18 +84,24 @@ echo 'TWRP confirmed.'
 
 echo
 echo '=== block devices ==='
+# Sectors are converted to bytes here, not on the tablet: TWRP's busybox shell
+# does 32-bit arithmetic, so sectors*512 wraps and a 29.7 GiB card was first
+# reported as 1.72 GiB.
 sh_ 'for d in /sys/block/*; do
 	n=$(basename $d)
 	case $n in
 		loop*|ram*|zram*|dm-*) continue ;;
 	esac
-	size=$(cat $d/size 2>/dev/null || echo 0)
-	rem=$(cat $d/removable 2>/dev/null || echo ?)
-	type=$(cat $d/device/type 2>/dev/null || echo -)
-	name=$(cat $d/device/name 2>/dev/null || echo -)
-	printf "%-12s %14s bytes  removable=%s type=%-4s name=%s\n" \
-		"$n" "$((size * 512))" "$rem" "$type" "$name"
-done'
+	printf "%s %s %s %s %s\n" "$n" \
+		"$(cat $d/size 2>/dev/null || echo 0)" \
+		"$(cat $d/removable 2>/dev/null || echo ?)" \
+		"$(cat $d/device/type 2>/dev/null || echo -)" \
+		"$(cat $d/device/name 2>/dev/null || echo -)"
+done' | while read -r n sectors rem type name; do
+	[ -n "$n" ] || continue
+	printf '%-10s %16s bytes  removable=%s type=%-4s name=%s\n' \
+		"$n" "$((sectors * 512))" "$rem" "$type" "$name"
+done
 
 echo
 echo '=== mounted filesystems on removable media ==='
@@ -134,21 +144,41 @@ case "$device" in
 esac
 
 base=$(basename "$device")
-removable=$(sh_ "cat /sys/block/$base/removable 2>/dev/null")
-[ "$removable" = 1 ] && check 0 'target is removable' || check 1 "target removable flag is '$removable', expected 1"
 
+# device/type == SD is the decisive signal.  The `removable` flag is NOT usable
+# here: this platform's SD host reports removable=0 for a card that plainly is
+# one, so requiring it would reject the only valid target.
 dtype=$(sh_ "cat /sys/block/$base/device/type 2>/dev/null")
-[ "$dtype" = SD ] && check 0 'target reports device type SD' || check 1 "target device type is '$dtype', expected SD"
+[ "$dtype" = SD ] && check 0 'target reports device type SD' || \
+	check 1 "target device type is '$dtype', expected SD"
 
+removable=$(sh_ "cat /sys/block/$base/removable 2>/dev/null")
+name=$(sh_ "cat /sys/block/$base/device/name 2>/dev/null")
+printf 'info  target card name %s, removable flag %s (not used as a guard)\n' \
+	"${name:-unknown}" "${removable:-?}"
+
+# Internal storage on this device is UFS and enumerates as sd*, so an mmcblk
+# target cannot be it.  Assert that separation rather than assume it.
+if sh_ 'ls /sys/block' | grep -q '^sda$'; then
+	check 0 'internal UFS is present separately as sda, so the target is not it'
+else
+	check 1 'internal UFS was not found as sda; the storage layout is not what this script expects'
+fi
+
+# Sectors are converted on this host: the tablet's shell would overflow.
 sectors=$(sh_ "cat /sys/block/$base/size 2>/dev/null")
 target_bytes=$(( ${sectors:-0} * 512 ))
-printf 'info  target capacity %s bytes\n' "$target_bytes"
+printf 'info  target capacity %s bytes (%s sectors)\n' "$target_bytes" "${sectors:-0}"
 [ "$target_bytes" -ge "$image_bytes" ] && check 0 'target is large enough' || \
 	check 1 'target is smaller than the image'
 
-mounted=$(sh_ "grep -c '^$device' /proc/mounts")
-[ "${mounted:-0}" = 0 ] && check 0 'no partition of the target is mounted' || \
-	check 1 'a partition of the target is mounted; unmount it in TWRP first'
+mounts=$(sh_ "grep '^$device' /proc/mounts")
+if [ -z "$mounts" ]; then
+	check 0 'no partition of the target is mounted'
+else
+	printf 'info  currently mounted from the target:\n%s\n' "$mounts"
+	check 0 'partitions of the target are mounted; they will be unmounted before writing'
+fi
 
 if [ "$fail" -ne 0 ]; then
 	echo
@@ -162,6 +192,23 @@ if [ "$do_write" -ne 1 ]; then
 	echo 'Re-run with --write to do it. Nothing was written.'
 	exit 0
 fi
+
+echo
+echo "=== unmounting anything from $device ==="
+# Writing under a mounted filesystem would corrupt it and the kernel would keep
+# stale cached blocks.  The whole card is about to be overwritten anyway.
+sh_ "grep '^$device' /proc/mounts | cut -d' ' -f2" | while read -r mp; do
+	[ -n "$mp" ] || continue
+	echo "umount $mp"
+	"$adb" shell "umount '$mp'" 2>&1 | tr -d '\r'
+done
+still=$(sh_ "grep -c '^$device' /proc/mounts")
+if [ "${still:-0}" != 0 ]; then
+	echo 'could not unmount every filesystem from the target; refusing to write' >&2
+	sh_ "grep '^$device' /proc/mounts"
+	exit 1
+fi
+echo 'nothing from the target is mounted now'
 
 echo
 echo "=== writing to $device ==="
