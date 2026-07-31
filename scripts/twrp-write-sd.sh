@@ -210,20 +210,55 @@ if [ "${still:-0}" != 0 ]; then
 fi
 echo 'nothing from the target is mounted now'
 
+# The image length must be a whole number of MiB, so the device-side dd that
+# verifies the card needs no arithmetic beyond a small integer count.
+if [ $(( image_bytes % 1048576 )) -ne 0 ]; then
+	echo 'image length is not a whole number of MiB; verification would need' >&2
+	echo 'byte-level arithmetic on the tablet, where the shell overflows' >&2
+	exit 1
+fi
+mib=$(( image_bytes / 1048576 ))
+
+echo
+echo '=== staging the image in the tablet RAM disk ==='
+# Never pipe the image straight into `dd of=<device>`.  Measured on this
+# hardware: dd reading from the adb pipe silently dropped 42688 bytes, and
+# every byte after that landed 42688 bytes too early on the card.  Staging the
+# image as a file first means dd reads a regular file, where short reads cannot
+# happen, and it lets the transfer be verified on its own.
+avail_kb=$(sh_ "df /tmp | tail -1" | awk '{print $4}')
+need_kb=$(( image_bytes / 1024 + 65536 ))
+printf 'tmpfs free %s KiB, need %s KiB\n' "${avail_kb:-0}" "$need_kb"
+if [ "${avail_kb:-0}" -lt "$need_kb" ]; then
+	echo 'not enough room in the tablet RAM disk to stage the image' >&2
+	exit 1
+fi
+
+"$adb" shell 'rm -f /tmp/ubuntu-sd.img' >/dev/null 2>&1
+if ! "$adb" exec-in 'cat > /tmp/ubuntu-sd.img' < "$image"; then
+	echo 'staging the image failed; nothing was written to the card' >&2
+	exit 1
+fi
+
+staged_sha=$(sh_ 'sha256sum /tmp/ubuntu-sd.img' | cut -d' ' -f1)
+staged_size=$(sh_ 'wc -c < /tmp/ubuntu-sd.img' | tr -d ' ')
+printf 'staged %s bytes, sha256 %s\n' "$staged_size" "$staged_sha"
+if [ "$staged_sha" != "$image_sha" ]; then
+	echo 'the staged copy does not match the image; nothing was written' >&2
+	"$adb" shell 'rm -f /tmp/ubuntu-sd.img' >/dev/null 2>&1
+	exit 1
+fi
+echo 'PASS  the staged copy matches the image byte for byte'
+
 echo
 echo "=== writing to $device ==="
 echo 'This erases the card completely.'
-if ! "$adb" exec-in "dd of=$device bs=4M conv=fsync" < "$image"; then
-	echo 'streaming failed; the card is now in an undefined state' >&2
-	exit 1
-fi
-"$adb" shell sync
+"$adb" shell "dd if=/tmp/ubuntu-sd.img of=$device bs=4M conv=fsync; sync" 2>&1 | tr -d '\r'
 
 echo
-echo '=== verifying the data read back ==='
-readback=$("$adb" exec-out \
-	"dd if=$device bs=1M count=$(( (image_bytes + 1048575) / 1048576 )) 2>/dev/null | head -c $image_bytes | sha256sum" \
-	| tr -d '\r' | cut -d' ' -f1)
+echo '=== verifying the card ==='
+readback=$(sh_ "dd if=$device bs=1M count=$mib 2>/dev/null | sha256sum" | cut -d' ' -f1)
+"$adb" shell 'rm -f /tmp/ubuntu-sd.img' >/dev/null 2>&1
 printf 'written  %s\nreadback %s\n' "$image_sha" "$readback"
 if [ "$image_sha" = "$readback" ]; then
 	echo 'VERIFIED: the card matches the image byte for byte.'
