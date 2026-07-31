@@ -1,0 +1,71 @@
+# Kernel options an Ubuntu desktop needs, on top of the hardware fragment
+# inherited from the postmarketOS port.
+#
+# Everything here is =y on purpose.  This port does not install a general
+# module tree — only the two isolated ath12k modules ship — so a symbol left at
+# =m is effectively absent on the running system.  That single fact caused
+# every failure this fragment fixes.
+
+# --- snaps -------------------------------------------------------------------
+# Every snap is a squashfs image that snapd attaches to a loop device.  With
+# SQUASHFS=m the mount simply cannot happen, so `apt install firefox` and
+# `apt install chromium` both fail: in Ubuntu those are transitional packages
+# whose entire job is to install a snap.
+CONFIG_SQUASHFS=y
+CONFIG_SQUASHFS_FILE_DIRECT=y
+# The decompressor parallelisation options live inside a Kconfig choice and
+# cannot be set individually; this is the one standalone symbol that turns them
+# all on and lets the mount pick.
+CONFIG_SQUASHFS_CHOICE_DECOMP_BY_MOUNT=y
+CONFIG_SQUASHFS_XATTR=y
+CONFIG_SQUASHFS_ZLIB=y
+CONFIG_SQUASHFS_LZ4=y
+CONFIG_SQUASHFS_LZO=y
+CONFIG_SQUASHFS_XZ=y
+CONFIG_SQUASHFS_ZSTD=y
+
+# snapd layers writable data over the read-only snap, and several desktop
+# portals and flatpak-style runtimes want FUSE.
+CONFIG_OVERLAY_FS=y
+CONFIG_FUSE_FS=y
+
+# --- AppArmor ----------------------------------------------------------------
+# Ubuntu confines snaps and much of the desktop with AppArmor, and userspace
+# ships profiles that silently do nothing without it.  lockdown stays in the
+# list: this port pairs a signed kernel with signed ath12k modules and depends
+# on it.
+CONFIG_SECURITY_APPARMOR=y
+CONFIG_SECURITY_APPARMOR_HASH=y
+CONFIG_SECURITY_APPARMOR_HASH_DEFAULT=y
+CONFIG_DEFAULT_SECURITY_APPARMOR=y
+CONFIG_LSM="landlock,lockdown,yama,loadpin,safesetid,apparmor,bpf"
+
+# --- binfmt_misc -------------------------------------------------------------
+# Without this, systemd-binfmt.service and proc-sys-fs-binfmt_misc.mount both
+# fail on every boot and systemd reports the system as degraded.  It is also
+# the mechanism FEX and Box64 need to run x86 binaries later.
+CONFIG_BINFMT_MISC=y
+
+# --- filesystems a desktop actually meets ------------------------------------
+# Removable media handed to this tablet will not all be ext4 or FAT32.
+CONFIG_EXFAT_FS=y
+# NTFS3 is "depends on !NTFS_FS || m", so while the legacy driver is enabled
+# NTFS3 can only ever be a module, which on this port means absent.  The legacy
+# driver is not wanted here anyway.
+# CONFIG_NTFS_FS is not set
+CONFIG_NTFS3_FS=y
+CONFIG_NTFS3_LZX_XPRESS=y
+CONFIG_ISO9660_FS=y
+CONFIG_JOLIET=y
+CONFIG_ZISOFS=y
+CONFIG_UDF_FS=y
+
+# --- container and sandbox plumbing ------------------------------------------
+# Snap confinement, systemd-nspawn and the networking that portals expect.
+CONFIG_VETH=y
+CONFIG_BRIDGE=y
+CONFIG_NETFILTER_XTABLES=y
+CONFIG_NF_TABLES=y
+CONFIG_UNIX_DIAG=y
+CONFIG_PACKET_DIAG=y
+CONFIG_NETLINK_DIAG=y

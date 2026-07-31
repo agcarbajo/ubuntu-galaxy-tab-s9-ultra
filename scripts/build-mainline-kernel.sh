@@ -233,23 +233,46 @@ grep -q 'ps5169.o' "$mux_dir/Makefile" || \
 
 cp "$cfg/config-mainline.aarch64" "$build_dir/.config"
 
-while IFS= read -r setting; do
-	case "$setting" in
-		CONFIG_*=y)
-			symbol=${setting%%=*}
-			"$kernel_tree/scripts/config" --file "$build_dir/.config" \
-				--enable "${symbol#CONFIG_}" ;;
-		CONFIG_*=m)
-			symbol=${setting%%=*}
-			"$kernel_tree/scripts/config" --file "$build_dir/.config" \
-				--module "${symbol#CONFIG_}" ;;
-		'# CONFIG_'*' is not set')
-			symbol=${setting#\# CONFIG_}
-			symbol=${symbol% is not set}
-			"$kernel_tree/scripts/config" --file "$build_dir/.config" \
-				--disable "$symbol" ;;
-	esac
-done < "$cfg/config-gts9uwifi.fragment"
+# Two fragments, applied in order: the hardware one inherited byte-for-byte
+# from the reference port, then the Ubuntu desktop one this port adds.  Keeping
+# them separate means the inherited file stays comparable to its origin.
+# An array, not a space-separated string: this repository lives under a path
+# that contains spaces, and word splitting turned it into nonexistent files.
+fragments=("$cfg/config-gts9uwifi.fragment")
+[ -f "$cfg/config-ubuntu-desktop.fragment" ] && \
+	fragments+=("$cfg/config-ubuntu-desktop.fragment")
+
+apply_fragment() {
+	while IFS= read -r setting; do
+		case "$setting" in
+			CONFIG_*=y)
+				symbol=${setting%%=*}
+				"$kernel_tree/scripts/config" --file "$build_dir/.config" \
+					--enable "${symbol#CONFIG_}" ;;
+			CONFIG_*=m)
+				symbol=${setting%%=*}
+				"$kernel_tree/scripts/config" --file "$build_dir/.config" \
+					--module "${symbol#CONFIG_}" ;;
+			CONFIG_*=\"*)
+				symbol=${setting%%=*}
+				value=${setting#*=}
+				value=${value#\"}
+				value=${value%\"}
+				"$kernel_tree/scripts/config" --file "$build_dir/.config" \
+					--set-str "${symbol#CONFIG_}" "$value" ;;
+			'# CONFIG_'*' is not set')
+				symbol=${setting#\# CONFIG_}
+				symbol=${symbol% is not set}
+				"$kernel_tree/scripts/config" --file "$build_dir/.config" \
+					--disable "$symbol" ;;
+		esac
+	done < "$1"
+}
+
+for fragment in "${fragments[@]}"; do
+	echo "applying config fragment: ${fragment##*/}"
+	apply_fragment "$fragment"
+done
 
 make -C "$kernel_tree" O="$build_dir" ARCH=arm64 LLVM=1 olddefconfig
 
@@ -259,20 +282,26 @@ make -C "$kernel_tree" O="$build_dir" ARCH=arm64 LLVM=1 olddefconfig
 # satisfy as =m is warned about; anything missing is fatal.
 missing=
 downgraded=
-while IFS= read -r setting; do
-	case "$setting" in
-		CONFIG_*=y|CONFIG_*=m)
-			symbol=${setting%%=*}
-			want=${setting##*=}
-			if grep -qxF "$symbol=y" "$build_dir/.config"; then
-				:
-			elif grep -qxF "$symbol=m" "$build_dir/.config"; then
-				[ "$want" = y ] && downgraded="$downgraded $symbol"
-			else
-				missing="$missing $symbol"
-			fi ;;
-	esac
-done < "$cfg/config-gts9uwifi.fragment"
+for fragment in "${fragments[@]}"; do
+	while IFS= read -r setting; do
+		case "$setting" in
+			CONFIG_*=y|CONFIG_*=m)
+				symbol=${setting%%=*}
+				want=${setting##*=}
+				if grep -qxF "$symbol=y" "$build_dir/.config"; then
+					:
+				elif grep -qxF "$symbol=m" "$build_dir/.config"; then
+					[ "$want" = y ] && downgraded="$downgraded $symbol"
+				else
+					missing="$missing $symbol"
+				fi ;;
+			CONFIG_*=\"*)
+				symbol=${setting%%=*}
+				grep -q "^$symbol=" "$build_dir/.config" || \
+					missing="$missing $symbol" ;;
+		esac
+	done < "$fragment"
+done
 [ -n "$downgraded" ] && \
 	echo "warning: fragment asked =y, kconfig could only give =m:$downgraded" >&2
 if [ -n "$missing" ]; then
