@@ -271,8 +271,51 @@ de 2 GiB.
 `update-initramfs` no produce un CPIO reproducible. El resto del bundle sí lo
 es. Queda pendiente normalizarlo, igual que se hizo con el fragmento vendor.
 
+### v0.1 desktop y el fallo que habría arruinado la primera prueba
+
+El perfil `desktop` construye 948 paquetes en 1,8 GiB. Comprobado dentro del
+rootfs, no supuesto: GDM3 46.2, GNOME Shell 46.0, Mutter 46.2, PipeWire 1.0.5,
+WirePlumber, Mesa 25.2.8 con `mesa-vulkan-drivers`, BlueZ 5.72, NetworkManager,
+OpenSSH y el paquete de dispositivo. El pin de apt funcionó: **no** se coló
+ningún `linux-image-*` de la distribución. `ssh`, `NetworkManager` y
+`ubuntu-gts9u-grow-rootfs` quedan habilitados; `/etc/fstab` monta por etiqueta y
+el usuario `ubuntu` está en `sudo`.
+
+Antes de proponer una prueba física apareció un fallo que la habría hecho
+fracasar por un motivo ajeno al hardware: **la cmdline heredada no lleva
+`root=`**. El initramfs de postmarketOS localiza su partición por sí mismo, así
+que su cmdline nunca lo necesitó. `initramfs-tools` no hace eso: habría
+esperado a un dispositivo que no llega y habría caído a la shell de emergencia.
+
+La cmdline de Ubuntu añade `root=LABEL=UBTS9U_ROOT rootfstype=ext4` —por
+etiqueta, porque el orden de enumeración entre microSD y UFS no está
+garantizado— y elimina dos parámetros arrastrados sin sentido aquí:
+`pmos.nosplash` y `ignore_console_null`, cuyo parche este build no aplica. El
+validador falla ahora si `root=` falta o si reaparece cualquiera de los dos.
+
+Los artefactos construidos con la cmdline antigua se borraron en lugar de
+dejarlos: no arrancan y su nombre no los distingue.
+
+Release v0.1 (desktop), con todas las comprobaciones estáticas en verde:
+
+| Artefacto | SHA-256 |
+|---|---|
+| `ubuntu-24.04-gts9uwifi-v0.1-sd.img.xz` | `5af2a7d2…` |
+| `ubuntu-24.04-gts9uwifi-v0.1-sm-x910-twrp.zip` | `3a55399e…` |
+| `boot.img` | `4b99e90e…` |
+| `init_boot.img` | `a8252f1e…` |
+| `vendor_boot.img` | `59a2e5c8…` |
+| `dtbo.img` | `c17418be…` |
+| `vbmeta.img` | `b95e5ef9…` |
+
+Imagen sin comprimir: 3.588.227.072 bytes, `27a4f469…`.
+
+`boot.img` es idéntico al del perfil mínimo, como debe ser: mismo kernel y mismo
+DTS. `dtbo.img` y `vbmeta.img` coinciden byte a byte con los de postmarketOS
+v1.71.
+
 ### Siguiente paso
 
-Construir el perfil `desktop` y preparar la primera prueba física con
-instrucciones exactas y la vía de vuelta a v1.71 verificada. Ningún componente
-de hardware se marcará como funcional bajo Ubuntu hasta observarlo.
+Preparar la primera prueba física con instrucciones exactas y la vía de vuelta
+a v1.71 verificada. Ningún componente de hardware se marcará como funcional
+bajo Ubuntu hasta observarlo.

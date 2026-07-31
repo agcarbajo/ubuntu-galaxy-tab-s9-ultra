@@ -14,10 +14,11 @@ software, and later Vulkan/Turnip-based gaming stacks, become usable.
 
 ## Status
 
-Milestone 1 (reproducible build infrastructure) is in progress. Nothing has
-been booted on the tablet from this repository yet. The tablet currently runs
-the postmarketOS v1.71 baseline, and a regenerated rollback build for it is
-kept outside Git.
+Milestone 1 is complete: `scripts/build-release.sh` produces a microSD image,
+an Android v4 bundle and a TWRP ZIP from source, and all 22 static checks pass.
+**Nothing has been booted on the tablet yet**, so every hardware row below is
+still inherited rather than proven. The tablet runs the postmarketOS v1.71
+baseline, and a regenerated rollback build for it is kept outside Git.
 
 See [docs/hardware-status.md](docs/hardware-status.md) for what is inherited,
 what has been proven under Ubuntu, and what is still assumed.
