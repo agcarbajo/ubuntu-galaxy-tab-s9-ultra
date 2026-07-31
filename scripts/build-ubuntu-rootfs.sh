@@ -128,10 +128,13 @@ EOF
 # LZ4 legacy is mandatory: Samsung ABL concatenates the generic init_boot
 # ramdisk with the vendor_boot fragment, and a gzip generic ramdisk makes Linux
 # reject the initrd with "invalid magic at start of compressed archive".
-# MODULES=dep keeps the image inside the 8 MiB init_boot partition; the critical
-# providers of this port are built into the kernel anyway.
+# MODULES must not be "dep": that asks initramfs-tools to inspect the root
+# device of the machine running the build, which here is the WSL host, and it
+# fails with "failed to determine device for /".  "most" is safe and still tiny
+# for this port, because the only modules installed are the two isolated ath12k
+# ones; every critical provider is built into the kernel.
 cat > "\$target/etc/initramfs-tools/initramfs.conf" <<EOF
-MODULES=dep
+MODULES=most
 BUSYBOX=y
 KEYMAP=n
 COMPRESS=lz4
@@ -263,6 +266,16 @@ if [ -n "$modules_root" ]; then
 	echo "staging kernel modules from $modules_root"
 	cp -a "$modules_root/." "$rootfs/"
 	chroot "$rootfs" depmod -a "$kernel_release"
+	# initramfs-tools reads /boot/config-<release> to check that the kernel
+	# actually supports the compressor we ask for; without it the LZ4
+	# requirement degrades to an unverified warning.
+	kernel_config=${KERNEL_CONFIG:-${modules_root%/modules-root}/config}
+	if [ -f "$kernel_config" ]; then
+		install -m 0644 "$kernel_config" \
+			"$rootfs/boot/config-$kernel_release"
+	else
+		echo "WARNING: no kernel config at $kernel_config" >&2
+	fi
 else
 	echo 'WARNING: no KERNEL_MODULES_ROOT given; /lib/modules is empty and' >&2
 	echo '         update-initramfs cannot run yet.' >&2

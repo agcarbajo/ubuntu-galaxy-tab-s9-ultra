@@ -33,6 +33,27 @@ test -d "$firmware" || {
 	exit 1
 }
 
+# Fail fast and completely: a missing blob halfway through leaves a partial
+# overlay that would silently ship without, say, Wi-Fi firmware.
+required='
+a740_zap.mdt a740_zap.b00 a740_zap.b01 a740_zap.b02 a740_sqe.fw
+gmu_gen70200.bin
+adsp.mdt adsp_dtb.mdt adspr.jsn adsps.jsn adspua.jsn cdspr.jsn
+Samsung-Galaxy-Tab-S9-Ultra-tplg.bin
+official-amss.bin m3.bin official-board-2.bin qrd-board.bin regdb.bin
+hmtbtfw20.tlv hmtnv20.b21
+'
+absent=
+for f in $required; do
+	[ -f "$firmware/$f" ] || absent="$absent $f"
+done
+if [ -n "$absent" ]; then
+	echo "missing staged firmware in $firmware:" >&2
+	for f in $absent; do echo "  $f" >&2; done
+	echo 'run the reference port stage-stock-*.sh helpers to produce them' >&2
+	exit 1
+fi
+
 for path in "$overlay" "$initramfs_overlay"; do
 	case "$path" in
 		"$base"/out/*) rm -rf -- "$path" ;;
@@ -74,16 +95,34 @@ install -m 0644 "$firmware/Samsung-Galaxy-Tab-S9-Ultra-tplg.bin" \
 	"$overlay/usr/lib/firmware/qcom/sm8550/Samsung-Galaxy-Tab-S9-Ultra-tplg.bin"
 
 # --- Wi-Fi WCN7850 --------------------------------------------------------
-# The official amss with the QRD board data, ELF wrapper intact. Samsung's own
-# HMT.2.0 board file crashes this amss (MHI RDDM) and must not be substituted.
-install -m 0644 "$firmware/amss.bin" \
+# The official linux-firmware amss: Samsung's downstream HMT amss never raises
+# WMI ready under mainline ath12k, because it expects the phy_ucode QMI
+# download that only cnss2 implements.
+install -m 0644 "$firmware/official-amss.bin" \
 	"$overlay/usr/lib/firmware/ath12k/WCN7850/hw2.0/amss.bin"
+# Canonical linux-firmware M3 image. Samsung ships no m3 for kiwi, and feeding
+# phy_ucode20.elf as M3 is not equivalent.
 install -m 0644 "$firmware/m3.bin" \
 	"$overlay/usr/lib/firmware/ath12k/WCN7850/hw2.0/m3.bin"
-install -m 0644 "$firmware/board-2.bin" \
+# The official container comes first and has no matching X910/board-id 255
+# entry, so ath12k falls back to the proven QRD ELF in board.bin.  That ELF
+# wrapper must stay: the Samsung HMT.2.0 board data crashes the official
+# HMT.1.1 amss with an MHI RDDM, and stripping the wrapper does not help.
+install -m 0644 "$firmware/official-board-2.bin" \
 	"$overlay/usr/lib/firmware/ath12k/WCN7850/hw2.0/board-2.bin"
+install -m 0644 "$firmware/qrd-board.bin" \
+	"$overlay/usr/lib/firmware/ath12k/WCN7850/hw2.0/board.bin"
 install -m 0644 "$firmware/regdb.bin" \
 	"$overlay/usr/lib/firmware/ath12k/WCN7850/hw2.0/regdb.bin"
+
+# --- CS35L45 speaker protection ------------------------------------------
+# Staged for parity with the reference port. The codec probes without these,
+# and protection is not claimed to work until it is measured.
+for f in cs35l45-dsp1-spk-prot.wmfw cs35l45-dsp1-spk-prot.bin \
+	cs35l45-dsp1-spk-prot-calib.bin; do
+	[ -f "$firmware/$f" ] && install -m 0644 "$firmware/$f" \
+		"$overlay/usr/lib/firmware/$f"
+done
 
 # --- Bluetooth ------------------------------------------------------------
 for f in hmtbtfw20.tlv hmtnv20.b21; do
