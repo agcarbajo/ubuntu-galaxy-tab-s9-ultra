@@ -1,0 +1,25 @@
+[Unit]
+Description=Recover the SM-X910 ANA38407 panel after a cold boot
+Documentation=https://github.com/agcarbajo/postmarketos-galaxy-tab-s9-ultra
+ConditionPathExists=/sys/power/pm_test
+After=local-fs.target systemd-udev-settle.service
+# GDM must not start before the DDIC is alive: the reference port showed the
+# compositor otherwise drives a panel that reports connected and enabled while
+# the OLED stays black.
+Before=display-manager.service gdm.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Give the DPU, DSI and panel time to finish their first probe; the cycle is
+# only useful once the complete DRM pipeline exists.
+ExecStartPre=/bin/sleep 2
+ExecStart=/usr/libexec/ubuntu-gts9u-panel-coldboot-recover
+TimeoutStartSec=30
+
+[Install]
+# multi-user.target, not graphical.target as in the reference port. That port
+# always reached a display manager, so the distinction never mattered. Here it
+# does: this cycle is also what makes the text console visible, so if GDM fails
+# to start we still want the panel alive to see why.
+WantedBy=multi-user.target

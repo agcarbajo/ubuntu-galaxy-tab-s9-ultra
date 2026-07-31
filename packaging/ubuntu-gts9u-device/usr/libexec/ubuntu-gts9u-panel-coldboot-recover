@@ -1,0 +1,52 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+#
+# Ported from gts9uwifi-panel-coldboot-recover of the postmarketOS gts9uwifi
+# port. The mechanism is a property of the hardware, not of the distribution:
+# the ANA38407 is unreachable after Samsung's cold-boot hand-off, reading back
+# a DCS ID of 00 00 00, and only the kernel's platform-level suspend test
+# repairs it. Suspending devices alone does not: pm_test=devices returns with
+# the panel still dead, while pm_test=platform brings the ID back to 80 00 04.
+#
+# The platform test returns on its own after about five seconds, so it needs no
+# RTC and no wake event.
+set -eu
+
+PM_TEST=/sys/power/pm_test
+PM_STATE=/sys/power/state
+
+log() {
+	echo "ubuntu-gts9u-panel-coldboot-recover: $*"
+}
+
+if [ ! -w "$PM_TEST" ] || [ ! -w "$PM_STATE" ]; then
+	log 'PM test interface unavailable; leaving the display state unchanged'
+	exit 0
+fi
+
+if ! grep -qw platform "$PM_TEST"; then
+	log 'platform test level unavailable; leaving the display state unchanged'
+	exit 0
+fi
+
+restore_pm_test() {
+	echo none > "$PM_TEST" 2>/dev/null || true
+}
+trap restore_pm_test EXIT INT TERM
+
+log 'running the automatic platform suspend/resume cycle'
+echo platform > "$PM_TEST"
+echo mem > "$PM_STATE"
+log 'platform cycle returned'
+
+# Report what the panel driver saw, so the journal records whether the DDIC
+# actually came back rather than only that the cycle ran.
+dmesg 2>/dev/null | grep -i 'ana38407 panel id' | tail -2 || true
+
+# The DWC3 host does not survive this platform test reliably. The reference
+# port recreates it here, but only when the tablet was already the USB data
+# host, so a PC/RNDIS connection in device mode is left alone. That helper is
+# not ported yet; this is where it goes once USB host is being validated.
+if [ -x /usr/libexec/ubuntu-gts9u-usb-host-resume ]; then
+	/usr/libexec/ubuntu-gts9u-usb-host-resume || true
+fi

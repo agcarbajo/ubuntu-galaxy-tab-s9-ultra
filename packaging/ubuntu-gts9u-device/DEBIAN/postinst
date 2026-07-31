@@ -1,0 +1,34 @@
+#!/bin/sh
+# Enable the device units from the package itself, so a rootfs built by any
+# route gets them and no build script has to remember.
+set -e
+
+case "$1" in
+	configure)
+		for unit in \
+			ubuntu-gts9u-grow-rootfs.service \
+			ubuntu-gts9u-panel-coldboot-recover.service; do
+			# deb-systemd-helper is not guaranteed inside a foreign-arch
+			# chroot, so fall back to systemctl and then to a plain symlink.
+			if command -v deb-systemd-helper >/dev/null 2>&1; then
+				deb-systemd-helper enable "$unit" >/dev/null || true
+			fi
+			systemctl enable "$unit" >/dev/null 2>&1 || true
+		done
+
+		# Verify rather than assume: a unit that silently failed to enable
+		# would only show up as a black screen on the tablet.
+		for unit in \
+			ubuntu-gts9u-grow-rootfs.service:basic.target \
+			ubuntu-gts9u-panel-coldboot-recover.service:multi-user.target; do
+			name=${unit%%:*}
+			target=${unit##*:}
+			if [ ! -e "/etc/systemd/system/$target.wants/$name" ] && \
+			   [ ! -e "/usr/lib/systemd/system/$target.wants/$name" ]; then
+				echo "ubuntu-gts9u-device: WARNING: $name is not enabled in $target" >&2
+			fi
+		done
+		;;
+esac
+
+exit 0
