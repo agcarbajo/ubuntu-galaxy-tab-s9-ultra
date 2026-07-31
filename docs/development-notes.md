@@ -44,6 +44,13 @@ port Ubuntu no se introduce en él.
   espacios. Las fuentes versionadas pueden vivir en la carpeta Windows.
 - **[pmOS]** No pasar Bash complejo en línea a través de PowerShell: el quoting
   se deforma. Escribir el script en `work/` y ejecutarlo como fichero.
+- La misma regla vale para Git Bash, y de forma más traicionera: al invocar
+  `wsl.exe ... bash -lc '...'` desde Git Bash, **las variables de shell dentro
+  del script en línea se pierden**. Un bucle
+  `for f in a b c; do echo "$f"; done` imprime líneas vacías, de modo que una
+  comprobación de dependencias llegó a informar «OK» de herramientas que no
+  estaban instaladas. No es un fallo ruidoso: **miente en silencio**. Cualquier
+  comprobación que decida algo debe ir en un fichero de script.
 - **[pmOS]** No usar `Set-Content`/`Out-File` de PowerShell para scripts Bash:
   escriben CRLF o BOM y `set -euo pipefail` falla con `invalid option name`.
   Usar la herramienta Write (LF) o `dos2unix`.
@@ -75,6 +82,23 @@ port Ubuntu no se introduce en él.
   salieron byte a byte iguales y solo `vendor_boot` difirió por esta causa. El
   pipeline Ubuntu debe fijar `mtime` a 0 en todo el árbol del overlay antes de
   empaquetarlo.
+
+## Hallazgos propios de este port
+
+- **El kernel validado y el kernel del paquete Alpine no son el mismo.** En el
+  port de referencia, la build directa —la que produjo el `boot.img` que se
+  flasheó y se validó físicamente— aplica 17 parches pero **no**
+  `ignore-console-null.patch`. El APKBUILD hace lo contrario: aplica ese parche
+  y en cambio **omite** `set-mi2s-codec-dai-format.patch`, el que hace sonar los
+  CS35L45. Como el kernel que arranca es el de la build directa, el audio
+  funciona; pero copiar la lista de parches del APKBUILD habría producido un
+  kernel distinto del validado. Este port reproduce el conjunto de la build
+  directa y deja el parche de consola tras
+  `APPLY_IGNORE_CONSOLE_NULL=1`.
+- **Fin de línea en ficheros sin extensión.** El instalador TWRP y los scripts
+  de `packaging/` no tienen extensión, así que una regla `.gitattributes` por
+  extensión no los cubre. Con CRLF, `#!/sbin/sh` simplemente no ejecuta. El
+  repositorio fuerza `eol=lf` para todo.
 
 ## Lo que no hay que repetir
 

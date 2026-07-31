@@ -284,6 +284,27 @@ fi
 # Build
 # ---------------------------------------------------------------------------
 
+# Two reasons to pin the build identity rather than let the kernel pick it up
+# from the host:
+#
+#  - Privacy. Without this the banner embeds the builder's account and machine
+#    name (it read "root@PC-ARTURO" during bring-up), and that string ships
+#    inside every published boot.img.
+#  - Reproducibility. UTS_VERSION carries the build counter and timestamp, and
+#    a one-character change there ("#1" vs "#18") shifts the linked image, so
+#    two builds of identical sources never match byte for byte.
+#
+# SOURCE_DATE_EPOCH defaults to the commit date of the pinned kernel, so it is
+# a property of the sources rather than of when we happened to build.
+export KBUILD_BUILD_USER=${KBUILD_BUILD_USER:-ubuntu}
+export KBUILD_BUILD_HOST=${KBUILD_BUILD_HOST:-gts9uwifi}
+export SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-$(git -C "$kernel_tree" log -1 --format=%ct)}
+export KBUILD_BUILD_TIMESTAMP=${KBUILD_BUILD_TIMESTAMP:-$(
+	LC_ALL=C date -u -d "@$SOURCE_DATE_EPOCH" 2>/dev/null
+)}
+# The build counter lives in .version and increments on every link.
+printf '0\n' > "$build_dir/.version"
+
 make -C "$kernel_tree" O="$build_dir" ARCH=arm64 LLVM=1 -j"$(nproc)" \
 	Image.gz qcom/sm8550-samsung-gts9uwifi.dtb
 
