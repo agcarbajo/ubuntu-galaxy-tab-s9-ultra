@@ -55,7 +55,10 @@ for patch in "$kpkg"/*.patch; do
 	copy "$patch" "kernel/patches/${patch##*/}"
 done
 
-copy "$pmos/configs/vendor_boot/cmdline.txt"    configs/vendor_boot/cmdline.txt
+# The postmarketOS cmdline is imported for reference only, never used: it has
+# no root= because the pmOS initramfs finds its own partition, and
+# initramfs-tools does not.  See configs/vendor_boot/README.md.
+copy "$pmos/configs/vendor_boot/cmdline.txt"    configs/vendor_boot/cmdline.pmos.txt
 copy "$pmos/configs/vendor_boot/bootconfig.txt" configs/vendor_boot/bootconfig.txt
 for dtbo in "$pmos"/configs/dtbo/*.dts; do
 	copy "$dtbo" "configs/dtbo/${dtbo##*/}"

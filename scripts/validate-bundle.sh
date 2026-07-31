@@ -128,12 +128,24 @@ else:
     print("FAIL  vendor cmdline differs from the repository source")
     ok = False
 
-for token in ("rootwait", "msm.separate_gpu_kms=1"):
+# root= is the one that would strand the boot in an emergency shell: unlike
+# the postmarketOS initramfs, initramfs-tools does not look for its own
+# partition. rootwait matters because the microSD takes time to enumerate.
+for token in ("root=LABEL=UBTS9U_ROOT", "rootwait", "msm.separate_gpu_kms=1"):
     if token in cmdline:
         print(f"PASS  cmdline keeps {token}")
     else:
         print(f"FAIL  cmdline is missing {token}")
         ok = False
+
+# A parameter for a patch this build does not apply is dead weight and a sign
+# the cmdline was copied rather than written for this port.
+if "ignore_console_null" in cmdline:
+    print("FAIL  cmdline passes ignore_console_null, whose patch is not applied by default")
+    ok = False
+if "pmos." in cmdline:
+    print("FAIL  cmdline still carries postmarketOS-specific parameters")
+    ok = False
 
 if bootconfig.strip() == bootconfig_src.read_text().strip():
     print("PASS  bootconfig matches configs/vendor_boot/bootconfig.txt")
