@@ -10,6 +10,7 @@
 #   desktop   adds GNOME/Wayland, PipeWire and Mesa (Hito 3, default)
 set -euo pipefail
 
+repo=$(cd "$(dirname "$0")/.." && pwd)
 base=${UBUNTU_WORKDIR:-/root/ubuntu-gts9u}
 rootfs=${ROOTFS_DIR:-$base/rootfs}
 profile=${GTS9U_PROFILE:-desktop}
@@ -50,6 +51,7 @@ initramfs-tools,busybox-initramfs,
 e2fsprogs,dosfstools,parted,gdisk,
 zstd,xz-utils,lz4,
 sudo,locales,tzdata,console-setup,keyboard-configuration,
+cloud-guest-utils,
 netplan.io,network-manager,wpasupplicant,
 openssh-server,avahi-daemon,
 iputils-ping,curl,wget,ca-certificates,
@@ -173,6 +175,25 @@ EOF
 HOOK
 chmod +x "$hooks/configure.sh"
 
+# The device package is built from packaging/ and installed here, inside the
+# same invocation, so the rootfs never depends on a manual dpkg run afterwards.
+device_deb=$(ls "$base"/out/packages/ubuntu-gts9u-device_*.deb 2>/dev/null | tail -1 || true)
+if [ -z "$device_deb" ]; then
+	bash "$repo/scripts/build-device-package.sh" >/dev/null
+	device_deb=$(ls "$base"/out/packages/ubuntu-gts9u-device_*.deb | tail -1)
+fi
+echo "device package: $device_deb"
+
+cat > "$hooks/device-package.sh" <<HOOK
+#!/bin/sh
+set -eu
+target="\$1"
+install -m 0644 '$device_deb' "\$target/tmp/ubuntu-gts9u-device.deb"
+chroot "\$target" dpkg -i /tmp/ubuntu-gts9u-device.deb
+rm -f "\$target/tmp/ubuntu-gts9u-device.deb"
+HOOK
+chmod +x "$hooks/device-package.sh"
+
 cat > "$hooks/chroot-setup.sh" <<HOOK
 #!/bin/sh
 set -eu
@@ -224,6 +245,7 @@ mmdebstrap \
 	--components='main,restricted,universe,multiverse' \
 	--include="$packages" \
 	--customize-hook="$hooks/configure.sh" \
+	--customize-hook="$hooks/device-package.sh" \
 	--customize-hook="$hooks/chroot-setup.sh" \
 	--verbose \
 	"$suite" \

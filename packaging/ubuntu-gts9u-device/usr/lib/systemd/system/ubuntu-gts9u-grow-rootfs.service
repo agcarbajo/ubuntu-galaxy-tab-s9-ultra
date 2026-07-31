@@ -1,0 +1,14 @@
+[Unit]
+Description=Expand the Ubuntu root partition to fill the microSD
+DefaultDependencies=no
+After=systemd-remount-fs.service
+Before=basic.target
+ConditionPathExists=!/var/lib/ubuntu-gts9u/rootfs-grown
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/ubuntu-gts9u-grow-rootfs
+
+[Install]
+WantedBy=basic.target

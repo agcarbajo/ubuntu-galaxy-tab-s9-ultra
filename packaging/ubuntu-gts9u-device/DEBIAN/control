@@ -1,0 +1,14 @@
+Package: ubuntu-gts9u-device
+Version: 0.1
+Section: admin
+Priority: optional
+Architecture: arm64
+Maintainer: Ubuntu gts9uwifi port contributors <noreply@example.invalid>
+Depends: systemd, e2fsprogs, gdisk, parted, util-linux, cloud-guest-utils
+Description: Device support for the Samsung Galaxy Tab S9 Ultra Wi-Fi
+ Board-specific integration for the SM-X910 (gts9uwifi) running an Ubuntu
+ userspace on a mainline kernel: first-boot root filesystem expansion and the
+ systemd units this port needs.
+ .
+ Hardware enablement lives in the kernel and in the firmware overlay installed
+ by the TWRP ZIP; this package only carries userspace integration.

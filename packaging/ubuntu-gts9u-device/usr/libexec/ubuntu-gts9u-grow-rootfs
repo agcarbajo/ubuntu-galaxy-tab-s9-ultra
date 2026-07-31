@@ -1,0 +1,45 @@
+#!/bin/sh
+# Expand the Ubuntu root partition and its filesystem to fill the microSD on
+# first boot.  The shipped image is deliberately small so it fits any card.
+#
+# It only ever touches the partition the running root filesystem is on, and
+# only when that is a microSD; it never repartitions UFS.
+set -eu
+
+marker=/var/lib/ubuntu-gts9u/rootfs-grown
+label=UBTS9U_ROOT
+
+root_dev=$(findmnt -no SOURCE /)
+case "$root_dev" in
+	/dev/mmcblk*p*) ;;
+	*)
+		echo "root is $root_dev, not a microSD partition; not growing" >&2
+		exit 0
+		;;
+esac
+
+# Refuse to act if the label does not match: a mislabelled card means we are
+# not looking at what we think we are.
+found=$(blkid -o value -s LABEL "$root_dev" 2>/dev/null || echo '')
+if [ "$found" != "$label" ]; then
+	echo "root $root_dev is labelled '$found', expected '$label'; not growing" >&2
+	exit 0
+fi
+
+disk=${root_dev%p*}
+partnum=${root_dev##*p}
+
+echo "growing $root_dev (disk $disk, partition $partnum)"
+# growpart is a no-op when there is nothing to reclaim, and returns 1 for it.
+if command -v growpart >/dev/null 2>&1; then
+	growpart "$disk" "$partnum" || true
+else
+	sgdisk --move-second-header "$disk" || true
+	parted -s "$disk" resizepart "$partnum" 100% || true
+fi
+partprobe "$disk" || true
+resize2fs "$root_dev" || true
+
+mkdir -p "$(dirname "$marker")"
+date -u +%Y-%m-%dT%H:%M:%SZ > "$marker"
+echo 'root filesystem expanded'
