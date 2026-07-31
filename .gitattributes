@@ -15,3 +15,8 @@
 *.txt text eol=lf
 control text eol=lf
 rules text eol=lf
+*update-binary text eol=lf
+updater-script text eol=lf
+deviceinfo text eol=lf
+*.fragment text eol=lf
+config-mainline.aarch64 text eol=lf
