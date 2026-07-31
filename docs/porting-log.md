@@ -61,12 +61,47 @@ El primer intento de regenerar la imagen del rootfs reveló un desajuste que
 habría producido un artefacto engañoso: el `pmaports` de la base de build WSL
 estaba en **kernel r103**, mientras que la baseline congelada del repositorio
 es **r114** (device r44, firmware r10). La imagen resultante se descartó y se
-repitió el proceso ejecutando antes `scripts/sync-pmaports.sh`, de modo que la
-imagen de rollback procede de las fuentes congeladas.
+repitió el proceso ejecutando antes `scripts/sync-pmaports.sh`.
 
-Conclusión reutilizable: la base de build en WSL no es una fuente de verdad. La
-fuente es el repositorio, y `sync-pmaports.sh` debe ejecutarse antes de
-cualquier build que se vaya a entregar.
+El segundo intento falló en `apk add`:
+
+```
+breaks: device-samsung-gts9uwifi-1-r44[hexagonrpcd=0.4.0-r4]
+```
+
+La causa no estaba en las fuentes: el repositorio congela `hexagonrpcd` en r4 y
+el paquete de dispositivo r44 lo fija exactamente. Lo que sobraba era un
+`hexagonrpcd 0.4.0-r5` **construido localmente** en un experimento posterior y
+todavía presente en `pmbootstrap-work/packages/edge`, que apk prefería por ser
+más reciente. Se movió a cuarentena, se reindexó el repositorio local y la
+build completó.
+
+El rootfs resultante instala exactamente el conjunto de la baseline: kernel
+r114, device r44, firmware r10, `hexagonrpcd` r4, `iio-sensor-proxy` r3 y
+Mutter r6.
+
+Dos conclusiones reutilizables:
+
+1. la base de build en WSL no es una fuente de verdad; el repositorio lo es, y
+   `sync-pmaports.sh` debe ejecutarse antes de cualquier build entregable;
+2. un paquete construido localmente puede ganar a la versión fijada aunque las
+   fuentes sean correctas. Ante un `breaks:` de este tipo hay que mirar el
+   repositorio local de paquetes antes que los APKBUILD.
+
+### Artefactos de rollback entregados
+
+Quedan en `PostmarketOS/artifacts/`, fuera de Git, con
+`MANIFEST-v1.71-rollback.txt`:
+
+| Artefacto | SHA-256 |
+|---|---|
+| `postmarketos-edge-gnome-mainline-v1.71-dp-dock-coldboot-sm-x910-twrp.zip` | `3270afa0…` |
+| `postmarketos-v1.71-rollback-sd-gts9uwifi.img.xz` | `05ccca69…` |
+
+La imagen sin comprimir mide 5.941.231.616 bytes y su SHA-256 es
+`fb346a78…`. La imagen del rootfs es una build nueva sobre Alpine edge actual,
+no un clon byte a byte del userspace validado en su día; lo que sí se conserva
+byte a byte es la parte de arranque, que es donde vive el soporte de hardware.
 
 ### Repositorio Ubuntu
 
@@ -81,9 +116,17 @@ arquitectura del rootfs y esta bitácora.
 - Vía de vuelta a postmarketOS v1.71 disponible fuera de Git, con manifiesto
   de hashes.
 - Repositorio Ubuntu inicializado y documentado.
+- Kernel, DTS, cinco drivers, 17 parches, fragmento de configuración, cmdline,
+  bootconfig y DTBO no-op importados con procedencia y hash de origen.
+- Dependencias del pipeline instaladas en la base de build WSL y comprobadas
+  con `scripts/check-build-deps.sh`.
+- `scripts/build-ubuntu-rootfs.sh` escrito: `mmdebstrap` arm64 con perfiles
+  `minimal` y `desktop`, configuración aplicada dentro de la propia invocación
+  y ningún paso manual posterior.
 - Ninguna partición, tarjeta ni instalación física modificada.
 
 ### Siguiente paso
 
-Importar kernel, DTS, drivers, parches y configuración con atribución por
-fichero, y construir el primer rootfs Ubuntu 24.04 arm64 con `mmdebstrap`.
+Ejecutar el primer rootfs `minimal`, adaptar el build de kernel y el
+empaquetado Android v4 a este repositorio, y generar la primera imagen de
+microSD y su ZIP TWRP con manifiesto de hashes.
