@@ -117,6 +117,29 @@ port Ubuntu no se introduce en él.
   destino, y falla con «failed to determine device for /». Para construir
   imágenes hay que usar `most` o una lista explícita.
 
+## Bluetooth en Ubuntu: dos trampas de `btmgmt`
+
+Ambas medidas en este dispositivo con BlueZ 5.72, y ambas derrotaron en
+silencio a versiones anteriores del servicio.
+
+1. **`btmgmt` es inservible con stdin en `/dev/null`**, que es exactamente lo
+   que systemd da a un servicio por defecto. No falla: **sale con código 0 y no
+   imprime nada**. Un `grep` sobre su salida no casa nunca y quien lo llama
+   concluye que el controlador no está. Con una tubería vacía —`printf '' |
+   btmgmt ...`— se comporta con normalidad; un pty vía `script(1)` también.
+2. **Ejecutado antes de `bluetoothd` se bloquea en `epoll_wait` durante
+   minutos.** El servicio, ordenado `Before=bluetooth.service`, se llevó por
+   delante toda la pila: 90 s de timeout en cada arranque y el controlador sin
+   configurar. Con el demonio ya arriba la misma llamada tarda 0 s.
+
+De ahí que este port ordene el servicio **después** de `bluetooth.service`, al
+revés que el port de referencia. Aplicar la dirección tarde no cuesta nada: un
+controlador sin dirección es inutilizable de todos modos, y `bluetoothd` lo
+adopta acto seguido sin reiniciarse.
+
+Para comprobar si la dirección ya está puesta se usa `hciconfig`, que es un
+ioctl, responde en ~3 ms y no puede bloquearse.
+
 ## Lo que no hay que repetir
 
 Heredado de postmarketOS; cada punto costó al menos una iteración física.

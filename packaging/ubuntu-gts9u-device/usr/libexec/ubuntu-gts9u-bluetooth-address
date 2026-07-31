@@ -12,18 +12,31 @@
 # Derived from gts9uwifi-bluetooth-address of the postmarketOS port, with the
 # btmgmt handling rewritten after it wedged the boot on Ubuntu.
 #
-# BlueZ 5.72's btmgmt blocks indefinitely when it runs before bluetoothd is up.
-# Measured on this device: `btmgmt info` sat for over four minutes, and the
-# unit timed out at 90 s on every boot.  Run after bluetooth.service instead
-# and the same call returns in under a second.  Everything here is still
-# bounded by a timeout, and the "is it already done?" probe uses hciconfig,
-# which is an ioctl and answers in about 3 ms, so a regression in btmgmt can
-# never wedge the boot again.
+# btmgmt needs care in a service.  Two behaviours of BlueZ 5.72 were measured
+# on this device, and both silently defeated earlier versions of this script:
+#
+#  1. It is useless when stdin is /dev/null, which is exactly what systemd
+#     gives a service by default.  It exits 0 and prints NOTHING, so a `grep`
+#     on its output never matches and the caller concludes the controller is
+#     not there.  Feeding it an empty pipe instead makes it behave normally.
+#     A pty via script(1) also works; the pipe is used here because it needs no
+#     extra tool.
+#  2. Run before bluetoothd it can block in epoll_wait for minutes.  Hence the
+#     unit is ordered after bluetooth.service, and every call is bounded by a
+#     timeout anyway.
+#
+# The "is it already done?" probe deliberately uses hciconfig, an ioctl that
+# answers in about 3 ms and cannot block.
 #
 # Applying the address late costs nothing: an unconfigured controller is
 # unusable until it has one, and bluetoothd adopts it immediately afterwards
 # without needing a restart.
 set -u
+
+# Never call btmgmt directly: see note 1 above.
+btmgmt_() {
+	printf '' | timeout 10 btmgmt "$@" 2>/dev/null
+}
 
 efs=/dev/disk/by-partlabel/efs
 mountpoint=/run/ubuntu-gts9u-efs-ro
@@ -90,22 +103,26 @@ fi
 # --- wait for the management interface to accept the controller --------------
 i=0
 while [ "$i" -lt "$deadline" ]; do
-	if timeout 5 btmgmt config 2>/dev/null | grep -q '^hci0:'; then
+	if btmgmt_ config | grep -q '^hci0:'; then
 		break
 	fi
 	sleep 1
 	i=$((i + 1))
 done
 
-if ! timeout 5 btmgmt config 2>/dev/null | grep -q '^hci0:'; then
+if ! btmgmt_ config | grep -q '^hci0:'; then
 	log 'hci0 is not in the unconfigured list; not forcing an address'
 	exit 0
 fi
 
-if timeout 10 btmgmt --index 0 public-addr "$address" >/dev/null 2>&1; then
-	sleep 1
-	log "applied the native address; hci0 is now $(current_address)"
+btmgmt_ --index 0 public-addr "$address" >/dev/null
+sleep 1
+
+# Report what the hardware ended up with rather than what btmgmt returned.
+now=$(current_address)
+if [ "$now" = "$address" ]; then
+	log "applied the native address; hci0 is now $now"
 else
-	log 'btmgmt refused to set the public address'
+	log "the address did not take; hci0 is still $now"
 fi
 exit 0
