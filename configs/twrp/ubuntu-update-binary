@@ -127,11 +127,39 @@ reread_partitions() {
     done
 }
 
+locate_rootfs() {
+    # Look before disturbing anything: if the kernel already has the right
+    # table, re-reading it would only create a window where the partition
+    # nodes do not exist.  That window is real: an earlier version re-read
+    # first and the immediately following lookup found nothing, while the
+    # failure message printed moments later listed the very partition it had
+    # just failed to find.
+    dev="$(find_rootfs)"
+    if [ -n "$dev" ]; then
+        echo "$dev"
+        return 0
+    fi
+
+    ui_print "Label not visible yet; re-reading the partition tables."
+    reread_partitions
+
+    attempt=0
+    while [ "$attempt" -lt 10 ]; do
+        sleep 1
+        dev="$(find_rootfs)"
+        if [ -n "$dev" ]; then
+            echo "$dev"
+            return 0
+        fi
+        attempt=$((attempt + 1))
+    done
+    return 1
+}
+
 HAS_ROOTFS_OVERLAY=0
 if unzip -l "$ZIPFILE" ROOTFS-OVERLAY-SHA256SUMS >/dev/null 2>&1; then
     HAS_ROOTFS_OVERLAY=1
-    reread_partitions
-    ROOTFS_DEV="$(find_rootfs)"
+    ROOTFS_DEV="$(locate_rootfs)"
     if [ -z "$ROOTFS_DEV" ]; then
         ui_print "Could not find a partition labelled $ROOTFS_LABEL."
         ui_print "Partitions the kernel currently sees:"
