@@ -99,6 +99,23 @@ port Ubuntu no se introduce en él.
   de `packaging/` no tienen extensión, así que una regla `.gitattributes` por
   extensión no los cubre. Con CRLF, `#!/sbin/sh` simplemente no ejecuta. El
   repositorio fuerza `eol=lf` para todo.
+- **Una comprobación negativa pasa con la entrada vacía.** Un `grep` que
+  verifica que algo *no* aparece devuelve «correcto» cuando no puede leer nada.
+  Al faltar `unzip`, el validador certificó como seguro un instalador que ni
+  siquiera había abierto. Toda comprobación debe confirmar primero que pudo leer
+  su entrada, y una herramienta ausente tiene que abortar, no degradar.
+- **No identificar un fichero por su prosa.** El validador reconocía al
+  instalador por una frase de sus comentarios y hacía `grep` de particiones
+  prohibidas sobre el fichero entero, marcando como peligrosa justo la
+  documentación que lo hace seguro. Se usa una línea de contrato explícita y se
+  analiza el código con los comentarios eliminados.
+- **`initramfs-tools` omite en silencio un hook no ejecutable.** No falla ni
+  avisa. El empaquetado del `.deb` fuerza el bit.
+- **En este entorno no hay udev.** `losetup --partscan` no garantiza que
+  aparezcan `/dev/loopNpM`; hay que esperar y tener `kpartx` como alternativa.
+- **`MODULES=dep` en `initramfs-tools` inspecciona el host de build**, no el
+  destino, y falla con «failed to determine device for /». Para construir
+  imágenes hay que usar `most` o una lista explícita.
 
 ## Lo que no hay que repetir
 

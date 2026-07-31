@@ -203,8 +203,76 @@ fuera de cualquier regla `.gitattributes` por extensión y se habrían escrito
 con CRLF en el checkout de Windows, lo que hace que `#!/sbin/sh` no ejecute. El
 repositorio fuerza ahora `eol=lf` para todo.
 
+### Primera release: v0.1-minimal
+
+El pipeline completo produjo su primer artefacto instalable. Cinco defectos
+salieron a la luz al ejecutarlo, todos corregidos en los scripts y ninguno
+parcheado a mano sobre el artefacto.
+
+**1. Firmware Wi-Fi mal mapeado.** El overlay pedía `amss.bin` y `board-2.bin`,
+nombres que no existen. Los ficheros reales son `official-amss.bin` y, para los
+datos de placa, `official-board-2.bin` como contenedor más `qrd-board.bin` como
+`board.bin`. El contenedor oficial no tiene entrada para la X910, así que
+ath12k cae deliberadamente al ELF QRD — y `board.bin` faltaba por completo. El
+overlay valida ahora todos los blobs por adelantado.
+
+**2. `MODULES=dep` mira el host equivocado.** Hace que `initramfs-tools`
+inspeccione el dispositivo raíz de la máquina que compila, que aquí es WSL, y
+falla con «failed to determine device for /». `MODULES=most` es lo correcto y
+sigue siendo diminuto: los únicos módulos instalados son los dos ath12k.
+Faltaba además `/boot/config-<release>`, sin el cual `initramfs-tools` no puede
+verificar el soporte de LZ4 — precisamente el único compresor admisible aquí.
+
+**3. El initramfs no cabía.** 9,4 MiB frente a un presupuesto de 8,0 MiB. El
+guardián de `build-sd-image.sh` lo detuvo en el host, que es su razón de ser.
+Se midió antes de recortar: **cero módulos** en el initramfs, y 12 MiB de los
+29,6 MiB sin comprimir eran `udev/hwdb.bin`, una base de datos de propiedades
+de dispositivos que nunca se lee mientras se busca la raíz. El compresor no era
+negociable, así que se recortó contenido: 25.212 KiB → 13.204 KiB en staging y
+**7.123.964 bytes comprimidos, con 1,2 MB de margen**. Descubierto de paso:
+`initramfs-tools` **omite en silencio** un hook que no sea ejecutable.
+
+**4. Los nodos de partición del loop no aparecen solos.** En este entorno no
+hay udev, así que `losetup --partscan` no garantiza `/dev/loopNpM`. El script
+empuja al kernel, espera y cae a `kpartx`.
+
+**5. El validador mentía.** Sin `unzip` instalado, todas las comprobaciones del
+ZIP fallaban salvo la negativa —«el instalador nunca menciona particiones
+prohibidas»—, que **pasaba** porque `grep` no encontraba nada en una entrada
+vacía. Es el mismo patrón de mentira silenciosa que ya costó una comprobación
+de dependencias falsa. Ahora una herramienta ausente aborta la validación. Las
+otras dos comprobaciones también estaban mal planteadas: identificaban el
+instalador por su prosa y hacían `grep` sobre los comentarios que documentan
+justamente las particiones que promete no tocar. Se sustituyeron por una línea
+de contrato explícita y por un análisis del código con los comentarios
+eliminados, más una comprobación nueva de que solo escribe con `dd` y no
+contiene ninguna orden de formateo.
+
+Resultado, con las 21 comprobaciones estáticas en verde:
+
+| Artefacto | SHA-256 |
+|---|---|
+| `ubuntu-24.04-gts9uwifi-v0.1-minimal-sd.img.xz` | `c68f2bb9…` |
+| `ubuntu-24.04-gts9uwifi-v0.1-minimal-sm-x910-twrp.zip` | `f534a5a5…` |
+| `boot.img` | `4b99e90e…` |
+| `init_boot.img` | `cbeb5716…` |
+| `vendor_boot.img` | `678a5ebb…` |
+| `dtbo.img` | `c17418be…` |
+| `vbmeta.img` | `b95e5ef9…` |
+
+`dtbo.img` y `vbmeta.img` coinciden byte a byte con los de postmarketOS v1.71,
+como debe ser: su contenido no depende de la distribución.
+
+Imagen de microSD: 2.367.684.608 bytes sin comprimir
+(`f399d509…`), 110 MB comprimida, con `UBTS9U_BOOT` de 256 MiB y `UBTS9U_ROOT`
+de 2 GiB.
+
+**Laguna conocida:** `init_boot.img` cambia de hash entre ejecuciones porque
+`update-initramfs` no produce un CPIO reproducible. El resto del bundle sí lo
+es. Queda pendiente normalizarlo, igual que se hizo con el fragmento vendor.
+
 ### Siguiente paso
 
-Completar la primera release `minimal`, validarla estáticamente y después
-construir el perfil `desktop`. Ninguna prueba física hasta tener imagen, ZIP y
-manifiesto verificados.
+Construir el perfil `desktop` y preparar la primera prueba física con
+instrucciones exactas y la vía de vuelta a v1.71 verificada. Ningún componente
+de hardware se marcará como funcional bajo Ubuntu hasta observarlo.
