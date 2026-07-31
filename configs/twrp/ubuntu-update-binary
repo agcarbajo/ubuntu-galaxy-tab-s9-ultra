@@ -92,17 +92,23 @@ for file in boot.img init_boot.img vendor_boot.img dtbo.img vbmeta.img; do
     unzip -l "$ZIPFILE" "$file" >/dev/null 2>&1 || abort "ZIP is missing $file"
 done
 
+fs_label() {
+    # This TWRP ships neither blkid nor findfs, and has no /dev/disk/by-label,
+    # but it does have tune2fs.  Try the usual tools first so the installer
+    # still works on a recovery that has them, then fall back.
+    if command -v blkid >/dev/null 2>&1; then
+        blkid -s LABEL -o value "$1" 2>/dev/null && return 0
+    fi
+    tune2fs -l "$1" 2>/dev/null | \
+        sed -n 's/^Filesystem volume name:[[:space:]]*//p'
+}
+
 find_rootfs() {
     # Never hardcode mmcblk1p2: microSD and UFS enumeration order is not
     # guaranteed, and a wrong guess would write an overlay onto the wrong card.
-    dev="$(blkid -L "$ROOTFS_LABEL" 2>/dev/null)"
-    if [ -n "$dev" ] && [ -b "$dev" ]; then
-        echo "$dev"
-        return 0
-    fi
     for candidate in /dev/block/mmcblk*p*; do
         [ -b "$candidate" ] || continue
-        if blkid "$candidate" 2>/dev/null | grep -q "LABEL=\"$ROOTFS_LABEL\""; then
+        if [ "$(fs_label "$candidate")" = "$ROOTFS_LABEL" ]; then
             echo "$candidate"
             return 0
         fi
@@ -110,11 +116,31 @@ find_rootfs() {
     return 1
 }
 
+reread_partitions() {
+    # After the card is rewritten, the kernel can still be holding the previous
+    # partition table: the block nodes then point at the old offsets and every
+    # filesystem on them looks corrupt.  Measured on this device, where the
+    # postmarketOS layout survived a full rewrite until this was forced.
+    for disk in /dev/block/mmcblk0 /dev/block/mmcblk1 /dev/block/mmcblk2; do
+        [ -b "$disk" ] || continue
+        blockdev --rereadpt "$disk" >/dev/null 2>&1 || true
+    done
+}
+
 HAS_ROOTFS_OVERLAY=0
 if unzip -l "$ZIPFILE" ROOTFS-OVERLAY-SHA256SUMS >/dev/null 2>&1; then
     HAS_ROOTFS_OVERLAY=1
-    ROOTFS_DEV="$(find_rootfs)" || \
+    reread_partitions
+    ROOTFS_DEV="$(find_rootfs)"
+    if [ -z "$ROOTFS_DEV" ]; then
+        ui_print "Could not find a partition labelled $ROOTFS_LABEL."
+        ui_print "Partitions the kernel currently sees:"
+        for candidate in /dev/block/mmcblk*p*; do
+            [ -b "$candidate" ] || continue
+            ui_print "  $candidate label='$(fs_label "$candidate")'"
+        done
         abort "no microSD partition labelled $ROOTFS_LABEL was found"
+    fi
     ui_print "Found the Ubuntu microSD rootfs on $ROOTFS_DEV."
     mkdir -p "$ROOTFS_MOUNT" || abort "cannot create microSD mount point"
     EXISTING_MOUNT="$(grep "^$ROOTFS_DEV " /proc/mounts 2>/dev/null | head -n 1 | cut -d' ' -f2)"

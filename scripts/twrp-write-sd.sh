@@ -256,6 +256,14 @@ echo 'This erases the card completely.'
 "$adb" shell "dd if=/tmp/ubuntu-sd.img of=$device bs=4M conv=fsync; sync" 2>&1 | tr -d '\r'
 
 echo
+echo '=== making the kernel adopt the new partition table ==='
+# Without this the kernel keeps the previous table: the pN block nodes point at
+# the old offsets, every filesystem on them looks corrupt, and the TWRP
+# installer cannot find the card it is supposed to update.
+"$adb" shell "blockdev --rereadpt $device" 2>&1 | tr -d '\r'
+sh_ 'cat /proc/partitions | grep mmcblk'
+
+echo
 echo '=== verifying the card ==='
 readback=$(sh_ "dd if=$device bs=1M count=$mib 2>/dev/null | sha256sum" | cut -d' ' -f1)
 "$adb" shell 'rm -f /tmp/ubuntu-sd.img' >/dev/null 2>&1
