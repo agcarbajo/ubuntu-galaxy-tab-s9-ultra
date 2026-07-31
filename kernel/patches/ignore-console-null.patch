@@ -1,0 +1,48 @@
+From: SM-X910 postmarketOS port <gts9uwifi@example.com>
+Date: Sun, 26 Jul 2026 18:30:00 +0200
+Subject: [PATCH] printk: allow a trusted boot command line to ignore console=null
+
+Samsung's ABL appends console=null after the vendor command line.  That makes
+the otherwise working framebuffer console disappear and removes useful visual
+diagnostics from development builds.
+
+Add an opt-in early parameter which makes a later console=null a no-op.  The
+normal behaviour is unchanged unless ignore_console_null is present.
+
+Signed-off-by: SM-X910 postmarketOS port <gts9uwifi@example.com>
+---
+ kernel/printk/printk.c | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/kernel/printk/printk.c b/kernel/printk/printk.c
+index 95fcb42f2132..81db2a0d684d 100644
+--- a/kernel/printk/printk.c
++++ b/kernel/printk/printk.c
+@@ -2620,6 +2620,15 @@ static int __init console_msg_format_setup(char *str)
+ }
+ __setup("console_msg_format=", console_msg_format_setup);
+ 
++static bool __initdata ignore_console_null;
++
++static int __init ignore_console_null_setup(char *str)
++{
++	ignore_console_null = true;
++	return 0;
++}
++early_param("ignore_console_null", ignore_console_null_setup);
++
+ /*
+  * Set up a console.  Called via do_early_param() in init/main.c
+  * for each "console=" parameter in the boot command line.
+@@ -2636,6 +2645,9 @@ static int __init console_setup(char *str)
+ 	 * disable console output. Use ttynull that has been created
+ 	 * for exactly this purpose.
+ 	 */
++	if (ignore_console_null && (str[0] == 0 || strcmp(str, "null") == 0))
++		return 1;
++
+ 	if (str[0] == 0 || strcmp(str, "null") == 0) {
+ 		__add_preferred_console("ttynull", 0, NULL, NULL, NULL, true);
+ 		return 1;
+-- 
+2.50.1

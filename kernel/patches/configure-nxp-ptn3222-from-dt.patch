@@ -1,0 +1,125 @@
+From: SM-X910 postmarketOS port <gts9uwifi@example.com>
+Subject: [PATCH] phy: nxp: ptn3222: apply downstream register overrides
+
+Samsung's X910 programs four PTN3222 registers after taking the repeater out
+of reset.  The generic driver only controls supplies and reset, leaving the
+physical link unusable and the DWC3 core unable to complete its soft reset.
+
+Accept the downstream value/register sequence from DT, wait the documented
+board interval after reset, and program it over the existing I2C regmap.
+
+---
+ drivers/phy/phy-nxp-ptn3222.c | 59 +++++++++++++++++++++++++++++++++--
+ 1 file changed, 57 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/phy/phy-nxp-ptn3222.c b/drivers/phy/phy-nxp-ptn3222.c
+index 6cb79b5c4..9fc82f0d1 100644
+--- a/drivers/phy/phy-nxp-ptn3222.c
++++ b/drivers/phy/phy-nxp-ptn3222.c
+@@ -3,6 +3,7 @@
+  * Copyright (c) 2024, Linaro Limited
+  */
+ 
++#include <linux/delay.h>
+ #include <linux/gpio/consumer.h>
+ #include <linux/i2c.h>
+ #include <linux/module.h>
+@@ -12,18 +13,28 @@
+ #include <linux/regulator/consumer.h>
+ 
+ #define NUM_SUPPLIES 2
++#define PTN3222_MAX_INIT_CELLS 16
+ 
+ struct ptn3222 {
+ 	struct i2c_client *client;
+ 	struct phy *phy;
++	struct regmap *regmap;
+ 	struct gpio_desc *reset_gpio;
+ 	struct regulator_bulk_data *supplies;
++	u32 init_seq[PTN3222_MAX_INIT_CELLS];
++	int init_seq_count;
++};
++
++static const struct regmap_config ptn3222_regmap_config = {
++	.reg_bits = 8,
++	.val_bits = 8,
++	.max_register = 0xff,
+ };
+ 
+ static int ptn3222_init(struct phy *phy)
+ {
+ 	struct ptn3222 *ptn3222 = phy_get_drvdata(phy);
+-	int ret;
++	int i, ret;
+ 
+ 	ret = regulator_bulk_enable(NUM_SUPPLIES, ptn3222->supplies);
+ 	if (ret)
+@@ -31,7 +42,30 @@ static int ptn3222_init(struct phy *phy)
+ 
+ 	gpiod_set_value_cansleep(ptn3222->reset_gpio, 0);
+ 
++	if (!ptn3222->init_seq_count)
++		return 0;
++
++	/* Samsung waits for the repeater after reset before programming it. */
++	usleep_range(4000, 5000);
++	for (i = 0; i < ptn3222->init_seq_count; i += 2) {
++		/* Downstream DT stores each pair as value, register. */
++		ret = regmap_write(ptn3222->regmap,
++				   ptn3222->init_seq[i + 1],
++				   ptn3222->init_seq[i]);
++		if (ret)
++			goto err_disable;
++	}
++
++	dev_info(&ptn3222->client->dev,
++		 "applied %d register overrides\n",
++		 ptn3222->init_seq_count / 2);
++
+ 	return 0;
++
++err_disable:
++	gpiod_set_value_cansleep(ptn3222->reset_gpio, 1);
++	regulator_bulk_disable(NUM_SUPPLIES, ptn3222->supplies);
++	return ret;
+ }
+ 
+ static int ptn3222_exit(struct phy *phy)
+@@ -64,13 +98,34 @@ static int ptn3222_probe(struct i2c_client *client)
+ 	struct device *dev = &client->dev;
+ 	struct phy_provider *phy_provider;
+ 	struct ptn3222 *ptn3222;
+-	int ret;
++	int count, ret;
+ 
+ 	ptn3222 = devm_kzalloc(dev, sizeof(*ptn3222), GFP_KERNEL);
+ 	if (!ptn3222)
+ 		return -ENOMEM;
+ 
+ 	ptn3222->client = client;
++	ptn3222->regmap = devm_regmap_init_i2c(client,
++					       &ptn3222_regmap_config);
++	if (IS_ERR(ptn3222->regmap))
++		return dev_err_probe(dev, PTR_ERR(ptn3222->regmap),
++				     "failed to initialize regmap\n");
++
++	count = of_property_count_u32_elems(dev->of_node,
++					    "qcom,param-override-seq");
++	if (count > 0) {
++		if (count > PTN3222_MAX_INIT_CELLS || count % 2)
++			return dev_err_probe(dev, -EINVAL,
++					     "invalid register override sequence\n");
++
++		ret = of_property_read_u32_array(dev->of_node,
++						 "qcom,param-override-seq",
++						 ptn3222->init_seq, count);
++		if (ret)
++			return dev_err_probe(dev, ret,
++					     "failed to read register overrides\n");
++		ptn3222->init_seq_count = count;
++	}
+ 
+ 	ptn3222->reset_gpio = devm_gpiod_get_optional(dev, "reset",
+ 						      GPIOD_OUT_HIGH);
+-- 
+2.50.1

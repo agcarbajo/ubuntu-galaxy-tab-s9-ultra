@@ -1,0 +1,233 @@
+# Early framebuffer and local console.
+CONFIG_SYSFB=y
+CONFIG_SYSFB_SIMPLEFB=y
+CONFIG_DRM=y
+CONFIG_DRM_SIMPLEDRM=y
+CONFIG_DRM_FBDEV_EMULATION=y
+CONFIG_FB=y
+CONFIG_FRAMEBUFFER_CONSOLE=y
+CONFIG_PM_DEBUG=y
+
+# Root filesystem on the external microSD must not depend on modules.
+CONFIG_MMC=y
+CONFIG_MMC_BLOCK=y
+CONFIG_MMC_SDHCI=y
+CONFIG_MMC_SDHCI_PLTFM=y
+CONFIG_MMC_SDHCI_MSM=y
+CONFIG_EXT4_FS=y
+CONFIG_EFI_PARTITION=y
+
+# Forced USB 2.0 peripheral path for the first diagnostic/SSH channel.
+CONFIG_USB=y
+CONFIG_USB_DWC3=y
+CONFIG_USB_DWC3_QCOM=y
+CONFIG_USB_ROLE_SWITCH=y
+CONFIG_PHY_SNPS_EUSB2=y
+CONFIG_PHY_QCOM_EUSB2_REPEATER=y
+CONFIG_PHY_NXP_PTN3222=y
+CONFIG_PHY_QCOM_QMP_COMBO=y
+CONFIG_USB_STORAGE=y
+CONFIG_USB_UAS=y
+CONFIG_USB_RTL8152=y
+CONFIG_USB_USBNET=y
+CONFIG_HID_GENERIC=y
+CONFIG_HID_LOGITECH=y
+CONFIG_HID_LOGITECH_DJ=y
+CONFIG_HID_LOGITECH_HIDPP=y
+CONFIG_LEDS_CLASS_MULTICOLOR=y
+CONFIG_USB_NET_AX8817X=y
+CONFIG_USB_NET_AX88179_178A=y
+CONFIG_USB_NET_CDCETHER=y
+CONFIG_USB_NET_CDC_NCM=y
+CONFIG_SND_USB_AUDIO=y
+CONFIG_USB_GADGET=y
+CONFIG_USB_LIBCOMPOSITE=y
+CONFIG_USB_U_ETHER=y
+CONFIG_USB_F_NCM=y
+CONFIG_USB_CONFIGFS=y
+CONFIG_USB_CONFIGFS_NCM=y
+CONFIG_USB_F_RNDIS=y
+CONFIG_USB_CONFIGFS_RNDIS=y
+
+# Qualcomm WCN7850 (Kiwi v2) on the board's PCIe0 link.
+CONFIG_PCI=y
+CONFIG_PCIE_QCOM=y
+CONFIG_PHY_QCOM_QMP=y
+CONFIG_PHY_QCOM_QMP_PCIE=y
+CONFIG_PCI_PWRCTRL=y
+CONFIG_PCI_PWRCTRL_PWRSEQ=y
+CONFIG_POWER_SEQUENCING=y
+CONFIG_POWER_SEQUENCING_QCOM_WCN=y
+CONFIG_WLAN=y
+CONFIG_RFKILL=y
+CONFIG_CFG80211=y
+CONFIG_MAC80211=y
+CONFIG_MHI_BUS=y
+CONFIG_QRTR=y
+CONFIG_QRTR_MHI=y
+CONFIG_QCOM_QMI_HELPERS=y
+CONFIG_CRYPTO_LIB_ARC4=y
+CONFIG_ATH_COMMON=y
+CONFIG_ATH12K=m
+
+# WCN7850 Bluetooth over the board's QUP SE14 four-wire UART.  Keep the full
+# transport and common HID/network profiles built-in: this port intentionally
+# does not install or autoload the generic kernel module tree.
+CONFIG_BT=y
+CONFIG_BT_BREDR=y
+CONFIG_BT_RFCOMM=y
+CONFIG_BT_RFCOMM_TTY=y
+CONFIG_BT_BNEP=y
+CONFIG_BT_BNEP_MC_FILTER=y
+CONFIG_BT_BNEP_PROTO_FILTER=y
+CONFIG_BT_HIDP=y
+CONFIG_BT_HCIUART=y
+CONFIG_BT_HCIUART_SERDEV=y
+CONFIG_BT_HCIUART_H4=y
+CONFIG_BT_HCIUART_QCA=y
+CONFIG_BT_QCA=y
+
+# Samsung ABL debug UART and initramfs support.
+CONFIG_SERIAL_QCOM_GENI=y
+CONFIG_SERIAL_QCOM_GENI_CONSOLE=y
+CONFIG_BLK_DEV_INITRD=y
+CONFIG_DEVTMPFS=y
+CONFIG_DEVTMPFS_MOUNT=y
+
+# Mainline Goodix Berlin I2C support for the GT9916 touchscreen.
+CONFIG_I2C=y
+CONFIG_I2C_CHARDEV=y
+CONFIG_I2C_QCOM_GENI=y
+CONFIG_QCOM_SPMI_ADC5_GEN3=y
+CONFIG_QCOM_GPI_DMA=y
+CONFIG_INPUT=y
+CONFIG_INPUT_EVDEV=y
+CONFIG_INPUT_UINPUT=y
+CONFIG_UHID=y
+CONFIG_INPUT_TOUCHSCREEN=y
+CONFIG_TOUCHSCREEN_GOODIX_BERLIN_CORE=y
+CONFIG_TOUCHSCREEN_GOODIX_BERLIN_I2C=y
+
+# Persist the early console across a warm reset.  The board-specific LOGM
+# console is readable by Samsung recovery through /proc/last_kmsg; retain the
+# generic pstore core for later backends as well.
+CONFIG_SAMSUNG_GTS9UWIFI_SEC_LOG=y
+CONFIG_PSTORE=y
+CONFIG_PSTORE_RAM=y
+CONFIG_PSTORE_CONSOLE=y
+CONFIG_PSTORE_PMSG=y
+
+# Adreno 740 GPU bring-up.  gpucc built-in gives the GPU SMMU (3da0000) and the
+# GMU their clocks so they stop failing probe with -110.  drm/msm is built-in
+# (=y): its DRM helper deps - drm_exec/gpuvm/sched/buddy/display_helper - are
+# invisible symbols selected only by DRM_MSM, so they cannot be forced built-in
+# while msm stays a module; =y pulls the whole set in.  With the mdss display
+# node disabled, msm probes the GPU headless (render-only) and leaves the
+# simpledrm boot scanout untouched.
+#
+# DRM_MSM "depends on QCOM_LLCC/OCMEM || =n", and a tristate cannot exceed a =m
+# dependency, so both must leave their =m default or msm is capped at =m: LLCC is
+# real on SM8550 (the GPU system-cache slice) -> built-in; OCMEM does not exist
+# on SM8550 -> disabled.
+# The GPU clock controller symbol is SM_GPUCC_8550 (not GPUCC_SM8550), and it
+# defaults to =m: this port never autoloads modules, so as a module it simply
+# never bound, 3d90000.clock-controller stayed driverless and the GPU SMMU and
+# GMU timed out waiting for their clocks (the -110).  Built-in is required.
+CONFIG_QCOM_LLCC=y
+# CONFIG_QCOM_OCMEM is not set
+CONFIG_SM_GPUCC_8550=y
+CONFIG_DRM_MSM=y
+
+# Native display: the DPU + DSI come in with DRM_MSM=y, but the display clock
+# controller defaults to =m (like gpucc did) and this port never autoloads
+# modules, so force it built-in or the mdss/dsi never get their clocks.
+CONFIG_SM_DISPCC_8550=y
+CONFIG_BACKLIGHT_CLASS_DEVICE=y
+CONFIG_DRM_PANEL_SAMSUNG_ANA38407=y
+
+# Internal UFS storage (built-in; the QCOM glue and UFS QMP phy default to =m).
+# Lets pmOS reach the on-device boot partition so builds can be flashed over SSH
+# without a TWRP round-trip; the rootfs itself still boots from the microSD.
+CONFIG_SCSI_UFS_QCOM=y
+CONFIG_PHY_QCOM_QMP_UFS=y
+
+# Internal audio, step 1: the ADSP (audio DSP) remoteproc.  All of this defaults
+# to =m and this port does not autoload modules, so it must be built-in or the
+# ADSP never probes.  Firmware is Samsung's own adsp.mdt (extracted from the
+# apnhlos partition; the reference qcom/sm8550/adsp.mbn is Qualcomm-signed and
+# would be rejected by Samsung's secure boot).  This is the foundation the q6
+# audio (GPR/soundwire/codecs/sound card) is built on later.
+CONFIG_REMOTEPROC=y
+CONFIG_QCOM_RPROC_COMMON=y
+CONFIG_QCOM_Q6V5_COMMON=y
+CONFIG_QCOM_Q6V5_PAS=y
+CONFIG_QCOM_SYSMON=y
+CONFIG_QCOM_PDR_HELPERS=y
+CONFIG_QCOM_PDR_MSG=y
+CONFIG_RPMSG_QCOM_GLINK_SMEM=y
+CONFIG_QRTR_SMD=y
+
+# Samsung's sensor protection domain is started by userspace through FastRPC.
+# Mainline defaults this to =m, but this port deliberately has no generic module
+# tree or autoloading.  Without a built-in FastRPC driver the ADSP announces
+# fastrpcglink-apps-dsp yet /dev/fastrpc-adsp never exists, hexagonrpcd cannot
+# attach sensorspd, and SSC QMI service 0x190 is never published.
+CONFIG_QCOM_FASTRPC=y
+
+# Internal audio, step 2: AudioReach/GPR, the SM8550 machine card, the X910's
+# real CS35L45 I2C/MI2S speaker path, and the LPASS VA macro used by its DMICs.
+# The generic mainline config leaves the entire graph at =m; this port does not
+# install or autoload that module tree, so the visible roots must be =y. Their
+# selects pull q6apm/q6afe/q6prm, WM_ADSP and QCOM PDR helpers up to =y too.
+CONFIG_SOUND=y
+CONFIG_SND=y
+CONFIG_SND_SOC=y
+CONFIG_SOUNDWIRE=y
+CONFIG_QCOM_APR=y
+CONFIG_SND_SOC_QCOM=y
+CONFIG_SND_SOC_QDSP6=y
+CONFIG_SND_SOC_SC8280XP=y
+CONFIG_SND_SOC_CS35L45_I2C=y
+CONFIG_SND_SOC_LPASS_VA_MACRO=y
+CONFIG_PINCTRL_LPASS_LPI=y
+CONFIG_PINCTRL_SM8550_LPASS_LPI=y
+
+# Linux 7.2 detects that the four CS35L45 instances share their physical reset
+# line (TLMM GPIO42) and routes it through the GPIO shared-proxy driver.  Its
+# default is =m; without module autoload every codec gets -EPROBE_DEFER even
+# though TLMM and GPIO42 are both valid, so the proxy must be built-in.
+CONFIG_GPIO_SHARED_PROXY=y
+
+# Physical power/volume keys: PMIC PON handles power and volume-down (resin);
+# the board's volume-up line is PM8550 GPIO6 through gpio-keys.
+#
+# pwrkey and resin are children of the PMK8550 pon@1300 node, and that parent is
+# matched by qcom-pon.c (POWER_RESET_QCOM_PON).  Left at its =m default the
+# parent never probes on this port - which does not autoload modules - so the
+# children are never created and only the gpio-keys volume-up works.  Built-in.
+CONFIG_KEYBOARD_GPIO=y
+CONFIG_INPUT_PM8941_PWRKEY=y
+CONFIG_POWER_RESET_QCOM_PON=y
+
+# Battery gauge and charger status.  SM8550 normally reports these over
+# pmic_glink/qcom_battmgr, but that path needs a charger_pd protection domain on
+# the ADSP and Samsung's firmware ships none, so the battery comes from the
+# Silicon Mitus SM5714 on the I2C master hub instead.  Built-in for the same
+# reason as everything else here: this port does not autoload modules.
+CONFIG_BATTERY_SM5714=y
+CONFIG_CHARGER_SM5440_DIRECT=y
+
+# USB Type-C and USB-PD policy/transport.  The SM5714 PDIC lives at 0x33 on
+# i2c_hub_9; Linux TCPM owns policy while the board driver only transports CC
+# and PD messages.  The SM5440 remains a separate power-supply driver and asks
+# TCPM for PPS; both are built-in because this port does not autoload modules.
+CONFIG_TYPEC=y
+CONFIG_TYPEC_TCPM=y
+CONFIG_TYPEC_SM5714=y
+CONFIG_TYPEC_DP_ALTMODE=y
+CONFIG_TYPEC_MUX_GPIO_SBU=y
+CONFIG_TYPEC_MUX_PS5169=y
+
+# Rust is not needed for the bring-up kernel and would couple the build to a
+# newer toolchain than Ubuntu 24.04 currently ships.
+# CONFIG_RUST is not set

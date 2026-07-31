@@ -1,0 +1,20 @@
+--- a/drivers/phy/qualcomm/phy-qcom-qmp-pcie.c	2026-07-21 12:13:19.774867761 +0200
++++ b/drivers/phy/qualcomm/phy-qcom-qmp-pcie.c	2026-07-21 12:13:19.774867761 +0200
+@@ -4981,6 +4981,17 @@
+ 	if (ret)
+ 		return ret;
+ 
++	/*
++	 * The GCC PIPE source muxes power up selecting the PHY output and no
++	 * mainline code switches them, but Samsung's X910 boot chain parks
++	 * PCIe0's mux on the XO reference (the register reads PHY_MUX_REF_SRC,
++	 * 19.2 MHz).  With the mux parked the MAC-PHY PIPE interface is dead and
++	 * the LTSSM never performs receiver detection, so the WCN7850 endpoint
++	 * is never found.  ULONG_MAX is the clk-regmap-phy-mux sentinel for
++	 * "select the PHY source", propagated by the branch's CLK_SET_RATE_PARENT.
++	 */
++	clk_set_rate(qmp->pipe_clks[0].clk, ULONG_MAX);
++
+ 	ret = reset_control_deassert(qmp->nocsr_reset);
+ 	if (ret) {
+ 		dev_err(qmp->dev, "no-csr reset deassert failed\n");

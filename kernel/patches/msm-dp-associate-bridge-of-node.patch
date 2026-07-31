@@ -1,0 +1,15 @@
+--- a/drivers/gpu/drm/msm/dp/dp_drm.c
++++ b/drivers/gpu/drm/msm/dp/dp_drm.c
+@@ -257,6 +257,12 @@ int msm_dp_bridge_init(struct msm_dp *msm_dp_display, struct drm_device *dev,
+ 	bridge = &msm_dp_bridge->bridge;
+ 	bridge->type = msm_dp_display->connector_type;
+ 	bridge->ycbcr_420_allowed = yuv_supported;
++	/*
++	 * Keep the DP controller's firmware node on the terminal bridge.  The
++	 * bridge connector then exposes the same fwnode to out-of-band Type-C
++	 * HPD notifications on systems where HPD is carried only by USB-PD.
++	 */
++	bridge->of_node = msm_dp_display->pdev->dev.of_node;
+ 
+ 	/*
+ 	 * Many ops only make sense for DP. Why?

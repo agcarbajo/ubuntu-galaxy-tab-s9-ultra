@@ -1,0 +1,77 @@
+From 6a34b8651326a5ff56b258441b4acefce91a63ee Mon Sep 17 00:00:00 2001
+From: SM-X910 postmarketOS port <gts9uwifi@example.com>
+Date: Thu, 30 Jul 2026 05:18:00 +0200
+Subject: [PATCH] usb: typec: tcpm: adopt retained Source/UFP dock role
+
+An externally powered charge-through dock can stay alive while the host
+reboots. The dock then retains its Source/UFP combination: it supplies power
+to the tablet but remains the USB data peripheral. TCPM initially assumes the
+usual Sink/UFP role and rejects the dock's first PD reply because both ends
+claim UFP, repeatedly entering error recovery.
+
+Provide an opt-in TCPC quirk that lets the sink adopt DFP before processing
+that reply. The power role is left untouched. Normal Source/DFP partners
+(including PCs) never enter this path.
+
+Signed-off-by: SM-X910 postmarketOS port <gts9uwifi@example.com>
+---
+ drivers/usb/typec/tcpm/tcpm.c | 21 +++++++++++++++++++++
+ include/linux/usb/tcpm.h       |  7 +++++++
+ 2 files changed, 28 insertions(+)
+
+diff --git a/drivers/usb/typec/tcpm/tcpm.c b/drivers/usb/typec/tcpm/tcpm.c
+index 89eec20a2..69fd01df4 100644
+--- a/drivers/usb/typec/tcpm/tcpm.c
++++ b/drivers/usb/typec/tcpm/tcpm.c
+@@ -4000,10 +4000,31 @@ static void tcpm_pd_rx_handler(struct kthread_work *work)
+ 		 */
+ 		if (!!(le16_to_cpu(msg->header) & PD_HEADER_DATA_ROLE) ==
+ 		    (port->data_role == TYPEC_HOST) && rx_sop_type == TCPC_TX_SOP) {
++			u16 header = le16_to_cpu(msg->header);
++			int ret;
++
++			/*
++			 * A charge-through dock can remain Source/UFP while
++			 * this sink reboots. Adopt DFP when the TCPC has
++			 * explicitly opted into that board-specific recovery.
++			 */
++			if (port->tcpc->adopt_retained_source_ufp &&
++			    port->pwr_role == TYPEC_SINK &&
++			    port->data_role == TYPEC_DEVICE &&
++			    (header & PD_HEADER_PWR_ROLE) &&
++			    !(header & PD_HEADER_DATA_ROLE)) {
++				tcpm_log(port,
++					 "Adopting DFP for retained Source/UFP partner");
++				ret = tcpm_set_roles(port, true, TYPEC_STATE_USB,
++						     TYPEC_SINK, TYPEC_HOST);
++				if (!ret)
++					goto process_message;
++			}
+ 			tcpm_log(port,
+ 				 "Data role mismatch, initiating error recovery");
+ 			tcpm_set_state(port, ERROR_RECOVERY, 0);
+ 		} else {
++process_message:
+ 			if (le16_to_cpu(msg->header) & PD_HEADER_EXT_HDR)
+ 				tcpm_pd_ext_msg_request(port, msg);
+ 			else if (cnt)
+diff --git a/include/linux/usb/tcpm.h b/include/linux/usb/tcpm.h
+index 93079450b..d6dc5b1d1 100644
+--- a/include/linux/usb/tcpm.h
++++ b/include/linux/usb/tcpm.h
+@@ -134,6 +134,13 @@ enum tcpm_transmit_type {
+ struct tcpc_dev {
+ 	struct fwnode_handle *fwnode;
+ 
++	/*
++	 * The partner may retain Source/UFP across a host reboot. Allow TCPM
++	 * to recover as Sink/DFP when that retained role is observed in the
++	 * first SOP reply.
++	 */
++	bool adopt_retained_source_ufp;
++
+ 	int (*init)(struct tcpc_dev *dev);
+ 	int (*get_vbus)(struct tcpc_dev *dev);
+ 	int (*get_current_limit)(struct tcpc_dev *dev);
+-- 
+2.52.0

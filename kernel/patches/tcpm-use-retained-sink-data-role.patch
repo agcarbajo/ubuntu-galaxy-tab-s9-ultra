@@ -1,0 +1,59 @@
+--- a/include/linux/usb/tcpm.h
++++ b/include/linux/usb/tcpm.h
+@@ -141,6 +141,13 @@ struct tcpc_dev {
+ 	 */
+ 	bool adopt_retained_source_ufp;
+ 
++	/*
++	 * Return true once when the controller retained a Sink/DFP role over a
++	 * reboot.  This lets an opt-in TCPM port restore the matching data role
++	 * before a still-powered Source/UFP dock sends any PD message.
++	 */
++	bool (*consume_retained_sink_dfp)(struct tcpc_dev *dev);
++
+ 	int (*init)(struct tcpc_dev *dev);
+ 	int (*get_vbus)(struct tcpc_dev *dev);
+ 	int (*get_current_limit)(struct tcpc_dev *dev);
+--- a/drivers/usb/typec/tcpm/tcpm.c
++++ b/drivers/usb/typec/tcpm/tcpm.c
+@@ -5013,7 +5013,9 @@ static void tcpm_src_detach(struct tcpm_port *port)
+ 
+ static int tcpm_snk_attach(struct tcpm_port *port)
+ {
++	enum typec_data_role data_role = tcpm_data_role_for_sink(port);
+ 	int ret;
++	bool retained_dfp;
+ 
+ 	if (port->attached)
+ 		return 0;
+@@ -5025,8 +5027,18 @@ static int tcpm_snk_attach(struct tcpm_port *port)
+ 
+ 	tcpm_enable_auto_vbus_discharge(port, true);
+ 
++	retained_dfp = port->tcpc->adopt_retained_source_ufp &&
++		       data_role == TYPEC_DEVICE &&
++		       port->tcpc->consume_retained_sink_dfp &&
++		       port->tcpc->consume_retained_sink_dfp(port->tcpc);
++	if (retained_dfp) {
++		tcpm_log(port,
++			 "Restoring DFP for retained Source/UFP attachment");
++		data_role = TYPEC_HOST;
++	}
++
+ 	ret = tcpm_set_roles(port, true, TYPEC_STATE_USB,
+-			     TYPEC_SINK, tcpm_data_role_for_sink(port));
++			     TYPEC_SINK, data_role);
+ 	if (ret < 0)
+ 		return ret;
+ 
+@@ -5949,7 +5961,9 @@ static void run_state_machine(struct tcpm_port *port)
+ 		if (port->pd_capable)
+ 			tcpm_set_charge(port, false);
+ 		tcpm_set_roles(port, port->self_powered, TYPEC_STATE_USB, TYPEC_SINK,
+-			       tcpm_data_role_for_sink(port));
++			       port->tcpc->adopt_retained_source_ufp &&
++			       port->data_role == TYPEC_HOST ?
++			       TYPEC_HOST : tcpm_data_role_for_sink(port));
+ 		/*
+ 		 * VBUS may or may not toggle, depending on the adapter.
+ 		 * If it doesn't toggle, transition to SNK_HARD_RESET_SINK_ON

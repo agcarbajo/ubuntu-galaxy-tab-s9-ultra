@@ -1,0 +1,24 @@
+diff --git a/drivers/soc/qcom/samsung-gts9uwifi-sec-log.c b/drivers/soc/qcom/samsung-gts9uwifi-sec-log.c
+index 7ccbac4fd645..31315d50f260 100644
+--- a/drivers/soc/qcom/samsung-gts9uwifi-sec-log.c
++++ b/drivers/soc/qcom/samsung-gts9uwifi-sec-log.c
+@@ -58,8 +58,17 @@ static void notrace gts9uwifi_sec_log_write(struct console *console,
+ 	if (first != count)
+ 		memcpy(log->header->data, text + first, count - first);
+ 
+-	/* Match the downstream ring: index is monotonically increasing. */
+-	WRITE_ONCE(log->header->index, index + count);
++	/*
++	 * Match the downstream ring: index is monotonically increasing.  Keep
++	 * previous_index current as well.  Samsung's boot path normally snapshots
++	 * it on a firmware-driven reset, but a manual key reboot from a mainline
++	 * panic bypasses that step.  Recovery uses previous_index as the length of
++	 * /proc/last_kmsg, so updating it here preserves the mainline stream in
++	 * both cases.
++	 */
++	index += count;
++	WRITE_ONCE(log->header->index, index);
++	WRITE_ONCE(log->header->previous_index, index);
+ }
+ 
+ static int gts9uwifi_sec_log_probe(struct platform_device *pdev)

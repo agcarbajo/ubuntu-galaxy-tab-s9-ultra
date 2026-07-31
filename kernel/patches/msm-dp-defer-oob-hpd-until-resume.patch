@@ -1,0 +1,143 @@
+--- a/drivers/gpu/drm/msm/dp/dp_drm.h
++++ b/drivers/gpu/drm/msm/dp/dp_drm.h
+@@ -5,6 +5,8 @@
+ #ifndef _DP_DRM_H_
+ #define _DP_DRM_H_
+ 
++#include <linux/notifier.h>
++#include <linux/workqueue.h>
+ #include <linux/types.h>
+ #include <drm/drm_bridge.h>
+ 
+@@ -15,5 +17,10 @@ struct msm_dp_bridge {
+ 	struct drm_bridge bridge;
+ 	struct msm_dp *msm_dp_display;
++	struct notifier_block pm_notifier;
++	struct delayed_work deferred_hpd_work;
++	enum drm_connector_status deferred_hpd_status;
++	bool defer_hpd_until_resume;
++	bool deferred_hpd_pending;
+ };
+ 
+ #define to_dp_bridge(x)     container_of((x), struct msm_dp_bridge, bridge)
+--- a/drivers/gpu/drm/msm/dp/dp_drm.c
++++ b/drivers/gpu/drm/msm/dp/dp_drm.c
+@@ -4,10 +4,14 @@
+  */
+ 
++#include <linux/jiffies.h>
++#include <linux/property.h>
+ #include <linux/string_choices.h>
++#include <linux/suspend.h>
+ #include <drm/drm_atomic_helper.h>
+ #include <drm/drm_atomic.h>
+ #include <drm/drm_bridge.h>
+ #include <drm/drm_bridge_connector.h>
++#include <drm/drm_connector.h>
+ #include <drm/drm_crtc.h>
+ 
+ #include "msm_drv.h"
+@@ -242,6 +246,52 @@ static const struct drm_bridge_funcs msm_edp_bridge_ops = {
+ 	.debugfs_init = msm_edp_bridge_debugfs_init,
+ };
+ 
++static void msm_dp_bridge_deferred_hpd_work(struct work_struct *work)
++{
++	struct msm_dp_bridge *msm_dp_bridge =
++		container_of(to_delayed_work(work), struct msm_dp_bridge,
++			     deferred_hpd_work);
++	struct device *dev = &msm_dp_bridge->msm_dp_display->pdev->dev;
++	enum drm_connector_status status;
++
++	if (!READ_ONCE(msm_dp_bridge->deferred_hpd_pending))
++		return;
++
++	status = READ_ONCE(msm_dp_bridge->deferred_hpd_status);
++	WRITE_ONCE(msm_dp_bridge->deferred_hpd_pending, false);
++
++	dev_info(dev,
++		 "replaying deferred Type-C DP HPD status=%d after first resume\n",
++		 status);
++	msm_dp_bridge_hpd_notify(&msm_dp_bridge->bridge, NULL, status);
++}
++
++static int msm_dp_bridge_pm_notifier(struct notifier_block *notifier,
++				     unsigned long action, void *unused)
++{
++	struct msm_dp_bridge *msm_dp_bridge =
++		container_of(notifier, struct msm_dp_bridge, pm_notifier);
++
++	if (action != PM_POST_SUSPEND ||
++	    !READ_ONCE(msm_dp_bridge->defer_hpd_until_resume))
++		return NOTIFY_DONE;
++
++	WRITE_ONCE(msm_dp_bridge->defer_hpd_until_resume, false);
++	if (READ_ONCE(msm_dp_bridge->deferred_hpd_pending))
++		schedule_delayed_work(&msm_dp_bridge->deferred_hpd_work,
++				      msecs_to_jiffies(3000));
++
++	return NOTIFY_OK;
++}
++
++static void msm_dp_bridge_unregister_pm_notifier(void *data)
++{
++	struct msm_dp_bridge *msm_dp_bridge = data;
++
++	unregister_pm_notifier(&msm_dp_bridge->pm_notifier);
++	cancel_delayed_work_sync(&msm_dp_bridge->deferred_hpd_work);
++}
++
+ int msm_dp_bridge_init(struct msm_dp *msm_dp_display, struct drm_device *dev,
+ 		   struct drm_encoder *encoder, bool yuv_supported)
+ {
+@@ -266,6 +316,26 @@ int msm_dp_bridge_init(struct msm_dp *msm_dp_display, struct drm_device *dev,
+ 	 */
+ 	bridge->of_node = msm_dp_display->pdev->dev.of_node;
+ 
++	if (!msm_dp_display->is_edp &&
++	    device_property_read_bool(&msm_dp_display->pdev->dev,
++				      "qcom,defer-hpd-until-first-resume")) {
++		INIT_DELAYED_WORK(&msm_dp_bridge->deferred_hpd_work,
++				  msm_dp_bridge_deferred_hpd_work);
++		msm_dp_bridge->pm_notifier.notifier_call =
++			msm_dp_bridge_pm_notifier;
++		msm_dp_bridge->defer_hpd_until_resume = true;
++
++		rc = register_pm_notifier(&msm_dp_bridge->pm_notifier);
++		if (rc)
++			return rc;
++
++		rc = devm_add_action_or_reset(dev->dev,
++				msm_dp_bridge_unregister_pm_notifier,
++				msm_dp_bridge);
++		if (rc)
++			return rc;
++	}
++
+ 	/*
+ 	 * Many ops only make sense for DP. Why?
+ 	 * - Detect/HPD are used by DRM to know if a display is _physically_
+--- a/drivers/gpu/drm/msm/dp/dp_display.c
++++ b/drivers/gpu/drm/msm/dp/dp_display.c
+@@ -1522,6 +1522,21 @@ void msm_dp_bridge_hpd_notify(struct drm_bridge *bridge,
+ 	struct msm_dp_display_private *dp = container_of(msm_dp_display, struct msm_dp_display_private, msm_dp_display);
+ 	u32 hpd_link_status = 0;
+ 
++	if (READ_ONCE(msm_dp_bridge->defer_hpd_until_resume)) {
++		if (!READ_ONCE(msm_dp_bridge->deferred_hpd_pending) ||
++		    status == connector_status_connected)
++			WRITE_ONCE(msm_dp_bridge->deferred_hpd_status, status);
++		WRITE_ONCE(msm_dp_bridge->deferred_hpd_pending, true);
++		drm_dbg_dp(dp->drm_dev,
++			   "deferring Type-C DP HPD status=%d until first resume\n",
++			   status);
++		return;
++	}
++
++	if (READ_ONCE(msm_dp_bridge->deferred_hpd_pending) &&
++	    cancel_delayed_work(&msm_dp_bridge->deferred_hpd_work))
++		WRITE_ONCE(msm_dp_bridge->deferred_hpd_pending, false);
++
+ 	if (pm_runtime_resume_and_get(&msm_dp_display->pdev->dev)) {
+ 		DRM_ERROR("failed to pm_runtime_resume\n");
+ 		return;

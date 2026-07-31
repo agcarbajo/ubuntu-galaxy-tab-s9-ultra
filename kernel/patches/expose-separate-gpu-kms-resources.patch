@@ -1,0 +1,62 @@
+From: SM-X910 postmarketOS port <gts9uwifi@example.com>
+Subject: [PATCH] drm/msm: expose empty KMS resources on separate GPU DRM
+
+With msm.separate_gpu_kms=1 the Adreno DRM device is render-only.  That keeps
+the DPU command-mode panel working, but Xorg's modesetting driver rejects the
+GPU before it can create a PRIME source provider: DRM_IOCTL_MODE_GETRESOURCES
+fails instead of returning an empty resource list.
+
+Advertise DRIVER_MODESET on the separate GPU instance and initialize an empty
+managed mode_config.  Supply the normal MSM dumb-buffer and framebuffer hooks
+and finite framebuffer bounds as well: Xorg uses a temporary 32-bpp dumb
+framebuffer to choose the GPU screen's depth before switching to glamor.  The
+GPU still owns no CRTCs, planes or connectors and the DPU remains separate.
+
+--- a/drivers/gpu/drm/msm/msm_drv.c
++++ b/drivers/gpu/drm/msm/msm_drv.c
+@@ -66,6 +66,10 @@ bool msm_gpu_no_components(void)
+ 	return separate_gpu_kms;
+ }
+ 
++static const struct drm_mode_config_funcs msm_gpu_mode_config_funcs = {
++	.fb_create = msm_framebuffer_create,
++};
++
+ static int msm_drm_uninit(struct device *dev, const struct component_ops *gpu_ops)
+ {
+ 	struct platform_device *pdev = to_platform_device(dev);
+@@ -143,10 +147,19 @@ static int msm_drm_init(struct device *dev, const struct drm_driver *drv,
+ 	might_lock(&ddev->gem_lru_mutex);
+ 	fs_reclaim_release(GFP_KERNEL);
+ 
+-	if (priv->kms_init) {
++	if (priv->kms_init ||
++	    drm_core_check_feature(ddev, DRIVER_MODESET)) {
+ 		ret = drmm_mode_config_init(ddev);
+ 		if (ret)
+ 			goto err_put_dev;
++
++		if (!priv->kms_init) {
++			ddev->mode_config.funcs = &msm_gpu_mode_config_funcs;
++			ddev->mode_config.min_width = 1;
++			ddev->mode_config.min_height = 1;
++			ddev->mode_config.max_width = 16384;
++			ddev->mode_config.max_height = 16384;
++		}
+ 	}
+ 
+ 	dma_set_max_seg_size(dev, UINT_MAX);
+@@ -881,10 +891,12 @@ static const struct drm_driver msm_kms_driver = {
+ };
+ 
+ static const struct drm_driver msm_gpu_driver = {
+-	.driver_features    = DRIVER_FEATURES_GPU,
++	.driver_features    = DRIVER_FEATURES_GPU | DRIVER_MODESET,
+ 	.open               = msm_open,
+ 	.postclose          = msm_postclose,
++	.dumb_create        = msm_gem_dumb_create,
++	.dumb_map_offset    = drm_gem_dumb_map_offset,
+ 	.gem_prime_import_sg_table = msm_gem_prime_import_sg_table,
+ #ifdef CONFIG_DEBUG_FS
+ 	.debugfs_init       = msm_debugfs_init,
+ #endif

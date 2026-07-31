@@ -1,0 +1,26 @@
+From: SM-X910 postmarketOS port <gts9uwifi@example.com>
+Subject: [PATCH] drm/msm/dp: don't defer external DP for unresolved USB-C bridge
+
+The SM-X910 routes DisplayPort through a QMP combo PHY and PS5169 Type-C
+retimer to a usb-c-connector node.  The connector is not a DRM bridge, so the
+transparent bridge chain ends in -EPROBE_DEFER.  Deferring the DP component
+also prevents the shared MSM DRM component master and the unrelated internal
+DSI panel from binding.
+
+External DP already has complete detect, HPD, EDID and mode operations in the
+MSM DP bridge.  Treat an unresolved optional downstream bridge like no
+downstream bridge for external DP.  Keep eDP strict because its panel bridge
+is mandatory.
+
+--- a/drivers/gpu/drm/msm/dp/dp_display.c
++++ b/drivers/gpu/drm/msm/dp/dp_display.c
+@@ -1016,7 +1016,8 @@ static int msm_dp_display_probe_tail(struct device *dev)
+ 	if (IS_ERR(dp->next_bridge)) {
+ 		ret = PTR_ERR(dp->next_bridge);
+ 		dp->next_bridge = NULL;
+-		if (dp->is_edp || ret != -ENODEV)
++		if (dp->is_edp ||
++		    (ret != -ENODEV && ret != -EPROBE_DEFER))
+ 			return ret;
+ 	}
+ 

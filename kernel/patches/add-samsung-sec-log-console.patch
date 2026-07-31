@@ -1,0 +1,175 @@
+diff --git a/drivers/soc/qcom/Kconfig b/drivers/soc/qcom/Kconfig
+index 5f9e94d8f8ac..a074c9047992 100644
+--- a/drivers/soc/qcom/Kconfig
++++ b/drivers/soc/qcom/Kconfig
+@@ -375,6 +375,17 @@ config QCOM_PBS
+ 	  trigger event through the PBS RAM on Qualcomm Technologies, Inc. PMICs.
+ 	  This module provides the APIs to the client drivers that wants to send the
+ 	  PBS trigger event to the PBS RAM.
++
++config SAMSUNG_GTS9UWIFI_SEC_LOG
++	bool "Samsung SM-X910 persistent early console"
++	depends on ARCH_QCOM
++	help
++	  Store the kernel console in the Samsung sec_log_buf reserved-memory
++	  ring used by the bootloader and recovery.  This is a bring-up aid for
++	  the Galaxy Tab S9 Ultra Wi-Fi: after a warm reset, its TWRP recovery
++	  can expose the previous mainline printk stream as /proc/last_kmsg.
++
++	  Say Y only for the SM-X910 bring-up kernel.
+ 
+ endmenu
+ 
+diff --git a/drivers/soc/qcom/Makefile b/drivers/soc/qcom/Makefile
+index 9b802843fbea..db6a248ba9e5 100644
+--- a/drivers/soc/qcom/Makefile
++++ b/drivers/soc/qcom/Makefile
+@@ -44,2 +44,3 @@ obj-$(CONFIG_QCOM_INLINE_CRYPTO_ENGINE) += qcom_ice.o
+ obj-$(CONFIG_QCOM_PBS) += qcom-pbs.o
+ obj-$(CONFIG_QCOM_UBWC_CONFIG) += ubwc_config.o
++obj-$(CONFIG_SAMSUNG_GTS9UWIFI_SEC_LOG) += samsung-gts9uwifi-sec-log.o
+diff --git a/drivers/soc/qcom/samsung-gts9uwifi-sec-log.c b/drivers/soc/qcom/samsung-gts9uwifi-sec-log.c
+new file mode 100644
+index 000000000000..7ccbac4fd645
+--- /dev/null
++++ b/drivers/soc/qcom/samsung-gts9uwifi-sec-log.c
+@@ -0,0 +1,139 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Minimal persistent console for Samsung Galaxy Tab S9 Ultra bring-up.
++ *
++ * Samsung's bootloader and downstream recovery share a 2 MiB ring named
++ * sec_log_buf.  Recovery's sec_log_buf driver exposes the previous contents
++ * through /proc/last_kmsg.  Keep the on-memory header compatible so early
++ * mainline failures can be diagnosed without photographing the framebuffer.
++ */
++
++#include <linux/console.h>
++#include <linux/io.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/of_reserved_mem.h>
++#include <linux/platform_device.h>
++
++#define SEC_LOG_MAGIC	0x4d474f4c /* "LOGM" on little-endian ARM64 */
++
++struct sec_log_header {
++	u32 boot_count;
++	u32 magic;
++	u32 index;
++	u32 previous_index;
++	u8 data[];
++};
++
++struct gts9uwifi_sec_log {
++	struct sec_log_header *header;
++	size_t data_size;
++	struct console console;
++};
++
++static struct gts9uwifi_sec_log *sec_log;
++
++static void notrace gts9uwifi_sec_log_write(struct console *console,
++					     const char *text,
++					     unsigned int count)
++{
++	struct gts9uwifi_sec_log *log = sec_log;
++	size_t first;
++	u32 index;
++
++	if (!log || !count || !log->data_size)
++		return;
++
++	if (count > log->data_size) {
++		text += count - log->data_size;
++		count = log->data_size;
++	}
++
++	index = READ_ONCE(log->header->index);
++	first = min_t(size_t, count, log->data_size - index % log->data_size);
++	memcpy(&log->header->data[index % log->data_size], text, first);
++	if (first != count)
++		memcpy(log->header->data, text + first, count - first);
++
++	/* Match the downstream ring: index is monotonically increasing. */
++	WRITE_ONCE(log->header->index, index + count);
++}
++
++static int gts9uwifi_sec_log_probe(struct platform_device *pdev)
++{
++	struct device_node *memory_node;
++	struct reserved_mem *reserved;
++	struct gts9uwifi_sec_log *log;
++	void *memory;
++
++	memory_node = of_parse_phandle(pdev->dev.of_node, "memory-region", 0);
++	if (!memory_node)
++		return dev_err_probe(&pdev->dev, -EINVAL,
++				     "missing memory-region\n");
++
++	reserved = of_reserved_mem_lookup(memory_node);
++	of_node_put(memory_node);
++	if (!reserved || reserved->size <= sizeof(struct sec_log_header))
++		return dev_err_probe(&pdev->dev, -EINVAL,
++				     "invalid sec_log_buf reservation\n");
++
++	log = devm_kzalloc(&pdev->dev, sizeof(*log), GFP_KERNEL);
++	if (!log)
++		return -ENOMEM;
++
++	memory = devm_memremap(&pdev->dev, reserved->base, reserved->size,
++			       MEMREMAP_WB);
++	if (IS_ERR(memory))
++		return dev_err_probe(&pdev->dev, PTR_ERR(memory),
++				     "cannot map sec_log_buf\n");
++
++	log->header = memory;
++	log->data_size = reserved->size - sizeof(*log->header);
++
++	if (READ_ONCE(log->header->magic) != SEC_LOG_MAGIC) {
++		WRITE_ONCE(log->header->boot_count, 0);
++		WRITE_ONCE(log->header->magic, SEC_LOG_MAGIC);
++	}
++	WRITE_ONCE(log->header->boot_count,
++		   READ_ONCE(log->header->boot_count) + 1);
++	WRITE_ONCE(log->header->previous_index,
++		   READ_ONCE(log->header->index));
++	WRITE_ONCE(log->header->index, 0);
++
++	strscpy(log->console.name, "sec_log", sizeof(log->console.name));
++	log->console.write = gts9uwifi_sec_log_write;
++	log->console.flags = CON_ENABLED | CON_ANYTIME | CON_PRINTBUFFER;
++	log->console.index = -1;
++
++	sec_log = log;
++	register_console(&log->console);
++	platform_set_drvdata(pdev, log);
++
++	dev_info(&pdev->dev, "persistent console at %pa (%zu bytes)\n",
++		 &reserved->base, (size_t)reserved->size);
++	return 0;
++}
++
++static void gts9uwifi_sec_log_remove(struct platform_device *pdev)
++{
++	struct gts9uwifi_sec_log *log = platform_get_drvdata(pdev);
++
++	unregister_console(&log->console);
++	sec_log = NULL;
++}
++
++static const struct of_device_id gts9uwifi_sec_log_of_match[] = {
++	{ .compatible = "samsung,gts9uwifi-sec-kernel-log" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, gts9uwifi_sec_log_of_match);
++
++static struct platform_driver gts9uwifi_sec_log_driver = {
++	.probe = gts9uwifi_sec_log_probe,
++	.remove = gts9uwifi_sec_log_remove,
++	.driver = {
++		.name = "gts9uwifi-sec-kernel-log",
++		.of_match_table = gts9uwifi_sec_log_of_match,
++	},
++};
++builtin_platform_driver(gts9uwifi_sec_log_driver);

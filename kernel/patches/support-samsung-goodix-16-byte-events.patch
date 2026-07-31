@@ -1,0 +1,266 @@
+From: SM-X910 postmarketOS port <gts9uwifi@example.com>
+Subject: [PATCH] input: goodix: support 16-byte Samsung Berlin events
+
+Samsung's GT6936 firmware emits 16-byte point records even though this X910
+firmware incorrectly reports the reference 8-byte length in IC_INFO.  The
+upstream Berlin driver trusts that field and consequently mistakes bytes 8
+and 9 of each Samsung event for the checksum, discarding every touch.
+
+Use the runtime header/point lengths from IC_INFO, retain the existing 8-byte
+format, and decode the 16-byte coordinate layout used by the Samsung driver.
+
+---
+ drivers/input/touchscreen/goodix_berlin_core.c | 144 +++++++++++++++++--------
+ 1 file changed, 100 insertions(+), 44 deletions(-)
+
+diff --git a/drivers/input/touchscreen/goodix_berlin_core.c b/drivers/input/touchscreen/goodix_berlin_core.c
+index 9aa4bf80d7b8..e8e43e4d405b 100644
+--- a/drivers/input/touchscreen/goodix_berlin_core.c
++++ b/drivers/input/touchscreen/goodix_berlin_core.c
+@@ -30,6 +30,8 @@
+ #include "goodix_berlin.h"
+ 
+ #define GOODIX_BERLIN_MAX_TOUCH			10
++#define GOODIX_BERLIN_MAX_POINT_SIZE		16
++#define GOODIX_BERLIN_PRE_READ_TOUCHES		1
+ 
+ #define GOODIX_BERLIN_NORMAL_RESET_DELAY_MS	100
+ 
+@@ -45,6 +46,12 @@
+ 
+ #define GOODIX_BERLIN_TOUCH_ID_MASK		GENMASK(7, 4)
+ 
++#define GOODIX_BERLIN_SAMSUNG_EVENT_ID_MASK	GENMASK(1, 0)
++#define GOODIX_BERLIN_SAMSUNG_TOUCH_ID_MASK	GENMASK(5, 2)
++#define GOODIX_BERLIN_SAMSUNG_ACTION_MASK	GENMASK(7, 6)
++#define GOODIX_BERLIN_SAMSUNG_COORD_EVENT	0
++#define GOODIX_BERLIN_SAMSUNG_ACTION_RELEASE	3
++
+ #define GOODIX_BERLIN_DEV_CONFIRM_VAL		0xAA
+ #define GOODIX_BERLIN_BOOTOPTION_ADDR		0x10000
+ 
+@@ -154,7 +161,7 @@ struct goodix_berlin_header {
+ struct goodix_berlin_event {
+ 	struct goodix_berlin_header hdr;
+ 	/* The data below is u16/__le16 aligned */
+-	u8 data[GOODIX_BERLIN_TOUCH_SIZE * GOODIX_BERLIN_MAX_TOUCH +
++	u8 data[GOODIX_BERLIN_MAX_POINT_SIZE * GOODIX_BERLIN_MAX_TOUCH +
+ 		GOODIX_BERLIN_CHECKSUM_SIZE];
+ };
+ 
+@@ -173,6 +180,8 @@ struct goodix_berlin_core {
+ 
+ 	/* Runtime parameters extracted from IC_INFO buffer  */
+ 	u32 touch_data_addr;
++	u16 touch_data_head_len;
++	u16 point_struct_len;
+ 
+ 	const struct goodix_berlin_ic_data *ic_data;
+ 
+@@ -348,7 +357,30 @@ static int goodix_berlin_parse_ic_info(struct goodix_berlin_core *cd,
+ #undef ADVANCE_LE16_PARAMS
+ 
+ 	misc = (struct goodix_berlin_ic_info_misc *)&data[offset];
++	if (offset + sizeof(*misc) > length)
++		goto invalid_offset;
++
+ 	cd->touch_data_addr = le32_to_cpu(misc->touch_data_addr);
++	cd->touch_data_head_len = le16_to_cpu(misc->touch_data_head_len);
++	cd->point_struct_len = le16_to_cpu(misc->point_struct_len);
++	/*
++	 * Samsung's 6936 firmware reports the reference 8-byte point size in
++	 * IC_INFO while emitting the vendor 16-byte coordinate records.  The
++	 * latter is also the only layout consumed by Samsung's downstream
++	 * driver, so identify this broken metadata by the firmware PID.
++	 */
++	if (cd->point_struct_len == GOODIX_BERLIN_TOUCH_SIZE &&
++	    !memcmp(cd->fw_version.patch_pid, "6936", 4)) {
++		dev_info(cd->dev,
++			 "forcing 16-byte Samsung events for firmware PID 6936\n");
++		cd->point_struct_len = GOODIX_BERLIN_MAX_POINT_SIZE;
++	}
++	if (cd->touch_data_head_len != GOODIX_BERLIN_HEADER_SIZE ||
++	    (cd->point_struct_len != GOODIX_BERLIN_TOUCH_SIZE &&
++	     cd->point_struct_len != GOODIX_BERLIN_MAX_POINT_SIZE))
++		return dev_err_probe(cd->dev, -EINVAL,
++			"unsupported event layout: header %u point %u\n",
++			cd->touch_data_head_len, cd->point_struct_len);
+ 
+ 	return 0;
+ 
+@@ -416,14 +435,16 @@ static int goodix_berlin_get_remaining_contacts(struct goodix_berlin_core *cd,
+ static int goodix_berlin_get_remaining_contacts(struct goodix_berlin_core *cd,
+ 						int n)
+ {
+-	size_t offset = 2 * GOODIX_BERLIN_TOUCH_SIZE +
++	size_t offset = GOODIX_BERLIN_PRE_READ_TOUCHES *
++			cd->point_struct_len +
+ 				GOODIX_BERLIN_CHECKSUM_SIZE;
+-	u32 addr = cd->touch_data_addr + GOODIX_BERLIN_HEADER_SIZE + offset;
++	u32 addr = cd->touch_data_addr + cd->touch_data_head_len + offset;
+ 	int error;
+ 
+ 	error = regmap_raw_read(cd->regmap, addr,
+ 				&cd->event.data[offset],
+-				(n - 2) * GOODIX_BERLIN_TOUCH_SIZE);
++				(n - GOODIX_BERLIN_PRE_READ_TOUCHES) *
++					cd->point_struct_len);
+ 	if (error) {
+ 		dev_err_ratelimited(cd->dev, "failed to get touch data, %d\n",
+ 				    error);
+@@ -434,16 +455,50 @@ static int goodix_berlin_get_remaining_contacts(struct goodix_berlin_core *cd,
+ 	return 0;
+ }
+ 
++static void goodix_berlin_report_samsung_touch(struct goodix_berlin_core *cd,
++					       const u8 *data, bool *coordinate)
++{
++	u8 action, id;
++	u16 x, y;
++
++	if (FIELD_GET(GOODIX_BERLIN_SAMSUNG_EVENT_ID_MASK, data[0]) !=
++	    GOODIX_BERLIN_SAMSUNG_COORD_EVENT)
++		return;
++
++	*coordinate = true;
++	id = FIELD_GET(GOODIX_BERLIN_SAMSUNG_TOUCH_ID_MASK, data[0]);
++	if (id >= GOODIX_BERLIN_MAX_TOUCH)
++		return;
++
++	action = FIELD_GET(GOODIX_BERLIN_SAMSUNG_ACTION_MASK, data[0]);
++	input_mt_slot(cd->input_dev, id);
++	input_mt_report_slot_state(cd->input_dev, MT_TOOL_FINGER,
++				   action != GOODIX_BERLIN_SAMSUNG_ACTION_RELEASE);
++	if (action == GOODIX_BERLIN_SAMSUNG_ACTION_RELEASE)
++		return;
++
++	x = data[1] << 4 | data[3] >> 4;
++	y = data[2] << 4 | (data[3] & 0x0f);
++	touchscreen_report_pos(cd->input_dev, &cd->props, x, y, true);
++	input_report_abs(cd->input_dev, ABS_MT_TOUCH_MAJOR, data[4]);
++}
++
+ static void goodix_berlin_report_state(struct goodix_berlin_core *cd, int n)
+ {
+-	struct goodix_berlin_touch *touch_data =
+-			(struct goodix_berlin_touch *)cd->event.data;
+ 	struct goodix_berlin_touch *t;
++	const u8 *data = cd->event.data;
++	bool coordinate = !n || cd->point_struct_len == GOODIX_BERLIN_TOUCH_SIZE;
+ 	int i;
+ 	u8 type, id;
+ 
+ 	for (i = 0; i < n; i++) {
+-		t = &touch_data[i];
++		if (cd->point_struct_len == GOODIX_BERLIN_MAX_POINT_SIZE) {
++			goodix_berlin_report_samsung_touch(cd, data, &coordinate);
++			data += cd->point_struct_len;
++			continue;
++		}
++
++		t = (struct goodix_berlin_touch *)data;
+ 
+ 		type = FIELD_GET(GOODIX_BERLIN_POINT_TYPE_MASK, t->status);
+ 		if (type == GOODIX_BERLIN_POINT_TYPE_STYLUS ||
+@@ -466,7 +520,12 @@ static void goodix_berlin_report_state(struct goodix_berlin_core *cd, int n)
+ 		input_report_abs(cd->input_dev, ABS_MT_TOUCH_MAJOR,
+ 				 __le16_to_cpu(t->w));
++
++		data += cd->point_struct_len;
+ 	}
+ 
++	if (!coordinate)
++		return;
++
+ 	input_mt_sync_frame(cd->input_dev);
+ 	input_sync(cd->input_dev);
+ }
+@@ -486,3 +560,3 @@ static void goodix_berlin_touch_handler(struct goodix_berlin_core *cd)
+-	if (touch_num > 2) {
+-		/* read additional contact data if more than 2 touch events */
++	if (touch_num > GOODIX_BERLIN_PRE_READ_TOUCHES) {
++		/* Read additional contact data after the one pre-read event. */
+ 		error = goodix_berlin_get_remaining_contacts(cd, touch_num);
+@@ -491,7 +550,7 @@ static void goodix_berlin_touch_handler(struct goodix_berlin_core *cd)
+ 	}
+ 
+ 	if (touch_num) {
+-		int len = touch_num * GOODIX_BERLIN_TOUCH_SIZE +
++		int len = touch_num * cd->point_struct_len +
+ 			  GOODIX_BERLIN_CHECKSUM_SIZE;
+ 		if (!goodix_berlin_checksum_valid(cd->event.data, len)) {
+ 			dev_err(cd->dev, "touch data checksum error: %*ph\n",
+@@ -521,7 +582,8 @@ static irqreturn_t goodix_berlin_irq(int irq, void *data)
+ 	/*
+-	 * First, read buffer with space for 2 touch events:
++	 * First, read buffer with space for one touch event:
+ 	 * - GOODIX_BERLIN_HEADER_SIZE = 8 bytes
+-	 * - GOODIX_BERLIN_TOUCH_SIZE * 2 = 16 bytes
++	 * - point_struct_len = 8 or 16 bytes
+ 	 * - GOODIX_BERLIN_CHECKLSUM_SIZE = 2 bytes
+-	 * For a total of 26 bytes.
++	 * For a total of 18 or 26 bytes. Keeping the first transfer short is
++	 * required by the Samsung 6936 firmware: a 42-byte GPI I2C read times out.
+ 	 *
+@@ -529,28 +604,6 @@ static irqreturn_t goodix_berlin_irq(int irq, void *data)
+-	 * If only a single finger is reported, we will read 8 bytes more than
+-	 * needed:
+-	 * - bytes 0-7:   Header (GOODIX_BERLIN_HEADER_SIZE)
+-	 * - bytes 8-15:  Finger 0 Data
+-	 * - bytes 24-25: Checksum
+-	 * - bytes 18-25: Unused 8 bytes
+-	 *
+-	 * If 2 fingers are reported, we would have read the exact needed
+-	 * amount of data and checksum would be at the end of the buffer:
+-	 * - bytes 0-7:   Header (GOODIX_BERLIN_HEADER_SIZE)
+-	 * - bytes 8-15:  Finger 0 Bytes 0-7
+-	 * - bytes 16-23: Finger 1 Bytes 0-7
+-	 * - bytes 24-25: Checksum
+-	 *
+-	 * If more than 2 fingers were reported, the "Checksum" bytes would
+-	 * in fact contain part of the next finger data, and then
+-	 * goodix_berlin_get_remaining_contacts() would complete the buffer
+-	 * with the missing bytes, including the trailing checksum.
+-	 * For example, if 3 fingers are reported, then we would do:
+-	 * Read 1:
+-	 * - bytes 0-7:   Header (GOODIX_BERLIN_HEADER_SIZE)
+-	 * - bytes 8-15:  Finger 0 Bytes 0-7
+-	 * - bytes 16-23: Finger 1 Bytes 0-7
+-	 * - bytes 24-25: Finger 2 Bytes 0-1
+-	 * Read 2 (with length of (3 - 2) * 8 = 8 bytes):
+-	 * - bytes 26-31: Finger 2 Bytes 2-7
+-	 * - bytes 32-33: Checksum
++	 * For one contact the trailing two bytes are its checksum and the
++	 * transfer is complete.  For more contacts those two bytes are the
++	 * beginning of contact 1. goodix_berlin_get_remaining_contacts()
++	 * resumes from there and reads the rest of the contacts plus the final
++	 * checksum, without repeating the header or contact 0.
+ 	 */
+@@ -557,8 +610,9 @@ static irqreturn_t goodix_berlin_irq(int irq, void *data)
+ 	error = regmap_raw_read(cd->regmap, cd->touch_data_addr,
+ 				&cd->event,
+-				GOODIX_BERLIN_HEADER_SIZE +
+-					2 * GOODIX_BERLIN_TOUCH_SIZE +
+-					GOODIX_BERLIN_CHECKSUM_SIZE);
++				cd->touch_data_head_len +
++					GOODIX_BERLIN_PRE_READ_TOUCHES *
++					cd->point_struct_len +
++					GOODIX_BERLIN_CHECKSUM_SIZE);
+ 	if (error) {
+ 		dev_warn_ratelimited(cd->dev,
+ 				     "failed get event head data: %d\n", error);
+@@ -797,8 +856,10 @@ int goodix_berlin_probe(struct device *dev, int irq, const struct input_id *id,
+ 
+ 	dev_set_drvdata(dev, cd);
+ 
+-	dev_dbg(dev, "Goodix Berlin %s Touchscreen Controller",
+-		cd->fw_version.patch_pid);
++	dev_info(dev,
++		 "Goodix Berlin %s Touchscreen Controller, event layout %u/%u\n",
++		 cd->fw_version.patch_pid, cd->touch_data_head_len,
++		 cd->point_struct_len);
+ 
+ 	return 0;
+ }
+-- 
+2.50.1

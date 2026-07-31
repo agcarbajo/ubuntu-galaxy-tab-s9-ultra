@@ -1,0 +1,39 @@
+From: SM-X910 postmarketOS port <gts9uwifi@example.com>
+Subject: [PATCH] phy: snps-eusb2: match downstream SM8550 PLL setup
+
+The SM-X910 reaches DWC3 gadget mode with the upstream SM8550 eUSB2 PHY
+sequence, but the host cannot read its USB descriptor. Samsung's working
+SM8550 driver waits after asserting POR and programs CPBIAS to one, whereas
+the upstream sequence has no delay and writes zero.
+
+Reproduce those two hardware sequencing details from the working downstream
+driver. The remaining PLL and transmitter values already match upstream.
+
+---
+ drivers/phy/phy-snps-eusb2.c | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/phy/phy-snps-eusb2.c b/drivers/phy/phy-snps-eusb2.c
+index af4fa17ac1ab..f86d5181f3fb 100644
+--- a/drivers/phy/phy-snps-eusb2.c
++++ b/drivers/phy/phy-snps-eusb2.c
+@@ -372,6 +372,8 @@ static int qcom_snps_eusb2_hsphy_init(struct phy *p)
+ 				    CMN_CTRL_OVERRIDE_EN, CMN_CTRL_OVERRIDE_EN);
+ 
+ 	snps_eusb2_hsphy_write_mask(phy->base, QCOM_USB_PHY_UTMI_CTRL5, POR, POR);
++	/* Match Samsung SM8550 sequencing before enabling the PHY. */
++	usleep_range(10, 20);
+ 
+ 	snps_eusb2_hsphy_write_mask(phy->base, QCOM_USB_PHY_HS_PHY_CTRL_COMMON0,
+ 				    PHY_ENABLE | RETENABLEN, PHY_ENABLE | RETENABLEN);
+@@ -391,7 +393,7 @@ static int qcom_snps_eusb2_hsphy_init(struct phy *p)
+ 
+ 	snps_eusb2_hsphy_write_mask(phy->base, QCOM_USB_PHY_CFG_CTRL_1,
+ 				    PHY_CFG_PLL_CPBIAS_CNTRL_MASK,
+-				    FIELD_PREP(PHY_CFG_PLL_CPBIAS_CNTRL_MASK, 0x0));
++				    FIELD_PREP(PHY_CFG_PLL_CPBIAS_CNTRL_MASK, 0x1));
+ 
+ 	snps_eusb2_hsphy_write_mask(phy->base, QCOM_USB_PHY_CFG_CTRL_4,
+ 				    PHY_CFG_PLL_INT_CNTRL_MASK,
+-- 
+2.50.1

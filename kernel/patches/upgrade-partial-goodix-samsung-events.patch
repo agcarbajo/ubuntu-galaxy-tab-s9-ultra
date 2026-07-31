@@ -1,0 +1,129 @@
+From: SM-X910 postmarketOS port <gts9uwifi@example.com>
+Subject: [PATCH] input: goodix: upgrade the partial Samsung event decoder
+
+Early direct-build worktrees already contain the Samsung coordinate decoder,
+but predate the PID 6936 metadata override and the one-contact pre-read needed
+by GPI I2C.  Upgrade only that partial state to the complete implementation.
+
+---
+ drivers/input/touchscreen/goodix_berlin_core.c | 52 ++++++++++---------
+ 1 file changed, 27 insertions(+), 25 deletions(-)
+
+diff --git a/drivers/input/touchscreen/goodix_berlin_core.c b/drivers/input/touchscreen/goodix_berlin_core.c
+--- a/drivers/input/touchscreen/goodix_berlin_core.c
++++ b/drivers/input/touchscreen/goodix_berlin_core.c
+@@ -39,6 +39,7 @@
+ 
+ #define GOODIX_BERLIN_MAX_TOUCH			10
+ #define GOODIX_BERLIN_MAX_POINT_SIZE		16
++#define GOODIX_BERLIN_PRE_READ_TOUCHES		1
+ 
+ #define GOODIX_BERLIN_NORMAL_RESET_DELAY_MS	100
+ 
+@@ -363,6 +364,18 @@ static int goodix_berlin_parse_ic_info(struct goodix_berlin_core *cd,
+ 	cd->touch_data_addr = le32_to_cpu(misc->touch_data_addr);
+ 	cd->touch_data_head_len = le16_to_cpu(misc->touch_data_head_len);
+ 	cd->point_struct_len = le16_to_cpu(misc->point_struct_len);
++	/*
++	 * Samsung's 6936 firmware reports the reference 8-byte point size in
++	 * IC_INFO while emitting the vendor 16-byte coordinate records.  The
++	 * latter is also the only layout consumed by Samsung's downstream
++	 * driver, so identify this broken metadata by the firmware PID.
++	 */
++	if (cd->point_struct_len == GOODIX_BERLIN_TOUCH_SIZE &&
++	    !memcmp(cd->fw_version.patch_pid, "6936", 4)) {
++		dev_info(cd->dev,
++			 "forcing 16-byte Samsung events for firmware PID 6936\n");
++		cd->point_struct_len = GOODIX_BERLIN_MAX_POINT_SIZE;
++	}
+ 	if (cd->touch_data_head_len != GOODIX_BERLIN_HEADER_SIZE ||
+ 	    (cd->point_struct_len != GOODIX_BERLIN_TOUCH_SIZE &&
+ 	     cd->point_struct_len != GOODIX_BERLIN_MAX_POINT_SIZE))
+@@ -436,14 +449,16 @@ static int goodix_berlin_get_remaining_contacts(struct goodix_berlin_core *cd,
+ static int goodix_berlin_get_remaining_contacts(struct goodix_berlin_core *cd,
+ 						int n)
+ {
+-	size_t offset = 2 * cd->point_struct_len +
++	size_t offset = GOODIX_BERLIN_PRE_READ_TOUCHES *
++			cd->point_struct_len +
+ 				GOODIX_BERLIN_CHECKSUM_SIZE;
+ 	u32 addr = cd->touch_data_addr + cd->touch_data_head_len + offset;
+ 	int error;
+ 
+ 	error = regmap_raw_read(cd->regmap, addr,
+ 				&cd->event.data[offset],
+-				(n - 2) * cd->point_struct_len);
++				(n - GOODIX_BERLIN_PRE_READ_TOUCHES) *
++					cd->point_struct_len);
+ 	if (error) {
+ 		dev_err_ratelimited(cd->dev, "failed to get touch data, %d\n",
+ 					    error);
+@@ -542,8 +557,8 @@ static void goodix_berlin_touch_handler(struct goodix_berlin_core *cd)
+ 		return;
+ 	}
+ 
+-	if (touch_num > 2) {
+-		/* read additional contact data if more than 2 touch events */
++	if (touch_num > GOODIX_BERLIN_PRE_READ_TOUCHES) {
++		/* Read additional contact data after the one pre-read event. */
+ 		error = goodix_berlin_get_remaining_contacts(cd, touch_num);
+ 		if (error)
+ 			return;
+@@ -579,44 +594,24 @@ static irqreturn_t goodix_berlin_irq(int irq, void *data)
+ 	int error;
+ 
+ 	/*
+-	 * First, read buffer with space for 2 touch events:
++	 * First, read buffer with space for one touch event:
+ 	 * - GOODIX_BERLIN_HEADER_SIZE = 8 bytes
+-	 * - point_struct_len * 2 = 16 or 32 bytes
++	 * - point_struct_len = 8 or 16 bytes
+ 	 * - GOODIX_BERLIN_CHECKLSUM_SIZE = 2 bytes
+-	 * For a total of 26 or 42 bytes.
+-	 *
+-	 * If only a single finger is reported, we will read 8 bytes more than
+-	 * needed:
+-	 * - bytes 0-7:   Header (GOODIX_BERLIN_HEADER_SIZE)
+-	 * - bytes 8-15:  Finger 0 Data
+-	 * - bytes 24-25: Checksum
+-	 * - bytes 18-25: Unused 8 bytes
+-	 *
+-	 * If 2 fingers are reported, we would have read the exact needed
+-	 * amount of data and checksum would be at the end of the buffer:
+-	 * - bytes 0-7:   Header (GOODIX_BERLIN_HEADER_SIZE)
+-	 * - bytes 8-15:  Finger 0 Bytes 0-7
+-	 * - bytes 16-23: Finger 1 Bytes 0-7
+-	 * - bytes 24-25: Checksum
++	 * For a total of 18 or 26 bytes. Keeping the first transfer short is
++	 * required by the Samsung 6936 firmware: a 42-byte GPI I2C read times out.
+ 	 *
+-	 * If more than 2 fingers were reported, the "Checksum" bytes would
+-	 * in fact contain part of the next finger data, and then
+-	 * goodix_berlin_get_remaining_contacts() would complete the buffer
+-	 * with the missing bytes, including the trailing checksum.
+-	 * For example, if 3 fingers are reported, then we would do:
+-	 * Read 1:
+-	 * - bytes 0-7:   Header (GOODIX_BERLIN_HEADER_SIZE)
+-	 * - bytes 8-15:  Finger 0 Bytes 0-7
+-	 * - bytes 16-23: Finger 1 Bytes 0-7
+-	 * - bytes 24-25: Finger 2 Bytes 0-1
+-	 * Read 2 (with length of (3 - 2) * 8 = 8 bytes):
+-	 * - bytes 26-31: Finger 2 Bytes 2-7
+-	 * - bytes 32-33: Checksum
++	 * For one contact the trailing two bytes are its checksum and the
++	 * transfer is complete.  For more contacts those two bytes are the
++	 * beginning of contact 1. goodix_berlin_get_remaining_contacts()
++	 * resumes from there and reads the rest of the contacts plus the final
++	 * checksum, without repeating the header or contact 0.
+ 	 */
+ 	error = regmap_raw_read(cd->regmap, cd->touch_data_addr,
+ 				&cd->event,
+ 				cd->touch_data_head_len +
+-					2 * cd->point_struct_len +
++					GOODIX_BERLIN_PRE_READ_TOUCHES *
++					cd->point_struct_len +
+ 					GOODIX_BERLIN_CHECKSUM_SIZE);
+ 	if (error) {
+ 		dev_warn_ratelimited(cd->dev,
+-- 
+2.50.1

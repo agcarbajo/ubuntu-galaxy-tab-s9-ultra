@@ -1,0 +1,70 @@
+--- a/sound/soc/qcom/sc8280xp.c
++++ b/sound/soc/qcom/sc8280xp.c
+@@ -15,6 +15,9 @@
+ #include "common.h"
+ #include "sdw.h"
+ 
++/* 48 kHz, 16 bit, 2 channels - the rate the BE hw_params fixup pins. */
++#define MI2S_BCLK_RATE		1536000
++
+ struct sc8280xp_snd_data {
+ 	bool stream_prepared[AFE_PORT_MAX];
+ 	struct snd_soc_card *card;
+@@ -114,8 +117,56 @@
+ 	return qcom_snd_sdw_hw_free(substream, &data->stream_prepared[cpu_dai->id]);
+ }
+ 
++static bool sc8280xp_is_mi2s(int dai_id)
++{
++	switch (dai_id) {
++	case PRIMARY_MI2S_RX ... QUATERNARY_MI2S_TX:
++	case QUINARY_MI2S_RX ... QUINARY_MI2S_TX:
++		return true;
++	default:
++		return false;
++	}
++}
++
++/*
++ * sc8280xp_snd_init() tells the CPU side that the LPASS provides bit clock and
++ * frame sync on MI2S, but the codec side was never told anything: an I2S codec
++ * kept its reset default format, and - more importantly - was never given the
++ * bit clock rate it has to lock its PLL to, so it produced no audio at all.
++ * AudioReach programs the I2S port itself, so the CPU DAI needs no sysclk here
++ * (q6apm has no .set_sysclk and returns -ENOTSUPP); the codec does.
++ */
++static int sc8280xp_snd_startup(struct snd_pcm_substream *substream)
++{
++	struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
++	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
++	struct snd_soc_dai *codec_dai;
++	int i, ret;
++
++	if (sc8280xp_is_mi2s(cpu_dai->id)) {
++		for_each_rtd_codec_dais(rtd, i, codec_dai) {
++			ret = snd_soc_dai_set_fmt(codec_dai,
++						  SND_SOC_DAIFMT_CBC_CFC |
++						  SND_SOC_DAIFMT_I2S |
++						  SND_SOC_DAIFMT_NB_NF);
++			if (ret && ret != -ENOTSUPP)
++				return dev_err_probe(rtd->dev, ret,
++						     "failed to set codec fmt\n");
++
++			ret = snd_soc_dai_set_sysclk(codec_dai, 0,
++						     MI2S_BCLK_RATE,
++						     SND_SOC_CLOCK_IN);
++			if (ret && ret != -ENOTSUPP)
++				return dev_err_probe(rtd->dev, ret,
++						     "failed to set codec sysclk\n");
++		}
++	}
++
++	return qcom_snd_sdw_startup(substream);
++}
++
+ static const struct snd_soc_ops sc8280xp_be_ops = {
+-	.startup = qcom_snd_sdw_startup,
++	.startup = sc8280xp_snd_startup,
+ 	.shutdown = qcom_snd_sdw_shutdown,
+ 	.hw_free = sc8280xp_snd_hw_free,
+ 	.prepare = sc8280xp_snd_prepare,

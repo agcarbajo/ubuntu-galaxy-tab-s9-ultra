@@ -1,0 +1,1510 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * Initial mainline device tree for the Samsung Galaxy Tab S9 Ultra Wi-Fi
+ * (SM-X910, gts9uwifi).
+ *
+ * Only hardware evidenced by the live downstream tree is enabled here.
+ * Native display support remains disabled; Samsung ABL's preserved splash
+ * framebuffer is used for the first visual milestone.
+ */
+
+/dts-v1/;
+
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/input.h>
+#include <dt-bindings/iio/qcom,spmi-vadc.h>
+#include <dt-bindings/interrupt-controller/irq.h>
+#include <dt-bindings/pinctrl/qcom,pmic-gpio.h>
+#include <dt-bindings/regulator/qcom,rpmh-regulator.h>
+#include <dt-bindings/usb/pd.h>
+#include "sm8550.dtsi"
+#include "pm8550.dtsi"
+#include "pm8550vs.dtsi"
+#include "pmk8550.dtsi"
+
+/* Samsung's ADSP/SLPI carveout is larger than the SM8550 reference value. */
+/delete-node/ &adspslpi_mem;
+
+/ {
+	model = "Samsung Galaxy Tab S9 Ultra Wi-Fi";
+	/*
+	 * The first three strings and the legacy IDs are consumed by Samsung ABL
+	 * when it selects the base DTB.  Keep the upstream compatibles as well so
+	 * Linux still identifies the actual board and SoC normally.
+	 */
+	compatible = "qcom,kalama-mtp", "qcom,kalama", "qcom,mtp",
+		     "samsung,gts9uwifi", "qcom,sm8550";
+	qcom,msm-id = <0x218 0x20000 0x207 0x20000
+		       0x207 0x10000 0x218 0x10000>;
+	qcom,board-id = <0x10008 0x03>;
+	chassis-type = "tablet";
+
+	aliases {
+		serial0 = &uart7;
+		mmc1 = &sdhc_2;
+	};
+
+	chosen {
+		stdout-path = "serial0:115200n8";
+		/*
+		 * The simple-framebuffer is intentionally gone: the native msm
+		 * DPU + DSI pipeline (below) owns the panel now.  If the panel
+		 * bring-up regresses, recover over SSH (Wi-Fi) or reflash v0.53.
+		 */
+	};
+
+	reserved-memory {
+		/*
+		 * Samsung ABL patches the /memory ranges but, without the stock
+		 * overlay, does not add the board-only protected carveouts below.
+		 * Keep them out of the buddy allocator: touching one of these ranges
+		 * can make the secure firmware reset the SoC with a fatal NoC error.
+		 */
+		kaslr_mem: kaslr@b01ff000 {
+			reg = <0x0 0xb01ff000 0x0 0x1000>;
+			no-map;
+		};
+
+		uh_heap_mem: uh-heap@b0200000 {
+			reg = <0x0 0xb0200000 0x0 0x40000>;
+			no-map;
+		};
+
+		uh_guest_mem: uh-guest@b1000000 {
+			reg = <0x0 0xb1000000 0x0 0x3a00000>;
+			no-map;
+		};
+
+		chipinfo_mem: chipinfo@81cf4000 {
+			reg = <0x0 0x81cf4000 0x0 0x1000>;
+			no-map;
+		};
+
+		sec_xbl_ramdump_mem: sec-xbl-ramdump@a7d00000 {
+			reg = <0x0 0xa7d00000 0x0 0x300000>;
+			no-map;
+		};
+
+		adspslpi_mem: adspslpi@9ea00000 {
+			reg = <0x0 0x9ea00000 0x0 0x59b4000>;
+			no-map;
+		};
+
+		llcc_lpi_mem: llcc-lpi@ff800000 {
+			reg = <0x0 0xff800000 0x0 0x600000>;
+			no-map;
+		};
+
+		/* X910 ABL expects this exact downstream node name and label. */
+		splash_region {
+			reg = <0x0 0xb8000000 0x0 0x2b00000>;
+			label = "cont_splash_region";
+			no-map;
+		};
+
+		sec_debug_pool_mem: sec-debug-pool@880100000 {
+			reg = <0x8 0x80100000 0x0 0xff000>;
+			no-map;
+		};
+
+		sec_reset_info_mem: sec-reset-info@8801ff000 {
+			reg = <0x8 0x801ff000 0x0 0x1000>;
+			no-map;
+		};
+
+		/* Shared with Samsung bootloader and recovery for /proc/last_kmsg. */
+		sec_log_buf_mem: sec-log@880200000 {
+			reg = <0x8 0x80200000 0x0 0x200000>;
+		};
+
+		sec_debug_bl_mem: sec-debug-bl@880400000 {
+			reg = <0x8 0x80400000 0x0 0x500000>;
+			no-map;
+		};
+
+		sec_pmsg_mem: sec-pmsg@880900000 {
+			reg = <0x8 0x80900000 0x0 0x200000>;
+			no-map;
+		};
+
+		google_debug_kinfo_mem: google-debug-kinfo@880b00000 {
+			reg = <0x8 0x80b00000 0x0 0x1000>;
+			no-map;
+		};
+
+		hdm_mem: hdm@880b01000 {
+			reg = <0x8 0x80b01000 0x0 0x1000>;
+			no-map;
+		};
+
+		sec_qcom_rdx_mem: sec-qcom-rdx@880c00000 {
+			reg = <0x8 0x80c00000 0x0 0xad00000>;
+			no-map;
+		};
+	};
+
+	sec-kernel-log {
+		compatible = "samsung,gts9uwifi-sec-kernel-log";
+		memory-region = <&sec_log_buf_mem>;
+	};
+
+	/* Mainline WCN7850 power sequencer input, as on the SM8550 QRD. */
+	vph_pwr: vph-pwr-regulator {
+		compatible = "regulator-fixed";
+		regulator-name = "vph_pwr";
+		regulator-min-microvolt = <3700000>;
+		regulator-max-microvolt = <3700000>;
+		regulator-always-on;
+		regulator-boot-on;
+	};
+
+	wcn7850_pmu: wcn7850-pmu {
+		compatible = "qcom,wcn7850-pmu";
+		pinctrl-names = "default";
+		pinctrl-0 = <&wlan_en>, <&bt_default>, <&pmk8550_sleep_clk>;
+
+		/* These are GPIO80/81 in the live X910 downstream tree. */
+		wlan-enable-gpios = <&tlmm 80 GPIO_ACTIVE_HIGH>;
+		bt-enable-gpios = <&tlmm 81 GPIO_ACTIVE_HIGH>;
+
+		/*
+		 * Stock cnss2 sends this exact qcom,pdc_init_table (chip_cfg@1,
+		 * device 0x1107, live X910 FDT) to the AOP through the QMP
+		 * mailbox before the first WLAN power-on.  It enables the
+		 * baseband PDC resource and programs the RF rail votes the
+		 * WCN7850 PMU handshake relies on.
+		 */
+		qcom,qmp = <&aoss_qmp>;
+		qcom,wlan-pdc-init =
+			"{class: wlan_pdc, ss: rf, res: s4e.v, upval: 916}",
+			"{class: wlan_pdc, ss: rf, res: s4e.v, dwnval: 612}",
+			"{class: wlan_pdc, ss: rf, res: s4g.v, upval: 1316}",
+			"{class: wlan_pdc, ss: rf, res: s4g.v, dwnval: 944}",
+			"{class: wlan_pdc, ss: rf, res: s6g.v, upval: 1864}",
+			"{class: wlan_pdc, ss: rf, res: s6g.v, dwnval: 1820}",
+			"{class: wlan_pdc, ss: rf, res: s2g.m, enable: 0}",
+			"{class: wlan_pdc, ss: rf, res: s2g.v, enable: 0}",
+			"{class: wlan_pdc, ss: bb, res: pdc, enable: 1}",
+			"{class: wlan_pdc, ss: bb, res: s2g.v, upval: 976}",
+			"{class: wlan_pdc, ss: bb, res: s2g.v, dwnval: 512}",
+			"{class: wlan_pdc, ss: bb, res: s5g.v, upval: 980}",
+			"{class: wlan_pdc, ss: bb, res: s5g.v, dwnval: 420}";
+
+		vdd-supply = <&vreg_s5g_1p0>;
+		vddio-supply = <&vreg_l15b_1p8>;
+		/* Stock Kiwi v2 votes PM8550VS-G L3 through its WCN PDC map. */
+		vddio1p2-supply = <&vreg_l3g_1p2>;
+		vddaon-supply = <&vreg_s2g_0p98>;
+		vdddig-supply = <&vreg_s4e_0p952>;
+		vddrfa1p2-supply = <&vreg_s4g_1p352>;
+		vddrfa1p8-supply = <&vreg_s6g_1p904>;
+
+		regulators {
+			vreg_pmu_rfa_cmn: ldo0 {
+				regulator-name = "vreg_pmu_rfa_cmn";
+			};
+
+			vreg_pmu_aon_0p59: ldo1 {
+				regulator-name = "vreg_pmu_aon_0p59";
+			};
+
+			vreg_pmu_wlcx_0p8: ldo2 {
+				regulator-name = "vreg_pmu_wlcx_0p8";
+			};
+
+			vreg_pmu_wlmx_0p85: ldo3 {
+				regulator-name = "vreg_pmu_wlmx_0p85";
+			};
+
+			vreg_pmu_btcmx_0p85: ldo4 {
+				regulator-name = "vreg_pmu_btcmx_0p85";
+			};
+
+			vreg_pmu_rfa_0p8: ldo5 {
+				regulator-name = "vreg_pmu_rfa_0p8";
+			};
+
+			vreg_pmu_rfa_1p2: ldo6 {
+				regulator-name = "vreg_pmu_rfa_1p2";
+			};
+
+			vreg_pmu_rfa_1p8: ldo7 {
+				regulator-name = "vreg_pmu_rfa_1p8";
+			};
+
+			vreg_pmu_pcie_0p9: ldo8 {
+				regulator-name = "vreg_pmu_pcie_0p9";
+			};
+
+			vreg_pmu_pcie_1p8: ldo9 {
+				regulator-name = "vreg_pmu_pcie_1p8";
+			};
+		};
+	};
+
+	/*
+	 * The four CS35L45 speaker amplifiers share one board power switch.
+	 * Samsung's stock overlay calls this a dummy regulator, but GPIO19 is
+	 * the real active-high enable and the rail is intentionally always on.
+	 */
+	speaker_vdd: regulator-speaker-vdd {
+		compatible = "regulator-fixed";
+		regulator-name = "speaker_vdd";
+		gpio = <&tlmm 19 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		regulator-always-on;
+		regulator-boot-on;
+	};
+
+	/*
+	 * EB-BX916ABY.  The design figures come from Samsung's own sec-battery
+	 * node (battery,battery_full_capacity = 9800 mAh, chg_float_voltage =
+	 * 4440 mV), not from the marketing "11200 mAh" figure.  The fuel gauge
+	 * reports state of charge itself, so these only feed the time-remaining
+	 * estimate.
+	 */
+	battery: battery {
+		compatible = "simple-battery";
+		charge-full-design-microamp-hours = <9800000>;
+		voltage-max-design-microvolt = <4440000>;
+		voltage-min-design-microvolt = <3400000>;
+	};
+
+	/*
+	 * The stock DP driver drives these two discrete AUX-path controls:
+	 * GPIO183 is active-low enable and GPIO180 follows cable orientation.
+	 * The generic mainline SBU mux maps those exact semantics onto Type-C.
+	 */
+	usb_c_sbu_mux: usb-c-sbu-mux {
+		compatible = "gpio-sbu-mux";
+		enable-gpios = <&tlmm 183 GPIO_ACTIVE_LOW>;
+		select-gpios = <&tlmm 180 GPIO_ACTIVE_HIGH>;
+		mode-switch;
+		orientation-switch;
+
+		port {
+			usb_c_sbu_mux_in: endpoint {
+				remote-endpoint = <&sm5714_sbu_out>;
+			};
+		};
+	};
+
+	gpio-keys {
+		compatible = "gpio-keys";
+		pinctrl-names = "default";
+		pinctrl-0 = <&volume_up_n>, <&hall_cover_n>;
+
+		key-volume-up {
+			label = "Volume Up";
+			linux,code = <KEY_VOLUMEUP>;
+			gpios = <&pm8550_gpios 6 GPIO_ACTIVE_LOW>;
+			debounce-interval = <15>;
+			linux,can-disable;
+			wakeup-source;
+		};
+
+		/*
+		 * Samsung's stock hall_ic node identifies the book-cover magnet
+		 * on TLMM GPIO107, active low, with a 50 ms debounce.  Report the
+		 * standard SW_LID event so logind and GNOME can blank/suspend on
+		 * close without a device-specific daemon.
+		 */
+		switch-lid {
+			label = "Book Cover";
+			linux,input-type = <EV_SW>;
+			linux,code = <SW_LID>;
+			gpios = <&tlmm 107 GPIO_ACTIVE_LOW>;
+			debounce-interval = <50>;
+			wakeup-source;
+		};
+	};
+
+	/*
+	 * Unlike the SM8550 QRD, the X910 has no WSA884x speaker path and no
+	 * WCD938x. Its four CS35L45 amplifiers consume PRIMARY_MI2S_RX over
+	 * TLMM126..129. Keep the first card deliberately small: one playback
+	 * backend plus the native VA-macro DMIC capture backend.
+	 */
+	sound {
+		compatible = "qcom,sm8550-sndcard", "qcom,sm8450-sndcard";
+		model = "Samsung-Galaxy-Tab-S9-Ultra";
+		pinctrl-names = "default";
+		pinctrl-0 = <&tdm0_clk_active>, <&tdm0_ws_active>,
+			    <&tdm0_din_active>, <&tdm0_dout_active>;
+
+		speaker-playback-dai-link {
+			link-name = "CS35L45 Speaker Playback";
+
+			cpu {
+				sound-dai = <&q6apmbedai PRIMARY_MI2S_RX>;
+			};
+
+			codec {
+				sound-dai = <&cs35l45_fl 0>, <&cs35l45_fr 0>,
+					    <&cs35l45_rl 0>, <&cs35l45_rr 0>;
+			};
+
+			platform {
+				sound-dai = <&q6apm>;
+			};
+		};
+
+		va-capture-dai-link {
+			link-name = "Internal DMIC Capture";
+
+			cpu {
+				/*
+				 * The VA macro has its own LPASS DMA lane: its
+				 * capture lands on VA_CODEC_DMA_TX_0, not on the
+				 * TX macro's TX_CODEC_DMA_TX_3 (which is where
+				 * the reference boards take their soundwire mics
+				 * from, and which this tablet does not have).
+				 * Wiring the link to the TX lane leaves the
+				 * backend with no data and arecord fails with
+				 * -EIO.
+				 */
+				sound-dai = <&q6apmbedai VA_CODEC_DMA_TX_0>;
+			};
+
+			codec {
+				sound-dai = <&lpass_vamacro 0>;
+			};
+
+			platform {
+				sound-dai = <&q6apm>;
+			};
+		};
+	};
+};
+
+/* The X910 firmware reserves a slightly larger HW-fence window than MTP. */
+&hwfence_shbuf {
+	reg = <0x0 0xe6440000 0x0 0x2dd000>;
+};
+
+/*
+ * The v0.5 video ends after the two preceding LPASS NOC providers probe and
+ * before this provider can return.  Audio is out of scope for milestone 1;
+ * keep the unsafe access quiescent until its board-specific power sequence is
+ * understood.
+ */
+&lpass_ag_noc {
+	status = "disabled";
+};
+
+&apps_rsc {
+	/* PM8550B: only the two external-SD rails needed for milestone 1. */
+	regulators-0 {
+		compatible = "qcom,pm8550-rpmh-regulators";
+		qcom,pmic-id = "b";
+
+		/*
+		 * Sensor VDD. Samsung's remoteproc-adsp node votes PM8550B L1 at
+		 * 1.8 V as sensor_vdd while the sensors protection domain runs.
+		 * Mainline qcom_q6v5_pas only manages cx/px supplies, so keep the
+		 * exact stock rail enabled until generic auxiliary-supply handling
+		 * exists in that driver. On the X910, omitting both sensor rails
+		 * correlates with the sensors PD watchdog during SSC bring-up.
+		 */
+		vreg_l1b_1p8: ldo1 {
+			regulator-name = "vreg_l1b_1p8";
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+			regulator-always-on;
+		};
+
+		/* NXP PTN3222 eUSB2 3.1 V rail, exact X910 stock voltage. */
+		vreg_l5b_3p104: ldo5 {
+			regulator-name = "vreg_l5b_3p104";
+			regulator-min-microvolt = <3104000>;
+			regulator-max-microvolt = <3104000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+			regulator-allow-set-load;
+			regulator-allowed-modes = <RPMH_REGULATOR_MODE_LPM
+						   RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l8b_1p8: ldo8 {
+			regulator-name = "vreg_l8b_1p8";
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <3000000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l9b_2p9: ldo9 {
+			regulator-name = "vreg_l9b_2p9";
+			regulator-min-microvolt = <2960000>;
+			regulator-max-microvolt = <3000000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		/*
+		 * Digital microphone bias.  Samsung wires the VA macro's
+		 * va-vdd-micb to this LDO (their pm_humu_l10, resource ldob10) at
+		 * 1.8 V; without it the driver falls back to a dummy regulator and
+		 * the DMICs stay unpowered, so capture returns silence.
+		 */
+		vreg_l10b_1p8: ldo10 {
+			regulator-name = "vreg_l10b_1p8";
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+			/*
+			 * The VA macro declares vdd-micb as a DAPM regulator
+			 * supply but never puts it in a route, so the widget is
+			 * never powered and the rail stays off even with a
+			 * capture running - the microphones then sit unpowered
+			 * and return digital silence.  Until the driver wires
+			 * that supply into the DMIC paths, keep the rail up.
+			 */
+			regulator-always-on;
+		};
+
+		/* Display panel VDD (1.2 V digital core). */
+		vreg_l11b_1p2: ldo11 {
+			regulator-name = "vreg_l11b_1p2";
+			regulator-min-microvolt = <1200000>;
+			regulator-max-microvolt = <1200000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l12b_1p8: ldo12 {
+			regulator-name = "vreg_l12b_1p8";
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		/* Display panel VCI (3.0 V analog). */
+		vreg_l13b_3p0: ldo13 {
+			regulator-name = "vreg_l13b_3p0";
+			regulator-min-microvolt = <3000000>;
+			regulator-max-microvolt = <3000000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l14b_3p2: ldo14 {
+			regulator-name = "vreg_l14b_3p2";
+			regulator-min-microvolt = <3200000>;
+			regulator-max-microvolt = <3200000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		/* NXP PTN3222 eUSB2 1.8 V rail. */
+		vreg_l15b_1p8: ldo15 {
+			regulator-name = "vreg_l15b_1p8";
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+			regulator-allow-set-load;
+			regulator-allowed-modes = <RPMH_REGULATOR_MODE_LPM
+						   RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		/*
+		 * Sensor VDDIO. The stock ADSP node requests PM8550B L16 at
+		 * 3.0 V (sensor_vddio-uV-uA = <3000000 0>); see L1 above for why
+		 * this is temporarily an always-on board rail.
+		 */
+		vreg_l16b_3p0: ldo16 {
+			regulator-name = "vreg_l16b_3p0";
+			regulator-min-microvolt = <3000000>;
+			regulator-max-microvolt = <3000000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+			regulator-always-on;
+		};
+
+		/* Internal UFS VCC (memory core). */
+		vreg_l17b_2p5: ldo17 {
+			regulator-name = "vreg_l17b_2p5";
+			regulator-min-microvolt = <2504000>;
+			regulator-max-microvolt = <2504000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+			regulator-allow-set-load;
+			regulator-allowed-modes = <RPMH_REGULATOR_MODE_LPM
+						   RPMH_REGULATOR_MODE_HPM>;
+		};
+	};
+
+	/* PM8550VS-E: rails consumed by the primary USB2 PHY. */
+	regulators-3 {
+		compatible = "qcom,pm8550vs-rpmh-regulators";
+		qcom,pmic-id = "e";
+		vdd-s4-supply = <&vph_pwr>;
+		vdd-s5-supply = <&vph_pwr>;
+
+		vreg_s4e_0p952: smps4 {
+			regulator-name = "vreg_s4e_0p952";
+			/* Stock asks 0.950 V; FTSMPS525 rounds up in 4 mV steps. */
+			regulator-min-microvolt = <952000>;
+			regulator-max-microvolt = <952000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l1e_0p88: ldo1 {
+			regulator-name = "vreg_l1e_0p88";
+			regulator-min-microvolt = <880000>;
+			regulator-max-microvolt = <880000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l3e_1p2: ldo3 {
+			regulator-name = "vreg_l3e_1p2";
+			regulator-min-microvolt = <1200000>;
+			regulator-max-microvolt = <1200000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+	};
+
+	/* PM8550VE-F: 0.88 V PLL rail for the USB3/DisplayPort combo PHY. */
+	regulators-4 {
+		compatible = "qcom,pm8550ve-rpmh-regulators";
+		qcom,pmic-id = "f";
+		vdd-l1-supply = <&vreg_s4e_0p952>;
+		vdd-l2-supply = <&vreg_s4e_0p952>;
+		vdd-l3-supply = <&vreg_s4e_0p952>;
+
+		vreg_l3f_0p88: ldo3 {
+			regulator-name = "vreg_l3f_0p88";
+			regulator-min-microvolt = <880000>;
+			regulator-max-microvolt = <912000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+	};
+
+	/* PM8550VS-G supplies the discrete WCN7850/Kiwi v2 radio PMU. */
+	regulators-5 {
+		compatible = "qcom,pm8550vs-rpmh-regulators";
+		qcom,pmic-id = "g";
+		vdd-s1-supply = <&vph_pwr>;
+		vdd-s2-supply = <&vph_pwr>;
+		vdd-s3-supply = <&vph_pwr>;
+		vdd-s4-supply = <&vph_pwr>;
+		vdd-s5-supply = <&vph_pwr>;
+		vdd-s6-supply = <&vph_pwr>;
+
+		vreg_s2g_0p98: smps2 {
+			regulator-name = "vreg_s2g_0p98";
+			/* X910 chip_cfg@1 votes exactly 0.980 V for WLAN_AON. */
+			regulator-min-microvolt = <980000>;
+			regulator-max-microvolt = <980000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_s4g_1p352: smps4 {
+			regulator-name = "vreg_s4g_1p352";
+			/* Stock asks 1.350 V; FTSMPS525 rounds up in 4 mV steps. */
+			regulator-min-microvolt = <1352000>;
+			regulator-max-microvolt = <1352000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_s5g_1p0: smps5 {
+			regulator-name = "vreg_s5g_1p0";
+			/* X910 chip_cfg@1 votes exactly 1.000 V for WLAN. */
+			regulator-min-microvolt = <1000000>;
+			regulator-max-microvolt = <1000000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_s6g_1p904: smps6 {
+			regulator-name = "vreg_s6g_1p904";
+			/* Stock asks 1.900 V; FTSMPS525 rounds up in 8 mV steps. */
+			regulator-min-microvolt = <1904000>;
+			regulator-max-microvolt = <1904000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		/*
+		 * Do not add vdd-l3-supply here.  Mainline SM8550 boards expose
+		 * PM8550VS-G LDO3 directly, and the experimental S4G parent used in
+		 * v0.20 created a fixed dependency cycle with this provider.
+		 */
+		vreg_l3g_1p2: ldo3 {
+			regulator-name = "vreg_l3g_1p2";
+			regulator-min-microvolt = <1200000>;
+			regulator-max-microvolt = <1200000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		/* Internal UFS VCCQ (controller I/O). */
+		vreg_l1g_1p2: ldo1 {
+			regulator-name = "vreg_l1g_1p2";
+			regulator-min-microvolt = <1200000>;
+			regulator-max-microvolt = <1200000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+			regulator-allow-set-load;
+			regulator-allowed-modes = <RPMH_REGULATOR_MODE_LPM
+						   RPMH_REGULATOR_MODE_HPM>;
+		};
+	};
+};
+
+&dispcc {
+	/* Needed for the native display pipeline (mdss/dpu/dsi clocks). */
+	status = "okay";
+};
+
+&pm8550_gpios {
+	volume_up_n: volume-up-n-state {
+		pins = "gpio6";
+		function = "normal";
+		power-source = <1>;
+		bias-pull-up;
+		input-enable;
+	};
+
+	sdc2_card_det_n: sdc2-card-det-state {
+		pins = "gpio12";
+		function = "normal";
+		input-enable;
+		output-disable;
+		bias-pull-up;
+		power-source = <1>; /* 1.8 V */
+	};
+};
+
+&pmk8550_gpios {
+	pmk8550_sleep_clk: sleep-clk-state {
+		pins = "gpio3";
+		function = "func1";
+		input-disable;
+		output-enable;
+		bias-disable;
+		power-source = <0>;
+	};
+};
+
+&pon_pwrkey {
+	status = "okay";
+};
+
+&pon_resin {
+	linux,code = <KEY_VOLUMEDOWN>;
+	status = "okay";
+};
+
+/* Stock X910 connects the NXP repeater reset to PM8550VS-D GPIO4. */
+&pm8550vs_d {
+	status = "okay";
+};
+
+&pm8550vs_d_gpios {
+	eusb2_reset_default: eusb2-reset-state {
+		pins = "gpio4";
+		function = "normal";
+		power-source = <1>;
+		input-enable;
+		output-enable;
+		drive-push-pull;
+		qcom,drive-strength = <PMIC_GPIO_STRENGTH_MED>;
+		bias-disable;
+	};
+};
+
+&tlmm {
+	/*
+	 * The Samsung board overlay marks GPIO36..39 as secure/reserved.  Use
+	 * the generic binding understood by mainline gpiolib so registration
+	 * does not access the TrustZone-owned TLMM registers.
+	 */
+	gpio-reserved-ranges = <36 4>;
+
+	hall_cover_n: hall-cover-n-state {
+		pins = "gpio107";
+		function = "gpio";
+		drive-strength = <2>;
+		input-enable;
+		bias-disable;
+	};
+
+	/* Panel tear-effect (TE) line routed to the MDP vsync input. */
+	sde_te: sde-te-state {
+		pins = "gpio86";
+		function = "mdp_vsync";
+		drive-strength = <2>;
+		bias-pull-down;
+	};
+
+	bt_default: bt-default-state {
+		bt-en-pins {
+			pins = "gpio81";
+			function = "gpio";
+			drive-strength = <16>;
+			bias-disable;
+		};
+	};
+
+	wlan_en: wlan-en-state {
+		pins = "gpio80";
+		function = "gpio";
+		drive-strength = <16>;
+		bias-pull-up;
+	};
+
+	cs35l45_gpio_default: cs35l45-gpio-default-state {
+		pins = "gpio14", "gpio42";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+	};
+
+	sm5714_usbpd_int: sm5714-usbpd-int-state {
+		pins = "gpio133";
+		function = "gpio";
+		drive-strength = <8>;
+		input-enable;
+		bias-disable;
+	};
+
+	sm5714_otg_det_default: sm5714-otg-det-default-state {
+		pins = "gpio89";
+		function = "gpio";
+		drive-strength = <2>;
+		output-low;
+		bias-disable;
+	};
+
+	sm5714_vbus_dischg_default: sm5714-vbus-dischg-default-state {
+		pins = "gpio175";
+		function = "gpio";
+		drive-strength = <2>;
+		output-low;
+		bias-pull-down;
+	};
+
+	tdm0_clk_active: tdm0-clk-active-state {
+		pins = "gpio126";
+		function = "i2s0_sck";
+		drive-strength = <2>;
+		bias-disable;
+		output-high;
+	};
+
+	tdm0_ws_active: tdm0-ws-active-state {
+		pins = "gpio129";
+		function = "i2s0_ws";
+		drive-strength = <2>;
+		bias-disable;
+		output-high;
+	};
+
+	tdm0_din_active: tdm0-din-active-state {
+		pins = "gpio127";
+		function = "i2s0_data0";
+		drive-strength = <2>;
+		bias-disable;
+	};
+
+	tdm0_dout_active: tdm0-dout-active-state {
+		pins = "gpio128";
+		function = "i2s0_data1";
+		drive-strength = <2>;
+		bias-disable;
+	};
+};
+
+&qupv3_id_0 {
+	status = "okay";
+};
+
+/* UART14 (WCN7850 Bluetooth) is a child of the second QUPv3 wrapper. */
+&qupv3_id_1 {
+	status = "okay";
+};
+
+/*
+ * Samsung numbers this I2C18. On mainline it is SE6 of the dedicated QUPv3
+ * I2C master hub (0x998000), and all four speaker amplifiers live here.
+ */
+&i2c_master_hub_0 {
+	status = "okay";
+};
+
+&i2c_hub_6 {
+	/*
+	 * 400 kHz, not the 1 MHz the downstream stack uses.  Under mainline the
+	 * QUPv3 i2c-master-hub runs its SEs in FIFO/PIO mode (no GPI DMA), and at
+	 * 1 MHz Fast-Mode Plus the SE accepts the M_CMD but never drives the bus
+	 * (mid-hang: bus idle, both lines high, zero interrupts) - the QUP core
+	 * clock available to PIO is not enough for FM+.  Every upstream SM8550
+	 * board that puts real devices on the i2c hub runs it at <=400 kHz
+	 * (sm8550-hdk/mtp/qrd typec muxes at default, sony-xperia-yodo at 400 kHz);
+	 * none run it at 1 MHz.  400 kHz is ample for CS35L45 register access and
+	 * DSP firmware download.
+	 */
+	clock-frequency = <400000>;
+	status = "okay";
+
+	cs35l45_rl: amplifier@30 {
+		compatible = "cirrus,cs35l45";
+		reg = <0x30>;
+		#sound-dai-cells = <1>;
+		interrupt-parent = <&tlmm>;
+		interrupts = <14 IRQ_TYPE_LEVEL_LOW>;
+		reset-gpios = <&tlmm 42 GPIO_ACTIVE_HIGH>;
+		vdd-a-supply = <&speaker_vdd>;
+		vdd-batt-supply = <&speaker_vdd>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&cs35l45_gpio_default>;
+		sound-name-prefix = "Rear Left";
+		cirrus,asp-sdout-hiz-ctrl = <3>;
+
+		cirrus,gpio-ctrl1 {
+			gpio-ctrl = <2>;
+		};
+
+		cirrus,gpio-ctrl2 {
+			gpio-ctrl = <2>;
+		};
+	};
+
+	cs35l45_fl: amplifier@31 {
+		compatible = "cirrus,cs35l45";
+		reg = <0x31>;
+		#sound-dai-cells = <1>;
+		interrupt-parent = <&tlmm>;
+		interrupts = <14 IRQ_TYPE_LEVEL_LOW>;
+		reset-gpios = <&tlmm 42 GPIO_ACTIVE_HIGH>;
+		vdd-a-supply = <&speaker_vdd>;
+		vdd-batt-supply = <&speaker_vdd>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&cs35l45_gpio_default>;
+		sound-name-prefix = "Front Left";
+		cirrus,asp-sdout-hiz-ctrl = <3>;
+
+		cirrus,gpio-ctrl1 {
+			gpio-ctrl = <2>;
+		};
+
+		cirrus,gpio-ctrl2 {
+			gpio-ctrl = <2>;
+		};
+	};
+
+	cs35l45_rr: amplifier@32 {
+		compatible = "cirrus,cs35l45";
+		reg = <0x32>;
+		#sound-dai-cells = <1>;
+		interrupt-parent = <&tlmm>;
+		interrupts = <14 IRQ_TYPE_LEVEL_LOW>;
+		reset-gpios = <&tlmm 42 GPIO_ACTIVE_HIGH>;
+		vdd-a-supply = <&speaker_vdd>;
+		vdd-batt-supply = <&speaker_vdd>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&cs35l45_gpio_default>;
+		sound-name-prefix = "Rear Right";
+		cirrus,asp-sdout-hiz-ctrl = <3>;
+
+		cirrus,gpio-ctrl1 {
+			gpio-ctrl = <2>;
+		};
+
+		cirrus,gpio-ctrl2 {
+			gpio-ctrl = <2>;
+		};
+	};
+
+	cs35l45_fr: amplifier@33 {
+		compatible = "cirrus,cs35l45";
+		reg = <0x33>;
+		#sound-dai-cells = <1>;
+		interrupt-parent = <&tlmm>;
+		interrupts = <14 IRQ_TYPE_LEVEL_LOW>;
+		reset-gpios = <&tlmm 42 GPIO_ACTIVE_HIGH>;
+		vdd-a-supply = <&speaker_vdd>;
+		vdd-batt-supply = <&speaker_vdd>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&cs35l45_gpio_default>;
+		sound-name-prefix = "Front Right";
+		cirrus,asp-sdout-hiz-ctrl = <3>;
+
+		cirrus,gpio-ctrl1 {
+			gpio-ctrl = <2>;
+		};
+
+		cirrus,gpio-ctrl2 {
+			gpio-ctrl = <2>;
+		};
+	};
+};
+
+/*
+ * Samsung's battery safety input is the external pack thermistor, not the
+ * SM5714 fuel-gauge die temperature.  The stock DT exposes it as PMK8550 ADC5
+ * Gen3 virtual channel 0x144 (PM8550 SID 1, AMUX1 with 100 kOhm pull-up).
+ */
+&pmk8550 {
+	pmk8550_vadc: adc@9000 {
+		compatible = "qcom,spmi-adc5-gen3";
+		reg = <0x9000>, <0x9100>;
+		interrupts = <0x0 0x90 0x1 IRQ_TYPE_EDGE_RISING>,
+			     <0x0 0x91 0x1 IRQ_TYPE_EDGE_RISING>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+		#io-channel-cells = <1>;
+		#thermal-sensor-cells = <1>;
+
+		channel@144 {
+			reg = <0x144>;
+			label = "battery-thermistor";
+			qcom,pre-scaling = <1 1>;
+			qcom,ratiometric;
+			qcom,hw-settle-time = <200>;
+			qcom,avg-samples = <4>;
+		};
+	};
+};
+
+/*
+ * QUP hub SE3 is the dedicated bus for the SM5440 2:1 direct-charge pump at
+ * 0x63.  This is also an SSC-visible hub: enabling the upstream controller in
+ * its default FIFO/PIO mode resets the SE and makes the complete SSC registry
+ * disappear.  Samsung drives this exact node through GPI DMA.  Match that
+ * topology so transfers are submitted as GPI TREs rather than reprogramming
+ * the shared serial engine from the AP.
+ *
+ * The SM5440 driver coordinates this pump with the SM5714 switching path and
+ * requests PPS through Linux TCPM.
+ */
+&i2c_hub_3 {
+	clock-frequency = <400000>;
+	dmas = <&gpi_dma1 0 3 QCOM_GPI_I2C>,
+	       <&gpi_dma1 1 3 QCOM_GPI_I2C>;
+	dma-names = "tx", "rx";
+	qcom,enable-gsi-dma;
+	status = "okay";
+
+	sm5440_direct: charger@63 {
+		compatible = "siliconmitus,sm5440";
+		reg = <0x63>;
+		tcpm-power-supply = <&sm5714_usbpd>;
+	};
+};
+
+/*
+ * SE8 of the same I2C master hub (0x9a0000).  The Silicon Mitus SM5714 combo
+ * PMIC answers here on three addresses: charger at 0x49, fuel gauge at 0x71 and
+ * MUIC at 0x25.  Its USB-PD block sits on the *next* SE instead (i2c_hub_9,
+ * 0x9a4000, address 0x33 - confirmed with i2cdetect).  Keep the controller
+ * enabled for the SM5714 TCPC driver, which leaves policy to Linux TCPM.
+ *
+ * Stock runs both at 400 kHz (qcom,clk-freq-out = <400000>), which is also the
+ * only speed this hub reaches in PIO mode - see the note on i2c_hub_6.
+ */
+&i2c_hub_8 {
+	clock-frequency = <400000>;
+	status = "okay";
+
+	/*
+	 * SM8550 normally reports the battery over pmic_glink/qcom_battmgr, but
+	 * that needs a charger_pd protection domain on the ADSP and Samsung's
+	 * firmware ships none - only root_pd, sensor_pd, audio_pd and the CDSP
+	 * root_pd.  The SM5714 is driven from the AP instead.
+	 */
+	sm5714_charger: charger@49 {
+		compatible = "siliconmitus,sm5714";
+		reg = <0x49>;
+		io-channels = <&pmk8550_vadc 0x144>;
+		io-channel-names = "battery-temp";
+		monitored-battery = <&battery>;
+	};
+};
+
+&i2c_hub_9 {
+	clock-frequency = <400000>;
+	status = "okay";
+
+	sm5714_usbpd: usbpd@33 {
+		compatible = "siliconmitus,sm5714-usbpd";
+		reg = <0x33>;
+		interrupts-extended = <&tlmm 133 IRQ_TYPE_LEVEL_LOW>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&sm5714_usbpd_int &sm5714_otg_det_default
+			     &sm5714_vbus_dischg_default>;
+		otg-det-gpios = <&tlmm 89 GPIO_ACTIVE_HIGH>;
+		wakeup-source;
+
+		sm5714_connector: connector {
+			compatible = "usb-c-connector";
+			power-role = "dual";
+			data-role = "dual";
+			try-power-role = "sink";
+			displayport = <&mdss_dp0>;
+
+			/*
+			 * Samsung limits the switching-charger PD path to
+			 * 15 W and 9 V. PPS direct charging through SM5440
+			 * raises the programmable APDO only after Q4 is open.
+			 */
+			op-sink-microwatt = <15000000>;
+			sink-pdos = <PDO_FIXED(5000, 3000,
+					       PDO_FIXED_DUAL_ROLE |
+					       PDO_FIXED_DATA_SWAP |
+					       PDO_FIXED_USB_COMM)
+				     PDO_FIXED(9000, 1660,
+					       PDO_FIXED_USB_COMM)>;
+			source-pdos = <PDO_FIXED(5000, 900,
+						 PDO_FIXED_DUAL_ROLE |
+						 PDO_FIXED_DATA_SWAP |
+						 PDO_FIXED_USB_COMM)>;
+
+			/*
+			 * The SM8550 QMP PHY and DPU expose a DisplayPort
+			 * source.  Register the local Type-C alternate mode so
+			 * TCPM can match the dock's 0xff01 partner mode and
+			 * negotiate pin assignment C or D.
+			 */
+			altmodes {
+				displayport {
+					svid = /bits/ 16 <0xff01>;
+					vdo = <0x00001c46>;
+				};
+			};
+
+			ports {
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				port@0 {
+					reg = <0>;
+
+					sm5714_hs_in: endpoint {
+						remote-endpoint =
+							<&usb_1_dwc3_hs>;
+					};
+				};
+
+				port@1 {
+					reg = <1>;
+
+					sm5714_ss_in: endpoint {
+						remote-endpoint =
+							<&ps5169_ss_out>;
+					};
+				};
+
+				port@2 {
+					reg = <2>;
+
+					sm5714_sbu_out: endpoint {
+						remote-endpoint =
+							<&usb_c_sbu_mux_in>;
+					};
+				};
+			};
+		};
+	};
+};
+
+/* I2C4 (touch) and I2C6 (PTN3222) are GPI-only on SM8550. */
+&gpi_dma1 {
+	status = "okay";
+};
+
+/* QUP wrapper 2 / SE12 carries the board's PS5169 combo redriver. */
+&gpi_dma2 {
+	status = "okay";
+};
+
+&i2c4 {
+	clock-frequency = <400000>;
+	status = "okay";
+
+	touchscreen@5d {
+		compatible = "goodix,gt9916";
+		reg = <0x5d>;
+		interrupts-extended = <&tlmm 25 IRQ_TYPE_LEVEL_LOW>;
+		reset-gpios = <&tlmm 24 GPIO_ACTIVE_LOW>;
+		avdd-supply = <&vreg_l14b_3p2>;
+		vddio-supply = <&vreg_l12b_1p8>;
+		touchscreen-size-x = <1848>;
+		touchscreen-size-y = <2960>;
+		touchscreen-inverted-x;
+		touchscreen-swapped-x-y;
+	};
+};
+
+&i2c6 {
+	clock-frequency = <400000>;
+	status = "okay";
+
+	eusb2_repeater: redriver@4f {
+		compatible = "nxp,ptn3222";
+		reg = <0x4f>;
+		#phy-cells = <0>;
+
+		vdd3v3-supply = <&vreg_l5b_3p104>;
+		vdd1v8-supply = <&vreg_l15b_1p8>;
+		reset-gpios = <&pm8550vs_d_gpios 4 GPIO_ACTIVE_LOW>;
+		qcom,param-override-seq = <0x20 0x06 0x21 0x07
+					   0x63 0x08 0x01 0x0a>;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&eusb2_reset_default>;
+	};
+};
+
+&i2c12 {
+	clock-frequency = <400000>;
+	status = "okay";
+
+	ps5169: redriver@28 {
+		compatible = "parade,ps5169";
+		reg = <0x28>;
+		parade,reg50 = <0x10>;
+		parade,reg51 = <0x70>;
+		parade,reg54 = <0x02>;
+		parade,reg5d = <0x40>;
+		usb-role-switch = <&usb_1>;
+		retimer-switch;
+		orientation-switch;
+
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			port@0 {
+				reg = <0>;
+
+				ps5169_ss_out: endpoint {
+					remote-endpoint = <&sm5714_ss_in>;
+				};
+			};
+
+			port@1 {
+				reg = <1>;
+
+				ps5169_ss_in: endpoint {
+					remote-endpoint =
+						<&usb_dp_qmpphy_out>;
+				};
+			};
+		};
+	};
+};
+
+&uart7 {
+	status = "okay";
+};
+
+/*
+ * The Samsung downstream hsuart0 alias and pinctrl both identify QUP SE14
+ * (0x898000) as the four-wire WCN7850 Bluetooth transport.  Power is shared
+ * with Wi-Fi through the already-enabled wcn7850_pmu sequencer; keep the
+ * upstream SM8550 QRD supply map so hci_qca can use that sequencer directly.
+ */
+&uart14 {
+	status = "okay";
+
+	bluetooth {
+		compatible = "qcom,wcn7850-bt";
+		/* Samsung GTS9U NVM: generic hmtnv20.bin is rejected (-52). */
+		firmware-name = "hmtnv20.b21";
+
+		vddrfacmn-supply = <&vreg_pmu_rfa_cmn>;
+		vddaon-supply = <&vreg_pmu_aon_0p59>;
+		vddwlcx-supply = <&vreg_pmu_wlcx_0p8>;
+		vddwlmx-supply = <&vreg_pmu_wlmx_0p85>;
+		vddrfa0p8-supply = <&vreg_pmu_rfa_0p8>;
+		vddrfa1p2-supply = <&vreg_pmu_rfa_1p2>;
+		vddrfa1p8-supply = <&vreg_pmu_rfa_1p8>;
+
+		max-speed = <3200000>;
+	};
+};
+
+&sdhc_2 {
+	cd-gpios = <&pm8550_gpios 12 GPIO_ACTIVE_LOW>;
+	pinctrl-names = "default", "sleep";
+	pinctrl-0 = <&sdc2_default &sdc2_card_det_n>;
+	pinctrl-1 = <&sdc2_sleep &sdc2_card_det_n>;
+	vmmc-supply = <&vreg_l9b_2p9>;
+	vqmmc-supply = <&vreg_l8b_1p8>;
+	bus-width = <4>;
+	no-sdio;
+	no-mmc;
+	status = "okay";
+};
+
+/* X910 downstream uses PCIe0 and GPIO94/96 for the Kiwi v2 WLAN endpoint. */
+&pcie0 {
+	wake-gpios = <&tlmm 96 GPIO_ACTIVE_HIGH>;
+	perst-gpios = <&tlmm 94 GPIO_ACTIVE_LOW>;
+	pinctrl-0 = <&pcie0_default_state>;
+	pinctrl-names = "default";
+	status = "okay";
+};
+
+/*
+ * Adreno 740 GPU.  gpucc, the GMU and the adreno SMMU are enabled by default in
+ * sm8550.dtsi; only the GPU node itself ships disabled.  The zap shader must be
+ * signed for this device's TrustZone, so point it at Samsung's stock MDT
+ * (a740_zap.mdt + a740_zap.b0N) staged under /lib/firmware/qcom.
+ */
+&gpu {
+	status = "okay";
+
+	zap-shader {
+		firmware-name = "qcom/a740_zap.mdt";
+	};
+};
+
+&pcieport0 {
+	wifi@0 {
+		compatible = "pci17cb,1107";
+		reg = <0x10000 0x0 0x0 0x0 0x0>;
+		vddrfacmn-supply = <&vreg_pmu_rfa_cmn>;
+		vddaon-supply = <&vreg_pmu_aon_0p59>;
+		vddwlcx-supply = <&vreg_pmu_wlcx_0p8>;
+		vddwlmx-supply = <&vreg_pmu_wlmx_0p85>;
+		vddrfa0p8-supply = <&vreg_pmu_rfa_0p8>;
+		vddrfa1p2-supply = <&vreg_pmu_rfa_1p2>;
+		vddrfa1p8-supply = <&vreg_pmu_rfa_1p8>;
+		vddpcie0p9-supply = <&vreg_pmu_pcie_0p9>;
+		vddpcie1p8-supply = <&vreg_pmu_pcie_1p8>;
+	};
+};
+
+&pcie0_phy {
+	vdda-phy-supply = <&vreg_l1e_0p88>;
+	vdda-pll-supply = <&vreg_l3e_1p2>;
+	status = "okay";
+};
+
+&sleep_clk {
+	clock-frequency = <32764>;
+};
+
+/* X910 uses a PTN3222-compatible NXP eUSB2 repeater on I2C6. */
+&usb_1_hsphy {
+	vdd-supply = <&vreg_l1e_0p88>;
+	vdda12-supply = <&vreg_l3e_1p2>;
+	phys = <&eusb2_repeater>;
+	status = "okay";
+};
+
+&usb_1 {
+	status = "okay";
+};
+
+&usb_1_dwc3_hs {
+	remote-endpoint = <&sm5714_hs_in>;
+};
+
+&usb_dp_qmpphy {
+	vdda-phy-supply = <&vreg_l3e_1p2>;
+	vdda-pll-supply = <&vreg_l3f_0p88>;
+	status = "okay";
+};
+
+&usb_dp_qmpphy_out {
+	remote-endpoint = <&ps5169_ss_in>;
+};
+
+&mdss_dp0 {
+	/*
+	 * The ANA38407 needs one platform suspend/resume after a cold boot.
+	 * Activating the external DPU encoder before that cycle makes the
+	 * platform suspend reset the board.  Keep Type-C negotiation and USB
+	 * host mode alive, but replay its out-of-band HPD after the recovery.
+	 */
+	qcom,defer-hpd-until-first-resume;
+	status = "okay";
+};
+
+&xo_board {
+	clock-frequency = <76800000>;
+};
+
+/* ANA38407 AMSA46AS02 native display pipeline. */
+
+/ {
+	/*
+	 * AMOLED ELVDD (~5.5 V) behind a GPIO load switch (tlmm 202,
+	 * enable-active-high); the stock DTS models this as display_panel_avdd.
+	 */
+	display_avdd: regulator-display-avdd {
+		compatible = "regulator-fixed";
+		regulator-name = "display_panel_avdd";
+		regulator-min-microvolt = <5500000>;
+		regulator-max-microvolt = <5500000>;
+		gpio = <&tlmm 202 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		regulator-boot-on;
+	};
+};
+
+&mdss {
+	status = "okay";
+};
+
+&mdss_dsi0 {
+	vdda-supply = <&vreg_l3e_1p2>;
+	status = "okay";
+
+	panel@0 {
+		compatible = "samsung,ana38407-amsa46as02";
+		reg = <0>;
+
+		vddio-supply = <&vreg_l12b_1p8>;
+		vdd-supply = <&vreg_l11b_1p2>;
+		vci-supply = <&vreg_l13b_3p0>;
+		avdd-supply = <&display_avdd>;
+
+		reset-gpios = <&tlmm 125 GPIO_ACTIVE_HIGH>;
+		te-gpios = <&tlmm 86 GPIO_ACTIVE_HIGH>;
+
+		pinctrl-0 = <&sde_te>;
+		pinctrl-names = "default";
+
+		port {
+			panel0_in: endpoint {
+				remote-endpoint = <&mdss_dsi0_out>;
+			};
+		};
+	};
+};
+
+&mdss_dsi0_out {
+	data-lanes = <0 1 2 3>;
+	remote-endpoint = <&panel0_in>;
+};
+
+&mdss_dsi0_phy {
+	vdds-supply = <&vreg_l1e_0p88>;
+	status = "okay";
+};
+
+/*
+ * Internal UFS.  The rootfs boots from the microSD; this only exists so pmOS
+ * can reach the on-device boot partition and flash new builds over SSH without
+ * a TWRP round-trip.  A UFS probe failure does not affect the SD boot.
+ */
+&ufs_mem_hc {
+	reset-gpios = <&tlmm 210 GPIO_ACTIVE_LOW>;
+	vcc-supply = <&vreg_l17b_2p5>;
+	vcc-max-microamp = <1300000>;
+	vccq-supply = <&vreg_l1g_1p2>;
+	vccq-max-microamp = <1200000>;
+	vdd-hba-supply = <&vreg_l3g_1p2>;
+	status = "okay";
+};
+
+&ufs_mem_phy {
+	vdda-phy-supply = <&vreg_l1e_0p88>;
+	vdda-pll-supply = <&vreg_l3e_1p2>;
+	status = "okay";
+};
+
+/*
+ * ADSP (audio DSP) — step 1 of internal audio.  Uses Samsung's own signed
+ * firmware (adsp.mdt + adsp_dtb.mdt + segments, extracted from apnhlos) because
+ * the reference qcom/sm8550/adsp.mbn is Qualcomm-signed and rejected by Samsung
+ * secure boot.  The sm8550-adsp-pas driver has dtb_pas_id set, so the second
+ * firmware-name entry (index 1) is mandatory — without it request_firmware for
+ * adsp_dtb.mdt fails and the ADSP never boots.  Both paths carry the qcom/sm8550
+ * prefix so the loader looks under /usr/lib/firmware/qcom/sm8550/.
+ * The ADSP is not on the boot path (rootfs is on the microSD), so a probe
+ * failure does not break booting.  q6/soundwire/codecs/sound come later.
+ */
+&lpass_tlmm {
+	dmic45_default: dmic45-default-state {
+		clk-pins {
+			pins = "gpio12";
+			function = "dmic3_clk";
+			drive-strength = <8>;
+			output-high;
+		};
+
+		data-pins {
+			pins = "gpio13";
+			function = "dmic3_data";
+			drive-strength = <8>;
+			input-enable;
+		};
+	};
+
+	dmic67_default: dmic67-default-state {
+		clk-pins {
+			pins = "gpio17";
+			function = "dmic4_clk";
+			drive-strength = <8>;
+			output-high;
+		};
+
+		data-pins {
+			pins = "gpio18";
+			function = "dmic4_data";
+			drive-strength = <8>;
+			input-enable;
+		};
+	};
+};
+
+&lpass_vamacro {
+	pinctrl-names = "default";
+	pinctrl-0 = <&dmic01_default>, <&dmic23_default>,
+		    <&dmic45_default>, <&dmic67_default>;
+	/*
+	 * Without this the driver logs "qcom,dmic-sample-rate dt entry missing"
+	 * and never derives the DMIC clock divider, so the decimators run with
+	 * no clock and capture returns pure silence.  4.8 MHz is what every
+	 * other mainline board with VA-macro DMICs uses and divides cleanly out
+	 * of the VA macro's 19.2 MHz mclk.
+	 */
+	qcom,dmic-sample-rate = <4800000>;
+	/* See vreg_l10b_1p8: the DMIC bias rail Samsung uses for va-vdd-micb. */
+	vdd-micb-supply = <&vreg_l10b_1p8>;
+	status = "okay";
+};
+
+&remoteproc_adsp {
+	firmware-name = "qcom/sm8550/adsp.mdt",
+			"qcom/sm8550/adsp_dtb.mdt";
+	/*
+	 * SSC needs the sensor-hub SE3/SE4 pins muxed.  SE4 remains disabled on
+	 * the AP side, so remoteproc owns that pinctrl state.  SE3 is now enabled
+	 * in GPI-DMA mode for the SM5440 and therefore owns GPIO22/23 itself;
+	 * listing it here as well makes pinctrl reject the ADSP probe with
+	 * "pin GPIO_22 already requested by 98c000.i2c".
+	 */
+	pinctrl-names = "default";
+	pinctrl-0 = <&hub_i2c4_data_clk>;
+	/*
+	 * Bring-up: drop the LPASS interconnect path.  The upstream node votes
+	 * bandwidth over <&lpass_lpicx_noc MASTER_LPASS_PROC ... &mc_virt
+	 * SLAVE_EBI1 ...>, but on this tree of_icc_get for that path never
+	 * resolves (the LPASS sub-graph does not connect to mc_virt in the
+	 * registered icc graph; lpass_ag_noc@7e40000 is disabled upstream), so
+	 * the driver stays in -EPROBE_DEFER and never reaches firmware load.
+	 * qcom_q6v5_init() treats a NULL path as valid (devm_of_icc_get returns
+	 * NULL when the property is absent, and icc_set_bw(NULL,...) is a no-op),
+	 * so deleting it lets the ADSP actually attempt PAS auth/boot.  Restore a
+	 * real path once the LPASS interconnect graph is fixed.
+	 */
+	/delete-property/ interconnects;
+	status = "okay";
+};
+
+/*
+ * Speaker I2C bus drive strength.  The four CS35L45 amplifiers sit on the QUPv3
+ * I2C master hub SE6 (998000.i2c, Samsung's I2C18) which this board runs at
+ * 1 MHz, i.e. Fast-Mode Plus.  Mainline's generic hub_i2c6_data_clk state asks
+ * for the weakest TLMM setting, drive-strength = <2>; Samsung's own
+ * qupv3_hub_i2c6_{sda,scl}_active states use <8> for the same two pins with the
+ * same pull-up and the same mux (their per-line i2chub0_se6_l0/l1 functions are
+ * mainline's single i2chub0_se6, func1 on gpio8 and gpio9).
+ *
+ * With 2 mA the edges cannot meet FM+ timing against four amplifier loads: the
+ * GENI controller never completes the first transfer and returns -110 after
+ * ~1.0 s, which surfaces as "Timeout waiting for OTP boot" even though the rail
+ * (tlmm19) is high and the shared reset (tlmm42) is verifiably released - a
+ * gpio/i2c ftrace shows gpio 578 going 0 -> 1 and then a single i2c_write whose
+ * i2c_result is ret=-110.  Match Samsung's drive strength; nothing else in the
+ * bus configuration differs from stock.
+ */
+&hub_i2c6_data_clk {
+	drive-strength = <8>;
+};
