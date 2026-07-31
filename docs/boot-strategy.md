@@ -94,6 +94,55 @@ not permitted»: hay que sincronizar siempre los dos módulos junto al kernel.
   firmados de forma aislada. Un símbolo crítico que quede en `=m` normalmente
   hace que el subsistema no aparezca en absoluto.
 
+## Procedimiento exacto de instalación
+
+Los pasos que ejecuta la usuaria. Ninguna herramienta del proyecto los hace por
+ella.
+
+### Antes de empezar
+
+1. Comprobar que los hashes del `MANIFEST-v<versión>.txt` coinciden con los
+   ficheros descargados.
+2. Tener a mano la vía de vuelta: el ZIP y la imagen de postmarketOS v1.71 con
+   su `MANIFEST-v1.71-rollback.txt`.
+3. Confirmar **qué microSD** se va a sobrescribir. Se borra por completo.
+
+### Paso 1 — escribir la microSD
+
+Con la tarjeta en el lector del PC, identificada sin ambigüedad:
+
+```bash
+xz -dc ubuntu-24.04-gts9uwifi-v<versión>-sd.img.xz > ubuntu-sd.img
+sudo sgdisk --zap-all /dev/<tarjeta>
+sudo dd if=ubuntu-sd.img of=/dev/<tarjeta> bs=4M status=progress conv=fsync
+```
+
+Verificar lo leído de vuelta antes de sacar la tarjeta, comparando con
+`uncompressed_sd_image_sha256` del manifiesto:
+
+```bash
+sudo dd if=/dev/<tarjeta> bs=4M count=<bloques-de-la-imagen> | sha256sum
+```
+
+### Paso 2 — flashear el ZIP desde TWRP
+
+1. Copiar el ZIP a `/sdcard` o a un USB.
+2. Arrancar en TWRP.
+3. `Install` → seleccionar el ZIP.
+4. Leer la salida: el instalador aborta si el dispositivo no es un SM-X910, si
+   el tamaño de alguna partición no cuadra, si `vbmeta` no tiene AVB flags 2 o
+   si la microSD no lleva una raíz Ubuntu etiquetada `UBTS9U_ROOT`.
+5. El ZIP **no reinicia**. Reiniciar a mano cuando termine.
+
+### Si algo va mal
+
+El ZIP no formatea, no borra y no reinicia, así que un fallo a mitad deja el
+dispositivo en TWRP, que sigue siendo accesible. Desde ahí:
+
+- reintentar el flasheo, o
+- volver a postmarketOS con los dos pasos equivalentes, o
+- entrar en Download Mode y restaurar el firmware oficial con Odin.
+
 ## Recuperación
 
 Por orden:
