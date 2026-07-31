@@ -1,0 +1,199 @@
+#!/bin/bash
+# Statically validate a generated Android v4 bundle and its TWRP ZIP.
+#
+# Read-only by construction: it never opens a block device, never writes to a
+# partition and never invokes fastboot, adb or TWRP.  Run it before asking
+# anyone to flash anything.
+set -uo pipefail
+
+repo=$(cd "$(dirname "$0")/.." && pwd)
+base=${UBUNTU_WORKDIR:-/root/ubuntu-gts9u}
+bundle=${BUNDLE_OUT_DIR:-$base/out/bundle}
+zip=${1:-}
+kernel_out=${KERNEL_OUT_DIR:-$base/out/kernel-gts9uwifi}
+
+failures=0
+pass() { printf 'PASS  %s\n' "$1"; }
+fail() { printf 'FAIL  %s\n' "$1"; failures=$((failures + 1)); }
+info() { printf 'info  %s\n' "$1"; }
+
+check_size() {
+	local name=$1 expected=$2 actual
+	actual=$(stat -c %s "$bundle/$name" 2>/dev/null || echo 0)
+	if [ "$actual" -eq "$expected" ]; then
+		pass "$name is exactly $expected bytes"
+	else
+		fail "$name is $actual bytes, expected $expected"
+	fi
+}
+
+echo '=== partition-sized images ==='
+check_size boot.img 100663296
+check_size init_boot.img 8388608
+check_size vendor_boot.img 100663296
+check_size dtbo.img 16777216
+check_size vbmeta.img 131072
+
+echo
+echo '=== boot.img: kernel plus appended DTB ==='
+if head -c 8 "$bundle/boot.img" 2>/dev/null | grep -q ANDROID; then
+	pass 'boot.img carries the Android boot magic'
+else
+	fail 'boot.img does not start with ANDROID!'
+fi
+# ABL only takes the appended-DTB fallback when it finds an FDT after the gzip
+# payload.  Verify the DTB we built is present inside boot.img.
+if [ -f "$kernel_out/sm8550-samsung-gts9uwifi.dtb" ]; then
+	if grep -qc "$(head -c 4 "$kernel_out/sm8550-samsung-gts9uwifi.dtb" | \
+		od -An -tx1 | tr -d ' \n')" /dev/null 2>/dev/null; then :; fi
+	if python3 - "$bundle/boot.img" "$kernel_out/sm8550-samsung-gts9uwifi.dtb" <<'PY'
+import sys, pathlib
+boot = pathlib.Path(sys.argv[1]).read_bytes()
+dtb = pathlib.Path(sys.argv[2]).read_bytes()
+sys.exit(0 if dtb in boot else 1)
+PY
+	then
+		pass 'the built DTB is appended inside boot.img'
+	else
+		fail 'boot.img does not contain the built DTB'
+	fi
+fi
+
+echo
+echo '=== init_boot.img: LZ4 legacy ramdisk ==='
+if python3 - "$bundle/init_boot.img" <<'PY'
+import sys, pathlib
+data = pathlib.Path(sys.argv[1]).read_bytes()
+sys.exit(0 if b"\x02\x21\x4c\x18" in data[:65536] else 1)
+PY
+then
+	pass 'init_boot carries a legacy LZ4 stream'
+else
+	fail 'init_boot ramdisk is not LZ4 legacy; Linux will reject the initrd'
+fi
+
+echo
+echo '=== dtbo.img: deliberately not an Android DT table ==='
+if head -c 4 "$bundle/dtbo.img" 2>/dev/null | \
+	od -An -tx1 | tr -d ' \n' | grep -q '^d7b7ab1e$'; then
+	fail 'dtbo.img is a DT table; ABL will take the ufdt path and reject the DTB'
+else
+	pass 'dtbo.img is not a DT table, so ABL uses the appended-DTB fallback'
+fi
+
+echo
+echo '=== vbmeta.img: AVB flags 2 ==='
+flags=$(dd if="$bundle/vbmeta.img" bs=1 skip=120 count=4 2>/dev/null | \
+	od -An -tx1 | tr -d ' \n')
+if [ "$flags" = 00000002 ]; then
+	pass 'vbmeta has verification and verity disabled (flags=2)'
+else
+	fail "vbmeta flags are $flags, expected 00000002"
+fi
+
+echo
+echo '=== vendor_boot.img: DTB, cmdline and bootconfig ==='
+python3 - "$bundle/vendor_boot.img" "$repo/configs/vendor_boot/cmdline.txt" \
+	"$repo/configs/vendor_boot/bootconfig.txt" \
+	"$kernel_out/sm8550-samsung-gts9uwifi.dtb" <<'PY'
+import hashlib, pathlib, struct, sys
+
+img, cmdline_src, bootconfig_src, dtb_src = (pathlib.Path(p) for p in sys.argv[1:5])
+data = img.read_bytes()
+if data[:8] != b"VNDRBOOT":
+    print("FAIL  vendor_boot magic is missing")
+    sys.exit(1)
+hdrv, pagesize, _k, _r, ramdisk_size = struct.unpack_from("<IIIII", data, 8)
+cmdline = data[28:28 + 2048].split(b"\0", 1)[0].decode()
+off = 28 + 2048 + 4 + 16
+header_size, dtb_size = struct.unpack_from("<II", data, off)
+off += 8 + 8
+table_size, _n, _e, bootconfig_size = struct.unpack_from("<IIII", data, off)
+
+def rnd(x):
+    return (x + pagesize - 1) // pagesize * pagesize
+
+p = rnd(header_size) + rnd(ramdisk_size)
+dtb = data[p:p + dtb_size]
+p += rnd(dtb_size) + rnd(table_size)
+bootconfig = data[p:p + bootconfig_size].split(b"\0", 1)[0].decode()
+
+ok = True
+print(f"info  header version {hdrv}, page size {pagesize}")
+
+want_cmdline = " ".join(cmdline_src.read_text().split())
+if cmdline.strip() == want_cmdline:
+    print("PASS  vendor cmdline matches configs/vendor_boot/cmdline.txt")
+else:
+    print("FAIL  vendor cmdline differs from the repository source")
+    ok = False
+
+for token in ("rootwait", "msm.separate_gpu_kms=1"):
+    if token in cmdline:
+        print(f"PASS  cmdline keeps {token}")
+    else:
+        print(f"FAIL  cmdline is missing {token}")
+        ok = False
+
+if bootconfig.strip() == bootconfig_src.read_text().strip():
+    print("PASS  bootconfig matches configs/vendor_boot/bootconfig.txt")
+else:
+    print("FAIL  bootconfig differs from the repository source")
+    ok = False
+
+if dtb_src.is_file():
+    if hashlib.sha256(dtb).hexdigest() == hashlib.sha256(dtb_src.read_bytes()).hexdigest():
+        print("PASS  the packed DTB is the one we built")
+    else:
+        print("FAIL  the packed DTB differs from the built DTB")
+        ok = False
+
+# ABL's ufdt fork needs /__symbols__ in this DTB.
+if b"__symbols__" in dtb:
+    print("PASS  the DTB exports /__symbols__")
+else:
+    print("FAIL  the DTB has no /__symbols__; ABL will reject it")
+    ok = False
+
+sys.exit(0 if ok else 1)
+PY
+[ $? -eq 0 ] || failures=$((failures + 1))
+
+if [ -n "$zip" ] && [ -f "$zip" ]; then
+	echo
+	echo '=== TWRP ZIP ==='
+	if unzip -t "$zip" >/dev/null 2>&1; then
+		pass 'ZIP CRCs are valid'
+	else
+		fail 'ZIP failed its CRC check'
+	fi
+	for member in boot.img init_boot.img vendor_boot.img dtbo.img vbmeta.img \
+		META-INF/com/google/android/update-binary SHA256SUMS; do
+		if unzip -l "$zip" "$member" >/dev/null 2>&1; then
+			pass "ZIP contains $member"
+		else
+			fail "ZIP is missing $member"
+		fi
+	done
+	if unzip -p "$zip" META-INF/com/google/android/update-binary | \
+		grep -q 'never formats, wipes or reboots'; then
+		pass 'the packaged installer is the non-destructive one'
+	else
+		fail 'the packaged installer is not the expected one'
+	fi
+	if unzip -p "$zip" META-INF/com/google/android/update-binary | \
+		grep -qE 'super|userdata|/dev/block/by-name/(pit|efs|persist|modem)'; then
+		fail 'the installer references a partition it must never write'
+	else
+		pass 'the installer never references super, userdata, PIT, EFS or modem'
+	fi
+	info "ZIP SHA-256: $(sha256sum "$zip" | cut -d' ' -f1)"
+fi
+
+echo
+if [ "$failures" -eq 0 ]; then
+	echo 'All static checks passed. Nothing was written to any device.'
+	exit 0
+fi
+echo "$failures check(s) failed. Do not flash this bundle."
+exit 1

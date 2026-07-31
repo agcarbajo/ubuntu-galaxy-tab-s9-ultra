@@ -30,6 +30,22 @@ copy() {
 copy "$kpkg/sm8550-samsung-gts9uwifi.dts" kernel/dts/sm8550-samsung-gts9uwifi.dts
 copy "$kpkg/config-gts9uwifi.fragment"    kernel/config/config-gts9uwifi.fragment
 
+# The device fragment is applied on top of the generic postmarketOS aarch64
+# mainline config.  That base lives in the upstream pmaports checkout rather
+# than in the port repository, so vendor it here to keep this build
+# self-contained.
+pmaports_checkout=${PMAPORTS_CHECKOUT:-/root/pmos-gts9u/pmaports}
+base_config=$pmaports_checkout/device/main/linux-postmarketos-mainline/config-mainline.aarch64
+if [ -f "$base_config" ]; then
+	copy "$base_config" kernel/config/config-mainline.aarch64
+elif [ -f "$here/kernel/config/config-mainline.aarch64" ]; then
+	echo 'keeping the already vendored config-mainline.aarch64'
+else
+	echo "missing base config: $base_config" >&2
+	echo 'set PMAPORTS_CHECKOUT to an upstream pmaports checkout' >&2
+	exit 1
+fi
+
 for driver in panel-samsung-ana38407.c ps5169.c sm5440_direct.c \
 	sm5714_battery.c sm5714_usbpd.c; do
 	copy "$kpkg/$driver" "kernel/drivers/$driver"

@@ -1,0 +1,224 @@
+#!/sbin/sh
+# Boot bundle installer for the SM-X910 only, Ubuntu variant.
+#
+# Derived from the postmarketOS gts9uwifi installer (MIT).  Differences: the
+# microSD rootfs is located by filesystem label instead of a hardcoded device
+# number, it must identify as Ubuntu, and systemd units are enabled from a
+# packaged manifest rather than one hardcoded service.
+#
+# It writes boot, init_boot, vendor_boot and dtbo.  It writes vbmeta only when
+# the recovery kernel exposes it read-write; otherwise it requires AVB flags 2
+# and preserves the existing vbmeta.  It never writes super, userdata,
+# recovery, bootloader, PIT, EFS or Samsung firmware partitions, and it never
+# formats, wipes or reboots.
+
+OUTFD=$2
+ZIPFILE=$3
+ROOTFS_MOUNTED=0
+ROOTFS_MOUNT=/tmp/ubuntu-root
+ROOTFS_LABEL=UBTS9U_ROOT
+
+ui_print() {
+    echo "ui_print $1" >> /proc/self/fd/$OUTFD
+    echo "ui_print" >> /proc/self/fd/$OUTFD
+}
+
+abort() {
+    if [ "$ROOTFS_MOUNTED" -eq 1 ]; then
+        sync
+        umount "$ROOTFS_MOUNT" >/dev/null 2>&1 || true
+        ROOTFS_MOUNTED=0
+    fi
+    ui_print "ERROR: $1"
+    ui_print "Installation aborted. Reboot to recovery, not system."
+    exit 1
+}
+
+BUNDLE_LABEL="$(unzip -p "$ZIPFILE" BUNDLE-LABEL 2>/dev/null)"
+[ -n "$BUNDLE_LABEL" ] || BUNDLE_LABEL="unnamed SM-X910 boot bundle"
+ui_print "---------------------------------------"
+ui_print " $BUNDLE_LABEL"
+ui_print "---------------------------------------"
+
+DEVICE_CODENAME="$(getprop ro.product.device)"
+EM_MODEL="$(getprop ro.boot.em.model)"
+BOOTLOADER="$(getprop ro.bootloader)"
+
+case "$DEVICE_CODENAME" in
+    gts9u|gts9uwifi) ;;
+    *) abort "Expected gts9u/gts9uwifi; got '$DEVICE_CODENAME'" ;;
+esac
+
+if [ -n "$EM_MODEL" ] && [ "$EM_MODEL" != "SM-X910" ]; then
+    abort "Expected SM-X910; got '$EM_MODEL'"
+fi
+if [ -z "$EM_MODEL" ]; then
+    case "$BOOTLOADER" in
+        X910*) ui_print "em.model empty; X910 bootloader accepted" ;;
+        *) abort "Cannot positively identify SM-X910" ;;
+    esac
+fi
+
+BB=/dev/block/by-name
+SLOT="$(getprop ro.boot.slot_suffix)"
+
+resolve_part() {
+    if [ -n "$SLOT" ] && [ -e "$BB/$1$SLOT" ]; then
+        echo "$BB/$1$SLOT"
+    elif [ -e "$BB/$1" ]; then
+        echo "$BB/$1"
+    else
+        return 1
+    fi
+}
+
+for part in boot init_boot vendor_boot dtbo vbmeta; do
+    resolve_part "$part" >/dev/null || abort "Missing partition $part"
+done
+
+blkdev_size() { blockdev --getsize64 "$1" 2>/dev/null || echo 0; }
+[ "$(blkdev_size "$(resolve_part boot)")" -eq 100663296 ] || abort "boot size mismatch"
+[ "$(blkdev_size "$(resolve_part init_boot)")" -eq 8388608 ] || abort "init_boot size mismatch"
+[ "$(blkdev_size "$(resolve_part vendor_boot)")" -eq 100663296 ] || abort "vendor_boot size mismatch"
+[ "$(blkdev_size "$(resolve_part dtbo)")" -eq 16777216 ] || abort "dtbo size mismatch"
+[ "$(blkdev_size "$(resolve_part vbmeta)")" -eq 131072 ] || abort "vbmeta size mismatch"
+
+for file in boot.img init_boot.img vendor_boot.img dtbo.img vbmeta.img; do
+    unzip -l "$ZIPFILE" "$file" >/dev/null 2>&1 || abort "ZIP is missing $file"
+done
+
+find_rootfs() {
+    # Never hardcode mmcblk1p2: microSD and UFS enumeration order is not
+    # guaranteed, and a wrong guess would write an overlay onto the wrong card.
+    dev="$(blkid -L "$ROOTFS_LABEL" 2>/dev/null)"
+    if [ -n "$dev" ] && [ -b "$dev" ]; then
+        echo "$dev"
+        return 0
+    fi
+    for candidate in /dev/block/mmcblk*p*; do
+        [ -b "$candidate" ] || continue
+        if blkid "$candidate" 2>/dev/null | grep -q "LABEL=\"$ROOTFS_LABEL\""; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+HAS_ROOTFS_OVERLAY=0
+if unzip -l "$ZIPFILE" ROOTFS-OVERLAY-SHA256SUMS >/dev/null 2>&1; then
+    HAS_ROOTFS_OVERLAY=1
+    ROOTFS_DEV="$(find_rootfs)" || \
+        abort "no microSD partition labelled $ROOTFS_LABEL was found"
+    ui_print "Found the Ubuntu microSD rootfs on $ROOTFS_DEV."
+    mkdir -p "$ROOTFS_MOUNT" || abort "cannot create microSD mount point"
+    EXISTING_MOUNT="$(grep "^$ROOTFS_DEV " /proc/mounts 2>/dev/null | head -n 1 | cut -d' ' -f2)"
+    if [ -n "$EXISTING_MOUNT" ]; then
+        ui_print "Unmounting stale microSD mount at $EXISTING_MOUNT."
+        umount "$EXISTING_MOUNT" || abort "cannot unmount stale microSD mount"
+    fi
+    if grep -q " $ROOTFS_MOUNT " /proc/mounts 2>/dev/null; then
+        umount "$ROOTFS_MOUNT" || abort "cannot clear stale rootfs mount point"
+    fi
+    mount -t ext4 -o rw "$ROOTFS_DEV" "$ROOTFS_MOUNT" || \
+        abort "cannot mount the Ubuntu microSD rootfs read-write"
+    ROOTFS_MOUNTED=1
+    [ -f "$ROOTFS_MOUNT/etc/os-release" ] || abort "microSD rootfs has no /etc/os-release"
+    grep -q '^ID=ubuntu$' "$ROOTFS_MOUNT/etc/os-release" || \
+        grep -q '^ID="ubuntu"$' "$ROOTFS_MOUNT/etc/os-release" || \
+        abort "microSD rootfs is not Ubuntu"
+    ui_print "Validated the Ubuntu microSD rootfs overlay target."
+fi
+
+VBMETA_TARGET="$(resolve_part vbmeta)"
+VBMETA_READ_ONLY="$(blockdev --getro "$VBMETA_TARGET" 2>/dev/null || echo 1)"
+SKIP_VBMETA=0
+if [ "$VBMETA_READ_ONLY" = "1" ]; then
+    VBMETA_FLAGS="$(dd if="$VBMETA_TARGET" bs=1 skip=120 count=4 2>/dev/null | od -An -tx1 | tr -d ' \n')"
+    [ "$VBMETA_FLAGS" = "00000002" ] || \
+        abort "vbmeta is read-only and does not have AVB flags 2"
+    SKIP_VBMETA=1
+    ui_print "vbmeta is read-only but already has AVB flags 2; preserving it."
+fi
+
+ui_print "Planned writes: boot, init_boot, vendor_boot and dtbo."
+[ "$SKIP_VBMETA" -eq 1 ] || ui_print "vbmeta is writable and will also be updated."
+if [ "$HAS_ROOTFS_OVERLAY" -eq 1 ]; then
+    ui_print "Kernel modules, configuration and firmware will be updated"
+    ui_print "on the Ubuntu microSD rootfs."
+else
+    ui_print "No filesystem or user-data partition will be touched."
+fi
+
+for part in boot init_boot vendor_boot dtbo; do
+    target="$(resolve_part "$part")" || abort "partition disappeared: $part"
+    ui_print "Writing $part..."
+    unzip -p "$ZIPFILE" "$part.img" | \
+        dd of="$target" bs=4M || abort "failed to write $part"
+done
+
+if [ "$SKIP_VBMETA" -eq 0 ]; then
+    ui_print "Writing vbmeta..."
+    unzip -p "$ZIPFILE" vbmeta.img | \
+        dd of="$VBMETA_TARGET" bs=4M || abort "failed to write vbmeta"
+else
+    ui_print "Keeping the existing read-only vbmeta."
+fi
+
+if [ "$HAS_ROOTFS_OVERLAY" -eq 1 ]; then
+    ui_print "Installing the versioned microSD rootfs overlay..."
+    # The ZIP's own POSIX bits are not applied by `unzip -p`, so the manifest
+    # carries the mode explicitly and it is set after extraction.
+    unzip -p "$ZIPFILE" ROOTFS-OVERLAY-SHA256SUMS | \
+    while read expected mode relative; do
+        [ -n "$expected" ] || continue
+        case "$mode" in
+            0644|0755) ;;
+            *) abort "unsafe rootfs overlay mode: $mode" ;;
+        esac
+        case "$relative" in
+            /*|../*|*/../*) abort "unsafe rootfs overlay path: $relative" ;;
+        esac
+        target="$ROOTFS_MOUNT/$relative"
+        mkdir -p "${target%/*}" || abort "cannot create directory for $relative"
+        chmod 0755 "${target%/*}" || abort "cannot secure directory for $relative"
+        unzip -p "$ZIPFILE" "rootfs-overlay/$relative" > "$target" || \
+            abort "cannot extract rootfs overlay file $relative"
+        chmod "$mode" "$target" || abort "cannot set mode on $relative"
+        actual="$(sha256sum "$target" | cut -d' ' -f1)"
+        [ "$actual" = "$expected" ] || abort "rootfs overlay hash mismatch: $relative"
+    done
+    [ "$?" -eq 0 ] || abort "rootfs overlay installation failed"
+
+    # systemd ignores a regular file inside a .wants directory: activation has
+    # to be a real symlink, so it is created here from a packaged manifest.
+    if unzip -l "$ZIPFILE" ROOTFS-OVERLAY-ENABLE >/dev/null 2>&1; then
+        unzip -p "$ZIPFILE" ROOTFS-OVERLAY-ENABLE | \
+        while read target_unit unit; do
+            [ -n "$unit" ] || continue
+            case "$target_unit$unit" in
+                */*|*..*) abort "unsafe unit activation: $target_unit $unit" ;;
+            esac
+            unit_path="$ROOTFS_MOUNT/usr/lib/systemd/system/$unit"
+            [ -f "$unit_path" ] || abort "unit missing from the overlay: $unit"
+            wants="$ROOTFS_MOUNT/usr/lib/systemd/system/$target_unit.wants"
+            mkdir -p "$wants" || abort "cannot create $target_unit.wants"
+            rm -f "$wants/$unit"
+            ln -s "../$unit" "$wants/$unit" || abort "cannot enable $unit"
+        done
+        [ "$?" -eq 0 ] || abort "unit activation failed"
+    fi
+
+    sync
+    umount "$ROOTFS_MOUNT" || abort "cannot unmount the Ubuntu microSD rootfs"
+    ROOTFS_MOUNTED=0
+    ui_print "microSD rootfs overlay installed and verified."
+fi
+
+sync
+ui_print "---------------------------------------"
+ui_print " Images written. This ZIP does not reboot."
+ui_print " Keep the postmarketOS rollback ZIP available."
+ui_print " Reboot manually only when the SD is ready."
+ui_print "---------------------------------------"
+exit 0

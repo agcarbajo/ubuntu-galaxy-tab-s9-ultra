@@ -36,6 +36,7 @@ copia de origen para poder detectar divergencias futuras.
 | `configs/vendor_boot/bootconfig.txt` | `configs/vendor_boot/bootconfig.txt` | `f85fa97b8a180cac5e1bc583585e774042df5b5a756119d6b31cacd3504c16e0` |
 | `configs/vendor_boot/cmdline.txt` | `configs/vendor_boot/cmdline.txt` | `847006d1438a43e1e848f6ab42e1f7cabbf85b7c7b955d2c7f2bd5ceac48c793` |
 | `kernel/config/config-gts9uwifi.fragment` | `pmaports/device/testing/linux-samsung-gts9uwifi-mainline/config-gts9uwifi.fragment` | `c6b57032a2171dec1c847385adee5d4263769c3578acba629c0fa023285f9b8f` |
+| `kernel/config/config-mainline.aarch64` | `/root/pmos-gts9u/pmaports/device/main/linux-postmarketos-mainline/config-mainline.aarch64` | `661c45023794690f38609be08e5a2a0b77eef5224f48f971f6d709a1871d132b` |
 | `kernel/drivers/panel-samsung-ana38407.c` | `pmaports/device/testing/linux-samsung-gts9uwifi-mainline/panel-samsung-ana38407.c` | `354a5dad9aa119475971d6b7bb347293c2afaff1384f9c79c589f065cddeae24` |
 | `kernel/drivers/ps5169.c` | `pmaports/device/testing/linux-samsung-gts9uwifi-mainline/ps5169.c` | `9002b6a8b6794749dedb42e2530f040995916638f2af51d4fa9f898dfc997b74` |
 | `kernel/drivers/sm5440_direct.c` | `pmaports/device/testing/linux-samsung-gts9uwifi-mainline/sm5440_direct.c` | `fd6ce815cfa8718d2ad0d01ea3cc712d93e73b7b2acb2a1ac18e6b7537852a34` |
