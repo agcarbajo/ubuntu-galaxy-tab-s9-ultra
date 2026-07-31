@@ -201,6 +201,30 @@ microSD.
 - Escalado 200 % por defecto: 2960×1848 en 14,6" es inusable al 100 %.
 - SSH habilitado con clave; contraseña del usuario fuera del repositorio.
 
+## Pipeline de build
+
+Todo se ejecuta como root dentro de `wsl.exe -d Ubuntu-24.04`, con base en
+`/root/ubuntu-gts9u`. Ningún script acepta un dispositivo de bloque ni escribe
+en una partición.
+
+| Paso | Script | Produce |
+|---|---|---|
+| 0 | `install-build-deps.sh` / `check-build-deps.sh` | entorno de build comprobado |
+| 0 | `fetch-mainline.sh` | checkout fijado en `a13c140c` (7.2-rc3) |
+| 0 | `stage-android-tools.sh` | `mkbootimg`, `mkdtboimg`, `avbtool` |
+| 0 | `import-kernel-sources.sh` | reimporta DTS, drivers y parches con hash de origen |
+| 1 | `build-mainline-kernel.sh` | `Image.gz`, DTB, config y módulos ath12k |
+| 2 | `build-ubuntu-rootfs.sh` | rootfs Ubuntu arm64 con `mmdebstrap` |
+| 3 | `build-rootfs-overlay.sh` | overlay de módulos y firmware para la microSD |
+| 4 | `build-sd-image.sh` | initramfs Ubuntu e imagen de dos particiones |
+| 5 | `build-android-v4-bundle.sh` | `boot`, `init_boot`, `vendor_boot`, `dtbo`, `vbmeta` |
+| 6 | `make-twrp-zip.py` | ZIP TWRP determinista |
+| 7 | `validate-bundle.sh` | validación estática, sin flashear |
+| — | `build-release.sh` | encadena 1–7 y escribe el manifiesto |
+
+`build-sd-image.sh` falla la build si el initramfs no es LZ4 legacy o no cabe
+en `init_boot`. Esos dos errores se descubren aquí y no en la tablet.
+
 ## Orden de validación
 
 1. `systemd` llega a `multi-user.target` con journal persistente.
