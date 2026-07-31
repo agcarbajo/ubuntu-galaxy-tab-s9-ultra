@@ -130,3 +130,81 @@ arquitectura del rootfs y esta bitácora.
 Ejecutar el primer rootfs `minimal`, adaptar el build de kernel y el
 empaquetado Android v4 a este repositorio, y generar la primera imagen de
 microSD y su ZIP TWRP con manifiesto de hashes.
+
+---
+
+## Sesión 2 — kernel propio, pipeline de imagen y primera release
+
+Fecha: 2026-07-31. No se tocó la tablet física.
+
+### El kernel validado no es el kernel del paquete Alpine
+
+Al portar el build de kernel apareció una discrepancia que habría producido un
+kernel distinto del validado si se hubiera copiado la lista de parches del
+sitio equivocado:
+
+| | build directa | APKBUILD |
+|---|---|---|
+| `ignore-console-null.patch` | **no** | sí |
+| `set-mi2s-codec-dai-format.patch` | **sí** | no |
+
+El `boot.img` que se flasheó y validó sale de la build directa. Es decir, el
+kernel que arranca tiene el arreglo de formato/sysclk de los CS35L45 —por eso
+suena el audio— y **no** tiene el parche de consola. Este port reproduce el
+conjunto de la build directa y deja `ignore-console-null` tras
+`APPLY_IGNORE_CONSOLE_NULL=1`, como build de diagnóstico explícita.
+
+### Verificación contra la baseline
+
+Construido desde este repositorio, con el checkout fijado en `a13c140c`:
+
+| Salida | Resultado |
+|---|---|
+| `sm8550-samsung-gts9uwifi.dtb` | `952688174c…` — **idéntico** a v1.71 |
+| `config` | `2c1eaeee…` — **idéntico** a v1.71 |
+| `Image.gz` | distinto |
+
+El DTB y la config son exactamente los validados, que es lo que fija la
+descripción del hardware y el conjunto de funciones. `Image.gz` no coincide, y
+la causa se midió en lugar de suponerse: mismo tamaño sin comprimir
+(65.903.104 bytes), mismo release, mismo compilador y mismo banner, pero
+7.003.750 bytes distintos. El desencadenante es `UTS_VERSION`: la baseline
+llevaba `#18` y la nuestra `#1`, y ese carácter de más desplaza el enlazado.
+Además, cada árbol de build genera su propia clave de firma de módulos.
+
+### Identidad de build: un problema de privacidad, no solo de reproducibilidad
+
+El banner del kernel empotraba `root@PC-ARTURO`, el nombre de la máquina de la
+usuaria, y ese literal habría viajado dentro de cada `boot.img` publicado. El
+build fija ahora `KBUILD_BUILD_USER=ubuntu`, `KBUILD_BUILD_HOST=gts9uwifi` y
+un `SOURCE_DATE_EPOCH` derivado de la fecha del commit del kernel, y reinicia
+`.version` en cada ejecución. Verificado sobre la imagen resultante: el banner
+es `ubuntu@gts9uwifi` y no queda ningún identificador personal.
+
+### Pipeline de imagen
+
+Se escribieron los siete pasos descritos en `ubuntu-userspace.md`. Tres
+decisiones merecen registro:
+
+- `build-sd-image.sh` **falla la build** si el initramfs no es LZ4 legacy o no
+  cabe en `init_boot` menos su footer AVB. Los dos son fallos que el port
+  anterior descubrió en la tablet; aquí se descubren en el host.
+- El instalador TWRP localiza el rootfs **por etiqueta**, no por
+  `mmcblk1p2`, y exige `ID=ubuntu`. Activa unidades systemd con symlinks reales
+  desde un manifiesto empaquetado, porque systemd ignora un fichero regular
+  dentro de un directorio `.wants`.
+- El fragmento vendor se normaliza a `mtime=0` antes de empaquetarlo, cerrando
+  la laguna de reproducibilidad detectada en la sesión 1.
+
+### Fin de línea
+
+Los scripts sin extensión —el instalador TWRP y los de `packaging/`— quedaban
+fuera de cualquier regla `.gitattributes` por extensión y se habrían escrito
+con CRLF en el checkout de Windows, lo que hace que `#!/sbin/sh` no ejecute. El
+repositorio fuerza ahora `eol=lf` para todo.
+
+### Siguiente paso
+
+Completar la primera release `minimal`, validarla estáticamente y después
+construir el perfil `desktop`. Ninguna prueba física hasta tener imagen, ZIP y
+manifiesto verificados.
