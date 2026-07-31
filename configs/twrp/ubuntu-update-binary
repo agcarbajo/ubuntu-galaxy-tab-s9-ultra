@@ -12,6 +12,11 @@
 # recovery, bootloader, PIT, EFS or Samsung firmware partitions, and it never
 # formats, wipes or reboots.
 
+# Machine-readable contract, asserted by scripts/validate-bundle.sh.  Prose in
+# the comments above can be reworded freely; this line is what identifies the
+# installer, so a build cannot silently package a different one.
+# GTS9U-INSTALLER-CONTRACT: writes boot init_boot vendor_boot dtbo vbmeta only
+
 OUTFD=$2
 ZIPFILE=$3
 ROOTFS_MOUNTED=0

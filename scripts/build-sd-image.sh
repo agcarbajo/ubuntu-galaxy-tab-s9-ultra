@@ -89,20 +89,48 @@ sgdisk \
 sgdisk --print "$out"
 
 loop=$(losetup --find --show --partscan "$out")
+used_kpartx=0
 release_loop() {
 	sync
 	umount "$base/mnt/boot" 2>/dev/null || true
 	umount "$base/mnt/root" 2>/dev/null || true
+	[ "$used_kpartx" = 1 ] && kpartx -d "$loop" 2>/dev/null
 	losetup -d "$loop" 2>/dev/null || true
 }
 trap release_loop EXIT
 
-mkfs.ext4 -q -F -L "$boot_label" "${loop}p1"
-mkfs.ext4 -q -F -L "$root_label" -O ^has_journal "${loop}p2"
+# There is no udev in this build environment, so the partition nodes that
+# --partscan asks for are not guaranteed to appear.  Nudge the kernel, wait,
+# and fall back to device-mapper rather than assuming /dev/loopNpM exists.
+partprobe "$loop" 2>/dev/null || partx -u "$loop" 2>/dev/null || true
+for _ in $(seq 20); do
+	[ -b "${loop}p1" ] && [ -b "${loop}p2" ] && break
+	sleep 0.5
+done
+
+if [ -b "${loop}p1" ] && [ -b "${loop}p2" ]; then
+	part1=${loop}p1
+	part2=${loop}p2
+else
+	echo 'partition nodes did not appear; falling back to kpartx'
+	kpartx -a -s "$loop"
+	used_kpartx=1
+	name=${loop##*/}
+	part1=/dev/mapper/${name}p1
+	part2=/dev/mapper/${name}p2
+	[ -b "$part1" ] && [ -b "$part2" ] || {
+		echo 'kpartx did not create the partition mappings either' >&2
+		exit 1
+	}
+fi
+echo "partitions: $part1 $part2"
+
+mkfs.ext4 -q -F -L "$boot_label" "$part1"
+mkfs.ext4 -q -F -L "$root_label" -O ^has_journal "$part2"
 
 mkdir -p "$base/mnt/boot" "$base/mnt/root"
-mount "${loop}p2" "$base/mnt/root"
-mount "${loop}p1" "$base/mnt/boot"
+mount "$part2" "$base/mnt/root"
+mount "$part1" "$base/mnt/boot"
 
 echo 'copying the rootfs'
 tar -C "$rootfs" --numeric-owner --xattrs --acls -cf - . \

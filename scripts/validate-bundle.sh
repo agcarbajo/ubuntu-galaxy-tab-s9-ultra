@@ -162,6 +162,16 @@ PY
 if [ -n "$zip" ] && [ -f "$zip" ]; then
 	echo
 	echo '=== TWRP ZIP ==='
+	# A missing tool must not be reportable as success.  The negative checks
+	# below ("the installer never references ...") pass on empty input, so
+	# without this guard an absent unzip would silently certify the ZIP.
+	if ! command -v unzip >/dev/null 2>&1; then
+		fail 'unzip is not installed; ZIP contents cannot be validated'
+		echo 'install it with: apt install unzip' >&2
+		echo
+		echo "$failures check(s) failed. Do not flash this bundle."
+		exit 1
+	fi
 	if unzip -t "$zip" >/dev/null 2>&1; then
 		pass 'ZIP CRCs are valid'
 	else
@@ -175,17 +185,39 @@ if [ -n "$zip" ] && [ -f "$zip" ]; then
 			fail "ZIP is missing $member"
 		fi
 	done
-	if unzip -p "$zip" META-INF/com/google/android/update-binary | \
-		grep -q 'never formats, wipes or reboots'; then
-		pass 'the packaged installer is the non-destructive one'
+	installer=$(unzip -p "$zip" META-INF/com/google/android/update-binary 2>/dev/null)
+	if [ -z "$installer" ]; then
+		fail 'the packaged installer could not be read'
 	else
-		fail 'the packaged installer is not the expected one'
-	fi
-	if unzip -p "$zip" META-INF/com/google/android/update-binary | \
-		grep -qE 'super|userdata|/dev/block/by-name/(pit|efs|persist|modem)'; then
-		fail 'the installer references a partition it must never write'
-	else
-		pass 'the installer never references super, userdata, PIT, EFS or modem'
+		if printf '%s\n' "$installer" | \
+			grep -q '^# GTS9U-INSTALLER-CONTRACT: writes boot init_boot vendor_boot dtbo vbmeta only$'; then
+			pass 'the packaged installer declares the expected contract'
+		else
+			fail 'the packaged installer does not declare the expected contract'
+		fi
+
+		# Check executable code, not prose: the installer's own comments name
+		# the partitions it promises never to touch, and grepping the whole
+		# file would flag exactly the documentation that makes it safe.
+		code=$(printf '%s\n' "$installer" | sed 's/#.*//')
+		if printf '%s\n' "$code" | \
+			grep -qE '\b(super|userdata|pit|efs|persist|modem|modemst|md5|sbl|xbl|abl)\b'; then
+			fail 'installer code references a partition it must never write'
+			printf '%s\n' "$code" | \
+				grep -nE '\b(super|userdata|pit|efs|persist|modem|modemst)\b' | \
+				head -5 | sed 's/^/      /'
+		else
+			pass 'installer code never names super, userdata, PIT, EFS, persist or modem'
+		fi
+
+		# The only writes must be dd into a resolved partition handle.
+		writes=$(printf '%s\n' "$code" | grep -cE '\bdd +(if|of)=' || true)
+		if [ "$writes" -gt 0 ] && \
+			! printf '%s\n' "$code" | grep -qE '\b(mkfs|wipefs|sgdisk|parted|format|fastboot)\b'; then
+			pass 'the installer only writes with dd and never formats'
+		else
+			fail 'the installer contains a formatting or partitioning command'
+		fi
 	fi
 	info "ZIP SHA-256: $(sha256sum "$zip" | cut -d' ' -f1)"
 fi

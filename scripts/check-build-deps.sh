@@ -34,6 +34,7 @@ need dtc 'apt install device-tree-compiler'
 need python3 'apt install python3'
 need xz 'apt install xz-utils'
 need zstd 'apt install zstd'
+need unzip 'apt install unzip'
 
 echo '=== aarch64 emulation ==='
 if [ -e /proc/sys/fs/binfmt_misc/qemu-aarch64 ]; then

@@ -27,6 +27,7 @@ apt-get install -y --no-install-recommends \
 	python3 \
 	python3-pycryptodome \
 	zip \
+	unzip \
 	ca-certificates
 
 bash "$(dirname "$0")/check-build-deps.sh"
