@@ -314,8 +314,50 @@ Imagen sin comprimir: 3.588.227.072 bytes, `27a4f469…`.
 DTS. `dtbo.img` y `vbmeta.img` coinciden byte a byte con los de postmarketOS
 v1.71.
 
+### v0.2: recuperación del panel y escritura de la microSD por TWRP
+
+Se portó la recuperación cold-boot del ANA38407 antes de proponer la primera
+prueba física, para que exista alguna posibilidad de imagen al primer intento.
+El mecanismo no cambia respecto al port de referencia porque es propiedad del
+hardware: el DDIC queda inalcanzable tras el hand-off de Samsung y solo el
+ciclo `pm_test=platform` lo recupera. Se verificó que `CONFIG_PM_DEBUG=y` está
+en el kernel construido, de modo que `/sys/power/pm_test` existirá.
+
+Una diferencia deliberada: la unidad se activa en `multi-user.target`, no en
+`graphical.target`. Aquel port siempre alcanzaba un display manager; aquí este
+ciclo es también lo que hace visible la consola de texto, así que si GDM falla
+conviene tener el panel vivo para poder ver por qué.
+
+Comprobado en el rootfs construido, no supuesto: paquete `ubuntu-gts9u-device`
+0.2 instalado, script ejecutable, unidad presente y **symlink de activación**
+en `/etc/systemd/system/multi-user.target.wants/`.
+
+La usuaria indicó que este PC no tiene lector de tarjetas, pero que la tablet
+puede dejarse en TWRP con la microSD puesta. `scripts/twrp-write-sd.sh` escribe
+la tarjeta por ADB: por defecto solo inspecciona, y escribir exige `--write`
+más un `--device` explícito tras cinco guardas —dispositivo mmc completo,
+`removable=1`, tipo `SD`, capacidad suficiente y nada montado— además de
+confirmar que el aparato es un SM-X910 **en recovery**. Al terminar relee la
+tarjeta y compara SHA-256 contra la imagen.
+
+Release v0.2 (desktop), todas las comprobaciones estáticas en verde:
+
+| Artefacto | SHA-256 |
+|---|---|
+| `ubuntu-24.04-gts9uwifi-v0.2-sd.img.xz` | `aebe0193…` |
+| `ubuntu-24.04-gts9uwifi-v0.2-sm-x910-twrp.zip` | `8a1c37bf…` |
+| `boot.img` | `4b99e90e…` |
+| `init_boot.img` | `fa787e86…` |
+| `vendor_boot.img` | `59a2e5c8…` |
+| `dtbo.img` | `c17418be…` |
+| `vbmeta.img` | `b95e5ef9…` |
+
+Imagen sin comprimir: 3.588.227.072 bytes, `6e14f383…`. Los artefactos de v0.1
+se retiraron para que no quede ambigüedad sobre cuál flashear.
+
 ### Siguiente paso
 
-Preparar la primera prueba física con instrucciones exactas y la vía de vuelta
-a v1.71 verificada. Ningún componente de hardware se marcará como funcional
-bajo Ubuntu hasta observarlo.
+Primera prueba física. El objetivo es el Hito 2: systemd hasta
+`multi-user.target`, journal persistente, Wi-Fi y SSH. La imagen y el panel
+todavía no están validados bajo Ubuntu y no se declararán funcionales hasta
+observarlos.
