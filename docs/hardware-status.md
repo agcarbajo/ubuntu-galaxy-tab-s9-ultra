@@ -1,7 +1,9 @@
 # Estado de hardware del SM-X910 bajo Ubuntu 24.04
 
-Última actualización: 2026-07-31. Ubuntu todavía **no ha arrancado** en la
-tablet; esta matriz distingue explícitamente lo heredado de lo comprobado.
+Última actualización: 2026-07-31, tras el primer arranque físico.
+
+Ubuntu **ya arranca** en la tablet. Esta matriz distingue explícitamente lo
+heredado de lo comprobado, y ningún componente pasa a ✅ sin observación real.
 
 ## Base
 
@@ -37,27 +39,27 @@ sondea» como prueba de funcionamiento.
 
 | Componente | pmOS v1.71 | Ubuntu | Nivel | Notas |
 |---|---|---|---|---|
-| Arranque Android v4 + rootfs microSD | ✅ | ⏳ | heredado | Ubuntu necesita initramfs propio, LZ4 legacy y `root=LABEL=` |
-| Pantalla interna 2960×1848@120 | ✅ | ⏳ | heredado | ANA38407/AMSA46AS02, DSI command mode, DSC y TE. Exige la recuperación cold-boot antes del display manager |
-| GPU Adreno 740 | ✅ | ⏳ | heredado | Mesa/Freedreno/Turnip, OpenGL 4.6. `card0` render, `card1` DPU para KMS |
-| Escritorio GNOME/Wayland | ✅ | ⏳ | heredado | Ubuntu debe probar GDM3 y Mutter nativos antes de portar parches |
+| Arranque Android v4 + rootfs microSD | ✅ | ✅ | confirmado | Arranca desde microSD con `root=LABEL=`. Initramfs propio en LZ4 legacy dentro de `init_boot` |
+| Pantalla interna 2960×1848@120 | ✅ | ✅ | medido | La recuperación cold-boot está validada bajo Ubuntu: el journal registra `panel id 00 00 00` → ciclo `pm_test=platform` → `80 00 04` |
+| GPU Adreno 740 | ✅ | ✅ | confirmado | Confirmado por la usuaria en el primer arranque. Falta medir `vulkaninfo`/`glmark2` |
+| Escritorio GNOME/Wayland | ✅ | ✅ | confirmado | GDM3 y GNOME 46 nativos, sin el workaround de cuentas greeter de Alpine |
 | Brillo / blanking | ✅ | ⏳ | heredado | Backlight DCS. El brillo automático no funciona en ninguna distro |
-| Táctil Goodix GT9916 | ✅ | ⏳ | heredado | Layout Samsung de eventos de 16 bytes |
-| Botones power y volumen | ✅ | ⏳ | heredado | |
+| Táctil Goodix GT9916 | ✅ | ✅ | confirmado | Layout Samsung de eventos de 16 bytes |
+| Botones power y volumen | ✅ | ✅ | confirmado | |
 | UFS interna | ✅ | ⏳ | heredado | Seis LUN `sda`–`sdf`; usada solo para las particiones de arranque |
-| microSD | ✅ | ⏳ | heredado | `sdhc_2`; la partición raíz se expande en el primer arranque |
-| Wi-Fi WCN7850 / ath12k | ✅ | ⏳ | heredado | Firmware oficial + BDF QRD en ELF; solo ath12k y ath12k_wifi7 son módulos |
-| Bluetooth y A2DP | ✅ | ⏳ | heredado | Dirección pública leída de EFS en `ro,noload`; en Ubuntu el sink pasa por PipeWire, no PulseAudio |
-| Altavoces 4× CS35L45 y DMIC | ✅ | ⏳ | heredado | UCM propio; hay que verificar que `alsa-ucm-conf` de Ubuntu no lo tape |
+| microSD | ✅ | ✅ | medido | Raíz por etiqueta `UBTS9U_ROOT`; la partición se expande en el primer arranque |
+| Wi-Fi WCN7850 / ath12k | ✅ | ✅ | confirmado | Conectada a la red por la usuaria; SSH en uso para el desarrollo |
+| Bluetooth y A2DP | ✅ | 🟡 | medido | La dirección de EFS levanta el controlador, verificado. Pero tras un **reinicio en caliente** el firmware no baja: `command 0xfc00 tx timeout`. Solo funcionó en arranque en frío. A2DP sin probar |
+| Altavoces 4× CS35L45 y DMIC | ✅ | ✅ | confirmado | PipeWire nativo, sin PulseAudio. Requiere el arranque tardío del ADSP y `protection-domain-mapper` |
 | Protección DSP de altavoces | ❌ | ❌ | supuesto | Firmware Cirrus sin cargar; volumen de hardware conservador |
-| Batería | ✅ | ⏳ | heredado | SM5714: porcentaje, voltaje, corriente y temperatura del pack |
+| Batería | ✅ | ✅ | confirmado | SM5714: porcentaje, voltaje, corriente y temperatura del pack |
 | Carga USB-PD/PPS | 🟡 | ⏳ | heredado | SM5714 TCPM + SM5440 2:1; a batería baja sigue sin revalidar |
-| Suspensión profunda | ✅ | ⏳ | heredado | Wake de 2–3 s; funda y botón power probados en pmOS |
-| Funda / Hall `SW_LID` | ✅ | ⏳ | heredado | GPIO107; `HoldoffTimeoutSec=0` es necesario |
-| Sensores de movimiento y autorrotación | ✅ | ⏳ | heredado | SSC/ADSP; requiere `libssc`, `hexagonrpcd` y `pd-mapper` empaquetados para Ubuntu |
+| Suspensión profunda | ✅ | ✅ | confirmado | Probada mediante la funda |
+| Funda / Hall `SW_LID` | ✅ | ✅ | confirmado | Cerrar apaga la pantalla |
+| Sensores de movimiento y autorrotación | ✅ | ❌ | medido | `/dev/fastrpc-adsp` ya existe tras arrancar el ADSP, pero faltan `libssc` y `hexagonrpcd`, que Ubuntu no empaqueta |
 | USB gadget / RNDIS | ✅ | ⏳ | heredado | |
-| USB host, HID y almacenamiento | ✅ | ⏳ | heredado | Hubs alimentados y bus-powered |
-| DisplayPort USB-C | ✅ | ⏳ | heredado | 1920×1080@60, incluido arranque con dock conectado |
+| USB host, HID y almacenamiento | ✅ | ✅ | confirmado | Con y sin alimentación externa |
+| DisplayPort USB-C | ✅ | ✅ | confirmado | Salida de vídeo confirmada por la usuaria |
 | Ethernet RTL8153 | 🟡 | ⏳ | heredado | Enumera y carga firmware; falta enlace y tráfico reales |
 | UAS | ❓ | ❓ | supuesto | Nunca probado: no hubo unidad con interfaz UAS |
 | Luz ambiental STK31610 | ❌ | ❌ | supuesto | El SSC lo descubre pero no emite lux; vía agotada en pmOS |
@@ -70,24 +72,34 @@ sondea» como prueba de funcionamiento.
 | Cámaras | ❌ | ❌ | supuesto | No iniciadas |
 | Módem | — | — | — | No aplica al modelo Wi-Fi |
 
-## Riesgos específicos de Ubuntu ya identificados
+## Riesgos de Ubuntu: cómo quedaron
 
-Ninguno está confirmado todavía; se registran para que la primera prueba
-física sepa qué mirar.
+Los cinco riesgos anticipados antes del primer arranque, con lo que ocurrió
+realmente.
 
-1. **UCM.** Ubuntu instala `alsa-ucm-conf` de upstream. El perfil propio de la
-   X910 debe tener prioridad o los cuatro CS35L45 no aparecerán como salida.
-2. **PipeWire frente a PulseAudio.** La baseline validó audio y A2DP con
-   PulseAudio 17. PipeWire es la opción nativa de Ubuntu y debe probarse
-   primero, pero el resultado de la baseline no se transfiere automáticamente.
-3. **`initramfs-tools` frente a `mkinitfs`.** Compresión LZ4 legacy, tamaño
-   bajo 8 MiB y montaje por etiqueta son requisitos duros que el initramfs por
-   defecto de Ubuntu no cumple.
-4. **AppArmor.** Ubuntu lo trae activo; los servicios de recuperación del panel
-   y de sensores escriben en `/sys/power` y en `remoteproc`. Si un perfil los
-   bloquea, la solución es un perfil explícito, no desactivar AppArmor.
-5. **Sensores.** `iio-sensor-proxy` de Ubuntu no sirve de nada sin `libssc`,
-   `hexagonrpcd` y `pd-mapper`, que no existen en el archivo de Ubuntu.
+1. **UCM — resuelto.** El perfil propio de la X910 convive con el
+   `alsa-ucm-conf` de Ubuntu sin conflicto; se instala en
+   `conf.d/sm8550/` y `Qualcomm/sm8550/GTS9U/` y tiene prioridad.
+2. **PipeWire frente a PulseAudio — resuelto a favor de PipeWire.** No hizo
+   falta PulseAudio: PipeWire nativo expone los cuatro CS35L45 y los DMIC. A2DP
+   sigue sin probar porque el controlador Bluetooth no se mantiene estable.
+3. **`initramfs-tools` — resuelto, con trabajo.** Cumple los tres requisitos
+   duros, pero solo tras forzar `COMPRESS=lz4`, corregir `MODULES` y podar la
+   base de datos de udev para caber en `init_boot`.
+4. **AppArmor — no se manifestó.** Los servicios de recuperación del panel y de
+   arranque del ADSP escriben en `/sys/power` y en `remoteproc` sin que ningún
+   perfil los bloquee. No se ha tocado AppArmor.
+5. **Sensores — confirmado como el hueco previsto.** `pd-mapper` sí existe en
+   Ubuntu (`protection-domain-mapper`), pero `libssc` y `hexagonrpcd` no, y sin
+   ellos `iio-sensor-proxy` no tiene de dónde leer.
+
+### Frente abierto: Bluetooth tras reinicio en caliente
+
+El controlador contesta a todas las consultas de versión y solo se atasca al
+descargar el firmware (`command 0xfc00 tx timeout`). Solo se ha visto funcionar
+en un arranque en frío. La recuperación por software está descartada con
+evidencia: `rfkill` no cambia nada y un unbind/rebind del serdev empeora el
+estado. Pendiente de comprobar si un apagado completo lo restaura.
 
 ## Invariantes heredadas que no se pueden romper
 

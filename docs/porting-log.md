@@ -361,3 +361,152 @@ Primera prueba física. El objetivo es el Hito 2: systemd hasta
 `multi-user.target`, journal persistente, Wi-Fi y SSH. La imagen y el panel
 todavía no están validados bajo Ubuntu y no se declararán funcionales hasta
 observarlos.
+
+---
+
+## Sesión 3 — primer arranque físico: Hitos 2 y 3 cumplidos
+
+Fecha: 2026-07-31. Primera ejecución de Ubuntu en la tablet.
+
+### Escribir la microSD sin lector de tarjetas
+
+El PC de la usuaria no tiene lector, pero la tablet puede quedarse en TWRP con
+la tarjeta puesta. `scripts/twrp-write-sd.sh` la escribe por ADB. Cuatro
+defectos aparecieron solo contra el hardware real, y merecen quedar escritos:
+
+1. **CRLF.** El `adb.exe` de Windows termina cada línea con CRLF, así que la
+   detección de dispositivo anclada a fin de línea nunca casaba y el script
+   informaba de que no había ninguno mientras estaba conectado.
+2. **Desbordamiento a 32 bits.** Los tamaños se calculaban en la tablet, cuyo
+   busybox hace aritmética de 32 bits: `sectores*512` daba la vuelta y una
+   tarjeta de 29,7 GiB se mostraba como 1,72 GiB.
+3. **`removable=0`.** El SD host de esta placa marca la tarjeta como no
+   extraíble. Mi guarda exigía `removable=1` y habría rechazado el único
+   destino válido. La señal decisiva es `device/type == SD`, más la
+   comprobación de que la UFS interna existe aparte como `sda`.
+4. **`dd` leyendo de una tubería perdió 42.688 bytes.** La tarjeta quedaba
+   engañosamente convincente —GPT correcto, nombres de partición correctos,
+   primer MiB idéntico— pero todo lo posterior al punto de pérdida había caído
+   42.688 bytes antes de su sitio. Se localizó buscando una firma de la imagen
+   dentro de la tarjeta. Solo la verificación de lectura lo detectó.
+
+Se descartaron las hipótesis fáciles con pruebas: `adb exec-in` y `exec-out`
+resultaron **binario-seguros** (4 MiB con 16.507 bytes LF llegaron idénticos),
+así que el transporte estaba limpio. La escritura ahora prepara la imagen como
+fichero en el disco RAM de la tablet, verifica esa copia contra el hash origen
+y solo entonces ejecuta `dd` desde un fichero regular.
+
+### El instalador TWRP, dos veces
+
+El ZIP abortó con «no encontré `UBTS9U_ROOT`» sobre una tarjeta que la tenía.
+Dos causas independientes:
+
+- este TWRP **no tiene `blkid` ni `findfs`** ni `/dev/disk/by-label`. Sí tiene
+  `tune2fs`, que lee el nombre de volumen ext4 directamente;
+- el kernel seguía con la tabla de particiones anterior, así que los nodos `pN`
+  apuntaban a los offsets de postmarketOS y cualquier filesystem sobre ellos
+  parecía corrupto.
+
+La corrección de eso introdujo un tercer fallo, más sutil: el instalador releía
+la tabla y buscaba **inmediatamente después**. Releer borra y recrea los nodos
+de partición, así que la búsqueda caía en esa ventana y no encontraba nada,
+mientras el mensaje de error impreso instantes después listaba la partición que
+acababa de no encontrar. Código idéntico, resultados opuestos, solo el momento
+cambiaba. Ahora busca primero y solo relee si hace falta.
+
+Desde entonces, el script de reconstrucción **extrae las funciones reales del
+ZIP empaquetado y las ejecuta en la tablet** antes de pedir un flasheo.
+
+### Primer arranque
+
+Funcionó. Confirmado por la usuaria: pantalla, GPU, táctil, botones, batería,
+suspensión con la funda, USB host y salida de vídeo por USB-C, con y sin
+alimentación externa.
+
+**La recuperación del panel quedó validada bajo Ubuntu**, con la firma exacta
+del port de referencia en el journal:
+
+```
+ana38407 panel id: 00 00 00
+  -> ciclo pm_test=platform ->
+ana38407 panel id: 80 00 04
+```
+
+No funcionaban: sonido, Bluetooth ni rotación automática.
+
+### Una sola causa raíz para sonido y sensores
+
+El ADSP estaba `offline`. `qcom_q6v5_pas` tiene `auto_boot=true` y pide
+`qcom/sm8550/adsp.mdt` a los ~3 s, cuando la microSD que lo contiene todavía no
+está montada: falla con `-ENOENT` y se queda apagado para siempre.
+
+Arrancarlo después de `local-fs.target` funciona, PAS acepta la imagen firmada
+de Samsung, y aparecen dos cosas a la vez: la tarjeta ALSA y `/dev/fastrpc-adsp`,
+que es el prerequisito de los sensores.
+
+Ubuntu ya empaqueta pd-mapper como **`protection-domain-mapper`**, así que no
+hubo que compilarlo; solo ordenarlo tras el arranque tardío del DSP, o no
+encuentra remoteproc y systemd se rinde.
+
+Con el perfil UCM del port de referencia, **PipeWire expone «Built-in speakers
+(4x CS35L45)» y los micrófonos digitales de forma nativa, sin PulseAudio**.
+Eso responde una de las preguntas abiertas del diseño de userspace. La usuaria
+confirmó audio audible tras un reinicio, sin intervención.
+
+### Bluetooth: mi servicio colgó el arranque
+
+La dirección de la NVM del WCN7850 es nula, así que `hci0` arranca como
+`00:00:00:00:5A:AD` y queda `DOWN`. Leerla de EFS (`ro,noload`) y aplicarla con
+`btmgmt` la levanta — verificado en vivo, el controlador pasó a `UP RUNNING`.
+
+Pero como servicio de arranque falló, y el fallo fue mío: **`btmgmt` de BlueZ
+5.72 se bloquea indefinidamente si corre antes de que el controlador esté
+registrado en la interfaz de gestión**, que es exactamente cuando corre este
+servicio. Se midió: `btmgmt info` estuvo más de cuatro minutos parado y, al
+estar el servicio ordenado antes de `bluetooth.service`, se llevó por delante
+toda la pila. El mismo comando responde en menos de un segundo una vez el
+controlador está registrado. `hciconfig` en cambio es un ioctl y responde en
+3 ms.
+
+El servicio acota ahora cada llamada con `timeout` y sondea con `hciconfig`.
+Pero al reintentarlo apareció un problema distinto y más profundo.
+
+### Bluetooth: el firmware no se descarga tras un reinicio en caliente
+
+```
+QCA Product ID   :0x00000019
+QCA SOC Version  :0x40170200
+QCA ROM Version  :0x00000200
+QCA Patch Version:0x000043fb
+QCA controller version 0x02000200
+QCA Downloading qca/hmtbtfw20.tlv
+command 0xfc00 tx timeout
+QCA Failed to send TLV segment (-110)
+```
+
+El controlador **responde correctamente** a todas las consultas de versión y
+solo se atasca en la descarga masiva del firmware. Es decir: el UART funciona,
+el fichero se encuentra, y aun así el TLV no pasa. El driver reintenta tres
+veces y se rinde.
+
+Lo que distingue los arranques observados:
+
+| Arranque | Tipo | Resultado |
+|---|---|---|
+| 1º | en frío, tras flashear desde TWRP | firmware cargado, `hci0` alcanzó `5A:AD` y subió |
+| 2º–4º | `systemctl reboot` en caliente | `tx timeout` a los 3,6 s, tres reintentos, se rinde |
+
+La recuperación por software está descartada con evidencia: `rfkill`
+block/unblock no cambia nada, y un unbind/rebind del serdev deja el
+controlador aún peor —tras él falla incluso la lectura de versión.
+
+Hipótesis actual, pendiente de confirmar con un apagado completo: el lado
+Bluetooth del WCN7850 compartido necesita un ciclo de alimentación real, que un
+reinicio en caliente no proporciona. No se declara nada hasta medirlo.
+
+### Estado al cerrar la sesión
+
+Suben solos desde arranque en frío, verificado sin tocar nada: recuperación del
+panel, ADSP, pd-mapper y audio. Bluetooth queda intermitente y la rotación
+automática sin abordar, porque necesita `hexagonrpcd` y `libssc`, que no
+existen en Ubuntu.

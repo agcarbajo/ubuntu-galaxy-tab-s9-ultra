@@ -14,11 +14,14 @@ software, and later Vulkan/Turnip-based gaming stacks, become usable.
 
 ## Status
 
-Milestone 1 is complete: `scripts/build-release.sh` produces a microSD image,
-an Android v4 bundle and a TWRP ZIP from source, and all 22 static checks pass.
-**Nothing has been booted on the tablet yet**, so every hardware row below is
-still inherited rather than proven. The tablet runs the postmarketOS v1.71
-baseline, and a regenerated rollback build for it is kept outside Git.
+Ubuntu boots on the tablet. Milestones 1 to 3 are done: the build is
+reproducible from source, the system reaches a GNOME desktop on the native
+panel, and display, GPU, touch, buttons, Wi-Fi, battery, lid wake, audio, USB
+host and DisplayPort have all been confirmed on hardware.
+
+Bluetooth is intermittent — the controller answers but its firmware download
+stalls after a warm reboot — and automatic rotation is not implemented yet.
+A rollback build of the postmarketOS v1.71 baseline is kept outside Git.
 
 See [docs/hardware-status.md](docs/hardware-status.md) for what is inherited,
 what has been proven under Ubuntu, and what is still assumed.
@@ -31,22 +34,23 @@ port is expected to reproduce.
 
 | Component | postmarketOS v1.71 | Ubuntu 24.04 |
 |---|---|---|
-| Display 2960×1848@120 (DSI + DSC + TE) | ✅ | ⏳ not tested |
-| GPU Adreno 740 (Mesa/Freedreno/Turnip) | ✅ | ⏳ not tested |
-| Desktop (GNOME/Wayland) | ✅ | ⏳ not tested |
-| Touchscreen (Goodix GT9916) | ✅ | ⏳ not tested |
-| Buttons (power, volume) | ✅ | ⏳ not tested |
-| microSD rootfs / internal UFS | ✅ | ⏳ not tested |
-| Wi-Fi (WCN7850 / ath12k) | ✅ | ⏳ not tested |
-| Bluetooth + A2DP | ✅ | ⏳ not tested |
-| Speakers (4× CS35L45) and DMIC | ✅ | ⏳ not tested |
-| Battery telemetry | ✅ | ⏳ not tested |
+| Display 2960×1848@120 (DSI + DSC + TE) | ✅ | ✅ |
+| GPU Adreno 740 (Mesa/Freedreno/Turnip) | ✅ | ✅ |
+| Desktop (GNOME/Wayland) | ✅ | ✅ |
+| Touchscreen (Goodix GT9916) | ✅ | ✅ |
+| Buttons (power, volume) | ✅ | ✅ |
+| microSD rootfs | ✅ | ✅ |
+| Wi-Fi (WCN7850 / ath12k) | ✅ | ✅ |
+| Speakers (4× CS35L45) and DMIC | ✅ | ✅ |
+| Battery telemetry | ✅ | ✅ |
+| Suspend / resume, lid wake | ✅ | ✅ |
+| USB host | ✅ | ✅ |
+| USB-C DisplayPort | ✅ | ✅ |
+| Bluetooth + A2DP | ✅ | 🟡 firmware download stalls after a warm reboot |
 | USB-PD/PPS charging | 🟡 | ⏳ not tested |
-| Suspend / resume, lid wake | ✅ | ⏳ not tested |
-| USB gadget / host | ✅ | ⏳ not tested |
-| USB-C DisplayPort | ✅ | ⏳ not tested |
-| Motion sensors and autorotation | ✅ | ⏳ not tested |
+| USB gadget / RNDIS | ✅ | ⏳ not tested |
 | Ethernet (RTL8153) / UAS | 🟡 / ❓ | ⏳ not tested |
+| Motion sensors and autorotation | ✅ | ❌ needs libssc and hexagonrpcd packaged |
 | Ambient light (STK31610) | ❌ | ❌ |
 | S Pen, pogo keyboard, fingerprint, haptics | ❌ | ❌ |
 | Speaker protection DSP | ❌ | ❌ |

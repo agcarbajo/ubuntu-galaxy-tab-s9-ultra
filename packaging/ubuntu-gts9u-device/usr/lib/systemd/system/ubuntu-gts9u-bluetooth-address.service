@@ -10,6 +10,11 @@ ConditionPathExists=/dev/disk/by-partlabel/efs
 Type=oneshot
 ExecStart=/usr/libexec/ubuntu-gts9u-bluetooth-address
 RemainAfterExit=yes
+# This unit is ordered before bluetooth.service, so anything that blocks here
+# blocks the whole Bluetooth stack.  An earlier version hung in btmgmt for
+# minutes and left bluetooth.service dead.  The script bounds its own calls;
+# this is the backstop.
+TimeoutStartSec=90
 
 [Install]
 WantedBy=bluetooth.service
