@@ -1,15 +1,21 @@
 Package: ubuntu-gts9u-device
-Version: 0.2
+Version: 0.3
 Section: admin
 Priority: optional
 Architecture: arm64
 Maintainer: Ubuntu gts9uwifi port contributors <noreply@example.invalid>
-Depends: systemd, e2fsprogs, gdisk, parted, util-linux, cloud-guest-utils
+Depends: systemd, e2fsprogs, gdisk, parted, util-linux, cloud-guest-utils,
+ protection-domain-mapper, bluez, alsa-ucm-conf
 Description: Device support for the Samsung Galaxy Tab S9 Ultra Wi-Fi
  Board-specific integration for the SM-X910 (gts9uwifi) running an Ubuntu
- userspace on a mainline kernel: first-boot root filesystem expansion, the
- ANA38407 panel cold-boot recovery, and the initramfs pruning this device's
- 8 MiB init_boot partition requires.
+ userspace on a mainline kernel:
+ .
+  * first-boot root filesystem expansion on the microSD;
+  * ANA38407 panel recovery after Samsung's cold-boot hand-off;
+  * late audio DSP boot, which the ALSA card and the sensors both depend on;
+  * the native Bluetooth address, read read-only from the Samsung EFS;
+  * the UCM profile for the four CS35L45 speakers and the digital microphones;
+  * initramfs pruning for this device's 8 MiB init_boot partition.
  .
  Hardware enablement lives in the kernel and in the firmware overlay installed
  by the TWRP ZIP; this package only carries userspace integration.

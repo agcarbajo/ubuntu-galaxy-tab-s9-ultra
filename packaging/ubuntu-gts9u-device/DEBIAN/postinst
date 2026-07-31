@@ -7,7 +7,9 @@ case "$1" in
 	configure)
 		for unit in \
 			ubuntu-gts9u-grow-rootfs.service \
-			ubuntu-gts9u-panel-coldboot-recover.service; do
+			ubuntu-gts9u-panel-coldboot-recover.service \
+			ubuntu-gts9u-adsp-boot.service \
+			ubuntu-gts9u-bluetooth-address.service; do
 			# deb-systemd-helper is not guaranteed inside a foreign-arch
 			# chroot, so fall back to systemctl and then to a plain symlink.
 			if command -v deb-systemd-helper >/dev/null 2>&1; then
@@ -20,7 +22,9 @@ case "$1" in
 		# would only show up as a black screen on the tablet.
 		for unit in \
 			ubuntu-gts9u-grow-rootfs.service:basic.target \
-			ubuntu-gts9u-panel-coldboot-recover.service:multi-user.target; do
+			ubuntu-gts9u-panel-coldboot-recover.service:multi-user.target \
+			ubuntu-gts9u-adsp-boot.service:multi-user.target \
+			ubuntu-gts9u-bluetooth-address.service:bluetooth.service; do
 			name=${unit%%:*}
 			target=${unit##*:}
 			if [ ! -e "/etc/systemd/system/$target.wants/$name" ] && \

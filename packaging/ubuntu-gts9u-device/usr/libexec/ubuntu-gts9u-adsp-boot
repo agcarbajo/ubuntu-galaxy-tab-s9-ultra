@@ -1,0 +1,50 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+#
+# Boot the audio DSP once the microSD rootfs is mounted.
+#
+# qcom_q6v5_pas has auto_boot=true, so it asks for qcom/sm8550/adsp.mdt during
+# its probe at about 3 s -- long before the microSD carrying that ~34 MB Samsung
+# firmware is mounted.  Measured on this device: the early attempt fails with
+# "Direct firmware load ... failed with error -2" and the remoteproc is left
+# offline for good.  Starting it late succeeds, and PAS secure boot accepts
+# Samsung's own signed image.
+#
+# Nothing else in the audio or sensor stack can work until this runs: the ALSA
+# card only appears afterwards, and /dev/fastrpc-adsp, which the sensors need,
+# is created by this handover.
+set -u
+
+fw=/usr/lib/firmware/qcom/sm8550/adsp.mdt
+[ -f "$fw" ] || { echo "ubuntu-gts9u-adsp-boot: $fw missing, skipping" >&2; exit 0; }
+
+rp=
+for d in /sys/class/remoteproc/remoteproc*; do
+	[ -e "$d/name" ] || continue
+	if [ "$(cat "$d/name" 2>/dev/null)" = adsp ]; then
+		rp="$d"
+		break
+	fi
+done
+[ -n "$rp" ] || { echo 'ubuntu-gts9u-adsp-boot: no adsp remoteproc found' >&2; exit 0; }
+
+state=$(cat "$rp/state" 2>/dev/null)
+if [ "$state" = running ]; then
+	echo 'ubuntu-gts9u-adsp-boot: adsp already running' >&2
+	exit 0
+fi
+
+echo start > "$rp/state" 2>/dev/null || {
+	echo 'ubuntu-gts9u-adsp-boot: failed to start adsp' >&2
+	exit 0
+}
+
+# Give the PAS handover a moment, then report what actually happened rather
+# than assuming the write succeeded.
+sleep 1
+state=$(cat "$rp/state" 2>/dev/null)
+echo "ubuntu-gts9u-adsp-boot: adsp state now $state" >&2
+if [ -e /dev/fastrpc-adsp ]; then
+	echo 'ubuntu-gts9u-adsp-boot: /dev/fastrpc-adsp present' >&2
+fi
+exit 0

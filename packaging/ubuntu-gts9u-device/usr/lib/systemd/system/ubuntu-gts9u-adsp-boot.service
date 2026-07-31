@@ -1,0 +1,12 @@
+[Unit]
+Description=Boot the SM-X910 audio DSP after the microSD rootfs is mounted
+After=local-fs.target
+ConditionPathExists=/usr/lib/firmware/qcom/sm8550/adsp.mdt
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/ubuntu-gts9u-adsp-boot
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

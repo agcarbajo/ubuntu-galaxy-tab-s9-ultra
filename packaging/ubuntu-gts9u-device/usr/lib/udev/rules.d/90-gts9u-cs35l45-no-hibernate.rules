@@ -1,0 +1,13 @@
+# Keep the four CS35L45 speaker amplifiers out of runtime suspend.
+#
+# cs35l45_runtime_suspend() puts the part into hibernation and switches its
+# regmap to cache-only; on resume the cache is synced back, but
+# cs35l45_set_pll() short-circuits when the *cached* REFCLK_INPUT already holds
+# the target frequency id, so after a hibernate cycle the driver believes the
+# PLL is programmed while the part came back with it cleared.  The amplifier
+# then never locks to the incoming bit clock and stays silent.
+#
+# The parts sit on a 400 kHz I2C bus and idle at low power anyway, so simply not
+# suspending them is the cheap and reliable fix until the driver stops trusting
+# the cache across hibernation.
+ACTION=="add", SUBSYSTEM=="i2c", DRIVERS=="cs35l45", ATTR{power/control}="on"

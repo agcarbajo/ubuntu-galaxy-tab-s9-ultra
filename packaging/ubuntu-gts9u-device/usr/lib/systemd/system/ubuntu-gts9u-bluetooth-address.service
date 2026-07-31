@@ -1,0 +1,15 @@
+[Unit]
+Description=Apply the native Samsung Bluetooth address from EFS
+Documentation=https://github.com/agcarbajo/postmarketos-galaxy-tab-s9-ultra
+After=systemd-udev-settle.service
+Before=bluetooth.service
+Wants=systemd-udev-settle.service
+ConditionPathExists=/dev/disk/by-partlabel/efs
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/ubuntu-gts9u-bluetooth-address
+RemainAfterExit=yes
+
+[Install]
+WantedBy=bluetooth.service

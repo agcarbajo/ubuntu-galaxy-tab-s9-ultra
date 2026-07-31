@@ -1,0 +1,54 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+#
+# Give the Bluetooth controller its real address.
+#
+# The WCN7850 NVM this device uses carries a null address, so hci0 comes up as
+# 00:00:00:00:5A:AD, stays DOWN, and BlueZ reports "No default controller
+# available".  The real address lives in the Samsung EFS partition, which is
+# mounted read-only with noload -- never written, never journalled -- just long
+# enough to read it.
+#
+# Ported from gts9uwifi-bluetooth-address of the postmarketOS port.
+set -eu
+
+efs=/dev/disk/by-partlabel/efs
+mountpoint=/run/ubuntu-gts9u-efs-ro
+
+# A restart after the address is already applied is a no-op: once hci0 is
+# configured it no longer appears in the unconfigured list.
+if btmgmt info 2>/dev/null | grep -q '^hci0:'; then
+	exit 0
+fi
+
+for _ in $(seq 1 100); do
+	[ -b "$efs" ] && break
+	sleep 0.1
+done
+[ -b "$efs" ]
+
+mkdir -p "$mountpoint"
+cleanup() {
+	mountpoint -q "$mountpoint" && umount "$mountpoint" || true
+}
+trap cleanup EXIT
+# ro,noload is mandatory: EFS holds per-device calibration and must never be
+# written, and noload stops the kernel replaying its journal.
+mount -o ro,noload "$efs" "$mountpoint"
+address=$(tr -d '\r\n[:space:]' < "$mountpoint/bluetooth/bt_addr")
+
+case "$address" in
+	[0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f]) ;;
+	*) echo 'Invalid native Bluetooth address in EFS' >&2; exit 1 ;;
+esac
+
+cleanup
+trap - EXIT
+
+for _ in $(seq 1 100); do
+	btmgmt config 2>/dev/null | grep -q '^hci0:' && break
+	sleep 0.1
+done
+
+btmgmt config 2>/dev/null | grep -q '^hci0:'
+btmgmt --index 0 public-addr "$address" >/dev/null
