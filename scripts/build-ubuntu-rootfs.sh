@@ -200,11 +200,18 @@ for pkg in libssc hexagonrpcd iio-sensor-proxy; do
 	fi
 done
 
+# Desktop tools that landed in the archive after noble froze, so "apt install"
+# has no candidate for them on 24.04.
+if ! ls "$base"/out/packages/fastfetch_*.deb >/dev/null 2>&1; then
+	echo 'extra packages are missing; building them first'
+	bash "$repo/scripts/build-extra-packages.sh" >/dev/null
+fi
+
 # Newest build of each, so repeated builds do not accumulate stale versions.
 stage_debs=$base/out/local-debs
 rm -rf -- "$stage_debs"
 mkdir -p "$stage_debs"
-for pkg in libssc hexagonrpcd iio-sensor-proxy ubuntu-gts9u-device; do
+for pkg in libssc hexagonrpcd iio-sensor-proxy ubuntu-gts9u-device fastfetch; do
 	deb=$(ls -t "$base"/out/packages/${pkg}_*.deb 2>/dev/null | head -1 || true)
 	if [ -z "$deb" ]; then
 		echo "missing local package: $pkg" >&2
