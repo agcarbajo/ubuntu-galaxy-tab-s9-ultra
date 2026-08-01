@@ -1,0 +1,48 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+#
+# Keep the sensor HexagonFS tree in the state Samsung's registry service
+# expects, so it does not rebuild the registry on every boot.
+#
+# The service treats sensors/registry/sensors_registry as a completion marker
+# and sensors/registry/sns_reg_config as a per-input timestamp cache: for every
+# JSON under sensors/config it records the mtime the file had when the registry
+# was generated.  The cache we ship records 0, because the tree is built with
+# every timestamp normalised to the epoch.
+#
+# If a config file's mtime does not match its cached value, the DSP rebuilds
+# the whole registry.  That rebuild stages each entry in a temporary file and
+# asks to move it into place, and afterwards asks for a local interface named
+# sns_registry that hexagonrpcd does not implement, at which point it closes
+# the session and no sensor is ever published.
+#
+# Two things break the timestamps in practice:
+#
+#   * the TWRP installer writes each overlay file with "unzip -p > file", which
+#     keeps no timestamp at all, so every file ends up carrying whatever the
+#     recovery's clock happened to say;
+#   * an interrupted rebuild leaves entries the DSP wrote itself.
+#
+# Normalising here fixes both, and costs a few milliseconds at boot.
+set -eu
+
+tree=/usr/share/qcom/sm8550/Samsung/gts9uwifi
+
+[ -d "$tree" ] || exit 0
+
+# Only the config inputs are compared against the cache, but normalising the
+# whole tree keeps it byte-for-byte reproducible and costs nothing.
+find "$tree" -exec touch -h -d @0 {} +
+
+# hexagonrpcd runs as the fastrpc user and the firmware needs to write its
+# registry cache, so the tree has to belong to it.  tmpfiles.d does this too;
+# repeat it here because this unit runs before the daemon either way.
+if getent passwd fastrpc >/dev/null 2>&1; then
+	chown -R fastrpc:fastrpc "$tree"
+fi
+
+marker=$tree/sensors/registry/sensors_registry
+if [ ! -e "$marker" ]; then
+	echo "ubuntu-gts9u-sensor-registry: completion marker missing; the DSP" \
+	     "will rebuild the registry and the session will not survive it" >&2
+fi

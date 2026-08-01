@@ -1,0 +1,15 @@
+[Unit]
+Description=Normalise the SM-X910 sensor registry tree before the DSP reads it
+Documentation=file:///usr/libexec/ubuntu-gts9u-sensor-registry
+After=local-fs.target
+Before=hexagonrpcd-adsp-sensorspd.service
+RequiresMountsFor=/usr/share/qcom
+ConditionPathIsDirectory=/usr/share/qcom/sm8550/Samsung/gts9uwifi
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/ubuntu-gts9u-sensor-registry
+
+[Install]
+WantedBy=multi-user.target

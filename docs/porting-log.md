@@ -827,3 +827,63 @@ Reiniciar el ADSP por `remoteproc` con el sistema arrancado deja el sistema
 solos. Un reinicio del sistema la recupera. Durante el diagnóstico se reinició
 el ADSP varias veces; se comprobó después del reinicio que la tarjeta
 `Samsung-Galaxy-Tab-S9-Ultra` vuelve a estar presente.
+
+## Autorrotación: la causa raíz, y por qué el port de referencia no la sufría
+
+Los parches de `rename` y del búfer del listener son correctos y necesarios
+para que el DSP *pueda* reconstruir el registro. Pero la pregunta buena era
+otra: por qué lo reconstruye, si postmarketOS usa el mismo `hexagonrpcd` 0.4.0
+con un único parche y allí la rotación funciona.
+
+La respuesta estaba escrita en el propio generador del árbol del port de
+referencia, `stage-stock-sensor-hexagonfs.sh`:
+
+> Samsung's registry service uses this zero-length file as the completion
+> marker and the companion JSON as a per-input timestamp cache. Omitting either
+> makes the DSP rebuild the registry through a temp.json + rename sequence.
+
+Dos ficheros gobiernan todo:
+
+- `sensors/registry/sensors_registry`, de longitud cero, marca el registro como
+  completo;
+- `sensors/registry/sns_reg_config` es un caché que guarda, para cada JSON de
+  `sensors/config`, la fecha que tenía cuando se generó el registro.
+
+El árbol se construye con **todas las fechas normalizadas a la época**, así que
+el caché guarda `"data": "0"`. El DSP compara ese valor contra el `stat()` de
+cada JSON: si no coincide, reconstruye.
+
+Nuestro overlay era correcto —los dos ficheros presentes, fechas a cero—, pero
+el instalador TWRP escribe cada fichero con `unzip -p > destino`, que no
+conserva ninguna fecha. En la tablet los JSON acababan con la hora del reloj de
+la recovery, julio de 2025, y el caché decía cero. De ahí la reconstrucción en
+cada arranque, y con ella la petición de `sns_registry` que cerraba la sesión.
+
+### La corrección
+
+`ubuntu-gts9u-sensor-registry.service`, un `oneshot` ordenado antes de
+`hexagonrpcd`, normaliza las fechas del árbol a la época y le devuelve la
+propiedad al usuario `fastrpc`. Se hace en el lado Ubuntu y no en el
+instalador a propósito: aquí hay `coreutils` de GNU y `touch -d @0` se comporta
+igual siempre, mientras que el `busybox` de TWRP varía; y además repara un
+árbol que haya quedado a medio reconstruir por un intento anterior.
+
+### Verificación desde arranque en frío
+
+| | |
+|---|---|
+| `hexagonrpcd-adsp-sensorspd` | active, 1 proceso |
+| acelerómetro | X=8.55 Y=0.00 Z=4.84 m/s², módulo 9.82 con la tablet inclinada |
+| `AccelerometerOrientation` | `normal` |
+| `AccelerometerTilt` | `tilted-up` |
+| tarjeta ALSA | presente |
+
+Sin intervención manual y sin reconstruir el registro.
+
+### Qué queda de los dos parches
+
+Siguen en el repositorio y siguen siendo correctos: sin ellos, cualquier
+reconstrucción del registro —por un árbol recién generado, por una fecha que se
+descuadre, por un JSON nuevo— muere en la primera entrada. Con ellos, la
+reconstrucción se completa entera. Lo que no arreglan es la etapa siguiente,
+`sns_registry`, y por eso conviene no llegar a necesitarla.
