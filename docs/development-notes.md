@@ -324,3 +324,38 @@ DTS solo cablea el primero:
 Que la funda normal apague la pantalla y la del teclado no encaja con que cada
 una accione un imán distinto. Antes de tocar el DTS hay que medirlo: leer TLMM
 203 con la funda de teclado abierta y cerrada.
+
+### Medido: los pines del conector pogo están muertos sin alimentar
+
+Dos grabaciones de 280 s cada una, con la dueña accionando la funda EF-DX920:
+cerrarla y abrirla tres veces, engancharla a los pines, teclear, desengancharla
+y volver a cerrarla. TLMM 203 (`hall_wacom`), 62 (`irq_conn`) y 75 (`irq_gpio`)
+**no cambiaron ni una vez**, ni con pull-up ni con pull-down, y `SW_LID` tampoco.
+
+Leer los pines desde userspace no sirve para atribuir la funda a ninguno: el
+nodo de Samsung declara un `stm32_vddo-supply` y un regulador de refuerzo
+`max77816,kbd_boost@18`, y sin encenderlos el MCU no arranca y el detector de
+presencia no conduce. La medida no dice «no hay señal», dice «no hay
+alimentación».
+
+Dato aportado por la dueña que cierra el razonamiento: **esta funda hay que
+desengancharla de los pines para cerrarla**. Con la funda cerrada el enlace
+pogo está muerto por definición, así que el estado «cerrada» no puede llegar
+por ahí. Y como el imán no mueve ni el Hall que ya usamos (TLMM 107, que sí
+funciona con la funda normal) ni el segundo (TLMM 203), lo más probable es que
+esta funda no lleve imán en esa posición y que en stock sea el propio driver
+del teclado quien apague la pantalla al ver que el conector se ha soltado.
+
+Consecuencia para la planificación: el apagado automático con la funda de
+teclado **no es independiente del teclado**. Las dos mitades son un solo
+trabajo, portar `stm,stm32_pogo` desde la publicación de fuentes GPL de Samsung
+para el SM-X910, más un nodo `i2c-gpio` sobre TLMM 72/106 y los dos
+reguladores.
+
+### `CONFIG_GPIO_CDEV_V1` hace falta para las herramientas de Ubuntu
+
+Ubuntu 24.04 trae libgpiod 1.6, que solo habla la ABI v1 del chardev de GPIO.
+Nuestro kernel se compila sin `CONFIG_GPIO_CDEV_V1`, así que `gpioget` devuelve
+`Invalid argument` en **todas** las líneas, incluso las que están en uso. El
+síntoma parece un pin reservado y no lo es. Añadir la opción al fragmento de
+escritorio en la próxima reconstrucción del kernel.
