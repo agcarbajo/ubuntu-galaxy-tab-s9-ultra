@@ -1,0 +1,19 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+#
+# system-sleep hooks run inside the suspend transaction.  Drive one named
+# service rather than anonymous timers: a following suspend can then cancel an
+# SSC discovery still in flight before sensorspd is stopped.  In the reference
+# port, anonymous `systemd-run --on-active` timers fired 7 to 16 seconds late
+# and rapid lid cycles left several of them racing to restart the same FastRPC
+# protection domain, which ended in "SSC QMI Service not found".
+
+case "$1" in
+	pre)
+		systemctl stop ubuntu-gts9u-sensors-resume.service 2>/dev/null || true
+		;;
+	post)
+		systemctl restart --no-block \
+			ubuntu-gts9u-sensors-resume.service || true
+		;;
+esac

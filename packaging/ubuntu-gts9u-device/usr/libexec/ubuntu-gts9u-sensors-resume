@@ -1,0 +1,40 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+#
+# Bring the Qualcomm Sensor Core back and hand it to the desktop.
+#
+# Ported from gts9uwifi-sensors-resume of the postmarketOS port.  The reasoning
+# is a property of the hardware and of libssc, not of the distribution:
+#
+#  - the sensors live inside the ADSP, reached over FastRPC, so hexagonrpcd has
+#    to be attached to the sensor protection domain before anything can read
+#    them;
+#  - deep sleep power-collapses SSC, and libssc 0.4.4 cannot reconnect an
+#    existing QMI client afterwards, so iio-sensor-proxy must be restarted to
+#    get a fresh one;
+#  - SSC discovery finishes later than the QMI service first appears.  Waiting
+#    for a real accelerometer sample, rather than for the service, stops the
+#    proxy exiting early with "No sensors".
+set -eu
+
+log() { echo "ubuntu-gts9u-sensors-resume: $*" >&2; }
+
+# A unit can still read as active after a platform PM cycle while its
+# FastRPC/QMI client is stale.  Restarting is cheap and gives SSC one clean
+# attachment, both at boot and after a real resume.
+systemctl restart hexagonrpcd-adsp-sensorspd.service || true
+
+attempt=0
+while [ "$attempt" -lt 45 ]; do
+	attempt=$((attempt + 1))
+	output=$(timeout 4 ssccli --sensor accelerometer --timeout 2 2>&1 || true)
+	if printf '%s\n' "$output" | grep -q 'Accelerometer sensor measurement:'; then
+		systemctl restart iio-sensor-proxy.service || true
+		log "SSC ready after attempt $attempt; restarted the sensor proxy for a fresh QMI client"
+		exit 0
+	fi
+	sleep 2
+done
+
+log 'SSC did not become ready; rotation will not work this boot'
+exit 1

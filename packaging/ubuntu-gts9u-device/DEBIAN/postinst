@@ -3,15 +3,22 @@
 # route gets them and no build script has to remember.
 set -e
 
+# unit:target pairs.  The target is where the enablement symlink must appear,
+# which is what the verification below checks.
+UNITS='
+ubuntu-gts9u-grow-rootfs.service:basic.target
+ubuntu-gts9u-panel-coldboot-recover.service:multi-user.target
+ubuntu-gts9u-adsp-boot.service:multi-user.target
+ubuntu-gts9u-bluetooth-address.service:multi-user.target
+ubuntu-gts9u-sensors-resume.service:multi-user.target
+'
+
 case "$1" in
 	configure)
-		for unit in \
-			ubuntu-gts9u-grow-rootfs.service \
-			ubuntu-gts9u-panel-coldboot-recover.service \
-			ubuntu-gts9u-adsp-boot.service \
-			ubuntu-gts9u-bluetooth-address.service; do
+		for pair in $UNITS; do
+			unit=${pair%%:*}
 			# deb-systemd-helper is not guaranteed inside a foreign-arch
-			# chroot, so fall back to systemctl and then to a plain symlink.
+			# chroot, so fall back to systemctl.
 			if command -v deb-systemd-helper >/dev/null 2>&1; then
 				deb-systemd-helper enable "$unit" >/dev/null || true
 			fi
@@ -19,17 +26,13 @@ case "$1" in
 		done
 
 		# Verify rather than assume: a unit that silently failed to enable
-		# would only show up as a black screen on the tablet.
-		for unit in \
-			ubuntu-gts9u-grow-rootfs.service:basic.target \
-			ubuntu-gts9u-panel-coldboot-recover.service:multi-user.target \
-			ubuntu-gts9u-adsp-boot.service:multi-user.target \
-			ubuntu-gts9u-bluetooth-address.service:multi-user.target; do
-			name=${unit%%:*}
-			target=${unit##*:}
-			if [ ! -e "/etc/systemd/system/$target.wants/$name" ] && \
-			   [ ! -e "/usr/lib/systemd/system/$target.wants/$name" ]; then
-				echo "ubuntu-gts9u-device: WARNING: $name is not enabled in $target" >&2
+		# shows up on the tablet only as a feature that quietly does nothing.
+		for pair in $UNITS; do
+			unit=${pair%%:*}
+			target=${pair##*:}
+			if [ ! -e "/etc/systemd/system/$target.wants/$unit" ] && \
+			   [ ! -e "/usr/lib/systemd/system/$target.wants/$unit" ]; then
+				echo "ubuntu-gts9u-device: WARNING: $unit is not enabled in $target" >&2
 			fi
 		done
 		;;

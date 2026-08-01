@@ -1,0 +1,18 @@
+[Unit]
+Description=Recover Qualcomm SSC and hand the sensors to the desktop
+Documentation=https://github.com/agcarbajo/postmarketos-galaxy-tab-s9-ultra
+After=ubuntu-gts9u-adsp-boot.service pd-mapper.service
+After=ubuntu-gts9u-panel-coldboot-recover.service
+After=hexagonrpcd-adsp-sensorspd.service
+Before=display-manager.service
+ConditionPathExists=/usr/bin/ssccli
+
+[Service]
+Type=oneshot
+ExecStartPre=/bin/sleep 2
+ExecStart=/usr/libexec/ubuntu-gts9u-sensors-resume
+# SSC discovery is slow: the loop allows 45 attempts two seconds apart.
+TimeoutStartSec=210
+
+[Install]
+WantedBy=multi-user.target
