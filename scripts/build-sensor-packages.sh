@@ -156,6 +156,7 @@ package_tree /build/stage-libssc libssc "$libssc_ver" \
 step "hexagonrpcd $hexagonrpc_ver"
 mkdir -p "$buildroot/build"
 cp "$patches/support-samsung-sensor-registry-writes.patch" "$buildroot/build/"
+cp "$patches/fix-fwrite-arity.patch" "$buildroot/build/"
 cp "$patches/10-fastrpc.rules" "$buildroot/build/"
 run "cd /build
 rm -rf hexagonrpc stage-hexagonrpcd
@@ -165,6 +166,9 @@ cd hexagonrpc
 # Samsung's sensor firmware wants a writable registry cache; without this the
 # sensor protection domain never publishes sns_registry.
 patch -p1 < /build/support-samsung-sensor-registry-writes.patch
+# The declared fwrite arity does not match what this firmware sends; see the
+# patch header for the measurement.
+patch -p1 < /build/fix-fwrite-arity.patch
 meson setup output --prefix=/usr
 meson compile -C output
 DESTDIR=/build/stage-hexagonrpcd meson install --no-rebuild -C output

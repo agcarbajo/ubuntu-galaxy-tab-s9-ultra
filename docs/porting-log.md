@@ -626,3 +626,93 @@ Que la cadena compile e instale no prueba que la rotación funcione. Falta ver
 si Mutter 46 de Ubuntu sufre las dos carreras del bloqueo de rotación que el
 port de referencia corrigió con un parche propio; se dejó fuera a propósito,
 para portarlo solo con evidencia.
+
+---
+
+## Sesión 5 — la cadena de sensores, eslabón a eslabón
+
+Fecha: 2026-08-01. `apt install chromium` y `firefox` quedaron confirmados por
+la usuaria: el arreglo de `CONFIG_SQUASHFS=y` era la causa.
+
+La rotación se recorrió midiendo cada eslabón —ADSP → `/dev/fastrpc-adsp` →
+`hexagonrpcd` → SSC → `libssc` → `iio-sensor-proxy` → Mutter— en lugar de
+suponer dónde fallaba. Aparecieron cuatro problemas distintos.
+
+### 1. Falta una dependencia de ejecución
+
+`ssccli` e `iio-sensor-proxy` morían con
+`error while loading shared libraries: libqmi-glib.so.5`. El paquete `libssc`
+no declaraba `libqmi-glib5`. Añadida, todos los símbolos resuelven.
+
+### 2. El árbol HexagonFS quedaba un nivel demasiado profundo
+
+El tarball anida todo bajo `sensor-hexagonfs/` y el port de referencia lo
+extrae con `--strip-components=1`. Este port lo omitía, y `hexagonrpcd`
+reportaba `Could not open /../sns_reg_version: No such file`.
+
+Esto importa además porque el parche de Samsung reasigna el mapeo de
+`/sensors/registry/` a `/sensors/`, de modo que el árbol debe tener `dsp`,
+`sensors` y `socinfo` en su raíz.
+
+### 3. La aridad declarada de `apps_std_fwrite` no coincide con este firmware
+
+Al hacer el árbol escribible apareció:
+
+```
+Invalid number of input numbers: 8 (expected 12)
+```
+
+El listener exige `4 * (in_nums + in_bufs + out_bufs)`. El parche declara
+`fwrite` como `(2, 1, 2, 0)` → 12 bytes; el firmware envía 8, que son dos
+palabras: `in_nums=1` más la palabra de tamaño que aporta el único búfer de
+entrada. Eso coincide además con el manejador, que lee
+`struct { uint32_t fd; uint32_t buf_size; }`, porque con `in_bufs=1` la palabra
+siguiente a `fd` **es** el tamaño de ese búfer.
+
+Corregido a `(1, 1, 2, 0)` en `packaging/sensors/fix-fwrite-arity.patch`.
+Verificado en hardware: desaparecen tanto el error de aridad como los de
+permiso, y `sns_reg_version` **se escribe** —su fecha pasa de 1970 a la hora
+actual conservando sus 10 bytes—. La ruta de escritura funciona.
+
+### 4. Frente abierto: el DSP pide una interfaz que no existe
+
+Con todo lo anterior corregido, el daemon vive **104 ms** y sale con estado 0.
+El intercambio completo es:
+
+```
+Starting hexagonrpcd (INIT_ATTACH_SNS) on /dev/fastrpc-adsp
+Could not find local interface sns_registry
+Unsupported handle: 4294967295
+```
+
+El firmware de sensores pide al AP una interfaz local llamada `sns_registry`.
+`hexagonrpcd` solo ofrece tres —`apps_mem`, `apps_std` y `remotectl`— y la
+palabra `sns_registry` no aparece en ninguna parte de su código, ni siquiera
+con el parche de Samsung. Al no encontrarla, el DSP invoca sobre el handle de
+error `0xFFFFFFFF` y cierra la sesión.
+
+Hechos establecidos, para no repetir el trabajo:
+
+- **No es un problema de permisos.** Ejecutado como root desaparecen los
+  `Permission denied` y el comportamiento final es idéntico.
+- **No es fatal por sí mismo.** Tanto `Unsupported handle` como
+  `Could not find local interface` devuelven un error al DSP y el listener
+  continúa; lo que termina la sesión es que el DSP la cierra.
+- **El ADSP y el audio sobreviven.** El intento no provoca SSR: la tarjeta
+  ALSA sigue presente después.
+- El árbol correcto hace que el DSP llegue **más lejos**, no menos: con el
+  árbol mal extraído el daemon vivía indefinidamente porque nunca alcanzaba
+  este punto.
+
+### Un aviso
+
+Durante el diagnóstico se ejecutó el daemon como root y truncó
+`sns_reg_version` a 0 bytes al abrirlo para escritura. Se detectó y el árbol se
+restauró desde la copia limpia del overlay de build, verificando que recupera
+sus 10 bytes. Conviene no ejecutar ese daemon como root sobre un árbol que
+importe.
+
+### Estado
+
+Rotación: sigue sin funcionar. Tres defectos reales corregidos y el cuarto
+caracterizado con precisión. Todo lo demás del dispositivo sigue igual.

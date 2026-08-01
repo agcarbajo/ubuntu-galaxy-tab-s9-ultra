@@ -1,0 +1,38 @@
+From: Ubuntu gts9uwifi port contributors <noreply@example.invalid>
+Subject: [PATCH] hexagonrpcd: correct the apps_std_fwrite input arity
+
+The Samsung registry-writes patch declares apps_std_fwrite with two input
+numbers, which makes the listener demand a 12-byte first input buffer:
+
+    4 * (in_nums + in_bufs + out_bufs) = 4 * (2 + 1 + 0) = 12
+
+Measured against the X910's sensor firmware, the DSP sends 8 bytes, and the
+daemon rejects the call with
+
+    Invalid number of input numbers: 8 (expected 12)
+
+Eight bytes is two words, which is in_nums=1 plus the one size word the single
+input buffer contributes.  That also matches the handler, which reads
+
+    struct { uint32_t fd; uint32_t buf_size; } *first_in = inbufs[0].p;
+
+because with in_bufs=1 the word after fd is exactly the size of that buffer.
+So the layout the firmware sends and the layout the handler reads already
+agree; only the declaration was wrong.
+
+This matters because the write is not optional.  With the registry read-only
+the firmware cannot update sns_reg_version, never publishes sns_registry, and
+closes the session: the daemon then exits cleanly with status 0 and no sensor
+ever appears.
+
+--- a/hexagonrpcd/interfaces/apps_std.def
++++ b/hexagonrpcd/interfaces/apps_std.def
+@@ -28,7 +28,7 @@ HEXAGONRPC_DEFINE_REMOTE_METHOD(1, apps_std_freopen, 1, 0, 1, 1)
+ HEXAGONRPC_DEFINE_REMOTE_METHOD(2, apps_std_fflush, 8, 0, 0, 0)
+ HEXAGONRPC_DEFINE_REMOTE_METHOD(3, apps_std_fclose, 1, 0, 0, 0)
+ HEXAGONRPC_DEFINE_REMOTE_METHOD(4, apps_std_fread, 1, 0, 2, 1)
+-HEXAGONRPC_DEFINE_REMOTE_METHOD(5, apps_std_fwrite, 2, 1, 2, 0)
++HEXAGONRPC_DEFINE_REMOTE_METHOD(5, apps_std_fwrite, 1, 1, 2, 0)
+ HEXAGONRPC_DEFINE_REMOTE_METHOD(9, apps_std_fseek, 3, 0, 0, 0)
+ HEXAGONRPC_DEFINE_REMOTE_METHOD(19, apps_std_fopen_with_env, 0, 4, 1, 0)
+ HEXAGONRPC_DEFINE_REMOTE_METHOD(26, apps_std_opendir, 0, 1, 2, 0)
