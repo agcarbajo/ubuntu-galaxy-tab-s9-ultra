@@ -140,6 +140,26 @@ adopta acto seguido sin reiniciarse.
 Para comprobar si la dirección ya está puesta se usa `hciconfig`, que es un
 ioctl, responde en ~3 ms y no puede bloquearse.
 
+## Un símbolo en `=m` está ausente, no degradado
+
+Este port no instala árbol de módulos: solo los dos ath12k firmados. Por tanto
+**cualquier `CONFIG_*=m` equivale a que la función no existe**. Es la causa
+única de tres fallos que parecían no tener relación:
+
+| Símbolo | Síntoma visible |
+|---|---|
+| `SQUASHFS=m` | `apt install firefox` y `chromium` fallan: en Ubuntu son paquetes de transición que instalan un snap, y un snap es una imagen squashfs |
+| `BINFMT_MISC=m` | `systemd-binfmt.service` y `proc-sys-fs-binfmt_misc.mount` fallan en cada arranque y el sistema queda `degraded` |
+| `OVERLAY_FS=m`, `FUSE_FS=m` | snapd no puede superponer datos escribibles sobre el snap |
+
+Antes de dar por buena una función de escritorio, comprobar que sus símbolos
+son `=y`, no `=m`.
+
+## No confiar en `Recommends` para nada que importe
+
+El rootfs v0.5 salió sin `snapd` porque se dejó a que
+`ubuntu-desktop-minimal` lo recomendara. Lo que importa se declara explícito.
+
 ## Lo que no hay que repetir
 
 Heredado de postmarketOS; cada punto costó al menos una iteración física.

@@ -510,3 +510,119 @@ Suben solos desde arranque en frío, verificado sin tocar nada: recuperación de
 panel, ADSP, pd-mapper y audio. Bluetooth queda intermitente y la rotación
 automática sin abordar, porque necesita `hexagonrpcd` y `libssc`, que no
 existen en Ubuntu.
+
+---
+
+## Sesión 4 — Bluetooth cerrado, rotación empaquetada, y un kernel de escritorio
+
+Fecha: 2026-08-01.
+
+### Bluetooth: dos comportamientos de `btmgmt`, ninguno documentado
+
+El servicio funcionaba a mano y fallaba como servicio. Fueron dos trampas
+encadenadas de BlueZ 5.72, ambas medidas:
+
+1. **Ordenado antes de `bluetoothd`, `btmgmt` se bloquea en `epoll_wait`**
+   durante minutos. Como la unidad estaba `Before=bluetooth.service` —copiando
+   al port de referencia— se llevó por delante toda la pila: 90 s de timeout
+   por arranque. Con el demonio ya arriba, la misma llamada tarda 0 s. Este
+   port ordena el servicio **después**, al revés que la referencia.
+2. **Con stdin en `/dev/null`, `btmgmt` no imprime nada y sale con 0.** Es lo
+   que systemd da por defecto a un servicio. No falla: miente. El `grep` sobre
+   su salida vacía no casaba nunca y el bucle de espera se agotaba. Con una
+   tubería vacía se comporta con normalidad.
+
+Un tercer detalle: el servicio informaba de fallo cuando había funcionado.
+Aplicar la dirección reinicializa el controlador, así que releerla un segundo
+después mostraba la antigua. Ahora sondea.
+
+Resultado verificado desde arranque en frío: `48:BC:…`, `UP RUNNING`,
+`Powered: yes`, servicio completado en 1,3 s. Escaneo de 10 s: 20 dispositivos.
+A2DP sigue sin probar.
+
+También quedó **refutada** la hipótesis del ciclo de alimentación: un apagado
+completo no cambia nada. El `command 0xfc00 tx timeout` del primer intento de
+descarga de firmware es intermitente y el propio driver se recupera en el
+reintento. No era el problema.
+
+### `apt install firefox`, `chromium` y `fastfetch`
+
+Tres síntomas, dos causas.
+
+La grande es sistémica: **este port no instala árbol de módulos**, así que todo
+lo que quede en `=m` está ausente. `CONFIG_SQUASHFS=m` significa que ningún
+snap puede montarse, y en Ubuntu `chromium` y `firefox` son paquetes de
+transición cuyo único trabajo es instalar un snap. Lo mismo explicaba
+`systemd-binfmt.service` y `proc-sys-fs-binfmt_misc.mount` fallando en cada
+arranque y dejando el sistema en `degraded`: `CONFIG_BINFMT_MISC=m`.
+
+Se añadió un fragmento de configuración propio, separado del heredado para que
+ese siga siendo comparable con su origen: `SQUASHFS` y sus cinco
+descompresores, `OVERLAY_FS`, `FUSE_FS`, `BINFMT_MISC`, exFAT, NTFS3, y
+AppArmor con `apparmor` en `CONFIG_LSM` **conservando `lockdown`**, del que
+depende el emparejamiento kernel/módulos firmados.
+
+El guard del build rechazó tres errores antes de compilar:
+`SQUASHFS_DECOMP_MULTI_PERCPU` vive dentro de un `choice` y no se fija
+directamente; `NTFS3_FS` solo puede ser módulo mientras el driver NTFS antiguo
+esté habilitado; y la lista de fragmentos era una cadena separada por espacios
+en un repositorio cuya ruta **contiene espacios**.
+
+`fastfetch` es distinto: simplemente **no existe en el archivo de Ubuntu
+24.04**. No es un fallo de configuración.
+
+### Rotación: tres paquetes que Ubuntu no tiene
+
+Los sensores viven dentro del ADSP y se alcanzan por FastRPC, así que
+`iio-sensor-proxy` de Ubuntu no tiene nada que leer. Se compilan `libssc`
+0.4.4, `hexagonrpcd` 0.4.0 y `iio-sensor-proxy` 3.9 con `-Dssc-support`.
+
+Dos cosas que Ubuntu impuso y que la lista de dependencias de Alpine no
+anticipaba: `libssc` exige meson ≥ 1.4 y noble trae 1.3.2, y el `pkg-config`
+de `qmi-glib` arrastra `mbim-glib` y `protoc`.
+
+Un error de diseño corregido a tiempo: la primera versión compilaba **dentro
+del rootfs que se distribuye**, lo que habría puesto `build-essential`, meson y
+las cabeceras de desarrollo en la tablet. Ahora usa un chroot arm64 desechable.
+
+Y un hueco que solo apareció al inspeccionar el `.deb`: **upstream hexagonrpc
+no trae ninguna unidad systemd** —Alpine las añade con un parche de
+distribución— así que el drop-in del port apuntaba a un servicio inexistente.
+La unidad se escribe aquí, con `Conflicts=suspend.target` y el usuario
+`fastrpc` que su propia regla udev necesita.
+
+### Un falso negativo propio
+
+Al comprobar si `snapd` estaba en el rootfs usé una variable en un comando en
+línea. Este entorno se las come, así que estaba inspeccionando el **host de
+build, no el rootfs**, y concluí erróneamente que sí estaba. La comprobación
+desde un fichero de script confirmó lo contrario. `snapd` y el userspace de
+AppArmor se declaran ahora explícitamente en lugar de depender de
+`Recommends`.
+
+### Release v0.6
+
+Verificado sobre el rootfs construido, no supuesto: los cuatro paquetes locales
+instalados, **`iio-sensor-proxy` enlazando contra `libssc.so.2`** según `ldd`,
+el usuario `fastrpc` creado, las seis unidades con sus symlinks de activación,
+y `snapd`, `squashfs-tools` y AppArmor 4.0.1 presentes.
+
+| Artefacto | SHA-256 |
+|---|---|
+| `ubuntu-24.04-gts9uwifi-v0.6-sd.img.xz` | `f3c8a6c5…` |
+| `ubuntu-24.04-gts9uwifi-v0.6-sm-x910-twrp.zip` | `d061a856…` |
+| `boot.img` | `744aab41…` |
+| `init_boot.img` | `a27a5370…` |
+| `vendor_boot.img` | `59a2e5c8…` |
+
+Imagen sin comprimir: 3.721.396.224 bytes, `3f92ddda…`.
+
+**Este ZIP hay que flashearlo**: el kernel cambió, y `boot` y los módulos
+ath12k forman un conjunto firmado bajo lockdown.
+
+### Pendiente de comprobar en hardware
+
+Que la cadena compile e instale no prueba que la rotación funcione. Falta ver
+si Mutter 46 de Ubuntu sufre las dos carreras del bloqueo de rotación que el
+port de referencia corrigió con un parche propio; se dejó fuera a propósito,
+para portarlo solo con evidencia.
