@@ -80,13 +80,23 @@ echo "image: ${total_mb} MiB (boot ${boot_mb} MiB, root ${root_mb} MiB)"
 rm -f "$out"
 truncate -s "${total_mb}M" "$out"
 
-sgdisk --zap-all "$out" >/dev/null
-sgdisk \
-	--new=1:2048:+"${boot_mb}"M --change-name=1:"$boot_label" \
-	--typecode=1:8300 \
-	--new=2:0:0 --change-name=2:"$root_label" --typecode=2:8300 \
-	"$out" >/dev/null
-sgdisk --print "$out"
+# The image is a freshly recreated regular file, so there is no stale GPT to
+# wipe.  Do not use `sgdisk --zap-all` here: gdisk calls the global sync(2),
+# which can block indefinitely in WSL 2 (observed with kernel 6.6.87.2) even on
+# a new 16 MiB test image.  sfdisk uses the same GPT layout without that WSL
+# failure mode.  The physical-media installation procedure still wipes the SD
+# with `sgdisk --zap-all` before writing the finished image.
+boot_sectors=$((boot_mb * 2048))
+root_start=$((2048 + boot_sectors))
+sfdisk "$out" <<EOF
+label: gpt
+unit: sectors
+first-lba: 2048
+
+start=2048, size=${boot_sectors}, type=linux, name="${boot_label}"
+start=${root_start}, type=linux, name="${root_label}"
+EOF
+sfdisk --dump "$out"
 
 loop=$(losetup --find --show --partscan "$out")
 used_kpartx=0

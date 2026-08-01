@@ -158,6 +158,22 @@
 		regulator-boot-on;
 	};
 
+	/*
+	 * Logic power for the STM32 in Samsung's pogo keyboard.  The stock X910
+	 * DTBO describes the same active-high switch on TLMM GPIO10 and feeds it
+	 * to stm32@2a as stm32_vddo-supply.  It is intentionally not always-on:
+	 * the keyboard driver owns the rail and the regulator core returns it to
+	 * the safe low state if the driver fails to probe.
+	 */
+	pogo_vddo: pogo-vddo-regulator {
+		compatible = "regulator-fixed";
+		regulator-name = "pogo_vddo";
+		gpio = <&tlmm 10 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		pinctrl-names = "default";
+		pinctrl-0 = <&pogo_vddo_en>;
+	};
+
 	wcn7850_pmu: wcn7850-pmu {
 		compatible = "qcom,wcn7850-pmu";
 		pinctrl-names = "default";
@@ -719,6 +735,40 @@
 		bias-disable;
 	};
 
+	pogo_vddo_en: pogo-vddo-en-state {
+		pins = "gpio10";
+		function = "gpio";
+		drive-strength = <2>;
+		output-low;
+		bias-disable;
+	};
+
+	pogo_control: pogo-control-state {
+		boot-pins {
+			pins = "gpio12";
+			function = "gpio";
+			drive-strength = <2>;
+			output-low;
+			bias-disable;
+		};
+
+		reset-pins {
+			pins = "gpio13";
+			function = "gpio";
+			drive-strength = <2>;
+			output-high;
+			bias-disable;
+		};
+	};
+
+	pogo_irqs: pogo-irqs-state {
+		pins = "gpio62", "gpio75";
+		function = "gpio";
+		drive-strength = <2>;
+		input-enable;
+		bias-disable;
+	};
+
 	/* Panel tear-effect (TE) line routed to the MDP vsync input. */
 	sde_te: sde-te-state {
 		pins = "gpio86";
@@ -1182,6 +1232,31 @@
 				};
 			};
 		};
+	};
+};
+
+/*
+ * Samsung's DTBO __fixups__ targets the pogo stm32@2a fragment at
+ * qupv3_se15_i2c.  Mainline calls that controller i2c15; its standard pinctrl
+ * already maps SDA/SCL to TLMM GPIO72/106.  The similarly named GPIO
+ * properties in Samsung's child node are only used for diagnostics and MCU
+ * recovery, not as a separate i2c-gpio bus.
+ */
+&i2c15 {
+	clock-frequency = <400000>;
+	status = "okay";
+
+	pogo_keyboard: keyboard@2a {
+		compatible = "samsung,gts9u-stm32-pogo";
+		reg = <0x2a>;
+		vddo-supply = <&pogo_vddo>;
+		boot-gpios = <&tlmm 12 GPIO_ACTIVE_HIGH>;
+		reset-gpios = <&tlmm 13 GPIO_ACTIVE_LOW>;
+		connected-gpios = <&tlmm 62 GPIO_ACTIVE_HIGH>;
+		data-ready-gpios = <&tlmm 75 GPIO_ACTIVE_LOW>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&pogo_control>, <&pogo_irqs>;
+		wakeup-source;
 	};
 };
 

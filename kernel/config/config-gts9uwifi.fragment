@@ -108,6 +108,10 @@ CONFIG_INPUT_TOUCHSCREEN=y
 CONFIG_TOUCHSCREEN_GOODIX_BERLIN_CORE=y
 CONFIG_TOUCHSCREEN_GOODIX_BERLIN_I2C=y
 
+# Samsung EF-DX920 Book Cover Keyboard Slim.  The controller is an STM32 on
+# QUPv3 SE15 and exposes Linux keycodes directly in its event packets.
+CONFIG_KEYBOARD_SAMSUNG_STM32_POGO=y
+
 # Persist the early console across a warm reset.  The board-specific LOGM
 # console is readable by Samsung recovery through /proc/last_kmsg; retain the
 # generic pstore core for later backends as well.

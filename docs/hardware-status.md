@@ -1,6 +1,6 @@
 # Estado de hardware del SM-X910 bajo Ubuntu 24.04
 
-Última actualización: 2026-07-31, tras el primer arranque físico.
+Última actualización: 2026-08-02, durante el bring-up de la funda EF-DX920.
 
 Ubuntu **ya arranca** en la tablet. Esta matriz distingue explícitamente lo
 heredado de lo comprobado, y ningún componente pasa a ✅ sin observación real.
@@ -49,7 +49,7 @@ sondea» como prueba de funcionamiento.
 | UFS interna | ✅ | ⏳ | heredado | Seis LUN `sda`–`sdf`; usada solo para las particiones de arranque |
 | microSD | ✅ | ✅ | medido | Raíz por etiqueta `UBTS9U_ROOT`; la partición se expande en el primer arranque |
 | Wi-Fi WCN7850 / ath12k | ✅ | ✅ | confirmado | Conectada a la red por la usuaria; SSH en uso para el desarrollo |
-| Bluetooth y A2DP | ✅ | 🟡 | medido | La dirección de EFS levanta el controlador, verificado. Pero tras un **reinicio en caliente** el firmware no baja: `command 0xfc00 tx timeout`. Solo funcionó en arranque en frío. A2DP sin probar |
+| Bluetooth y A2DP | ✅ | ✅ | confirmado | La unidad espera a `bluetoothd`, alimenta correctamente `btmgmt` y reaplica la dirección nativa; controlador y A2DP validados |
 | Altavoces 4× CS35L45 y DMIC | ✅ | ✅ | confirmado | PipeWire nativo, sin PulseAudio. Requiere el arranque tardío del ADSP y `protection-domain-mapper` |
 | Protección DSP de altavoces | ❌ | ❌ | supuesto | Firmware Cirrus sin cargar; volumen de hardware conservador |
 | Batería | ✅ | ✅ | confirmado | SM5714: porcentaje, voltaje, corriente y temperatura del pack |
@@ -66,7 +66,7 @@ sondea» como prueba de funcionamiento.
 | Luz ambiental STK31610 | ❌ | ❌ | supuesto | El SSC lo descubre pero no emite lux; vía agotada en pmOS |
 | Proximidad | — | — | — | El firmware SSC stock del X910 no instancia el sensor |
 | S Pen (Wacom I²C 0x56) | ❌ | ❌ | supuesto | |
-| Teclado pogo (STM32 I²C 0x2a) | ❌ | ❌ | supuesto | Sin driver mainline |
+| Teclado pogo EF-DX920 (STM32 I²C 0x2a) | ❌ | 🟡 | medido | Bus GENI SE15 y GPIO de alimentación/control confirmados; el MCU genera actividad al alimentarlo. Driver mainline incluido en v0.8, aún no validado en hardware |
 | Huella (EgisTec EL7xx, SPI) | ❌ | ❌ | supuesto | Sin driver mainline |
 | Vibración / hápticos | ❌ | ❌ | supuesto | Hardware sin identificar |
 | Flash / linterna | ❌ | ❌ | supuesto | PM8350C; candidato `leds-qcom-flash` |
@@ -96,13 +96,14 @@ realmente.
    correcciones más, todas en el repositorio y ninguna específica de Ubuntu.
    Ver «Autorrotación: los cuatro obstáculos» en el registro de porte.
 
-### Frente abierto: Bluetooth tras reinicio en caliente
+### Frente abierto: funda con teclado EF-DX920
 
-El controlador contesta a todas las consultas de versión y solo se atasca al
-descargar el firmware (`command 0xfc00 tx timeout`). Solo se ha visto funcionar
-en un arranque en frío. La recuperación por software está descartada con
-evidencia: `rfkill` no cambia nada y un unbind/rebind del serdev empeora el
-estado. Pendiente de comprobar si un apagado completo lo restaura.
+El DTBO stock enlaza `stm32@2a` a QUPv3 SE15. La alimentación VDDO por TLMM10,
+BOOT0 por TLMM12, reset por TLMM13 y las líneas de presencia/datos 62/75 se han
+comprobado en vivo: al aplicar los niveles stock aparece actividad del MCU. El
+primer driver mainline usa el protocolo de keycodes directos de las fuentes
+GPL de Samsung y ya está empaquetado en v0.8; falta instalarlo y validarlo con
+pulsaciones reales.
 
 ## Invariantes heredadas que no se pueden romper
 

@@ -42,6 +42,7 @@ copia de origen para poder detectar divergencias futuras.
 | `kernel/drivers/sm5440_direct.c` | `pmaports/device/testing/linux-samsung-gts9uwifi-mainline/sm5440_direct.c` | `fd6ce815cfa8718d2ad0d01ea3cc712d93e73b7b2acb2a1ac18e6b7537852a34` |
 | `kernel/drivers/sm5714_battery.c` | `pmaports/device/testing/linux-samsung-gts9uwifi-mainline/sm5714_battery.c` | `91e5766a09c91df4cdfb0f7ffbe297e68ab8e2b8c0392d777995fc56e50a656f` |
 | `kernel/drivers/sm5714_usbpd.c` | `pmaports/device/testing/linux-samsung-gts9uwifi-mainline/sm5714_usbpd.c` | `f51803065b130427c1f733be595bd3230eca02c69f723c6a490774d6f7dd3a92` |
+| `kernel/drivers/samsung_stm32_pogo.c` | Adaptación mainline del protocolo de `kernel/vendor/samsung-stm32-pogo/` | Véase `kernel/vendor/samsung-stm32-pogo/SHA256SUMS` |
 | `kernel/dts/sm8550-samsung-gts9uwifi.dts` | `pmaports/device/testing/linux-samsung-gts9uwifi-mainline/sm8550-samsung-gts9uwifi.dts` | `a9ff4284183c7943b2a94ac704e19b3974a58197f082e2602e1aea09f7851937` |
 | `kernel/patches/add-gts9uwifi-dtb.patch` | `pmaports/device/testing/linux-samsung-gts9uwifi-mainline/add-gts9uwifi-dtb.patch` | `36acdf4aff5abb1022edb431b39b0f99e680b9a006c859ed1f986fea7f788da3` |
 | `kernel/patches/add-samsung-sec-log-console.patch` | `pmaports/device/testing/linux-samsung-gts9uwifi-mainline/add-samsung-sec-log-console.patch` | `8a0d84ca1a2e32c937edca91752379429e42563a3308f1b880381191e6b3bfba` |

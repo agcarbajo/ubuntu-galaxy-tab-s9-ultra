@@ -887,3 +887,96 @@ reconstrucción del registro —por un árbol recién generado, por una fecha qu
 descuadre, por un JSON nuevo— muere en la primera entrada. Con ellos, la
 reconstrucción se completa entera. Lo que no arreglan es la etapa siguiente,
 `sns_registry`, y por eso conviene no llegar a necesitarla.
+
+---
+
+## Sesión 6 — el STM32 de la funda EF-DX920 responde al alimentarlo
+
+Fecha: 2026-08-02.
+
+### Corrección de una conclusión anterior: no es `i2c-gpio`
+
+La primera lectura del fragmento `stm32@2a` vio las propiedades
+`stm32,sda_gpio = <&tlmm 72 ...>` y `stm32,scl_gpio = <&tlmm 106 ...>` y dedujo
+que el MCU usaba un bus bit-bang. Era incorrecto. La tabla `__fixups__` del
+mismo DTBO contiene la asociación decisiva:
+
+```
+qupv3_se15_i2c = "/fragment@70:target:0";
+```
+
+El fragmento 70 es `stm32@2a`. En mainline el controlador es `i2c15`, y su
+pinctrl upstream ya asigna exactamente GPIO72/106 a `qup2_se7`. Crear además
+un `i2c-gpio` habría hecho competir dos maestros por las mismas líneas.
+
+El DT stock también separa el booster: `kbd_boost@18` está en
+`qupv3_hub_i2c4`, no en SE15, y `stm32,booster_power_models` solo contiene
+`0xf9` y `0xd3`. EF-DX920 aparece como modelo `0xd6`, de modo que el primer
+bring-up puede omitir el MAX77816 con respaldo documental.
+
+### Prueba física reversible de alimentación
+
+El kernel arrancado expone GPIO chardev v2, aunque las herramientas de Ubuntu
+24.04 solo hablan v1. Se escribió una sonda temporal que usa directamente los
+ioctl v2, sin modificar el rootfs ni ninguna partición. Sobre el TLMM principal
+aplicó la secuencia del DT Samsung:
+
+- GPIO10=1: VDDO;
+- GPIO12=0: BOOT0/SWCLK;
+- GPIO13=1: reset liberado.
+
+Al cabo de 100 ms GPIO62 (`irq_conn`) empezó a mostrar actividad periódica y
+GPIO75 (`irq_gpio`) produjo también una transición. Al cerrar los descriptores
+los GPIO quedaron liberados. La prueba anterior con los tres pines muertos no
+refutaba el cableado: el MCU estaba sin alimentar. Esta medida confirma VDDO y
+las líneas de control, pero todavía no confirma teclas; eso exige SE15.
+
+### Fuentes GPL y primer driver mainline
+
+Se importaron 19 ficheros de la implementación V3 desde la publicación oficial
+`SM-X910_EUR_16_Opensource.zip`, verificando primero el SHA-256 del archivo.
+Quedan intactos bajo `kernel/vendor/samsung-stm32-pogo/` con un
+`SHA256SUMS`. No se importó firmware binario.
+
+Portar sin cambios las 11.652 líneas downstream arrastraría `sec_class`, MUIC,
+notificadores Android, `msm-bus` y la ruta FOTA. Para el modelo real se escribió
+un subconjunto mainline pequeño que conserva el protocolo observado en las
+fuentes Samsung:
+
+- cabecera de tres bytes y eventos por IRQ activa baja;
+- modelo `0xd6` / EF-DX920;
+- eventos de teclado de 16 bits: keycode Linux en bits 0..14 y press en bit 15;
+- estado del LED Caps Lock en la siguiente cabecera;
+- evento Hall del MCU traducido a `SW_LID` (`2` abierto, cualquier otro valor
+  cerrado).
+
+El DTS nuevo habilita QUPv3 SE15 a 400 kHz, el regulador con GPIO10 y las cuatro
+líneas de control/IRQ exactas. El controlador queda built-in, como todos los
+proveedores de este port. También se añade `CONFIG_GPIO_CDEV_V1=y` para que las
+herramientas libgpiod 1.6 de Noble dejen de dar falsos `Invalid argument`.
+
+### Estado al terminar esta entrada
+
+El kernel compiló correctamente con el driver built-in y el DTB resultante
+contiene `keyboard@2a` bajo `i2c15`, el regulador VDDO y los cuatro GPIO
+esperados. `llvm-nm` confirmó también el registro estático del driver.
+
+Al empaquetar v0.8 apareció una regresión del entorno: `sgdisk --zap-all`
+escribía el archivo y quedaba bloqueado para siempre dentro de `sync(2)`, en
+`super_lock`. Se reprodujo con una imagen nueva de solo 16 MiB y se localizó la
+syscall exacta con `strace`; no era un fallo del layout. La creación de la GPT
+del archivo recién recreado se cambió a `sfdisk`, manteniendo los offsets,
+tipos y etiquetas. La regla de limpiar una microSD física con
+`sgdisk --zap-all` antes de escribirla permanece intacta.
+
+La release v0.8 terminó con todas las validaciones estáticas aprobadas:
+
+- ZIP TWRP: SHA-256
+  `2376e12699b4ba93287435a81cdae4ef767aa7235069f3bd18c480ea2d08bcc5`;
+- imagen SD comprimida: SHA-256
+  `e43500ebf2c1bb321fe8ccbd79fc1885090d8f25b27a2e465bc8c5ecc27e2fcb`.
+
+Nada se ha flasheado y el driver todavía no puede marcarse funcional. La
+siguiente evidencia exigida es que `i2c15` sondee `0x2a`, aparezca el
+dispositivo de entrada y las pulsaciones físicas generen eventos correctos sin
+regresiones en audio, Wi-Fi, rotación ni suspensión.

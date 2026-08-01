@@ -227,6 +227,26 @@ fi
 grep -q 'ps5169.o' "$mux_dir/Makefile" || \
 	printf 'obj-$(CONFIG_TYPEC_MUX_PS5169)\t+= ps5169.o\n' >> "$mux_dir/Makefile"
 
+keyboard_dir=$kernel_tree/drivers/input/keyboard
+install -m 0644 "$drv/samsung_stm32_pogo.c" \
+	"$keyboard_dir/samsung_stm32_pogo.c"
+if ! grep -q 'KEYBOARD_SAMSUNG_STM32_POGO' "$keyboard_dir/Kconfig"; then
+	cat >> "$keyboard_dir/Kconfig" <<'EOF'
+
+config KEYBOARD_SAMSUNG_STM32_POGO
+	tristate "Samsung SM-X910 STM32 pogo keyboard"
+	depends on I2C
+	depends on GPIOLIB
+	depends on REGULATOR
+	help
+	  Mainline-oriented driver for the STM32 controller in Samsung's
+	  EF-DX920 Book Cover Keyboard Slim for the Galaxy Tab S9 Ultra.
+EOF
+fi
+grep -q 'samsung_stm32_pogo.o' "$keyboard_dir/Makefile" || \
+	printf 'obj-$(CONFIG_KEYBOARD_SAMSUNG_STM32_POGO) += samsung_stm32_pogo.o\n' \
+		>> "$keyboard_dir/Makefile"
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------

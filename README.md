@@ -19,9 +19,11 @@ reproducible from source, the system reaches a GNOME desktop on the native
 panel, and display, GPU, touch, buttons, Wi-Fi, battery, lid wake, audio, USB
 host and DisplayPort have all been confirmed on hardware.
 
-Bluetooth is intermittent — the controller answers but its firmware download
-stalls after a warm reboot — and automatic rotation is not implemented yet.
-A rollback build of the postmarketOS v1.71 baseline is kept outside Git.
+Bluetooth/A2DP and automatic rotation are also working. Current development is
+focused on the Samsung EF-DX920 pogo keyboard cover: its STM32 controller has
+now been powered and observed live, and the first mainline driver is packaged
+in v0.8 awaiting hardware validation. A rollback build of the postmarketOS v1.71
+baseline is kept outside Git.
 
 See [docs/hardware-status.md](docs/hardware-status.md) for what is inherited,
 what has been proven under Ubuntu, and what is still assumed.
@@ -46,13 +48,14 @@ port is expected to reproduce.
 | Suspend / resume, lid wake | ✅ | ✅ |
 | USB host | ✅ | ✅ |
 | USB-C DisplayPort | ✅ | ✅ |
-| Bluetooth + A2DP | ✅ | 🟡 firmware download stalls after a warm reboot |
+| Bluetooth + A2DP | ✅ | ✅ |
 | USB-PD/PPS charging | 🟡 | ⏳ not tested |
 | USB gadget / RNDIS | ✅ | ⏳ not tested |
 | Ethernet (RTL8153) / UAS | 🟡 / ❓ | ⏳ not tested |
-| Motion sensors and autorotation | ✅ | ❌ needs libssc and hexagonrpcd packaged |
+| Motion sensors and autorotation | ✅ | ✅ |
 | Ambient light (STK31610) | ❌ | ❌ |
-| S Pen, pogo keyboard, fingerprint, haptics | ❌ | ❌ |
+| Pogo keyboard (EF-DX920) | ❌ | 🟡 v0.8 driver awaiting hardware validation |
+| S Pen, fingerprint, haptics | ❌ | ❌ |
 | Speaker protection DSP | ❌ | ❌ |
 | Flash / cameras | ❌ | ❌ |
 

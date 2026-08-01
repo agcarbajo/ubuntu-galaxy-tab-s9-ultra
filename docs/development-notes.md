@@ -82,6 +82,12 @@ port Ubuntu no se introduce en él.
   salieron byte a byte iguales y solo `vendor_boot` difirió por esta causa. El
   pipeline Ubuntu debe fijar `mtime` a 0 en todo el árbol del overlay antes de
   empaquetarlo.
+- **`sgdisk` puede bloquearse en WSL 2 al crear un archivo de imagen.** Con el
+  kernel WSL `6.6.87.2`, `sgdisk --zap-all` llega a escribir los sectores y se
+  queda indefinidamente en su llamada global `sync(2)` (`super_lock`), incluso
+  sobre un fichero nuevo de 16 MiB. `build-sd-image.sh` usa `sfdisk` sobre el
+  archivo recién recreado y conserva el mismo layout GPT. La regla de ejecutar
+  `sgdisk --zap-all` antes de escribir una **microSD física** no cambia.
 
 ## Hallazgos propios de este port
 
@@ -269,9 +275,16 @@ Reglas innegociables, idénticas a las del port postmarketOS:
 ## Funda con teclado EF-DX920: cómo está cableada de verdad
 
 Recuperado del DTBO original de Samsung (`port/firmware-extracted/ap/dtbo.img`,
-entrada `board-id,00`, decompilada con `dtc`). Nada de esto es visible desde el
-sistema en marcha: el teclado no está en ninguno de los siete buses GENI, y por
-eso `i2cdetect` no encuentra nada en 0x2a.
+entrada `board-id,00`, decompilada con `dtc`). La primera lectura del overlay
+aislado confundió las propiedades GPIO de diagnóstico con el bus. La sección
+`__fixups__` resuelve el padre sin ambigüedad:
+
+```
+qupv3_se15_i2c = "/fragment@70:target:0";
+```
+
+Por tanto `stm32@2a` vive en QUPv3 SE15, que mainline llama `i2c15`; su pinctrl
+upstream ya asigna SDA/SCL a TLMM72/106.
 
 ### El teclado
 
@@ -293,10 +306,10 @@ stm32@2a {
 };
 ```
 
-Lo importante: **`sda_gpio` y `scl_gpio` son pines TLMM sueltos**, no un
-controlador GENI. El bus del conector pogo es I²C por GPIO, así que hace falta
-un nodo `i2c-gpio` sobre TLMM 72/106 antes de que ningún driver pueda hablar
-con el MCU.
+Lo importante: **no se debe crear un segundo bus `i2c-gpio`**. `sda_gpio` y
+`scl_gpio` repiten los pines del controlador GENI para diagnóstico y la ruta de
+recuperación/bootloader del MCU. Un `i2c-gpio` sobre 72/106 competiría con SE15
+por las mismas líneas.
 
 Cuelgan de él dos nodos de función:
 
@@ -305,7 +318,9 @@ Cuelgan de él dos nodos de función:
 - `pogo_touchpad`, `compatible = "stm,touchpad"`, con
   `touchpad,invert = <0 1 1>`.
 
-Y un regulador de refuerzo aparte: `kbd_boost@18`, `max77816,kbd_boost`.
+Y un regulador de refuerzo aparte: `kbd_boost@18`, `max77816,kbd_boost`, en el
+bus distinto `qupv3_hub_i2c4`. Samsung solo lo activa para los modelos `0xf9`
+y `0xd3`; EF-DX920 es `0xd6`, por lo que no pertenece a esa lista.
 
 `stm,stm32_pogo` no existe en mainline. Sí existe en la publicación de fuentes
 de Samsung para el SM-X910, que es GPL, así que la vía realista es portarlo, no
@@ -348,9 +363,19 @@ del teclado quien apague la pantalla al ver que el conector se ha soltado.
 
 Consecuencia para la planificación: el apagado automático con la funda de
 teclado **no es independiente del teclado**. Las dos mitades son un solo
-trabajo, portar `stm,stm32_pogo` desde la publicación de fuentes GPL de Samsung
-para el SM-X910, más un nodo `i2c-gpio` sobre TLMM 72/106 y los dos
-reguladores.
+trabajo: portar el protocolo `stm,stm32_pogo` desde la publicación GPL de
+Samsung, habilitar SE15 y VDDO, y traducir el evento Hall que envía el MCU a
+`SW_LID`. El booster se pospone salvo que una medida del EF-DX920 demuestre que
+también lo necesita.
+
+### Medido con el MCU alimentado
+
+Una prueba transitoria con GPIO chardev v2 aplicó exactamente los niveles del
+DT stock: TLMM10=1 (VDDO), TLMM12=0 (BOOT0) y TLMM13=1 (NRST). TLMM62 empezó a
+mostrar actividad periódica y TLMM75 produjo una transición. Al cerrar los
+descriptores todos los GPIO quedaron liberados. Esto prueba que la alimentación
+y el cableado de control son correctos; no prueba todavía que el teclado
+registre pulsaciones, que requiere arrancar el driver sobre SE15.
 
 ### `CONFIG_GPIO_CDEV_V1` hace falta para las herramientas de Ubuntu
 

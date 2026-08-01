@@ -60,6 +60,10 @@ CONFIG_JOLIET=y
 CONFIG_ZISOFS=y
 CONFIG_UDF_FS=y
 
+# Ubuntu 24.04 ships libgpiod 1.6, whose diagnostic tools use GPIO chardev ABI
+# v1.  Keep the current ABI v2 and expose v1 compatibility as well.
+CONFIG_GPIO_CDEV_V1=y
+
 # --- container and sandbox plumbing ------------------------------------------
 # Snap confinement, systemd-nspawn and the networking that portals expect.
 CONFIG_VETH=y
