@@ -44,6 +44,11 @@ esac
 # Package sets
 # ---------------------------------------------------------------------------
 
+# snapd and apparmor are listed explicitly rather than left to Recommends.
+# A build that relied on ubuntu-desktop-minimal recommending snapd produced a
+# rootfs without it, and `apt install firefox` then fails: in Ubuntu that
+# package exists only to install a snap.  apparmor userspace matters now that
+# the kernel enables the LSM, or the profiles Ubuntu ships never load.
 base_packages='
 ubuntu-minimal,ubuntu-standard,
 systemd,systemd-sysv,systemd-resolved,udev,dbus,
@@ -52,6 +57,8 @@ e2fsprogs,dosfstools,parted,gdisk,
 zstd,xz-utils,lz4,
 sudo,locales,tzdata,console-setup,keyboard-configuration,
 cloud-guest-utils,
+apparmor,apparmor-utils,
+snapd,squashfs-tools,
 netplan.io,network-manager,wpasupplicant,
 openssh-server,avahi-daemon,
 protection-domain-mapper,qrtr-tools,
