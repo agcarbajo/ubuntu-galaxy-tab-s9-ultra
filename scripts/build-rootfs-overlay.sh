@@ -139,8 +139,12 @@ install -m 0644 "$firmware/hmtnv20.b21" \
 
 # --- sensors: HexagonFS tree ----------------------------------------------
 if [ -f "$firmware/sensor-hexagonfs.tar.gz" ]; then
+	# --strip-components=1 is required.  The tarball nests everything under
+	# sensor-hexagonfs/, and without it hexagonrpcd looks one level too high
+	# and reports "Could not open /../sns_reg_version: No such file".
 	tar -xzf "$firmware/sensor-hexagonfs.tar.gz" \
-		-C "$overlay/usr/share/qcom/sm8550/Samsung/gts9uwifi"
+		-C "$overlay/usr/share/qcom/sm8550/Samsung/gts9uwifi" \
+		--strip-components=1
 else
 	echo 'note: sensor-hexagonfs.tar.gz is absent; motion sensors will not work' >&2
 fi

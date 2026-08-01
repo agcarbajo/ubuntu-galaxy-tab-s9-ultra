@@ -149,7 +149,7 @@ echo 'libssc built'"
 run 'cp -a /build/stage-libssc/. / && ldconfig && echo "libssc available to the chroot"'
 
 package_tree /build/stage-libssc libssc "$libssc_ver" \
-	'libc6, libglib2.0-0t64, libqrtr-glib0, libprotobuf-c1' \
+	'libc6, libglib2.0-0t64, libqmi-glib5, libqrtr-glib0, libprotobuf-c1' \
 	'Client library for the Qualcomm Sensor Core (SSC)'
 
 # ---------------------------------------------------------------------------
@@ -198,6 +198,27 @@ Restart=no
 [Install]
 WantedBy=multi-user.target
 UNIT
+
+# Alpine defines a second unit for the root protection domain.  It is shipped
+# for parity with upstream packaging; the sensor domain is the one this device
+# needs.
+install -Dm644 /dev/stdin 	"$buildroot/build/stage-hexagonrpcd/usr/lib/systemd/system/hexagonrpcd-adsp-rootpd.service" <<'UNIT2'
+[Unit]
+Description=HexagonFS daemon for the ADSP root protection domain
+Documentation=man:hexagonrpcd(1)
+Conflicts=suspend.target
+Before=suspend.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/hexagonrpcd -f /dev/fastrpc-adsp -d adsp
+User=fastrpc
+Group=fastrpc
+Restart=no
+
+[Install]
+WantedBy=multi-user.target
+UNIT2
 
 # The udev rule above hands /dev/fastrpc-* to a dedicated unprivileged user, so
 # the package has to create it.
