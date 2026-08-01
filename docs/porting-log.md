@@ -716,3 +716,114 @@ importe.
 
 Rotación: sigue sin funcionar. Tres defectos reales corregidos y el cuarto
 caracterizado con precisión. Todo lo demás del dispositivo sigue igual.
+
+## Autorrotación: resuelta
+
+La traza completa de FastRPC cerró el caso. Se compiló un `hexagonrpcd` de
+diagnóstico con la opción de meson `hexagonrpcd_verbose`, que registra cada
+llamada que el firmware de sensores hace contra el sistema de ficheros. El
+binario no se instala: es solo para depurar.
+
+### Lo que se vio
+
+Con el árbol HexagonFS bien extraído, escribible por el usuario `fastrpc` y con
+la aridad de `fwrite` corregida, la traza pasó de 3 líneas a **757**:
+
+```
+openat($ADSP_LIBRARY_PATH, /vendor/etc/sensors/sns_reg_config) -> 2
+read(2, 512) -> 329
+...
+openat(..., /mnt/vendor/persist/sensors/registry/registry/../sns_reg_version) -> 3
+write(3, 10) -> 10
+opendir(/mnt/vendor/persist/sensors/registry/registry) -> 3
+readdir(3) -> lsm6dso_0_platform.ff.config
+readdir(3) -> lsm6dso_0.gyro
+...
+```
+
+El `write(3, 10) -> 10` es la prueba directa de que el parche de aridad
+funciona: el DSP consigue por fin actualizar la versión del registro, y a
+partir de ahí recorre entero el directorio de configuración de sensores. La
+petición de `sns_registry` que cerraba la sesión no vuelve a aparecer: era
+consecuencia de que el DSP nunca completaba la carga del registro, no una
+interfaz que hiciera falta implementar.
+
+`ssccli --sensor accelerometer` devuelve entonces medidas reales:
+
+```
+Accelerometer sensor measurement: X=0.440279 Y=-0.062213 Z=9.757931 m/s²
+```
+
+9,76 m/s² en Z con la tablet en horizontal: es la gravedad.
+
+### El cuarto obstáculo: una etiqueta udev que upstream no pone
+
+Con el acelerómetro leyéndose, `iio-sensor-proxy` seguía diciendo
+`No accelerometer` mientras sí reconocía la brújula y la luz ambiental. La
+causa está en la regla que trae el propio `iio-sensor-proxy`:
+
+```
+SUBSYSTEM=="misc", KERNEL=="fastrpc-adsp*", ENV{IIO_SENSOR_PROXY_TYPE}+="ssc-light ssc-compass"
+```
+
+Los cuatro drivers SSC (`ssc-accel`, `ssc-light`, `ssc-compass`,
+`ssc-proximity`) están compilados, pero cada uno solo mira dispositivos que
+lleven su etiqueta. `ssc-accel` no aparece en ninguna regla, así que
+`drv-ssc-accel` nunca recibe un dispositivo que examinar. No es un problema del
+X910 ni de Ubuntu: le pasa a cualquier dispositivo cuyo acelerómetro viva
+detrás del DSP.
+
+La corrección va en `61-gts9u-sensor-mount-matrix.rules`, junto a la matriz de
+montaje que ya tocaba ese mismo nodo. `IIO_SENSOR_PROXY_TYPE` es una lista
+separada por espacios construida con `+=`, de modo que el orden respecto a la
+regla `80-` de upstream es indiferente.
+
+Tras aplicarla:
+
+```
+IIO_SENSOR_PROXY_TYPE=ssc-accel ssc-light ssc-compass
+Found SSC accelerometer at /sys/devices/virtual/misc/fastrpc-adsp
+=== Has accelerometer (orientation: undefined, tilt: undefined)
+{'HasAccelerometer': <true>, ...}
+```
+
+La orientación sale `undefined` con la tablet en horizontal, que es la
+respuesta correcta: con la gravedad en Z no hay orientación de pantalla que
+deducir.
+
+### Verificación desde arranque en frío
+
+Reiniciada la tablet, sin ninguna intervención manual:
+
+| | |
+|---|---|
+| `pd-mapper` | active |
+| `hexagonrpcd-adsp-sensorspd` | active, 1 proceso vivo |
+| `iio-sensor-proxy` | active |
+| etiqueta udev | `ssc-accel ssc-light ssc-compass` |
+| acelerómetro | 9,76 m/s² en Z |
+| tarjeta ALSA | presente |
+
+El daemon ya no muere a los 104 ms: se mantiene sirviendo el árbol.
+
+### Los cuatro obstáculos, en orden
+
+1. **Árbol HexagonFS extraído un nivel de más** — faltaba
+   `--strip-components=1`. El DSP no encontraba nada.
+2. **Árbol de solo lectura para el daemon** — el firmware necesita escribir la
+   caché del registro; sin eso abandona.
+3. **Aridad de `apps_std_fwrite` mal declarada** — `(2,1,2,0)` exige 12 bytes de
+   entrada y este firmware envía 8. Corregido a `(1,1,2,0)`.
+4. **Etiqueta udev `ssc-accel` inexistente** — `iio-sensor-proxy` nunca
+   consideraba el nodo FastRPC como acelerómetro.
+
+Ninguno era específico de Ubuntu; los cuatro son defectos reales del camino
+genérico, y las cuatro correcciones viven en el repositorio.
+
+### Efecto colateral que conviene conocer
+
+Reiniciar el ADSP por `remoteproc` con el sistema arrancado deja el sistema
+**sin tarjeta de sonido**: los servicios de audio no vuelven a registrarse
+solos. Un reinicio del sistema la recupera. Durante el diagnóstico se reinició
+el ADSP varias veces; se comprobó después del reinicio que la tarjeta
+`Samsung-Galaxy-Tab-S9-Ultra` vuelve a estar presente.

@@ -56,7 +56,8 @@ sondea» como prueba de funcionamiento.
 | Carga USB-PD/PPS | 🟡 | ⏳ | heredado | SM5714 TCPM + SM5440 2:1; a batería baja sigue sin revalidar |
 | Suspensión profunda | ✅ | ✅ | confirmado | Probada mediante la funda |
 | Funda / Hall `SW_LID` | ✅ | ✅ | confirmado | Cerrar apaga la pantalla |
-| Sensores de movimiento y autorrotación | ✅ | ❌ | medido | `/dev/fastrpc-adsp` ya existe tras arrancar el ADSP, pero faltan `libssc` y `hexagonrpcd`, que Ubuntu no empaqueta |
+| Acelerómetro y autorrotación | ✅ | ✅ | medido | `libssc` + `hexagonrpcd` empaquetados por este port. Acelerómetro leído desde arranque limpio (gravedad 9,76 m/s²) y expuesto en `net.hadess.SensorProxy` como `HasAccelerometer: true` |
+| Giroscopio y brújula LSM6DSO | ✅ | ✅ | medido | El mismo canal SSC; `monitor-sensor` sigue el rumbo de la brújula |
 | USB gadget / RNDIS | ✅ | ⏳ | heredado | |
 | USB host, HID y almacenamiento | ✅ | ✅ | confirmado | Con y sin alimentación externa |
 | DisplayPort USB-C | ✅ | ✅ | confirmado | Salida de vídeo confirmada por la usuaria |
@@ -89,9 +90,11 @@ realmente.
 4. **AppArmor — no se manifestó.** Los servicios de recuperación del panel y de
    arranque del ADSP escriben en `/sys/power` y en `remoteproc` sin que ningún
    perfil los bloquee. No se ha tocado AppArmor.
-5. **Sensores — confirmado como el hueco previsto.** `pd-mapper` sí existe en
-   Ubuntu (`protection-domain-mapper`), pero `libssc` y `hexagonrpcd` no, y sin
-   ellos `iio-sensor-proxy` no tiene de dónde leer.
+5. **Sensores — confirmado como el hueco previsto, y resuelto.** `pd-mapper` sí
+   existe en Ubuntu (`protection-domain-mapper`), pero `libssc` y `hexagonrpcd`
+   no. Empaquetarlos fue necesario pero no suficiente: hicieron falta tres
+   correcciones más, todas en el repositorio y ninguna específica de Ubuntu.
+   Ver «Autorrotación: los cuatro obstáculos» en el registro de porte.
 
 ### Frente abierto: Bluetooth tras reinicio en caliente
 

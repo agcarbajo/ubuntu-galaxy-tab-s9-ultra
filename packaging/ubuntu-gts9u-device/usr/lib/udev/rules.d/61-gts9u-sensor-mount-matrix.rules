@@ -1,8 +1,21 @@
 # SPDX-License-Identifier: MIT
 #
+# The X910's accelerometer, gyroscope, magnetometer and light sensor all sit
+# behind the ADSP, so the kernel exposes no IIO device for them; iio-sensor-proxy
+# reaches them through libssc over the FastRPC node.
+#
+# Upstream's 80-iio-sensor-proxy.rules tags that node with "ssc-light
+# ssc-compass" only.  drv-ssc-accel is compiled in but is never offered a
+# device, so the daemon reports "No accelerometer" while ssccli reads the
+# accelerometer fine.  Add the missing tag.  IIO_SENSOR_PROXY_TYPE is a
+# space-separated list built with "+=", so ordering against 80- does not matter.
+ACTION=="remove", GOTO="gts9u_ssc_end"
+SUBSYSTEM=="misc", KERNEL=="fastrpc-adsp", ENV{IIO_SENSOR_PROXY_TYPE}+="ssc-accel"
+
 # Samsung mounts the X910's SSC accelerometer 90 degrees counter-clockwise
 # relative to the panel's logical coordinate system.  The stock SSC registry
 # exports an all-zero mount matrix, so libssc correctly falls back to identity.
 # Apply the board rotation in iio-sensor-proxy's second mount-matrix stage:
 # physical landscape previously arrived as "left-up"; this maps it to "normal".
 SUBSYSTEM=="misc", KERNEL=="fastrpc-adsp", ENV{ACCEL_MOUNT_MATRIX}="0,1,0;-1,0,0;0,0,1"
+LABEL="gts9u_ssc_end"

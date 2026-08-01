@@ -160,6 +160,25 @@ son `=y`, no `=m`.
 El rootfs v0.5 salió sin `snapd` porque se dejó a que
 `ubuntu-desktop-minimal` lo recomendara. Lo que importa se declara explícito.
 
+## Un driver compilado no es un driver ofrecido
+
+`iio-sensor-proxy` trae cuatro drivers SSC compilados, pero cada uno solo mira
+dispositivos que udev haya etiquetado con su nombre en `IIO_SENSOR_PROXY_TYPE`.
+La regla `80-iio-sensor-proxy.rules` de upstream etiqueta el nodo FastRPC con
+`ssc-light ssc-compass` y nada más, de modo que `drv-ssc-accel` jamás recibe un
+dispositivo aunque esté enlazado en el binario. El síntoma es desconcertante:
+`ssccli` lee el acelerómetro perfectamente y el daemon dice `No accelerometer`.
+
+Cuando una capacidad existe en el código pero el sistema no la ve, mirar
+primero el mecanismo de descubrimiento, no la implementación.
+
+## Reiniciar el ADSP en caliente deja el sistema sin sonido
+
+`echo stop/start > /sys/class/remoteproc/remoteproc0/state` con el sistema
+arrancado destruye la tarjeta ALSA y los servicios de audio no se vuelven a
+registrar solos. Se recupera reiniciando el sistema. Útil para depurar
+sensores, pero hay que contarlo antes de dejar la tablet en manos de nadie.
+
 ## Lo que no hay que repetir
 
 Heredado de postmarketOS; cada punto costó al menos una iteración física.
