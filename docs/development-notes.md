@@ -265,3 +265,62 @@ Reglas innegociables, idénticas a las del port postmarketOS:
 - No publicar SSID, contraseñas, IPs, claves privadas, direcciones MAC/Bluetooth
   ni nombres personales en commits, logs o documentación.
 - No publicar firmware propietario ni imágenes que lo contengan.
+
+## Funda con teclado EF-DX920: cómo está cableada de verdad
+
+Recuperado del DTBO original de Samsung (`port/firmware-extracted/ap/dtbo.img`,
+entrada `board-id,00`, decompilada con `dtc`). Nada de esto es visible desde el
+sistema en marcha: el teclado no está en ninguno de los siete buses GENI, y por
+eso `i2cdetect` no encuentra nada en 0x2a.
+
+### El teclado
+
+```
+stm32@2a {
+        compatible = "stm,stm32_pogo";
+        reg = <0x2a>;
+        stm32,irq_gpio  = <&tlmm 75 0>;    /* datos listos */
+        stm32,irq_conn  = <&tlmm 62 0>;    /* funda conectada */
+        stm32,irq_type      = <0x2008>;
+        stm32,irq_conn_type = <0x2003>;
+        stm32,mcu_swclk = <&tlmm 12 0>;
+        stm32,mcu_nrst  = <&tlmm 13 0>;
+        stm32,sda_gpio  = <&tlmm 72 0>;
+        stm32,scl_gpio  = <&tlmm 106 0>;
+        stm32,fw_name   = "keyboard_stm/stm32_gts9family.bin";
+        stm32,model_name = "EF-DX915","EF-DX910","EF-DX900","EF-DX925","EF-DX920";
+        support_open_close;
+};
+```
+
+Lo importante: **`sda_gpio` y `scl_gpio` son pines TLMM sueltos**, no un
+controlador GENI. El bus del conector pogo es I²C por GPIO, así que hace falta
+un nodo `i2c-gpio` sobre TLMM 72/106 antes de que ningún driver pueda hablar
+con el MCU.
+
+Cuelgan de él dos nodos de función:
+
+- `pogo_kpd`, `compatible = "stm,keypad"`, con la lista de nombres que incluye
+  `Book Cover Keyboard Slim (EF-DX920)`;
+- `pogo_touchpad`, `compatible = "stm,touchpad"`, con
+  `touchpad,invert = <0 1 1>`.
+
+Y un regulador de refuerzo aparte: `kbd_boost@18`, `max77816,kbd_boost`.
+
+`stm,stm32_pogo` no existe en mainline. Sí existe en la publicación de fuentes
+de Samsung para el SM-X910, que es GPL, así que la vía realista es portarlo, no
+reinventar el protocolo.
+
+### El apagado al cerrar
+
+El nodo `hall_ic` de Samsung tiene **dos** sensores de efecto Hall, y nuestro
+DTS solo cablea el primero:
+
+| | GPIO | evento Samsung | en nuestro DTS |
+|---|---|---|---|
+| `hall` | TLMM 107, activo bajo | `0x15` | sí, como `SW_LID` |
+| `hall_wacom` | TLMM 203, activo bajo | `0x1e` | **no** |
+
+Que la funda normal apague la pantalla y la del teclado no encaja con que cada
+una accione un imán distinto. Antes de tocar el DTS hay que medirlo: leer TLMM
+203 con la funda de teclado abierta y cerrada.
