@@ -972,11 +972,15 @@ tipos y etiquetas. La regla de limpiar una microSD física con
 La release v0.8 terminó con todas las validaciones estáticas aprobadas:
 
 - ZIP TWRP: SHA-256
-  `2376e12699b4ba93287435a81cdae4ef767aa7235069f3bd18c480ea2d08bcc5`;
+  `35a48756961bb5c72eb207af6a3a5981a868add3c49108fe74a98b936ba17652`;
 - imagen SD comprimida: SHA-256
-  `e43500ebf2c1bb321fe8ccbd79fc1885090d8f25b27a2e465bc8c5ecc27e2fcb`.
+  `a24ce5f3fbc1b246311af046ad4e8876f9d87ffe34ffb4ab72a26a6febe1e093`.
 
 Nada se ha flasheado y el driver todavía no puede marcarse funcional. La
 siguiente evidencia exigida es que `i2c15` sondee `0x2a`, aparezca el
 dispositivo de entrada y las pulsaciones físicas generen eventos correctos sin
 regresiones en audio, Wi-Fi, rotación ni suspensión.
+
+Como línea base previa a la instalación se consultó la v0.7 por SSH: kernel
+`7.2.0-rc3-dirty`, GDM activo, ninguna unidad fallida y, como era esperable en
+esa versión, ni `i2c-15` ni `15-002a` presentes en sysfs.
