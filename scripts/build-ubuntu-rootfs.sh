@@ -180,24 +180,46 @@ EOF
 HOOK
 chmod +x "$hooks/configure.sh"
 
-# The device package is built from packaging/ and installed here, inside the
-# same invocation, so the rootfs never depends on a manual dpkg run afterwards.
-device_deb=$(ls "$base"/out/packages/ubuntu-gts9u-device_*.deb 2>/dev/null | tail -1 || true)
-if [ -z "$device_deb" ]; then
-	bash "$repo/scripts/build-device-package.sh" >/dev/null
-	device_deb=$(ls "$base"/out/packages/ubuntu-gts9u-device_*.deb | tail -1)
-fi
-echo "device package: $device_deb"
+# Local packages: the device integration, plus the three sensor pieces Ubuntu
+# does not ship at all.  All are installed inside the same mmdebstrap
+# invocation, so the rootfs never depends on a manual dpkg run afterwards.
+bash "$repo/scripts/build-device-package.sh" >/dev/null
 
-cat > "$hooks/device-package.sh" <<HOOK
+for pkg in libssc hexagonrpcd iio-sensor-proxy; do
+	if ! ls "$base"/out/packages/${pkg}_*.deb >/dev/null 2>&1; then
+		echo 'sensor packages are missing; building them first'
+		bash "$repo/scripts/build-sensor-packages.sh" >/dev/null
+		break
+	fi
+done
+
+# Newest build of each, so repeated builds do not accumulate stale versions.
+stage_debs=$base/out/local-debs
+rm -rf -- "$stage_debs"
+mkdir -p "$stage_debs"
+for pkg in libssc hexagonrpcd iio-sensor-proxy ubuntu-gts9u-device; do
+	deb=$(ls -t "$base"/out/packages/${pkg}_*.deb 2>/dev/null | head -1 || true)
+	if [ -z "$deb" ]; then
+		echo "missing local package: $pkg" >&2
+		exit 1
+	fi
+	cp "$deb" "$stage_debs/"
+	echo "local package: ${deb##*/}"
+done
+
+cat > "$hooks/local-packages.sh" <<HOOK
 #!/bin/sh
 set -eu
 target="\$1"
-install -m 0644 '$device_deb' "\$target/tmp/ubuntu-gts9u-device.deb"
-chroot "\$target" dpkg -i /tmp/ubuntu-gts9u-device.deb
-rm -f "\$target/tmp/ubuntu-gts9u-device.deb"
+mkdir -p "\$target/tmp/local-debs"
+cp $stage_debs/*.deb "\$target/tmp/local-debs/"
+# One dpkg call so it works out the order itself: iio-sensor-proxy needs
+# libssc, and the device package depends on all three.  Our iio-sensor-proxy is
+# version 3.9 against Ubuntu's 3.5, so it replaces the archive one.
+chroot "\$target" sh -c 'dpkg -i /tmp/local-debs/*.deb || apt-get -y -f install'
+rm -rf "\$target/tmp/local-debs"
 HOOK
-chmod +x "$hooks/device-package.sh"
+chmod +x "$hooks/local-packages.sh"
 
 cat > "$hooks/chroot-setup.sh" <<HOOK
 #!/bin/sh
@@ -250,7 +272,7 @@ mmdebstrap \
 	--components='main,restricted,universe,multiverse' \
 	--include="$packages" \
 	--customize-hook="$hooks/configure.sh" \
-	--customize-hook="$hooks/device-package.sh" \
+	--customize-hook="$hooks/local-packages.sh" \
 	--customize-hook="$hooks/chroot-setup.sh" \
 	--verbose \
 	"$suite" \

@@ -59,7 +59,8 @@ build_deps='build-essential ninja-build pkg-config git ca-certificates curl
 python3-pip python3-setuptools python3-dev python3-gi python3-protobuf
 libglib2.0-dev libgudev-1.0-dev libudev-dev
 libqmi-glib-dev libmbim-glib-dev libqrtr-glib-dev
-libprotobuf-c-dev protobuf-c-compiler libpolkit-gobject-1-dev'
+libprotobuf-c-dev protobuf-c-compiler protobuf-compiler
+libpolkit-gobject-1-dev'
 
 if [ ! -d "$buildroot/usr/bin" ]; then
 	mmdebstrap \
@@ -95,12 +96,16 @@ echo "meson $(meson --version)"'
 
 # ---------------------------------------------------------------------------
 package_tree() {
-	# package_tree <staged-root-inside-chroot> <name> <version> <deps> <desc>
+	# package_tree <staged-root-inside-chroot> <name> <version> <deps> <desc> [debian-dir]
 	local tree=$buildroot$1 name=$2 version=$3 depends=$4 desc=$5
+	local extra_debian=${6:-}
 	local pkgdir=$base/build/deb/$name
 	rm -rf -- "$pkgdir"
 	mkdir -p "$pkgdir/DEBIAN"
 	cp -a "$tree/." "$pkgdir/"
+	if [ -n "$extra_debian" ] && [ -d "$extra_debian" ]; then
+		cp -a "$extra_debian/." "$pkgdir/DEBIAN/"
+	fi
 	cat > "$pkgdir/DEBIAN/control" <<EOF
 Package: $name
 Version: $version
@@ -118,6 +123,10 @@ EOF
 		[ -d "$pkgdir/$d" ] && find "$pkgdir/$d" -type f -exec chmod 0755 {} +
 	done
 	find "$pkgdir" -name '*.so*' -type f -exec chmod 0755 {} + 2>/dev/null || true
+	# Maintainer scripts must be executable or dpkg refuses the package.
+	for s in preinst postinst prerm postrm; do
+		[ -f "$pkgdir/DEBIAN/$s" ] && chmod 0755 "$pkgdir/DEBIAN/$s"
+	done
 	find "$pkgdir" -exec touch -h -d '@0' {} +
 	dpkg-deb --root-owner-group --build "$pkgdir" \
 		"$out/${name}_${version}_arm64.deb" >/dev/null
@@ -163,9 +172,59 @@ install -Dm644 /build/10-fastrpc.rules \
 	/build/stage-hexagonrpcd/usr/lib/udev/rules.d/10-fastrpc.rules
 echo 'hexagonrpcd built'"
 
+# Upstream hexagonrpc ships no systemd units at all — Alpine adds them with a
+# distro patch, which is why the reference port had them.  Author the one unit
+# this device needs instead of carrying a patch for a file that does not exist
+# upstream.  The device package supplies the board-specific arguments through a
+# drop-in.
+install -Dm644 /dev/stdin \
+	"$buildroot/build/stage-hexagonrpcd/usr/lib/systemd/system/hexagonrpcd-adsp-sensorspd.service" <<'UNIT'
+[Unit]
+Description=HexagonFS daemon for the ADSP sensor protection domain
+Documentation=man:hexagonrpcd(1)
+# Deep sleep power-collapses the DSP, so this is stopped for the transition and
+# restarted afterwards rather than left to fail.
+Conflicts=suspend.target
+Before=suspend.target
+
+[Service]
+Type=simple
+# The board-specific -R tree and ordering come from a drop-in.
+ExecStart=/usr/bin/hexagonrpcd -f /dev/fastrpc-adsp -d adsp -s
+User=fastrpc
+Group=fastrpc
+Restart=no
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+# The udev rule above hands /dev/fastrpc-* to a dedicated unprivileged user, so
+# the package has to create it.
+mkdir -p "$buildroot/build/stage-hexagonrpcd-DEBIAN"
+cat > "$buildroot/build/stage-hexagonrpcd-DEBIAN/postinst" <<'POSTINST'
+#!/bin/sh
+set -e
+case "$1" in
+	configure)
+		if ! getent group fastrpc >/dev/null; then
+			addgroup --system fastrpc
+		fi
+		if ! getent passwd fastrpc >/dev/null; then
+			adduser --system --no-create-home --home /var/lib/fastrpc \
+				--shell /usr/sbin/nologin --ingroup fastrpc \
+				--gecos 'FastRPC' fastrpc
+		fi
+		systemctl enable hexagonrpcd-adsp-sensorspd.service >/dev/null 2>&1 || true
+		;;
+esac
+exit 0
+POSTINST
+
 package_tree /build/stage-hexagonrpcd hexagonrpcd "$hexagonrpc_ver" \
 	'libc6, adduser' \
-	'Qualcomm FastRPC daemon exposing the DSP sensor protection domain'
+	'Qualcomm FastRPC daemon exposing the DSP sensor protection domain' \
+	"$buildroot/build/stage-hexagonrpcd-DEBIAN"
 
 # ---------------------------------------------------------------------------
 step "iio-sensor-proxy $isp_ver with SSC support"
