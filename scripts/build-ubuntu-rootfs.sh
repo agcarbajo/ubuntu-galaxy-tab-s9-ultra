@@ -68,10 +68,23 @@ usbutils,pciutils,ethtool,evtest,i2c-tools,
 strace,tree
 '
 
+# Two more things ubuntu-desktop-minimal only recommends, and that a build
+# without them gets wrong in ways that look like distro bugs:
+#
+#   yaru-theme-icon    without it only yaru-theme-gnome-shell arrives, the icon
+#                      theme falls back to Adwaita, and the Ubuntu-specific
+#                      entries in Settings show a generic placeholder icon.
+#   gnome-keyring      GNOME Shell's NetworkManager secret agent is backed by
+#                      the keyring.  Without it no agent registers, joining a
+#                      protected Wi-Fi never prompts for the password, and
+#                      NetworkManager just logs "no secrets: No agents were
+#                      available for this request" and fails.
 desktop_packages='
 ubuntu-desktop-minimal,gdm3,gnome-shell,gnome-session,gnome-control-center,
 gnome-terminal,nautilus,gnome-text-editor,
 mutter,xdg-desktop-portal-gnome,xdg-user-dirs,
+yaru-theme-icon,yaru-theme-gtk,yaru-theme-sound,yaru-theme-gnome-shell,
+gnome-keyring,libpam-gnome-keyring,
 mesa-utils,mesa-vulkan-drivers,libgl1-mesa-dri,vulkan-tools,
 libdrm-tests,edid-decode,
 pipewire,pipewire-pulse,pipewire-audio,wireplumber,

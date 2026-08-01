@@ -1,0 +1,64 @@
+Give the FastRPC listener room for a message larger than 256 bytes.
+
+hexagonrpcd hands adsp_listener_next2 a 256-byte stack buffer and gives up on
+anything longer.  That is enough for ordinary traffic, where reads and writes
+arrive in 512-byte chunks split across several messages, but not for the sensor
+registry import: a registry entry is written in one message, and the larger
+configs exceed 256 bytes.  The daemon aborts the session and no sensor is ever
+published.
+
+    write(5, 106) -> 106
+    rename(.../temp.json, .../sns_direct_channel) -> 0
+    Large (>256B) input buffers aren't implemented
+
+Nothing in the protocol requires the small buffer; the size is simply the
+capacity offered to the DSP.  Raise it, and report the real numbers if a
+message ever does exceed it.
+
+diff --git a/hexagonrpcd/listener.c b/hexagonrpcd/listener.c
+index 3adb115..7644329 100644
+--- a/hexagonrpcd/listener.c
++++ b/hexagonrpcd/listener.c
+@@ -133,6 +133,12 @@ static int check_inbuf_sizes(const struct fastrpc_function_def_interp2 *def,
+ 	return 0;
+ }
+ 
++/*
++ * Capacity offered to the DSP for a single incoming message.  The sensor
++ * registry import writes an entry in one message, so 256 bytes is not enough.
++ */
++#define LISTENER_INBUF_SIZE 65536
++
+ static int return_for_next_invoke(int fd,
+ 				  uint32_t result,
+ 				  uint32_t *rctx,
+@@ -142,7 +148,7 @@ static int return_for_next_invoke(int fd,
+ 				  struct fastrpc_io_buffer **decoded)
+ {
+ 	struct fastrpc_decoder_context *ctx;
+-	char inbufs[256];
++	char inbufs[LISTENER_INBUF_SIZE];
+ 	char *outbufs = NULL;
+ 	uint32_t inbufs_len;
+ 	uint32_t outbufs_len;
+@@ -164,7 +170,7 @@ static int return_for_next_invoke(int fd,
+ 				  *rctx, result,
+ 				  outbufs_len, outbufs,
+ 				  rctx, handle, sc,
+-				  &inbufs_len, 256, inbufs);
++				  &inbufs_len, LISTENER_INBUF_SIZE, inbufs);
+ 	if (ret) {
+ 		if (ret == -1)
+ 			perror("Could not fetch next FastRPC message");
+@@ -174,8 +180,9 @@ static int return_for_next_invoke(int fd,
+ 		goto err_free_outbufs;
+ 	}
+ 
+-	if (inbufs_len > 256) {
+-		fprintf(stderr, "Large (>256B) input buffers aren't implemented\n");
++	if (inbufs_len > LISTENER_INBUF_SIZE) {
++		fprintf(stderr, "Input buffer of %" PRIu32 " bytes exceeds the %u byte limit\n",
++				inbufs_len, LISTENER_INBUF_SIZE);
+ 		ret = -1;
+ 		goto err_free_outbufs;
+ 	}

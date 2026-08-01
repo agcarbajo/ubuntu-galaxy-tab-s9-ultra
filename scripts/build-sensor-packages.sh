@@ -157,6 +157,8 @@ step "hexagonrpcd $hexagonrpc_ver"
 mkdir -p "$buildroot/build"
 cp "$patches/support-samsung-sensor-registry-writes.patch" "$buildroot/build/"
 cp "$patches/fix-fwrite-arity.patch" "$buildroot/build/"
+cp "$patches/add-apps-std-rename.patch" "$buildroot/build/"
+cp "$patches/raise-listener-inbuf-limit.patch" "$buildroot/build/"
 cp "$patches/10-fastrpc.rules" "$buildroot/build/"
 run "cd /build
 rm -rf hexagonrpc stage-hexagonrpcd
@@ -169,6 +171,11 @@ patch -p1 < /build/support-samsung-sensor-registry-writes.patch
 # The declared fwrite arity does not match what this firmware sends; see the
 # patch header for the measurement.
 patch -p1 < /build/fix-fwrite-arity.patch
+# Without these two the firmware cannot import its sensor registry at all: it
+# stages each entry in a temporary file it cannot move into place, and the
+# larger entries do not fit in the listener's fixed message buffer.
+patch -p1 < /build/add-apps-std-rename.patch
+patch -p1 < /build/raise-listener-inbuf-limit.patch
 meson setup output --prefix=/usr
 meson compile -C output
 DESTDIR=/build/stage-hexagonrpcd meson install --no-rebuild -C output

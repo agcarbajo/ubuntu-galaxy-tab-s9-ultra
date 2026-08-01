@@ -1,0 +1,188 @@
+Serve the rename the Samsung sensor firmware needs to import its registry.
+
+The sensor firmware builds its registry from /vendor/etc/sensors/config/*.json.
+For each entry it writes the result to a staging file and then asks for that
+file to be moved over the registry entry.  hexagonrpcd knows apps_std method 31
+only as stat, whose signature is different, so it rejects the call and the DSP
+closes the session before publishing a single sensor.
+
+Measured on a Galaxy Tab S9 Ultra Wi-Fi (SM-X910), with the daemon instrumented
+to log the handle and scalars of every call:
+
+    ACCEPT handle=1 method=31 sc=1f020100     x146   stat: 2 in, 1 out
+    REJECT handle=1 method=31 sc=1f030000            3 in, 0 out
+      inbuf[0] len=12  {33, 59, 65}
+      inbuf[1] "/mnt/vendor/persist/sensors/registry/registry/../temp.json"
+      inbuf[2] "/mnt/vendor/persist/sensors/registry/registry/sns_direct_channel"
+
+One method id, two signatures, told apart only by the buffer counts.  The
+leading buffer holds one scalar followed by the length of each string, 59 and
+65, which are exactly the two buffer sizes: in_nums 1, in_bufs 2.
+
+So the dispatch table gains an alternate implementation per method, chosen by
+shape.  HexagonFS has no rename operation and adding one would mean teaching
+every backing store to move entries between directories; the DSP only needs the
+destination to end up with the staged contents, so copy instead and leave the
+staging file behind.  Samsung's own firmware dump ships that same leftover
+temp.json, so the stock stack does the same.
+
+With this applied the import runs to completion: 50 renames, the whole registry
+rewritten, where before not one entry could be written.
+
+diff --git a/hexagonrpcd/apps_std.c b/hexagonrpcd/apps_std.c
+index 8504b67..4047616 100644
+--- a/hexagonrpcd/apps_std.c
++++ b/hexagonrpcd/apps_std.c
+@@ -455,6 +455,75 @@ void fastrpc_apps_std_deinit(struct fastrpc_interface *iface)
+ 	free(iface);
+ }
+ 
++/*
++ * The sensor firmware stages a registry entry in a temporary file and then
++ * asks for it to be moved into place.  HexagonFS cannot move an entry between
++ * directories, so copy the contents across and leave the staging file behind;
++ * the destination is what the DSP goes on to read.
++ */
++static uint32_t apps_std_rename(void *data,
++				const struct fastrpc_io_buffer *inbufs,
++				struct fastrpc_io_buffer *outbufs)
++{
++	struct apps_std_ctx *ctx = data;
++	const char *oldname = inbufs[1].p;
++	const char *newname = inbufs[2].p;
++	char buf[4096];
++	uint32_t ret = 0;
++	ssize_t n;
++	int src, dst;
++
++	if (((const char *) inbufs[1].p)[inbufs[1].s - 1] != 0
++	 || ((const char *) inbufs[2].p)[inbufs[2].s - 1] != 0)
++		return AEE_EBADPARM;
++
++	src = hexagonfs_openat(ctx->fds, ctx->rootfd,
++			       ctx->adsp_library_dirfd, oldname);
++	if (src < 0) {
++		fprintf(stderr, "Could not open %s: %s\n",
++				oldname, strerror(-src));
++		return AEE_EFAILED;
++	}
++
++	dst = hexagonfs_openat_flags(ctx->fds, ctx->rootfd,
++				     ctx->adsp_library_dirfd, newname,
++				     O_WRONLY | O_CREAT | O_TRUNC);
++	if (dst < 0) {
++		fprintf(stderr, "Could not create %s: %s\n",
++				newname, strerror(-dst));
++		hexagonfs_close(ctx->fds, src);
++		return AEE_EFAILED;
++	}
++
++	while ((n = hexagonfs_read(ctx->fds, src, sizeof(buf), buf)) > 0) {
++		if (hexagonfs_write(ctx->fds, dst, n, buf) != n) {
++			fprintf(stderr, "Could not write %s\n", newname);
++			ret = AEE_EFAILED;
++			break;
++		}
++	}
++
++	if (n < 0) {
++		fprintf(stderr, "Could not read %s: %s\n",
++				oldname, strerror((int) -n));
++		ret = AEE_EFAILED;
++	}
++
++	hexagonfs_close(ctx->fds, dst);
++	hexagonfs_close(ctx->fds, src);
++
++#ifdef HEXAGONRPC_VERBOSE
++	printf("rename(%s, %s) -> %u\n", oldname, newname, ret);
++#endif
++
++	return ret;
++}
++
++static const struct fastrpc_function_impl apps_std_rename_impl = {
++	.def = &apps_std_rename_def,
++	.impl = apps_std_rename,
++};
++
+ static const struct fastrpc_function_impl apps_std_procs[] = {
+ 	{ .def = NULL, .impl = NULL, },
+ 	{ .def = NULL, .impl = NULL, },
+@@ -517,6 +586,7 @@ static const struct fastrpc_function_impl apps_std_procs[] = {
+ 	{
+ 		.def = &apps_std_stat_def,
+ 		.impl = apps_std_stat,
++		.alt = &apps_std_rename_impl,
+ 	},
+ };
+ 
+diff --git a/hexagonrpcd/interfaces/apps_std.def b/hexagonrpcd/interfaces/apps_std.def
+index 35441e1..efdf60b 100644
+--- a/hexagonrpcd/interfaces/apps_std.def
++++ b/hexagonrpcd/interfaces/apps_std.def
+@@ -35,5 +35,6 @@ HEXAGONRPC_DEFINE_REMOTE_METHOD(26, apps_std_opendir, 0, 1, 2, 0)
+ HEXAGONRPC_DEFINE_REMOTE_METHOD(27, apps_std_closedir, 2, 0, 0, 0)
+ HEXAGONRPC_DEFINE_REMOTE_METHOD(28, apps_std_readdir, 2, 0, 66, 0)
+ HEXAGONRPC_DEFINE_REMOTE_METHOD(31, apps_std_stat, 1, 1, 24, 0)
++HEXAGONRPC_DEFINE_REMOTE_METHOD(31, apps_std_rename, 1, 2, 0, 0)
+ 
+ #endif /* INTERFACE_APPS_STD_DEF */
+diff --git a/hexagonrpcd/listener.c b/hexagonrpcd/listener.c
+index 932c54d..3adb115 100644
+--- a/hexagonrpcd/listener.c
++++ b/hexagonrpcd/listener.c
+@@ -247,16 +247,25 @@ static int invoke_requested_procedure(size_t n_ifaces,
+ 		return 1;
+ 	}
+ 
+-	in_count = impl->def->in_bufs + ((impl->def->in_nums
+-				       || impl->def->in_bufs
+-				       || impl->def->out_bufs) && 1);
+-	out_count = impl->def->out_bufs + (impl->def->out_nums && 1);
+-
+-	if (REMOTE_SCALARS_INBUFS(sc) != in_count
+-	 || REMOTE_SCALARS_OUTBUFS(sc) != out_count) {
+-		fprintf(stderr, "Unexpected buffer count: %08x\n", sc);
+-		*result = AEE_EBADPARM;
+-		return 1;
++	for (;;) {
++		in_count = impl->def->in_bufs + ((impl->def->in_nums
++					       || impl->def->in_bufs
++					       || impl->def->out_bufs) && 1);
++		out_count = impl->def->out_bufs + (impl->def->out_nums && 1);
++
++		if (REMOTE_SCALARS_INBUFS(sc) == in_count
++		 && REMOTE_SCALARS_OUTBUFS(sc) == out_count)
++			break;
++
++		if (impl->alt == NULL
++		 || impl->alt->def == NULL
++		 || impl->alt->impl == NULL) {
++			fprintf(stderr, "Unexpected buffer count: %08x\n", sc);
++			*result = AEE_EBADPARM;
++			return 1;
++		}
++
++		impl = impl->alt;
+ 	}
+ 
+ 	ret = check_inbuf_sizes(impl->def, decoded);
+diff --git a/hexagonrpcd/listener.h b/hexagonrpcd/listener.h
+index 7c2aab3..d0413de 100644
+--- a/hexagonrpcd/listener.h
++++ b/hexagonrpcd/listener.h
+@@ -33,6 +33,13 @@ struct fastrpc_function_impl {
+ 	uint32_t (*impl)(void *data,
+ 			 const struct fastrpc_io_buffer *inbufs,
+ 			 struct fastrpc_io_buffer *outbufs);
++	/*
++	 * Some firmware reuses one method id for more than one signature, and
++	 * the buffer counts are the only thing that tells them apart.  A
++	 * method may chain to an alternate implementation to be tried when the
++	 * counts do not match this one.
++	 */
++	const struct fastrpc_function_impl *alt;
+ };
+ 
+ struct fastrpc_interface {
