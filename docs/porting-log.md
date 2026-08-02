@@ -1144,3 +1144,135 @@ con el hash fijado. Artefactos finales:
   `5477e23cd9c1884237b7171c6dafbd4271eca1e7c39ad06f150f7ab2a1187c16`;
 - `boot.img` ejecutado en la tablet: SHA-256
   `f77de14e484b83bb31ead3e557e10d441b87e8c92e5f05c84d48600ba24e4ffe`.
+
+---
+
+## Sesión 9 — inicialización completa de la aplicación y sondeo descartado
+
+Fecha: 2026-08-02.
+
+### La capa de aplicación sí queda inicializada
+
+Las pulsaciones físicas nuevas se observaron simultáneamente con `evtest`, el
+contador de la IRQ GPIO75 y el journal. No apareció ningún `EV_KEY` y el
+contador permaneció inmóvil. Esto corrige la conclusión provisional de la
+sesión anterior: el input es real y dinámico, pero las teclas aún no funcionan.
+
+La comparación con `stm32_check_ic_work()` de Samsung reveló la fase que
+faltaba después del anuncio `0xd6`. Se portaron sus lecturas de versión, modo,
+CRC y versión del accesorio, junto con los tres reintentos I²C del stock. En un
+arranque limpio el hardware respondió exactamente:
+
+```
+application initialized: version 04 01 05 01, mode 1,
+  CRC cd 0b f7 cf, accessory 09 00 ff 00 00 00
+```
+
+El valor `ff 00` indica que no hay controlador de touchpad, como corresponde a
+la funda Slim. Aun con esta inicialización correcta, nuevas pulsaciones no
+activaron GPIO75 ni entregaron eventos. Una consulta manual devolvió la
+cabecera de keypad con payload `ff ff`, marcador de que no había tecla
+pendiente. Consultas posteriores compitieron con el driver y causaron
+NACK/`-EPROTO`; no deben repetirse con el cliente enlazado.
+
+### Sondeo periódico: regresión y retirada inmediata
+
+Para separar una IRQ ausente de una cola de eventos válida se construyó un
+sondeo de 20 ms dentro del propio driver, protegido por el mismo mutex. Solo se
+escribió `boot`; copia, backup y partición se verificaron por SHA-256. El nuevo
+boot sí alcanzó el sistema real, aunque el Wi-Fi no asoció hasta que se reinició
+una vez. El journal posterior aportó la causa para retirar el experimento:
+`i2c i2c-6: Transfer while suspended`, con la pila apuntando al trabajo de
+sondeo. Una tarea de 20 ms no puede tocar SE15 mientras el sistema suspende.
+
+Se retiró de inmediato y se recompiló un kernel que conserva solo la
+inicialización probada.
+El `boot.img` de recuperación resultante tiene SHA-256
+`17e7feaaca18cddbdd39c41bb2f477c0164482af26a40f0c86fdeb236d722f58`.
+Tras un reinicio manual, la tablet recuperó Wi-Fi/SSH y se escribió únicamente
+ese `boot` por UFS. No fue necesario TWRP.
+
+Como control externo, la misma funda EF-DX920 se probó en One UI: las teclas
+funcionaron correctamente y cerrar la tapa apagó la pantalla. El hardware y los
+contactos quedan descartados como causa general; el bloqueo es propio de la
+secuencia mainline.
+
+---
+
+## Sesión 10 — primeras teclas reales y recuperación de rebotes del STM32
+
+Fecha: 2026-08-02.
+
+### La temporización de Samsung era funcional, no cosmética
+
+La comparación fina con `stm32_dev_int_proc()` y `stm32_check_ic_work()` mostró
+que Samsung no mantiene la IRQ GPIO75 enmascarada durante toda la inicialización.
+Lee VERSION de forma síncrona cuando recibe el anuncio `0xd6`, sale del handler
+y programa el resto 10 ms después. La primera reproducción que dejó MODE, la
+espera de 200 ms, CRC y accesorio dentro del handler atascó DATA y produjo
+timeouts `-110`. Al separar ambos pasos como el stock, GPIO75 volvió a reposo y
+la aplicación respondió de forma consistente.
+
+Reproducir también el flanco de desconexión de Samsung —liberar estado y cortar
+VDDO cuando GPIO62 baja, restaurarlo si vuelve a subir antes de los 250 ms—
+desbloqueó por fin el teclado. Una captura física de `evtest` midió press y
+release de `U`, `I`, `T`, `H`, `W`, `E`, `F`, espacio y retroceso. El contador de
+GPIO75 subió a la vez. Esto descarta definitivamente GNOME, evdev, el mapa de
+teclas y el firmware como causa del silencio anterior.
+
+### Por qué alguna tecla quedaba pulsada y luego moría el teclado
+
+La primera build con teclas utilizó `boot.img` SHA-256
+`25e0b8f6a58f7104649f7eb16f0bede7de0b40aa3ebacbaf40a5105677702838`.
+Durante escritura real GPIO62 rebotó en ambos sentidos y el STM32 reinició. Si
+eso ocurría con una tecla baja, el micro perdía el estado y nunca enviaba su
+release. Además el driver solo hacía VERSION/MODE/CRC en el primer anuncio;
+después conservaba el input pero omitía el handshake en los reanuncios. El
+resultado visible era una tecla pegada seguida de un teclado sin respuesta.
+
+La iteración `f33516674b910b5853f9fc3a9aaa94ac67069242cdcbadb4af73c8ae0cfb2243`
+liberó todas las teclas antes de cortar VDDO y repitió el handshake en cada
+`0xd6`. Eliminó la retención, pero una prueba física acabó con un modelo espurio
+`0xff`, DATA afirmada y un `-ETIMEDOUT` cada ~4,4 s sin recuperación. La captura
+había usado antes `evtest --grab`; mientras estuvo activo GNOME no podía recibir
+las teclas. Las capturas posteriores retiraron `--grab`.
+
+El kernel actualmente instalado, `boot.img` SHA-256
+`171d335e9609be33387c915e8c7997b4fb884f0842b34abcf7b888d4bb31da2e`, añade
+la ruta de error del stock: ignora `0xff`, libera todo el bitmap y pulsa NRST
+durante 3 ms tras agotar los reintentos I²C. En un arranque limpio superó un
+rebote temprano, repitió el anuncio `0xd6` y terminó con versión
+`04 01 05 01`, modo 1, CRC `cd 0b f7 cf`, DATA inactiva y sin nuevos timeouts.
+Dos ventanas posteriores de 40 y 90 segundos no recibieron actividad física;
+el estado permaneció estable, pero la validación final de escritura sostenida
+sigue explícitamente pendiente y no se marca todavía como soporte completo.
+
+### La traza conjunta reveló una lectura espuria de una cola vacía
+
+Con una tecla mantenida físicamente se habilitaron únicamente los tracepoints
+del adaptador I²C 6 y las IRQ 186/187. La secuencia fue determinista: anuncio
+`0xd6`, VERSION y varios paquetes keypad válidos; después llegaba otra IRQ 186,
+la escritura de la cabecera `[03 00 01]` tenía éxito, pero la lectura de la
+cabecera expiraba con `-110` tras unos 0,9–1,0 s. Los reintentos devolvían `-6`,
+GPIO62 generaba la IRQ 187 y VDDO entraba en un ciclo de alimentación. El patrón
+reaparecía cada 2–3 s.
+
+La causa era la adaptación a `IRQF_TRIGGER_FALLING`: solucionó la pérdida de
+pulsos breves del modo level-low, pero el handler leía sin comprobar si DATA
+seguía afirmada. El ISR de Samsung sí retorna cuando la línea activa-baja ya ha
+subido. Se conservó el flanco descendente y se añadió esa comprobación antes de
+cualquier transacción. También se retiró el watchdog experimental de 3 s: una
+tecla legítimamente mantenida no demuestra un stream bloqueado y no debe
+reiniciar la aplicación.
+
+Se compiló y escribió solo `boot` con backup y verificación SHA-256. El nuevo
+`boot.img` es
+`5e3d577d81c6a74f11b55476555c3d4e37e387e332f6d50a21075900cdcc755b`;
+el anterior
+`4b1e3637781081fc5fae9e108422dbca8864713f48f97df577f3a26c45471640`
+quedó como rollback temporal. En vivo, durante seis minutos con carga física,
+los contadores permanecieron en `connection_high=0`, `connection_low=0`,
+`recoveries=0`; una IRQ ya desactivada quedó registrada en
+`data_irq_deasserted=1` y no produjo ningún timeout. Es evidencia fuerte de que
+la tormenta de alimentación quedó corregida. Aún falta la prueba final de
+escritura variada por la dueña, por lo que el estado continúa en amarillo.

@@ -66,7 +66,7 @@ sondea» como prueba de funcionamiento.
 | Luz ambiental STK31610 | ❌ | ❌ | supuesto | El SSC lo descubre pero no emite lux; vía agotada en pmOS |
 | Proximidad | — | — | — | El firmware SSC stock del X910 no instancia el sensor |
 | S Pen (Wacom I²C 0x56) | ❌ | ❌ | supuesto | |
-| Teclado pogo EF-DX920 (STM32 I²C 0x2a) | ❌ | 🟡 | medido | Bootloader PID `0x0460`, firmware oficial `00 37 00 37` verificado, modelo `0xd6` y dispositivo input dinámico confirmados; falta una pulsación física nueva en `evtest` |
+| Teclado pogo EF-DX920 (STM32 I²C 0x2a) | ❌ | 🟡 | medido | Teclas `EV_KEY` confirmadas; sin timeouts ni reconexiones durante seis minutos bajo carga, pendiente validar escritura sostenida normal |
 | Huella (EgisTec EL7xx, SPI) | ❌ | ❌ | supuesto | Sin driver mainline |
 | Vibración / hápticos | ❌ | ❌ | supuesto | Hardware sin identificar |
 | Flash / linterna | ❌ | ❌ | supuesto | PM8350C; candidato `leds-qcom-flash` |
@@ -105,9 +105,18 @@ pasó de la aplicación antigua `00 34 00 34` a la imagen oficial del X910
 Sin el reset adicional posterior a VDDO —que el stock no hace— el controlador
 anuncia el modelo `0xd6` y Linux registra `Book Cover Keyboard Slim (EF-DX920)`.
 El dispositivo solo existe mientras el modelo real está presente, por lo que
-GNOME no pierde la autorrotación por un teclado fantasma. Falta que la usuaria
-produzca una transición física nueva en `evtest`: una tecla mantenida desde
-antes del arranque no genera un evento retrospectivo.
+GNOME no pierde la autorrotación por un teclado fantasma. La fase de aplicación
+stock también responde con versión, modo, CRC y ausencia esperada de touchpad.
+La secuencia correcta —leer VERSION dentro de la IRQ y diferir 10 ms el resto—
+desbloqueó las pulsaciones: `evtest` midió presiones y liberaciones reales. Una
+traza posterior encontró la causa de la tormenta: el flanco descendente de
+GPIO75 podía ejecutarse cuando DATA ya estaba inactiva y provocaba una lectura
+de una cola vacía, timeout GENI y ciclo de alimentación. El handler conserva el
+flanco para no perder pulsos cortos, pero aplica antes la comprobación de nivel
+del driver Samsung. Bajo una tecla colocada como carga permaneció seis minutos
+con cero pulsos GPIO62, cero recuperaciones y cero timeouts. Falta confirmar con
+escritura física sostenida normal que todas las pulsaciones y liberaciones se
+conservan.
 
 ## Invariantes heredadas que no se pueden romper
 

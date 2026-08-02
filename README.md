@@ -23,9 +23,12 @@ reproducible release is **v0.9**.
 Bluetooth/A2DP and automatic rotation are also working. The Samsung EF-DX920
 pogo controller now boots its official firmware, identifies the attached
 keyboard as model `0xd6`, and creates a real Linux input device only while the
-cover is connected. A fresh physical key transition is the remaining check
-before keyboard input is marked fully supported. A rollback build of the
-postmarketOS v1.71 baseline is kept outside Git.
+cover is connected. Physical `EV_KEY` press/release transitions are now proven;
+the current test kernel filters stale DATA IRQs before touching I²C and no
+longer mistakes a legitimately held key for a stalled stream. A six-minute
+loaded run completed with no I²C timeout, connection pulse or recovery reset;
+normal sustained typing still needs final confirmation by the owner. A
+rollback build of the postmarketOS v1.71 baseline is kept outside Git.
 
 See [docs/hardware-status.md](docs/hardware-status.md) for what is inherited,
 what has been proven under Ubuntu, and what is still assumed.
@@ -56,7 +59,7 @@ port is expected to reproduce.
 | Ethernet (RTL8153) / UAS | 🟡 / ❓ | ⏳ not tested |
 | Motion sensors and autorotation | ✅ | ✅ |
 | Ambient light (STK31610) | ❌ | ❌ |
-| Pogo keyboard (EF-DX920) | ❌ | 🟡 real input device; physical key check pending |
+| Pogo keyboard (EF-DX920) | ❌ | 🟡 keys work; stable under held-key test, sustained typing pending |
 | S Pen, fingerprint, haptics | ❌ | ❌ |
 | Speaker protection DSP | ❌ | ❌ |
 | Flash / cameras | ❌ | ❌ |

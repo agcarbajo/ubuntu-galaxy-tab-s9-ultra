@@ -367,6 +367,61 @@ un teclado externo permanente y oculta la autorrotación. El valor inicial
 `0x7fff` está fuera del rango Linux y se ignora. Una tecla mantenida desde antes
 de alimentar la funda no genera una transición retrospectiva en `evtest`.
 
+Después del anuncio de modelo, Samsung todavía ejecuta una inicialización de la
+aplicación: versión MCU (`ID_MCU`, comando `0x02`), modo (`0x01`), espera de
+200 ms, CRC (`0x03`) y versión del accesorio (`ID_TOUCHPAD`, `0x18`). En el
+EF-DX920 real devuelve versión `04 01 05 01`, modo 1, CRC `cd 0b f7 cf` y
+accesorio `09 00 ff 00 00 00`. La pareja `ff 00` es el caso stock sin
+controlador táctil, normal para la funda Slim. Esta secuencia ya funciona y no
+es la causa de que falten teclas.
+
+La inicialización de aplicación no puede ejecutarse entera dentro de la IRQ de
+datos. Samsung lee VERSION de inmediato, libera la IRQ y difiere 10 ms MODE,
+la espera de 200 ms, CRC y accesorio. Mantener los 200 ms dentro del handler
+deja GPIO75 afirmado y termina en `-ETIMEDOUT`. Con la división asíncrona,
+`evtest` recibió presiones y liberaciones reales de letras, espacio y retroceso.
+
+GPIO62 puede rebotar al teclear. Cortar VDDO durante una tecla hace que el STM32
+olvide su liberación, por lo que Linux debe liberar todo `keys_down` antes de
+apagarlo. Tras cada reanuncio `0xd6` se repite VERSION + inicialización aunque
+el input ya exista. `0xff` es basura de bus durante un rebote y nunca debe
+sustituir el modelo válido. Si se agotan los reintentos I²C y DATA queda
+afirmada, se liberan las teclas y se pulsa NRST durante 3 ms, igual que hace el
+driver Samsung en su ruta de error; sin esa recuperación la IRQ repetía un
+timeout cada ~4,4 s para siempre.
+
+Una traza conjunta de `i2c_transfer` e IRQ aclaró que esa recuperación estaba
+tratando un síntoma creado por nuestra selección de IRQ. Con
+`IRQF_TRIGGER_FALLING`, después de entregar varios paquetes válidos quedaba un
+último handler con GPIO75 ya desactivado. El envío de la cabecera de sondeo
+tenía éxito, pero la lectura de una cola vacía expiraba tras ~1 s; acto seguido
+el STM32 pulsaba GPIO62 y empezaba el ciclo de alimentación. El stock comprueba
+el nivel de GPIO75 al entrar en su ISR y retorna si ya está alto. Mainline debe
+mantener el flanco descendente —el nivel bajo perdió pulsos cortos— y combinarlo
+con esa guarda: si el descriptor activo-bajo devuelve 0, se contabiliza
+`data_irq_deasserted` y no se toca I²C. En la primera prueba de seis minutos el
+resultado fue un descarte, cero timeouts, cero pulsos GPIO62 y cero resets.
+
+No usar un watchdog basado únicamente en el tiempo durante el que una tecla
+permanece pulsada. Una tecla real puede mantenerse indefinidamente; el
+temporizador experimental de 3 s la confundía con una liberación perdida y
+reiniciaba un STM32 sano. Las liberaciones sintéticas se conservan en las rutas
+objetivas de desconexión y error de transporte.
+
+No consultar
+`0x2a` con `i2ctransfer` mientras el driver está enlazado: compite con su
+transacción de dos fases, provoca NACK/`-EPROTO` y puede forzar un falso ciclo
+de desconexión. Un sondeo periódico dentro del driver sí llegó al sistema real,
+pero el Wi-Fi no asoció hasta un reinicio y el journal demostró además
+`i2c i2c-6: Transfer while suspended` desde el trabajo de sondeo. Se retiró: no
+se debe reintroducir ninguna consulta periódica que pueda sobrevivir a la
+suspensión. Un control `event_poll` manual, serializado y ejecutado solo a
+petición mientras el sistema está despierto es una herramienta distinta.
+
+La misma unidad física se probó después en One UI: las teclas funcionaron y el
+cierre de la funda apagó la pantalla. Eso descarta un defecto de teclado,
+contactos o cableado como explicación general del silencio bajo mainline.
+
 El MAX77816 está en hub SE4 y ese SE debe usar GPI DMA. PIO reclama TLMM4/5 y
 bloquea el probe del ADSP. Liberar SE4 en caliente no recuperó SSC, y un control
 con v0.8 tampoco tuvo sensores en ese arranque: no atribuir esa intermitencia
