@@ -17,12 +17,14 @@ software, and later Vulkan/Turnip-based gaming stacks, become usable.
 Ubuntu boots on the tablet. Milestones 1 to 3 are done: the build is
 reproducible from source, the system reaches a GNOME desktop on the native
 panel, and display, GPU, touch, buttons, Wi-Fi, battery, lid wake, audio, USB
-host and DisplayPort have all been confirmed on hardware.
+host and DisplayPort have all been confirmed on hardware. The current
+reproducible release is **v0.9**.
 
-Bluetooth/A2DP and automatic rotation are also working. Current development is
-focused on the Samsung EF-DX920 pogo keyboard cover: its STM32 controller has
-now been powered and observed live. The first mainline driver probes in v0.8,
-but physical input events are not working yet. A rollback build of the
+Bluetooth/A2DP and automatic rotation are also working. The Samsung EF-DX920
+pogo controller now boots its official firmware, identifies the attached
+keyboard as model `0xd6`, and creates a real Linux input device only while the
+cover is connected. A fresh physical key transition is the remaining check
+before keyboard input is marked fully supported. A rollback build of the
 postmarketOS v1.71 baseline is kept outside Git.
 
 See [docs/hardware-status.md](docs/hardware-status.md) for what is inherited,
@@ -54,7 +56,7 @@ port is expected to reproduce.
 | Ethernet (RTL8153) / UAS | 🟡 / ❓ | ⏳ not tested |
 | Motion sensors and autorotation | ✅ | ✅ |
 | Ambient light (STK31610) | ❌ | ❌ |
-| Pogo keyboard (EF-DX920) | ❌ | 🟡 controller probes; no input yet |
+| Pogo keyboard (EF-DX920) | ❌ | 🟡 real input device; physical key check pending |
 | S Pen, fingerprint, haptics | ❌ | ❌ |
 | Speaker protection DSP | ❌ | ❌ |
 | Flash / cameras | ❌ | ❌ |
@@ -101,7 +103,8 @@ chain, safe iteration procedure and recovery paths are in
 ## Firmware
 
 This repository contains **no proprietary firmware**. Samsung and Qualcomm
-blobs — Wi-Fi, Bluetooth, GPU, ADSP, CS35L45 and audio topology — are staged
+blobs — Wi-Fi, Bluetooth, GPU, ADSP, CS35L45, audio topology and the STM32
+keyboard application — are staged
 from the owner's device or from the official Samsung firmware package by the
 `scripts/stage-stock-*.sh` helpers, which verify pinned checksums. Generated
 images and ZIP files are ignored by Git.

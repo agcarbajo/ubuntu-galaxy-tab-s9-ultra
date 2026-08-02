@@ -1045,3 +1045,102 @@ La v0.9 debe implementar la IRQ de conexión y la secuencia de potencia del
 stock, habilitar `i2c_hub_4` y programar el MAX77816 con un driver built-in.
 Solo se considerará funcional tras observar pulsaciones reales en `evtest`;
 la mera aparición del dispositivo de entrada no basta.
+
+---
+
+## Sesión 8 — v0.9: el STM32 arranca y aparece el input real del EF-DX920
+
+Fecha: 2026-08-02.
+
+### Una primera regresión real y su corrección
+
+La primera v0.9 habilitó `i2c_hub_4` en PIO. Ese controlador reclamó TLMM4/5 y
+el ADSP dejó de sondear porque `6800000.remoteproc` usa las mismas líneas en su
+pinctrl. Se restauró inmediatamente el `boot` v0.8 y se rehízo SE4 con GPI DMA,
+igual que el SE3 ya validado para el SM5440. También se retiró del nodo ADSP la
+propiedad de pinctrl que no debe poseer un bus delegado a GPI. En el siguiente
+arranque el ADSP volvió a `running` y desapareció el conflicto de GPIO.
+
+SSC no apareció en ese arranque. Para no atribuirlo al teclado se hicieron dos
+controles negativos. Primero se desregistraron en vivo tanto `6-002a` como
+`990000.i2c`, se reinició el ADSP y se sondeó SSC doce veces: siguió devolviendo
+`SSC QMI Service not found`. Después se arrancó de nuevo el `boot` v0.8 limpio
+y se esperó la ventana completa del servicio: tampoco aparecieron sensorspd ni
+el acelerómetro. Por tanto es la intermitencia ya conocida de SSC, no una
+regresión de SE4; al terminar se restauró la v0.9.
+
+### Alimentación correcta, aplicación muda
+
+El driver pasó a gestionar GPIO62 en ambos flancos con 250 ms de debounce,
+GPIO75 como nivel bajo, VDDO y el MAX77816. En vivo se leyeron sus registros:
+`CONFIG1=0x8e`, `CONFIG2=0x70` y tensión por defecto `0x23`; las escrituras sí
+llegaban. Aun así, la dirección de aplicación `0x2a` seguía en NACK y GPIO75 no
+generaba IRQ. El input dejó de registrarse en `probe`: ahora solo se crea tras
+recibir el modelo exacto `0xd6`, evitando que GNOME desactive la autorrotación
+por un teclado fantasma.
+
+El código Samsung aportó la siguiente prueba decisiva. Antes de usar la
+aplicación siempre entra en el bootloader I²C del STM32, valida el firmware y
+vuelve al flash principal. Se reprodujo solo la parte de lectura:
+
+- bootloader ROM en `0x51`: accesible;
+- product ID: `0x0460`, el esperado por Samsung;
+- versión en `0x08000200`: `00 34 00 34`;
+- imagen oficial `keyboard_stm/stm32_gts9family.bin`: `00 37 00 37`, 52.132
+  bytes, SHA-256
+  `1b48d88c23523ae205cd960e6d42725268638a15a47d8a5e52854eb01108caa3`.
+
+Se añadió un actualizador explícito, accesible solo por root. Rechaza cualquier
+tamaño o versión inesperados, borra solo las 31 páginas que borra Samsung
+(conserva la última), programa en bloques de 256 bytes y relee/compara el blob
+completo. Con la tablet cargando y al 89 %, la actualización terminó sin un
+solo byte distinto. Un reinicio confirmó la versión `00 37 00 37`. Los option
+bytes leídos después fueron `aa fe ff fe`: RDP nivel 0 y bit 24 ya borrado, de
+modo que no hizo falta escribirlos.
+
+### Causa final del silencio
+
+El firmware nuevo todavía quedaba mudo porque nuestro driver hacía un segundo
+reset justo después de activar VDDO/MAX77816. Esa hipótesis procedía de una
+lectura incompleta: Samsung resetea al salir del bootloader, **antes** de la
+conexión, pero su `stm32_keyboard_start()` solo alimenta, espera 50 ms y
+habilita la IRQ; no vuelve a resetear. Al eliminar ese reset adicional, el
+primer arranque produjo:
+
+```
+STM32 bootloader reachable, product id 0x460, flash version 00 37 00 37
+keyboard attached, model 0xd6 (EF-DX920)
+EF-DX920 protocol confirmed; input enabled
+```
+
+`/proc/bus/input/devices` y `evtest` muestran el dispositivo I²C Samsung
+`04e8:a035` con `EV_KEY`, `EV_LED/LED_CAPSL` y `EV_SW/SW_LID`. Desconectar la
+funda lo elimina y reconectarla lo vuelve a registrar. El paquete inicial
+`0x7fff` queda fuera del rango de keycodes, igual que en el parser bypass de
+Samsung; se ignora. La tecla se había dejado pulsada antes de alimentar el
+teclado y el firmware no reporta transiciones anteriores, así que falta una
+pulsación física nueva para elevar la fila a soporte completo.
+
+### Reproducibilidad
+
+El firmware propietario no entra en Git. `stage-stock-pogo-firmware.sh` lo
+toma del vendor oficial ya extraído y comprueba el SHA-256 fijado; el overlay
+lo instala bajo `/lib/firmware/keyboard_stm/`. El paquete
+`ubuntu-gts9u-device` 1.2 añade una unidad oneshot que solicita la actualización
+solo con el blob exacto, al menos 50 % de batería y alimentación externa. Si la
+versión ya es `00 37 00 37`, el driver no escribe nada. La imagen instalada en
+vivo quedó de nuevo en la v0.9 y Wi-Fi/SSH, audio, GPU, táctil y DSI se
+comprobaron presentes.
+
+La release completa v0.9 también se construyó desde cero: 985 paquetes, paquete
+de dispositivo 1.2 y unidad pogo habilitada dentro de la imagen SD. Se montó la
+imagen terminada en solo lectura para comprobar esos tres datos. El ZIP superó
+todas las validaciones estáticas y contiene el firmware STM32 de 52.132 bytes
+con el hash fijado. Artefactos finales:
+
+- imagen SD comprimida: SHA-256
+  `fdeaf00cd5d64f9e0b16d39f9a9f1914a4e8a4fa59824e80fef680e6d1186eab`;
+- ZIP TWRP: SHA-256
+  `5477e23cd9c1884237b7171c6dafbd4271eca1e7c39ad06f150f7ab2a1187c16`;
+- `boot.img` ejecutado en la tablet: SHA-256
+  `f77de14e484b83bb31ead3e557e10d441b87e8c92e5f05c84d48600ba24e4ffe`.

@@ -1,0 +1,12 @@
+[Unit]
+Description=Validate Samsung STM32 pogo keyboard firmware
+After=local-fs.target
+ConditionPathExists=/lib/firmware/keyboard_stm/stm32_gts9family.bin
+ConditionPathExists=/sys/bus/i2c/devices/6-002a/firmware_update
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/ubuntu-gts9u-pogo-firmware-update
+
+[Install]
+WantedBy=multi-user.target

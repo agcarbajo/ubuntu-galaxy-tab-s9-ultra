@@ -1034,6 +1034,26 @@
 };
 
 /*
+ * Samsung's keyboard buck-boost converter is on hub SE4, not on the STM32's
+ * SE15 bus.  The stock driver writes CONFIG2=0x70 and CONFIG1=0x8e every time
+ * the pogo logic rail is enabled.  Keep the device as an unbound I2C peer: the
+ * board-specific STM32 driver owns the exact two-register power sequence.
+ */
+&i2c_hub_4 {
+	clock-frequency = <400000>;
+	dmas = <&gpi_dma1 0 4 QCOM_GPI_I2C>,
+	       <&gpi_dma1 1 4 QCOM_GPI_I2C>;
+	dma-names = "tx", "rx";
+	qcom,enable-gsi-dma;
+	status = "okay";
+
+	pogo_boost: booster@18 {
+		compatible = "max77816,kbd_boost";
+		reg = <0x18>;
+	};
+};
+
+/*
  * SE8 of the same I2C master hub (0x9a0000).  The Silicon Mitus SM5714 combo
  * PMIC answers here on three addresses: charger at 0x49, fuel gauge at 0x71 and
  * MUIC at 0x25.  Its USB-PD block sits on the *next* SE instead (i2c_hub_9,
@@ -1254,6 +1274,7 @@
 		reset-gpios = <&tlmm 13 GPIO_ACTIVE_LOW>;
 		connected-gpios = <&tlmm 62 GPIO_ACTIVE_HIGH>;
 		data-ready-gpios = <&tlmm 75 GPIO_ACTIVE_LOW>;
+		booster = <&pogo_boost>;
 		pinctrl-names = "default";
 		pinctrl-0 = <&pogo_control>, <&pogo_irqs>;
 		wakeup-source;
@@ -1539,14 +1560,14 @@
 	firmware-name = "qcom/sm8550/adsp.mdt",
 			"qcom/sm8550/adsp_dtb.mdt";
 	/*
-	 * SSC needs the sensor-hub SE3/SE4 pins muxed.  SE4 remains disabled on
-	 * the AP side, so remoteproc owns that pinctrl state.  SE3 is now enabled
-	 * in GPI-DMA mode for the SM5440 and therefore owns GPIO22/23 itself;
-	 * listing it here as well makes pinctrl reject the ADSP probe with
-	 * "pin GPIO_22 already requested by 98c000.i2c".
+	 * Hub SE3 and SE4 are both enabled on the AP side in GPI-DMA mode for the
+	 * SM5440 and MAX77816.  They therefore own their pinctrl states while the
+	 * same serial engines remain usable by SSC firmware.  Giving GPIO4/5 to
+	 * remoteproc as well makes pinctrl reject the ADSP probe and removes every
+	 * sensor.  This is the same measured ownership rule already used by SE3.
 	 */
-	pinctrl-names = "default";
-	pinctrl-0 = <&hub_i2c4_data_clk>;
+	/delete-property/ pinctrl-names;
+	/delete-property/ pinctrl-0;
 	/*
 	 * Bring-up: drop the LPASS interconnect path.  The upstream node votes
 	 * bandwidth over <&lpass_lpicx_noc MASTER_LPASS_PROC ... &mc_virt

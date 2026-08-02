@@ -344,6 +344,34 @@ la conexión y reintentó aproximadamente cada dos segundos, pero GPIO75 quedó
 siempre alto. El siguiente driver debe implementar las dos IRQ y habilitar
 también el MAX77816 antes de esperar datos.
 
+### Secuencia validada del STM32 en v0.9
+
+El bootloader ROM está en `0x51`, responde con PID `0x0460` y permite leer el
+flash aunque la aplicación `0x2a` esté muda. El X910 probado contenía
+`00 34 00 34`; el blob oficial `stm32_gts9family.bin` es `00 37 00 37`, mide
+52.132 bytes y tiene SHA-256
+`1b48d88c23523ae205cd960e6d42725268638a15a47d8a5e52854eb01108caa3`.
+Tras programarlo se comparó todo el rango byte a byte. Los option bytes
+`aa fe ff fe` ya tienen borrado el bit 24 que comprueba Samsung.
+
+La secuencia funcional es estricta: entrar en bootloader, validar/actualizar,
+poner BOOT0 bajo, pulsar NRST y esperar 150 ms; después, al detectar GPIO62,
+activar VDDO y MAX77816, esperar 50 ms y habilitar GPIO75. **No resetear el
+STM32 después de activar VDDO**: ese reset extra mantiene muda la aplicación,
+aunque firmware, option bytes y alimentación sean correctos. Sin él, el MCU
+anuncia `0xd6` y crea el input EF-DX920.
+
+El input no debe existir desde `probe`. Solo se registra tras el anuncio de
+modelo y se destruye al desconectar; de lo contrario GNOME interpreta que hay
+un teclado externo permanente y oculta la autorrotación. El valor inicial
+`0x7fff` está fuera del rango Linux y se ignora. Una tecla mantenida desde antes
+de alimentar la funda no genera una transición retrospectiva en `evtest`.
+
+El MAX77816 está en hub SE4 y ese SE debe usar GPI DMA. PIO reclama TLMM4/5 y
+bloquea el probe del ADSP. Liberar SE4 en caliente no recuperó SSC, y un control
+con v0.8 tampoco tuvo sensores en ese arranque: no atribuir esa intermitencia
+preexistente al teclado sin una comparación A/B.
+
 ### El apagado al cerrar
 
 El nodo `hall_ic` de Samsung tiene **dos** sensores de efecto Hall, y nuestro

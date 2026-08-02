@@ -12,6 +12,7 @@ ubuntu-gts9u-adsp-boot.service:multi-user.target
 ubuntu-gts9u-sensor-registry.service:multi-user.target
 ubuntu-gts9u-bluetooth-address.service:multi-user.target
 ubuntu-gts9u-sensors-resume.service:multi-user.target
+ubuntu-gts9u-pogo-firmware.service:multi-user.target
 '
 
 case "$1" in

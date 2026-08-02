@@ -42,6 +42,7 @@ adsp.mdt adsp_dtb.mdt adspr.jsn adsps.jsn adspua.jsn cdspr.jsn
 Samsung-Galaxy-Tab-S9-Ultra-tplg.bin
 official-amss.bin m3.bin official-board-2.bin qrd-board.bin regdb.bin
 hmtbtfw20.tlv hmtnv20.b21
+stm32_gts9family.bin
 '
 absent=
 for f in $required; do
@@ -66,6 +67,7 @@ mkdir -p \
 	"$overlay/usr/lib/firmware/qcom/sm8550" \
 	"$overlay/usr/lib/firmware/ath12k/WCN7850/hw2.0" \
 	"$overlay/usr/lib/firmware/qca" \
+	"$overlay/usr/lib/firmware/keyboard_stm" \
 	"$overlay/usr/share/qcom/sm8550/Samsung/gts9uwifi" \
 	"$initramfs_overlay/usr/lib/firmware/qca"
 
@@ -136,6 +138,13 @@ install -m 0644 "$firmware/hmtbtfw20.tlv" \
 	"$initramfs_overlay/usr/lib/firmware/qca/hmtbtfw20.tlv"
 install -m 0644 "$firmware/hmtnv20.b21" \
 	"$initramfs_overlay/usr/lib/firmware/qca/hmtnv20.b21"
+
+# --- EF-DX920 keyboard controller -----------------------------------------
+# Samsung's tablet-side STM32 boot ROM is always recoverable.  The device
+# service requests an update only when its application is older, the exact
+# official blob passes the pinned SHA-256 check, and the tablet is charging.
+install -m 0644 "$firmware/stm32_gts9family.bin" \
+	"$overlay/usr/lib/firmware/keyboard_stm/stm32_gts9family.bin"
 
 # --- sensors: HexagonFS tree ----------------------------------------------
 if [ -f "$firmware/sensor-hexagonfs.tar.gz" ]; then

@@ -1,0 +1,30 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# Update the tablet-side STM32 pogo controller from Samsung's own X910 blob.
+set -eu
+
+firmware=/lib/firmware/keyboard_stm/stm32_gts9family.bin
+expected=1b48d88c23523ae205cd960e6d42725268638a15a47d8a5e52854eb01108caa3
+control=/sys/bus/i2c/devices/6-002a/firmware_update
+battery=/sys/class/power_supply/sm5714-battery
+
+[ -w "$control" ] || exit 0
+[ -r "$firmware" ] || exit 0
+
+actual=$(sha256sum "$firmware" | cut -d' ' -f1)
+if [ "$actual" != "$expected" ]; then
+	echo 'ubuntu-gts9u-pogo: refusing firmware with an unexpected SHA-256' >&2
+	exit 1
+fi
+
+# A current controller returns immediately, but a real update erases and
+# verifies 52 KiB.  Only permit that operation with ample battery and power.
+capacity=$(cat "$battery/capacity" 2>/dev/null || echo 0)
+status=$(cat "$battery/status" 2>/dev/null || echo Unknown)
+if [ "$capacity" -lt 50 ] || [ "$status" != Charging ]; then
+	echo "ubuntu-gts9u-pogo: deferred (battery=$capacity%, status=$status)" >&2
+	exit 0
+fi
+
+printf '1\n' > "$control"
+echo 'ubuntu-gts9u-pogo: firmware is current and the controller is ready' >&2

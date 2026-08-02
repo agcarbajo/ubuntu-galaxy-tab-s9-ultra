@@ -66,7 +66,7 @@ sondea» como prueba de funcionamiento.
 | Luz ambiental STK31610 | ❌ | ❌ | supuesto | El SSC lo descubre pero no emite lux; vía agotada en pmOS |
 | Proximidad | — | — | — | El firmware SSC stock del X910 no instancia el sensor |
 | S Pen (Wacom I²C 0x56) | ❌ | ❌ | supuesto | |
-| Teclado pogo EF-DX920 (STM32 I²C 0x2a) | ❌ | 🟡 | medido | Bus GENI SE15 y GPIO de alimentación/control confirmados; el MCU genera actividad al alimentarlo. Driver mainline incluido en v0.8, aún no validado en hardware |
+| Teclado pogo EF-DX920 (STM32 I²C 0x2a) | ❌ | 🟡 | medido | Bootloader PID `0x0460`, firmware oficial `00 37 00 37` verificado, modelo `0xd6` y dispositivo input dinámico confirmados; falta una pulsación física nueva en `evtest` |
 | Huella (EgisTec EL7xx, SPI) | ❌ | ❌ | supuesto | Sin driver mainline |
 | Vibración / hápticos | ❌ | ❌ | supuesto | Hardware sin identificar |
 | Flash / linterna | ❌ | ❌ | supuesto | PM8350C; candidato `leds-qcom-flash` |
@@ -98,12 +98,16 @@ realmente.
 
 ### Frente abierto: funda con teclado EF-DX920
 
-El DTBO stock enlaza `stm32@2a` a QUPv3 SE15. La alimentación VDDO por TLMM10,
-BOOT0 por TLMM12, reset por TLMM13 y las líneas de presencia/datos 62/75 se han
-comprobado en vivo: al aplicar los niveles stock aparece actividad del MCU. El
-primer driver mainline usa el protocolo de keycodes directos de las fuentes
-GPL de Samsung y ya está empaquetado en v0.8; falta instalarlo y validarlo con
-pulsaciones reales.
+La v0.9 reproduce la máquina de estados de Samsung: QUPv3 SE15, VDDO, el
+MAX77816 de SE4, las dos IRQ y la entrada/salida del bootloader ROM. El STM32
+pasó de la aplicación antigua `00 34 00 34` a la imagen oficial del X910
+`00 37 00 37`; los 52.132 bytes se releyeron y compararon antes de arrancarla.
+Sin el reset adicional posterior a VDDO —que el stock no hace— el controlador
+anuncia el modelo `0xd6` y Linux registra `Book Cover Keyboard Slim (EF-DX920)`.
+El dispositivo solo existe mientras el modelo real está presente, por lo que
+GNOME no pierde la autorrotación por un teclado fantasma. Falta que la usuaria
+produzca una transición física nueva en `evtest`: una tecla mantenida desde
+antes del arranque no genera un evento retrospectivo.
 
 ## Invariantes heredadas que no se pueden romper
 

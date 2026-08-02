@@ -5,24 +5,28 @@
  * The wire protocol and input packet layout are derived from Samsung's GPLv2
  * SM-X910 Android 16 source release.  The untouched files and their hashes are
  * kept in kernel/vendor/samsung-stm32-pogo/.  This driver deliberately omits
- * Android sec_class/MUIC notifiers, firmware flashing and the MAX77816 booster:
- * EF-DX920 uses the direct-keycode protocol and is not one of the two booster
- * models declared by Samsung's device tree.
+ * Android sec_class/MUIC notifiers.  Its small firmware path accepts only the
+ * measured official X910 size/version and verifies the complete flash before
+ * booting it.  Power sequencing, both physical IRQs and the MAX77816 setup
+ * follow the stock driver's measured path.
  *
  * Copyright (C) 2019-2026 Samsung Electronics
  */
 
 #include <linux/bitmap.h>
 #include <linux/delay.h>
+#include <linux/firmware.h>
 #include <linux/gpio/consumer.h>
 #include <linux/i2c.h>
 #include <linux/input.h>
 #include <linux/interrupt.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
+#include <linux/of.h>
 #include <linux/pm_wakeup.h>
 #include <linux/regulator/consumer.h>
 #include <linux/unaligned.h>
+#include <linux/workqueue.h>
 
 #define POGO_EVENT_MCU		1
 #define POGO_EVENT_TOUCHPAD	2
@@ -34,26 +38,472 @@
 #define POGO_MODEL_EF_DX920	0xd6
 #define POGO_HALL_LID_OPEN	2
 
+#define MAX77816_CONFIG1	0x02
+#define MAX77816_CONFIG2	0x03
+#define MAX77816_LIMIT_3P1A	0x8e
+#define MAX77816_OUTPUT_ENABLE	0x70
+#define POGO_DISCONNECT_DEBOUNCE_MS	250
+#define STM32_BOOT_I2C_ADDR	0x51
+#define STM32_BOOT_ACK		0x79
+#define STM32_FLASH_BASE	0x08000000
+#define STM32_OPTION_BASE	0x1fff7800
+#define STM32_FLASH_PAGE_SIZE	2048
+#define STM32_FLASH_APP_PAGES	31
+#define STM32_FW_SIZE		52132
+#define STM32_FW_VERSION_OFFSET	0x200
+#define STM32_FW_NAME		"keyboard_stm/stm32_gts9family.bin"
+
 struct samsung_pogo {
 	struct i2c_client *client;
+	struct i2c_client *booster;
 	struct regulator *vddo;
 	struct gpio_desc *data_ready;
 	struct gpio_desc *connected;
 	struct gpio_desc *boot;
 	struct gpio_desc *reset;
 	struct input_dev *input;
+	struct delayed_work connection_work;
 	struct mutex lock;
+	int data_irq;
+	int connection_irq;
 	DECLARE_BITMAP(keys_down, KEY_MAX + 1);
 	u8 model;
 	u8 caps_request;
+	u8 flash_version[4];
+	bool attached;
+	bool bootloader_reachable;
+	bool data_irq_enabled;
+	bool powered;
+	bool wake_enabled;
 	bool lid_closed;
 };
+
+static int samsung_pogo_input_event(struct input_dev *input,
+				    unsigned int type, unsigned int code, int value);
+static void samsung_pogo_set_data_irq(struct samsung_pogo *pogo, bool enable);
 
 static void samsung_pogo_power_off(void *data)
 {
 	struct samsung_pogo *pogo = data;
 
-	regulator_disable(pogo->vddo);
+	if (pogo->powered) {
+		regulator_disable(pogo->vddo);
+		pogo->powered = false;
+	}
+}
+
+static void samsung_pogo_put_booster(void *data)
+{
+	put_device(data);
+}
+
+static int samsung_pogo_booster_write(struct samsung_pogo *pogo, u8 reg, u8 value)
+{
+	u8 data[] = { reg, value };
+	struct i2c_msg msg = {
+		.addr = pogo->booster->addr,
+		.flags = 0,
+		.len = sizeof(data),
+		.buf = data,
+	};
+	int ret;
+
+	ret = i2c_transfer(pogo->booster->adapter, &msg, 1);
+	return ret == 1 ? 0 : ret < 0 ? ret : -EIO;
+}
+
+static void samsung_pogo_start_application(struct samsung_pogo *pogo)
+{
+	/*
+	 * Samsung's firmware-validation path always ends by selecting main flash
+	 * and pulsing NRST before the normal keyboard protocol is enabled.  The
+	 * STM32 otherwise remains silent at its application address even when both
+	 * VDDO and the MAX77816 output are present.
+	 */
+	gpiod_set_value_cansleep(pogo->boot, 0);
+	gpiod_set_value_cansleep(pogo->reset, 1);
+	usleep_range(2000, 3000);
+	gpiod_set_value_cansleep(pogo->reset, 0);
+	msleep(150);
+}
+
+static int samsung_pogo_boot_write(struct samsung_pogo *pogo,
+				   const void *buf, size_t len)
+{
+	struct i2c_msg msg = {
+		.addr = STM32_BOOT_I2C_ADDR,
+		.len = len,
+		.buf = (void *)buf,
+	};
+	int ret = i2c_transfer(pogo->client->adapter, &msg, 1);
+
+	return ret == 1 ? 0 : ret < 0 ? ret : -EIO;
+}
+
+static int samsung_pogo_boot_read(struct samsung_pogo *pogo, void *buf,
+				  size_t len)
+{
+	struct i2c_msg msg = {
+		.addr = STM32_BOOT_I2C_ADDR,
+		.flags = I2C_M_RD,
+		.len = len,
+		.buf = buf,
+	};
+	int ret = i2c_transfer(pogo->client->adapter, &msg, 1);
+
+	return ret == 1 ? 0 : ret < 0 ? ret : -EIO;
+}
+
+static int samsung_pogo_boot_ack(struct samsung_pogo *pogo)
+{
+	u8 ack;
+	int ret = samsung_pogo_boot_read(pogo, &ack, sizeof(ack));
+
+	if (ret)
+		return ret;
+	return ack == STM32_BOOT_ACK ? 0 : -EPROTO;
+}
+
+static u8 samsung_pogo_checksum(const u8 *data, size_t len)
+{
+	u8 checksum = 0;
+
+	while (len--)
+		checksum ^= *data++;
+	return checksum;
+}
+
+static void samsung_pogo_enter_bootloader(struct samsung_pogo *pogo)
+{
+	/* Exact GPIO sequence from Samsung's stm32_sysboot_connect(). */
+	gpiod_set_value_cansleep(pogo->reset, 1);
+	gpiod_set_value_cansleep(pogo->boot, 1);
+	usleep_range(3000, 4000);
+	gpiod_set_value_cansleep(pogo->reset, 0);
+	msleep(50);
+	gpiod_set_value_cansleep(pogo->boot, 0);
+}
+
+static int samsung_pogo_boot_connect(struct samsung_pogo *pogo)
+{
+	const u8 sync = 0xff;
+	int ret;
+
+	samsung_pogo_enter_bootloader(pogo);
+	ret = samsung_pogo_boot_write(pogo, &sync, sizeof(sync));
+	if (ret)
+		return ret;
+
+	/* Required by the STM32 I2C boot protocol after its first SYNC. */
+	samsung_pogo_enter_bootloader(pogo);
+	return 0;
+}
+
+static int samsung_pogo_boot_read_memory(struct samsung_pogo *pogo, u32 address,
+					 void *data, size_t len)
+{
+	const u8 command[] = { 0x11, 0xee };
+	u8 start[5];
+	u8 count[2];
+	int ret;
+
+	if (!len || len > 256)
+		return -EINVAL;
+	put_unaligned_be32(address, start);
+	start[4] = samsung_pogo_checksum(start, 4);
+	count[0] = len - 1;
+	count[1] = ~count[0];
+
+	ret = samsung_pogo_boot_write(pogo, command, sizeof(command));
+	if (!ret)
+		ret = samsung_pogo_boot_ack(pogo);
+	if (!ret)
+		ret = samsung_pogo_boot_write(pogo, start, sizeof(start));
+	if (!ret)
+		ret = samsung_pogo_boot_ack(pogo);
+	if (!ret)
+		ret = samsung_pogo_boot_write(pogo, count, sizeof(count));
+	if (!ret)
+		ret = samsung_pogo_boot_ack(pogo);
+	if (!ret)
+		ret = samsung_pogo_boot_read(pogo, data, len);
+	return ret;
+}
+
+static int samsung_pogo_boot_write_memory(struct samsung_pogo *pogo, u32 address,
+					  const u8 *data, size_t len)
+{
+	const u8 command[] = { 0x31, 0xce };
+	u8 start[5];
+	u8 packet[258];
+	int ret;
+
+	if (!len || len > 256)
+		return -EINVAL;
+	put_unaligned_be32(address, start);
+	start[4] = samsung_pogo_checksum(start, 4);
+	packet[0] = len - 1;
+	memcpy(&packet[1], data, len);
+	packet[len + 1] = samsung_pogo_checksum(packet, len + 1);
+
+	ret = samsung_pogo_boot_write(pogo, command, sizeof(command));
+	if (!ret)
+		ret = samsung_pogo_boot_ack(pogo);
+	if (!ret)
+		ret = samsung_pogo_boot_write(pogo, start, sizeof(start));
+	if (!ret)
+		ret = samsung_pogo_boot_ack(pogo);
+	if (!ret)
+		ret = samsung_pogo_boot_write(pogo, packet, len + 2);
+	if (!ret)
+		ret = samsung_pogo_boot_ack(pogo);
+	return ret;
+}
+
+static int samsung_pogo_boot_erase_application(struct samsung_pogo *pogo)
+{
+	const u8 command[] = { 0x44, 0xbb };
+	u8 count[] = { 0x00, STM32_FLASH_APP_PAGES - 1,
+			 STM32_FLASH_APP_PAGES - 1 };
+	u8 pages[STM32_FLASH_APP_PAGES * 2 + 1];
+	unsigned int page;
+	int ret;
+
+	for (page = 0; page < STM32_FLASH_APP_PAGES; page++)
+		put_unaligned_be16(page, &pages[page * 2]);
+	pages[sizeof(pages) - 1] = samsung_pogo_checksum(pages,
+							sizeof(pages) - 1);
+
+	ret = samsung_pogo_boot_write(pogo, command, sizeof(command));
+	if (!ret)
+		ret = samsung_pogo_boot_ack(pogo);
+	if (!ret)
+		ret = samsung_pogo_boot_write(pogo, count, sizeof(count));
+	if (!ret)
+		ret = samsung_pogo_boot_ack(pogo);
+	if (!ret)
+		ret = samsung_pogo_boot_write(pogo, pages, sizeof(pages));
+	if (!ret) {
+		msleep(1500);
+		ret = samsung_pogo_boot_ack(pogo);
+	}
+	return ret;
+}
+
+static void samsung_pogo_probe_bootloader(struct samsung_pogo *pogo)
+{
+	const u8 sync = 0xff;
+	const u8 get_id[] = { 0x02, 0xfd };
+	const u8 read_memory[] = { 0x11, 0xee };
+	const u8 version_address[] = { 0x08, 0x00, 0x02, 0x00, 0x0a };
+	const u8 version_length[] = { 0x03, 0xfc };
+	u8 info[3] = { 0 };
+	u8 version[4] = { 0 };
+	u8 option[4] = { 0 };
+	u8 ack = 0;
+	int ret;
+
+	/*
+	 * This is deliberately read-only.  Samsung performs the same handshake at
+	 * every driver probe before returning the MCU to its main flash.  Besides
+	 * selecting I2C system-boot mode, it tells us whether a silent application
+	 * is caused by bus/reset wiring or by the contents of the STM32 flash.
+	 */
+	samsung_pogo_enter_bootloader(pogo);
+	ret = samsung_pogo_boot_write(pogo, &sync, sizeof(sync));
+	if (ret)
+		goto out;
+
+	/* Samsung re-enters system boot mode after the initial I2C SYNC. */
+	samsung_pogo_enter_bootloader(pogo);
+	ret = samsung_pogo_boot_write(pogo, get_id, sizeof(get_id));
+	if (!ret)
+		ret = samsung_pogo_boot_read(pogo, &ack, sizeof(ack));
+	if (!ret && ack == STM32_BOOT_ACK)
+		ret = samsung_pogo_boot_read(pogo, info, sizeof(info));
+	if (!ret)
+		ret = samsung_pogo_boot_read(pogo, &ack, sizeof(ack));
+	if (ret || ack != STM32_BOOT_ACK)
+		goto out;
+
+	ret = samsung_pogo_boot_write(pogo, read_memory, sizeof(read_memory));
+	if (!ret)
+		ret = samsung_pogo_boot_read(pogo, &ack, sizeof(ack));
+	if (ret || ack != STM32_BOOT_ACK)
+		goto out;
+	ret = samsung_pogo_boot_write(pogo, version_address,
+				      sizeof(version_address));
+	if (!ret)
+		ret = samsung_pogo_boot_read(pogo, &ack, sizeof(ack));
+	if (ret || ack != STM32_BOOT_ACK)
+		goto out;
+	ret = samsung_pogo_boot_write(pogo, version_length,
+				      sizeof(version_length));
+	if (!ret)
+		ret = samsung_pogo_boot_read(pogo, &ack, sizeof(ack));
+	if (!ret && ack == STM32_BOOT_ACK)
+		ret = samsung_pogo_boot_read(pogo, version, sizeof(version));
+	if (!ret)
+		ret = samsung_pogo_boot_read_memory(pogo, STM32_OPTION_BASE,
+						     option, sizeof(option));
+
+out:
+	if (!ret && ack == STM32_BOOT_ACK) {
+		pogo->bootloader_reachable = true;
+		memcpy(pogo->flash_version, version, sizeof(version));
+		dev_info(&pogo->client->dev,
+			 "STM32 bootloader reachable, product id %#04x, flash version %*ph, option bytes %*ph\n",
+			 get_unaligned_be16(&info[1]), (int)sizeof(version), version,
+			 (int)sizeof(option), option);
+	} else {
+		dev_warn(&pogo->client->dev,
+			 "STM32 bootloader probe failed: %d (ack=%#x)\n",
+			 ret ?: -EPROTO, ack);
+	}
+
+	samsung_pogo_start_application(pogo);
+}
+
+static int samsung_pogo_update_firmware(struct samsung_pogo *pogo,
+					const struct firmware *firmware)
+{
+	u8 verify[256];
+	size_t offset;
+	int ret;
+
+	ret = samsung_pogo_boot_connect(pogo);
+	if (ret)
+		goto out_start_app;
+
+	dev_info(&pogo->client->dev, "erasing STM32 application pages\n");
+	ret = samsung_pogo_boot_erase_application(pogo);
+	if (ret)
+		goto out_start_app;
+
+	for (offset = 0; offset < firmware->size; offset += sizeof(verify)) {
+		size_t len = min_t(size_t, sizeof(verify), firmware->size - offset);
+
+		ret = samsung_pogo_boot_write_memory(pogo,
+				STM32_FLASH_BASE + offset, firmware->data + offset, len);
+		if (ret)
+			goto out_start_app;
+		if (!(offset & 0x1fff))
+			dev_info(&pogo->client->dev, "STM32 programmed %zu/%zu bytes\n",
+				 offset + len, firmware->size);
+		cond_resched();
+	}
+
+	for (offset = 0; offset < firmware->size; offset += sizeof(verify)) {
+		size_t len = min_t(size_t, sizeof(verify), firmware->size - offset);
+
+		ret = samsung_pogo_boot_read_memory(pogo,
+				STM32_FLASH_BASE + offset, verify, len);
+		if (ret)
+			goto out_start_app;
+		if (memcmp(verify, firmware->data + offset, len)) {
+			ret = -EBADMSG;
+			goto out_start_app;
+		}
+		cond_resched();
+	}
+
+	memcpy(pogo->flash_version,
+	       firmware->data + STM32_FW_VERSION_OFFSET,
+	       sizeof(pogo->flash_version));
+	dev_info(&pogo->client->dev,
+		 "STM32 firmware programmed and fully verified (%zu bytes, version %*ph)\n",
+		 firmware->size, (int)sizeof(pogo->flash_version),
+		 pogo->flash_version);
+
+out_start_app:
+	samsung_pogo_start_application(pogo);
+	return ret;
+}
+
+static ssize_t firmware_update_store(struct device *dev,
+				     struct device_attribute *attribute,
+				     const char *buf, size_t count)
+{
+	static const u8 expected_version[] = { 0x00, 0x37, 0x00, 0x37 };
+	struct samsung_pogo *pogo = dev_get_drvdata(dev);
+	const struct firmware *firmware;
+	bool connected;
+	int ret;
+
+	if (!sysfs_streq(buf, "1"))
+		return -EINVAL;
+	if (!pogo->bootloader_reachable)
+		return -ENODEV;
+	if (!memcmp(pogo->flash_version, expected_version,
+		    sizeof(expected_version))) {
+		dev_info(dev, "STM32 firmware is already current\n");
+		return count;
+	}
+
+	ret = request_firmware(&firmware, STM32_FW_NAME, dev);
+	if (ret)
+		return ret;
+	if (firmware->size != STM32_FW_SIZE ||
+	    memcmp(firmware->data + STM32_FW_VERSION_OFFSET,
+		   expected_version, sizeof(expected_version))) {
+		dev_err(dev, "refusing unexpected STM32 firmware (%zu bytes, version %*ph)\n",
+			firmware->size, (int)sizeof(expected_version),
+			firmware->size >= STM32_FW_VERSION_OFFSET + sizeof(expected_version) ?
+			firmware->data + STM32_FW_VERSION_OFFSET : expected_version);
+		ret = -EINVAL;
+		goto out_release;
+	}
+
+	/* Keep the noisy connection GPIO from racing the atomic update. */
+	disable_irq(pogo->connection_irq);
+	cancel_delayed_work_sync(&pogo->connection_work);
+	samsung_pogo_set_data_irq(pogo, false);
+	mutex_lock(&pogo->lock);
+	connected = gpiod_get_value_cansleep(pogo->connected) > 0;
+	if (!connected) {
+		ret = -ENODEV;
+	} else {
+		ret = samsung_pogo_update_firmware(pogo, firmware);
+		pogo->attached = false;
+		pogo->model = 0;
+	}
+	mutex_unlock(&pogo->lock);
+	enable_irq(pogo->connection_irq);
+	mod_delayed_work(system_dfl_wq, &pogo->connection_work, 0);
+
+out_release:
+	release_firmware(firmware);
+	return ret ? ret : count;
+}
+static DEVICE_ATTR_WO(firmware_update);
+
+static int samsung_pogo_enable_power(struct samsung_pogo *pogo)
+{
+	int ret;
+
+	if (pogo->powered)
+		return 0;
+
+	ret = regulator_enable(pogo->vddo);
+	if (ret)
+		return ret;
+	pogo->powered = true;
+
+	/* Exact order and values used by Samsung before accepting STM32 data. */
+	ret = samsung_pogo_booster_write(pogo, MAX77816_CONFIG2,
+					 MAX77816_OUTPUT_ENABLE);
+	if (!ret)
+		ret = samsung_pogo_booster_write(pogo, MAX77816_CONFIG1,
+					     MAX77816_LIMIT_3P1A);
+	if (ret) {
+		samsung_pogo_power_off(pogo);
+		return ret;
+	}
+
+	dev_info(&pogo->client->dev,
+		 "MAX77816 output enabled (config2=%#x, config1=%#x)\n",
+		 MAX77816_OUTPUT_ENABLE, MAX77816_LIMIT_3P1A);
+	return 0;
 }
 
 static int samsung_pogo_send_header(struct samsung_pogo *pogo)
@@ -77,6 +527,11 @@ static void samsung_pogo_release_keys(struct samsung_pogo *pogo)
 	unsigned int code;
 	bool changed = false;
 
+	if (!pogo->input) {
+		bitmap_zero(pogo->keys_down, KEY_MAX + 1);
+		return;
+	}
+
 	for_each_set_bit(code, pogo->keys_down, KEY_MAX + 1) {
 		input_report_key(pogo->input, code, 0);
 		changed = true;
@@ -86,10 +541,62 @@ static void samsung_pogo_release_keys(struct samsung_pogo *pogo)
 		input_sync(pogo->input);
 }
 
+static int samsung_pogo_register_input(struct samsung_pogo *pogo)
+{
+	struct device *dev = &pogo->client->dev;
+	struct input_dev *input;
+	unsigned int code;
+	int ret;
+
+	if (pogo->input)
+		return 0;
+
+	input = input_allocate_device();
+	if (!input)
+		return -ENOMEM;
+
+	input->name = "Book Cover Keyboard Slim (EF-DX920)";
+	input->phys = "samsung-pogo/input0";
+	input->dev.parent = dev;
+	input->id.bustype = BUS_I2C;
+	input->id.vendor = 0x04e8;
+	input->id.product = 0xa035;
+	input->event = samsung_pogo_input_event;
+	input_set_drvdata(input, pogo);
+	for (code = 1; code <= KEY_MAX; code++)
+		input_set_capability(input, EV_KEY, code);
+	input_set_capability(input, EV_LED, LED_CAPSL);
+	input_set_capability(input, EV_SW, SW_LID);
+
+	ret = input_register_device(input);
+	if (ret) {
+		input_free_device(input);
+		return ret;
+	}
+
+	pogo->input = input;
+	return 0;
+}
+
+static void samsung_pogo_unregister_input(struct samsung_pogo *pogo)
+{
+	struct input_dev *input = pogo->input;
+
+	if (!input)
+		return;
+
+	samsung_pogo_release_keys(pogo);
+	pogo->input = NULL;
+	input_unregister_device(input);
+}
+
 static void samsung_pogo_report_keys(struct samsung_pogo *pogo,
 				     const u8 *payload, size_t len)
 {
 	size_t offset;
+
+	if (!pogo->input)
+		return;
 
 	for (offset = 0; offset + sizeof(u16) <= len; offset += sizeof(u16)) {
 		u16 event = get_unaligned_le16(payload + offset);
@@ -116,7 +623,7 @@ static void samsung_pogo_report_hall(struct samsung_pogo *pogo,
 {
 	bool closed;
 
-	if (!len)
+	if (!len || !pogo->input)
 		return;
 
 	closed = payload[0] != POGO_HALL_LID_OPEN;
@@ -149,11 +656,18 @@ static int samsung_pogo_read_event(struct samsung_pogo *pogo)
 	total = get_unaligned_le16(header);
 	if (total <= sizeof(header) || total - sizeof(header) > sizeof(payload)) {
 		/* Samsung uses this otherwise-invalid header as the attach/model event. */
-		if (header[2] && header[2] != pogo->model) {
+		if (header[2]) {
 			pogo->model = header[2];
 			dev_info(&pogo->client->dev,
 				 "keyboard attached, model %#02x%s\n", pogo->model,
 				 pogo->model == POGO_MODEL_EF_DX920 ? " (EF-DX920)" : "");
+			if (pogo->model == POGO_MODEL_EF_DX920 && !pogo->input) {
+				ret = samsung_pogo_register_input(pogo);
+				if (ret)
+					return ret;
+				dev_info(&pogo->client->dev,
+					 "EF-DX920 protocol confirmed; input enabled\n");
+			}
 		}
 		return 0;
 	}
@@ -197,11 +711,81 @@ static irqreturn_t samsung_pogo_irq_thread(int irq, void *data)
 
 	pm_wakeup_event(&pogo->client->dev, 1000);
 	mutex_lock(&pogo->lock);
-	ret = samsung_pogo_read_event(pogo);
+	ret = pogo->attached ? samsung_pogo_read_event(pogo) : -ENODEV;
 	mutex_unlock(&pogo->lock);
-	if (ret)
+	if (ret && ret != -ENODEV)
 		dev_warn_ratelimited(&pogo->client->dev,
 				     "event read failed: %d\n", ret);
+
+	return IRQ_HANDLED;
+}
+
+static void samsung_pogo_set_data_irq(struct samsung_pogo *pogo, bool enable)
+{
+	if (enable == pogo->data_irq_enabled)
+		return;
+
+	if (enable)
+		enable_irq(pogo->data_irq);
+	else
+		disable_irq(pogo->data_irq);
+	pogo->data_irq_enabled = enable;
+}
+
+static void samsung_pogo_connection_work(struct work_struct *work)
+{
+	struct samsung_pogo *pogo = container_of(to_delayed_work(work),
+						  struct samsung_pogo, connection_work);
+	struct device *dev = &pogo->client->dev;
+	bool connected;
+	int ret;
+
+	connected = gpiod_get_value_cansleep(pogo->connected) > 0;
+
+	/* Wait for an in-flight data thread before destroying its input device. */
+	if (!connected)
+		samsung_pogo_set_data_irq(pogo, false);
+
+	mutex_lock(&pogo->lock);
+	if (connected == pogo->attached)
+		goto out_unlock;
+
+	if (connected) {
+		ret = samsung_pogo_enable_power(pogo);
+		if (ret) {
+			dev_err_ratelimited(dev, "cannot power keyboard: %d\n", ret);
+			mod_delayed_work(system_dfl_wq, &pogo->connection_work,
+					 msecs_to_jiffies(1000));
+			goto out_unlock;
+		}
+
+		msleep(50);
+		pogo->attached = true;
+		samsung_pogo_set_data_irq(pogo, true);
+		dev_info(dev, "pogo connection detected; waiting for protocol ID\n");
+	} else {
+		samsung_pogo_unregister_input(pogo);
+		pogo->attached = false;
+		pogo->model = 0;
+		pogo->caps_request = 1;
+		pogo->lid_closed = false;
+		samsung_pogo_power_off(pogo);
+		dev_info(dev, "keyboard physically disconnected\n");
+	}
+
+out_unlock:
+	mutex_unlock(&pogo->lock);
+}
+
+static irqreturn_t samsung_pogo_connection_irq_thread(int irq, void *data)
+{
+	struct samsung_pogo *pogo = data;
+	unsigned long delay = 0;
+
+	pm_wakeup_event(&pogo->client->dev, 1000);
+	if (gpiod_get_value_cansleep(pogo->connected) <= 0)
+		delay = msecs_to_jiffies(POGO_DISCONNECT_DEBOUNCE_MS);
+	mod_delayed_work(system_dfl_wq, &pogo->connection_work, delay);
 
 	return IRQ_HANDLED;
 }
@@ -222,9 +806,8 @@ static int samsung_pogo_input_event(struct input_dev *input,
 static int samsung_pogo_probe(struct i2c_client *client)
 {
 	struct device *dev = &client->dev;
+	struct device_node *booster_np;
 	struct samsung_pogo *pogo;
-	unsigned int code;
-	int irq;
 	int ret;
 
 	if (!i2c_check_functionality(client->adapter, I2C_FUNC_I2C))
@@ -237,11 +820,30 @@ static int samsung_pogo_probe(struct i2c_client *client)
 	pogo->client = client;
 	pogo->caps_request = 1;
 	mutex_init(&pogo->lock);
+	INIT_DELAYED_WORK(&pogo->connection_work, samsung_pogo_connection_work);
 	i2c_set_clientdata(client, pogo);
 
 	pogo->vddo = devm_regulator_get(dev, "vddo");
 	if (IS_ERR(pogo->vddo))
 		return dev_err_probe(dev, PTR_ERR(pogo->vddo), "failed to get VDDO\n");
+	ret = devm_add_action_or_reset(dev, samsung_pogo_power_off, pogo);
+	if (ret)
+		return ret;
+
+	booster_np = of_parse_phandle(dev->of_node, "booster", 0);
+	if (!booster_np)
+		return dev_err_probe(dev, -EINVAL, "missing MAX77816 phandle\n");
+	pogo->booster = of_find_i2c_device_by_node(booster_np);
+	of_node_put(booster_np);
+	if (!pogo->booster)
+		return dev_err_probe(dev, -EPROBE_DEFER, "MAX77816 is not ready\n");
+	ret = devm_add_action_or_reset(dev, samsung_pogo_put_booster,
+				       &pogo->booster->dev);
+	if (ret)
+		return ret;
+	if (!i2c_check_functionality(pogo->booster->adapter, I2C_FUNC_I2C))
+		return dev_err_probe(dev, -EOPNOTSUPP,
+				     "MAX77816 adapter lacks raw I2C\n");
 
 	pogo->boot = devm_gpiod_get(dev, "boot", GPIOD_OUT_LOW);
 	if (IS_ERR(pogo->boot))
@@ -252,63 +854,61 @@ static int samsung_pogo_probe(struct i2c_client *client)
 	if (IS_ERR(pogo->reset))
 		return dev_err_probe(dev, PTR_ERR(pogo->reset), "failed to get reset\n");
 
+	samsung_pogo_probe_bootloader(pogo);
+
 	pogo->data_ready = devm_gpiod_get(dev, "data-ready", GPIOD_IN);
 	if (IS_ERR(pogo->data_ready))
 		return dev_err_probe(dev, PTR_ERR(pogo->data_ready),
 				     "failed to get data-ready GPIO\n");
 
-	pogo->connected = devm_gpiod_get_optional(dev, "connected", GPIOD_IN);
+	pogo->connected = devm_gpiod_get(dev, "connected", GPIOD_IN);
 	if (IS_ERR(pogo->connected))
 		return dev_err_probe(dev, PTR_ERR(pogo->connected),
 				     "failed to get connection GPIO\n");
 
-	ret = regulator_enable(pogo->vddo);
-	if (ret)
-		return dev_err_probe(dev, ret, "failed to enable VDDO\n");
-	ret = devm_add_action_or_reset(dev, samsung_pogo_power_off, pogo);
-	if (ret)
-		return ret;
+	pogo->data_irq = gpiod_to_irq(pogo->data_ready);
+	if (pogo->data_irq < 0)
+		return dev_err_probe(dev, pogo->data_irq,
+				     "failed to map data-ready IRQ\n");
 
-	msleep(50);
-
-	pogo->input = devm_input_allocate_device(dev);
-	if (!pogo->input)
-		return -ENOMEM;
-	pogo->input->name = "Book Cover Keyboard Slim (EF-DX920)";
-	pogo->input->phys = "samsung-pogo/input0";
-	pogo->input->id.bustype = BUS_I2C;
-	pogo->input->id.vendor = 0x04e8;
-	pogo->input->id.product = 0xa035;
-	pogo->input->event = samsung_pogo_input_event;
-	input_set_drvdata(pogo->input, pogo);
-	for (code = 1; code <= KEY_MAX; code++)
-		input_set_capability(pogo->input, EV_KEY, code);
-	input_set_capability(pogo->input, EV_LED, LED_CAPSL);
-	input_set_capability(pogo->input, EV_SW, SW_LID);
-
-	ret = input_register_device(pogo->input);
-	if (ret)
-		return dev_err_probe(dev, ret, "failed to register input device\n");
-
-	irq = gpiod_to_irq(pogo->data_ready);
-	if (irq < 0)
-		return dev_err_probe(dev, irq, "failed to map data-ready IRQ\n");
-
-	ret = devm_request_threaded_irq(dev, irq, NULL, samsung_pogo_irq_thread,
-					IRQF_TRIGGER_FALLING | IRQF_ONESHOT,
+	ret = devm_request_threaded_irq(dev, pogo->data_irq, NULL,
+					samsung_pogo_irq_thread,
+					IRQF_TRIGGER_LOW | IRQF_ONESHOT,
 					dev_name(dev), pogo);
 	if (ret)
 		return dev_err_probe(dev, ret, "failed to request data-ready IRQ\n");
+	disable_irq(pogo->data_irq);
+	pogo->data_irq_enabled = false;
+
+	pogo->connection_irq = gpiod_to_irq(pogo->connected);
+	if (pogo->connection_irq < 0)
+		return dev_err_probe(dev, pogo->connection_irq,
+				     "failed to map connection IRQ\n");
+	ret = devm_request_threaded_irq(dev, pogo->connection_irq, NULL,
+					samsung_pogo_connection_irq_thread,
+					IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING |
+					IRQF_ONESHOT,
+					"samsung-pogo-connection", pogo);
+	if (ret)
+		return dev_err_probe(dev, ret, "failed to request connection IRQ\n");
 
 	device_init_wakeup(dev, true);
+	ret = enable_irq_wake(pogo->connection_irq);
+	if (ret) {
+		dev_warn(dev, "connection IRQ cannot wake the tablet: %d\n", ret);
+	} else {
+		pogo->wake_enabled = true;
+	}
+	ret = device_create_file(dev, &dev_attr_firmware_update);
+	if (ret)
+		return dev_err_probe(dev, ret,
+				     "failed to create firmware update control\n");
 	dev_info(dev, "STM32 pogo controller ready (connected=%d, data-ready=%d)\n",
-		 pogo->connected ? gpiod_get_value_cansleep(pogo->connected) : -1,
+		 gpiod_get_value_cansleep(pogo->connected),
 		 gpiod_get_value_cansleep(pogo->data_ready));
 
-	/* Do not miss an attach packet that was already pending before IRQ setup. */
-	/* The descriptor is active-low, so logical 1 means a physical low IRQ. */
-	if (gpiod_get_value_cansleep(pogo->data_ready) > 0)
-		samsung_pogo_irq_thread(irq, pogo);
+	/* Register the input device only if the physical connection is present. */
+	mod_delayed_work(system_dfl_wq, &pogo->connection_work, 0);
 
 	return 0;
 }
@@ -317,7 +917,15 @@ static void samsung_pogo_remove(struct i2c_client *client)
 {
 	struct samsung_pogo *pogo = i2c_get_clientdata(client);
 
-	samsung_pogo_release_keys(pogo);
+	device_remove_file(&client->dev, &dev_attr_firmware_update);
+	cancel_delayed_work_sync(&pogo->connection_work);
+	if (pogo->wake_enabled)
+		disable_irq_wake(pogo->connection_irq);
+	samsung_pogo_set_data_irq(pogo, false);
+	mutex_lock(&pogo->lock);
+	samsung_pogo_unregister_input(pogo);
+	samsung_pogo_power_off(pogo);
+	mutex_unlock(&pogo->lock);
 	device_init_wakeup(&client->dev, false);
 }
 
