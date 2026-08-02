@@ -1321,3 +1321,17 @@ conectado y el resultado se repitió. Finalmente se hizo un unbind/bind solo del
 driver: recreó `event3`, recibió de nuevo la tecla física y permaneció otros
 tres minutos sin nuevos GPIO62 ni resets. La frecuencia queda como corrección
 reproducible de v0.10; falta que la dueña valide escritura variada al volver.
+
+Una tercera prueba de reinicio, ya con la corrección instalada de forma
+persistente, fue todavía más limpia: el firmware anunció `0xd6`, completó
+VERSION/MODE/CRC al primer intento y creó `event3` con
+`connection_high=0`, `connection_low=0` y `recoveries=0`. Antes de ese reinicio,
+57 muestras durante nueve minutos habían permanecido idénticas. El objeto sobre
+el teclado produjo un `ESC` físico, pero no sustituye la prueba manual de varias
+teclas y reconexión que sigue pendiente.
+
+La release reproducible v0.10 se generó desde el commit `5403cd7`. Sus artefactos
+son `ubuntu-24.04-gts9uwifi-v0.10-sd.img.xz` (SHA-256
+`8380a22336e4a6b5c8a9e713e105fd1807fc3346930d87662d07f7753fb3aa40`)
+y `ubuntu-24.04-gts9uwifi-v0.10-sm-x910-twrp.zip` (SHA-256
+`895c2f8a526d0bc234490c917349f87d48f739367cc1e74ece634db7ade233fc`).

@@ -66,7 +66,7 @@ sondea» como prueba de funcionamiento.
 | Luz ambiental STK31610 | ❌ | ❌ | supuesto | El SSC lo descubre pero no emite lux; vía agotada en pmOS |
 | Proximidad | — | — | — | El firmware SSC stock del X910 no instancia el sensor |
 | S Pen (Wacom I²C 0x56) | ❌ | ❌ | supuesto | |
-| Teclado pogo EF-DX920 (STM32 I²C 0x2a) | ❌ | 🟡 | medido | Teclas `EV_KEY` confirmadas; SE15 a 100 kHz estable en dos reinicios y un rebind bajo carga, pendiente escritura sostenida normal |
+| Teclado pogo EF-DX920 (STM32 I²C 0x2a) | ❌ | 🟡 | medido | Teclas `EV_KEY` confirmadas; SE15 a 100 kHz estable en tres reinicios y un rebind tras actividad física, pendiente escritura sostenida normal |
 | Huella (EgisTec EL7xx, SPI) | ❌ | ❌ | supuesto | Sin driver mainline |
 | Vibración / hápticos | ❌ | ❌ | supuesto | Hardware sin identificar |
 | Flash / linterna | ❌ | ❌ | supuesto | PM8350C; candidato `leds-qcom-flash` |
@@ -123,7 +123,7 @@ aparecieron decenas de GPIO62, NACK `-6`, timeouts y recreaciones de `event3`.
 Forzar el runtime PM de SE15 a `on` no cambió el patrón, por lo que autosuspend
 quedó descartado. La diferencia temporal mostró transacciones/reintentos de
 ~230–250 ms en el arranque malo. Reducir únicamente `clock-frequency` de SE15
-a 100 kHz eliminó la tormenta en dos arranques consecutivos y tras un rebind del
+a 100 kHz eliminó la tormenta en tres arranques consecutivos y tras un rebind del
 driver; una tecla física se recibió en los tres casos. El estado sigue amarillo
 hasta que la dueña pruebe escritura variada a esta frecuencia.
 

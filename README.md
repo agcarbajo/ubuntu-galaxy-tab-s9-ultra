@@ -26,8 +26,8 @@ keyboard as model `0xd6`, and creates a real Linux input device only while the
 cover is connected. Physical `EV_KEY` press/release transitions are now proven;
 the driver filters stale DATA IRQs before touching I²C and no longer mistakes
 a legitimately held key for a stalled stream. Release v0.10 also runs the
-STM32 bus at 100 kHz: two cold boots and a driver reconnect remained stable
-under a held key, without timeout or recovery reset. Normal sustained typing
+STM32 bus at 100 kHz: three cold boots and a driver reconnect remained stable
+after physical key input, without timeout or recovery reset. Normal sustained typing
 still needs final confirmation by the owner. A
 rollback build of the postmarketOS v1.71 baseline is kept outside Git.
 

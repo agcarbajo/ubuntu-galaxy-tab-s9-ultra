@@ -408,8 +408,8 @@ decenas de ciclos GPIO62; `event3` se destruía cuando el nivel permanecía bajo
 más de 250 ms. Mantener `89c000.i2c/power/control=on` y reinicializar el cliente
 no lo corrigió, así que no atribuirlo al autosuspend de 250 ms. El downstream
 usa 400 kHz, pero su generador GENI y sus parches de temporización no son los de
-mainline. En esta placa, 100 kHz dio dos arranques y un rebind consecutivos sin
-timeouts ni resets bajo una tecla física. Para un teclado la pérdida de ancho
+mainline. En esta placa, 100 kHz dio tres arranques y un rebind consecutivos sin
+timeouts ni resets después de recibir una tecla física. Para un teclado la pérdida de ancho
 de banda es irrelevante; no volver a 400 kHz sin una comparación equivalente.
 
 No usar un watchdog basado únicamente en el tiempo durante el que una tecla
