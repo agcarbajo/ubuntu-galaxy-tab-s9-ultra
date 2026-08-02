@@ -207,6 +207,11 @@ if [ -n "$zip" ] && [ -f "$zip" ]; then
 		else
 			fail 'the packaged installer does not declare the expected contract'
 		fi
+		if printf '%s\n' "$installer" | grep -q 'e2fsck -p "\$1"'; then
+			pass 'the installer preens the Ubuntu rootfs before mounting it read-write'
+		else
+			fail 'the installer does not validate the Ubuntu rootfs with e2fsck'
+		fi
 
 		# Check executable code, not prose: the installer's own comments name
 		# the partitions it promises never to touch, and grepping the whole

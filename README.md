@@ -21,9 +21,9 @@ host and DisplayPort have all been confirmed on hardware.
 
 Bluetooth/A2DP and automatic rotation are also working. Current development is
 focused on the Samsung EF-DX920 pogo keyboard cover: its STM32 controller has
-now been powered and observed live, and the first mainline driver is packaged
-in v0.8 awaiting hardware validation. A rollback build of the postmarketOS v1.71
-baseline is kept outside Git.
+now been powered and observed live. The first mainline driver probes in v0.8,
+but physical input events are not working yet. A rollback build of the
+postmarketOS v1.71 baseline is kept outside Git.
 
 See [docs/hardware-status.md](docs/hardware-status.md) for what is inherited,
 what has been proven under Ubuntu, and what is still assumed.
@@ -54,7 +54,7 @@ port is expected to reproduce.
 | Ethernet (RTL8153) / UAS | 🟡 / ❓ | ⏳ not tested |
 | Motion sensors and autorotation | ✅ | ✅ |
 | Ambient light (STK31610) | ❌ | ❌ |
-| Pogo keyboard (EF-DX920) | ❌ | 🟡 v0.8 driver awaiting hardware validation |
+| Pogo keyboard (EF-DX920) | ❌ | 🟡 controller probes; no input yet |
 | S Pen, fingerprint, haptics | ❌ | ❌ |
 | Speaker protection DSP | ❌ | ❌ |
 | Flash / cameras | ❌ | ❌ |
@@ -66,7 +66,8 @@ Installation has two manual steps, exactly as in the postmarketOS baseline:
 1. **Write the image to a microSD.** The owner writes it and verifies the data
    read back before rebooting.
 2. **Flash the TWRP ZIP.** It writes `boot`, `init_boot`, `vendor_boot` and
-   `dtbo`, and applies the firmware/configuration overlay onto the card.
+   `dtbo`, checks the ext4 rootfs before mounting it, and applies the
+   firmware/configuration overlay onto the card.
 
 The build tooling never writes to a partition or to a card. The exact boot
 chain, safe iteration procedure and recovery paths are in

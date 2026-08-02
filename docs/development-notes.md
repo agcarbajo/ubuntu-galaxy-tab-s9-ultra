@@ -319,12 +319,30 @@ Cuelgan de él dos nodos de función:
   `touchpad,invert = <0 1 1>`.
 
 Y un regulador de refuerzo aparte: `kbd_boost@18`, `max77816,kbd_boost`, en el
-bus distinto `qupv3_hub_i2c4`. Samsung solo lo activa para los modelos `0xf9`
-y `0xd3`; EF-DX920 es `0xd6`, por lo que no pertenece a esa lista.
+bus distinto `qupv3_hub_i2c4`. La lista `stm32,booster_power_models` contiene
+`0xf9` y `0xd3`, mientras que EF-DX920 es `0xd6`, pero esa lista **solo**
+selecciona el ajuste posterior de tensión. El driver Samsung llama siempre a
+`kbd_max77816_control_init()` al encender VDDO cuando la lista no está vacía;
+esa rutina activa la salida (`0x03 = 0x70`) y fija el límite a 3,1 A
+(`0x02 = 0x8e`). Por tanto el MAX77816 no se puede omitir en EF-DX920.
 
 `stm,stm32_pogo` no existe en mainline. Sí existe en la publicación de fuentes
 de Samsung para el SM-X910, que es GPL, así que la vía realista es portarlo, no
 reinventar el protocolo.
+
+### Secuencia de conexión que exige el driver
+
+La implementación stock no deja VDDO encendido desde `probe`. Solicita la IRQ
+de conexión GPIO62 en ambos flancos y mantiene deshabilitada la IRQ de datos
+GPIO75. Cuando GPIO62 sube, enciende VDDO, espera 50 ms, habilita GPIO75 y arma
+el timeout de inicialización; cuando baja, deshabilita datos, libera el estado
+y apaga VDDO. GPIO75 es activa baja y se solicita como nivel bajo + oneshot.
+
+La v0.8 todavía no reproduce esta máquina de estados: mantiene VDDO encendido y
+solo escucha el flanco de bajada de GPIO75. En la prueba física GPIO62 detectó
+la conexión y reintentó aproximadamente cada dos segundos, pero GPIO75 quedó
+siempre alto. El siguiente driver debe implementar las dos IRQ y habilitar
+también el MAX77816 antes de esperar datos.
 
 ### El apagado al cerrar
 

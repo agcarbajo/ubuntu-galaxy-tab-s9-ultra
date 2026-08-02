@@ -156,6 +156,30 @@ locate_rootfs() {
     return 1
 }
 
+check_rootfs() {
+    # Never mount a known-dirty rootfs read-write and then install a new boot
+    # bundle over it.  A v0.8 test boot reached systemd but fell into the
+    # emergency target because ext4 contained unattached inodes; the black
+    # panel made that look like a kernel regression.  e2fsck -p performs only
+    # repairs that ext4 considers safe without operator input.  Anything more
+    # serious is left untouched and requires an explicit recovery pass.
+    command -v e2fsck >/dev/null 2>&1 || \
+        abort "TWRP has no e2fsck; cannot validate the Ubuntu rootfs safely"
+
+    ui_print "Checking the Ubuntu microSD rootfs before mounting it."
+    e2fsck -p "$1" >/tmp/ubuntu-rootfs-fsck.log 2>&1
+    rc=$?
+    case "$rc" in
+        0) ui_print "microSD rootfs is clean." ;;
+        1) ui_print "microSD rootfs had safe errors; e2fsck repaired them." ;;
+        *)
+            ui_print "e2fsck could not repair the rootfs automatically (code $rc)."
+            ui_print "Run e2fsck manually from TWRP before flashing again."
+            abort "Ubuntu microSD rootfs needs manual filesystem repair"
+            ;;
+    esac
+}
+
 HAS_ROOTFS_OVERLAY=0
 if unzip -l "$ZIPFILE" ROOTFS-OVERLAY-SHA256SUMS >/dev/null 2>&1; then
     HAS_ROOTFS_OVERLAY=1
@@ -170,6 +194,7 @@ if unzip -l "$ZIPFILE" ROOTFS-OVERLAY-SHA256SUMS >/dev/null 2>&1; then
         abort "no microSD partition labelled $ROOTFS_LABEL was found"
     fi
     ui_print "Found the Ubuntu microSD rootfs on $ROOTFS_DEV."
+    check_rootfs "$ROOTFS_DEV"
     mkdir -p "$ROOTFS_MOUNT" || abort "cannot create microSD mount point"
     EXISTING_MOUNT="$(grep "^$ROOTFS_DEV " /proc/mounts 2>/dev/null | head -n 1 | cut -d' ' -f2)"
     if [ -n "$EXISTING_MOUNT" ]; then

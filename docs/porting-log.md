@@ -984,3 +984,64 @@ regresiones en audio, Wi-Fi, rotación ni suspensión.
 Como línea base previa a la instalación se consultó la v0.7 por SSH: kernel
 `7.2.0-rc3-dirty`, GDM activo, ninguna unidad fallida y, como era esperable en
 esa versión, ni `i2c-15` ni `15-002a` presentes en sysfs.
+
+---
+
+## Sesión 7 — v0.8 en hardware: recuperación del rootfs y diagnóstico del pogo
+
+Fecha: 2026-08-02.
+
+### La pantalla negra no era una regresión de arranque
+
+El ZIP v0.8 se instaló desde TWRP con todos sus hashes correctos, pero el primer
+reinicio quedó con el panel negro y sin red. Se descartó expresamente un gadget
+USB llamado `postmarketos`: pertenecía a otro dispositivo conectado al PC, no
+a la X910 que ejecuta Ubuntu.
+
+`/proc/last_kmsg` solo alcanzaba `ExitBootServices`; no contenía panic. El
+journal persistente de la microSD dio la causa exacta: `systemd-fsck-root`
+terminó con código 4 por una inconsistencia inesperada y varios inodos sin
+enlazar, y systemd entró en `emergency.target`. El panel negro ocultó el prompt
+y simuló un fallo anterior al kernel.
+
+Desde TWRP se ejecutó una reparación explícita sobre la partición Ubuntu:
+`e2fsck -f -y` recuperó tres inodos pequeños en `lost+found` y corrigió los
+bitmaps y contadores. Una segunda pasada `e2fsck -f -n` terminó con código 0.
+Tras reiniciar, la tablet arrancó v0.8 con GNOME y Wi-Fi activos. El rootfs está
+montado desde la microSD como ext4 `rw,noatime,errors=remount-ro`.
+
+Para que un rootfs sucio no vuelva a presentarse como una regresión del kernel,
+el instalador TWRP pasa ahora `e2fsck -p` **antes** de montarlo en lectura y
+escritura. Solo continúa si el sistema estaba limpio o si se corrigieron errores
+seguros automáticamente; cualquier código más grave aborta antes de escribir
+las particiones y pide una reparación manual. La validación estática del ZIP
+comprueba que esta guarda siga empaquetada.
+
+### Lo que v0.8 demuestra y lo que no
+
+El driver sondea en el controlador dinámico `i2c-5` (`89c000.i2c`; el número no
+es el alias de hardware), registra `Book Cover Keyboard Slim (EF-DX920)` como
+dispositivo I²C de entrada y anuncia `connected=0, data-ready=0`. Eso prueba el
+enlace del driver, no teclas funcionales. Una captura de `evtest` no recibió
+eventos y el contador de la IRQ de datos GPIO75 permaneció a cero.
+
+Una sonda reversible, con el driver y el regulador liberados y restaurados al
+salir, aplicó VDDO=1, BOOT0=0 y NRST=1. GPIO62 pasó a detectar la funda y a
+oscilar en reintentos de aproximadamente dos segundos; GPIO75 se mantuvo alto.
+El MCU ve la conexión física pero nunca anuncia un paquete.
+
+La relectura completa del driver GPL de Samsung encontró dos omisiones en la
+v0.8. Primero, el stock usa GPIO62 en ambos flancos como máquina de estados:
+enciende VDDO al conectar, espera 50 ms, habilita GPIO75 activa baja y revierte
+todo al desconectar. Segundo, el MAX77816 de `qupv3_hub_i2c4` sí es necesario:
+la lista de modelos solo controla un ajuste posterior, mientras que la rutina
+de encendido de la salida se ejecuta siempre. Escribe `0x03 = 0x70` y
+`0x02 = 0x8e`. En v0.8 dicho bus está deshabilitado, por lo que la lógica del
+STM32 arranca pero la alimentación reforzada de la funda no.
+
+### Siguiente iteración
+
+La v0.9 debe implementar la IRQ de conexión y la secuencia de potencia del
+stock, habilitar `i2c_hub_4` y programar el MAX77816 con un driver built-in.
+Solo se considerará funcional tras observar pulsaciones reales en `evtest`;
+la mera aparición del dispositivo de entrada no basta.
