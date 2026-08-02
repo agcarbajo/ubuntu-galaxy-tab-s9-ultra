@@ -1263,7 +1263,8 @@
  * recovery, not as a separate i2c-gpio bus.
  */
 &i2c15 {
-	clock-frequency = <400000>;
+	/* Mainline GENI timing is more reliable with the STM32 at standard mode. */
+	clock-frequency = <100000>;
 	status = "okay";
 
 	pogo_keyboard: keyboard@2a {

@@ -1276,3 +1276,48 @@ los contadores permanecieron en `connection_high=0`, `connection_low=0`,
 `data_irq_deasserted=1` y no produjo ningún timeout. Es evidencia fuerte de que
 la tormenta de alimentación quedó corregida. Aún falta la prueba final de
 escritura variada por la dueña, por lo que el estado continúa en amarillo.
+
+---
+
+## Sesión 11 — la estabilidad a 400 kHz no sobrevivía al reinicio
+
+Fecha: 2026-08-02.
+
+La usuaria confirmó que el teclado había funcionado con varias teclas a la vez
+y también tras desconectarlo y conectarlo, pero al reiniciar volvió a ser
+irregular. Era exactamente el mismo `boot.img`, por lo que se compararon los
+arranques en vez de atribuirlo al filtro de IRQ.
+
+En el arranque malo el driver recibió cientos de eventos reales, pero acumuló
+decenas de flancos GPIO62, NACK `-6`, errores `-71`, timeouts GENI y varias
+destrucciones/recreaciones de `event3`. Una captura pasiva terminó con
+`No such device` justo cuando GPIO62 permaneció bajo más de 250 ms. El filtro
+de IRQ vacía sí hacía su trabajo —los descartes crecían sin causar reset—, pero
+había además fallos en transacciones con DATA realmente activa.
+
+### Autosuspend descartado
+
+El controlador `89c000.i2c` usa autosuspend de 250 ms y las fases fallidas
+mostraban retardos del mismo orden. Se forzó temporalmente
+`power/control=on`, se verificó el estado `active` y se reinicializó solo el
+driver pogo. GPIO62 siguió pulsando y las teclas volvieron a detenerse. La
+prueba fue reversible, se devolvió el controlador a `auto` y no se conservó
+ningún parche de userspace.
+
+### SE15 a 100 kHz
+
+Se cambió únicamente `clock-frequency` de I2C15 de 400 kHz a 100 kHz. El driver
+y `boot` permanecieron idénticos. Se construyó y escribió solo `vendor_boot`,
+con copia y verificación SHA-256:
+
+- nuevo: `1313836dd22c120f7c2bb82a7ec45fba0de1e057e2b6691cb2e453d1bbdef6ba`;
+- anterior: `fb31f91ebb9959400a5110607353148e63f7017f7ba03616e21dcbbe6dc653ba`.
+
+El árbol vivo confirmó `clock-frequency=100000`. En el primer arranque hubo un
+ciclo inicial, el handshake terminó correctamente y una tecla física `ESC`
+llegó al input. Los 36 muestreos siguientes durante tres minutos quedaron
+idénticos, sin timeout ni recuperación. Se reinició de nuevo con el teclado
+conectado y el resultado se repitió. Finalmente se hizo un unbind/bind solo del
+driver: recreó `event3`, recibió de nuevo la tecla física y permaneció otros
+tres minutos sin nuevos GPIO62 ni resets. La frecuencia queda como corrección
+reproducible de v0.10; falta que la dueña valide escritura variada al volver.

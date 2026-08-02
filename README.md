@@ -18,16 +18,17 @@ Ubuntu boots on the tablet. Milestones 1 to 3 are done: the build is
 reproducible from source, the system reaches a GNOME desktop on the native
 panel, and display, GPU, touch, buttons, Wi-Fi, battery, lid wake, audio, USB
 host and DisplayPort have all been confirmed on hardware. The current
-reproducible release is **v0.9**.
+reproducible release is **v0.10**.
 
 Bluetooth/A2DP and automatic rotation are also working. The Samsung EF-DX920
 pogo controller now boots its official firmware, identifies the attached
 keyboard as model `0xd6`, and creates a real Linux input device only while the
 cover is connected. Physical `EV_KEY` press/release transitions are now proven;
-the current test kernel filters stale DATA IRQs before touching I²C and no
-longer mistakes a legitimately held key for a stalled stream. A six-minute
-loaded run completed with no I²C timeout, connection pulse or recovery reset;
-normal sustained typing still needs final confirmation by the owner. A
+the driver filters stale DATA IRQs before touching I²C and no longer mistakes
+a legitimately held key for a stalled stream. Release v0.10 also runs the
+STM32 bus at 100 kHz: two cold boots and a driver reconnect remained stable
+under a held key, without timeout or recovery reset. Normal sustained typing
+still needs final confirmation by the owner. A
 rollback build of the postmarketOS v1.71 baseline is kept outside Git.
 
 See [docs/hardware-status.md](docs/hardware-status.md) for what is inherited,
@@ -59,7 +60,7 @@ port is expected to reproduce.
 | Ethernet (RTL8153) / UAS | 🟡 / ❓ | ⏳ not tested |
 | Motion sensors and autorotation | ✅ | ✅ |
 | Ambient light (STK31610) | ❌ | ❌ |
-| Pogo keyboard (EF-DX920) | ❌ | 🟡 keys work; stable under held-key test, sustained typing pending |
+| Pogo keyboard (EF-DX920) | ❌ | 🟡 keys work; 100 kHz stable across reboots, sustained typing pending |
 | S Pen, fingerprint, haptics | ❌ | ❌ |
 | Speaker protection DSP | ❌ | ❌ |
 | Flash / cameras | ❌ | ❌ |

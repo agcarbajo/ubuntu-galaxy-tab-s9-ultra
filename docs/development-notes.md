@@ -402,6 +402,16 @@ con esa guarda: si el descriptor activo-bajo devuelve 0, se contabiliza
 `data_irq_deasserted` y no se toca I²C. En la primera prueba de seis minutos el
 resultado fue un descarte, cero timeouts, cero pulsos GPIO62 y cero resets.
 
+Esa ventana estable a 400 kHz no era reproducible tras reiniciar. En el arranque
+siguiente las lecturas volvían a sufrir NACK `-6`, `-EPROTO`, timeouts GENI y
+decenas de ciclos GPIO62; `event3` se destruía cuando el nivel permanecía bajo
+más de 250 ms. Mantener `89c000.i2c/power/control=on` y reinicializar el cliente
+no lo corrigió, así que no atribuirlo al autosuspend de 250 ms. El downstream
+usa 400 kHz, pero su generador GENI y sus parches de temporización no son los de
+mainline. En esta placa, 100 kHz dio dos arranques y un rebind consecutivos sin
+timeouts ni resets bajo una tecla física. Para un teclado la pérdida de ancho
+de banda es irrelevante; no volver a 400 kHz sin una comparación equivalente.
+
 No usar un watchdog basado únicamente en el tiempo durante el que una tecla
 permanece pulsada. Una tecla real puede mantenerse indefinidamente; el
 temporizador experimental de 3 s la confundía con una liberación perdida y
