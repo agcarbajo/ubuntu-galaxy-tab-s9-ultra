@@ -580,3 +580,51 @@ de detectar corrupción, así que el daño crece en silencio hasta el día en qu
 
 Ahora la raíz lleva journal y `-e remount-ro`. El primer error real deja la
 raíz en solo lectura: molesto, pero visible y reparable antes de componerse.
+
+## No reiniciar `systemd-logind` con una sesión gráfica viva
+
+Al instalar el manejador del botón de encendido se hizo
+`systemctl restart systemd-logind` para que cogiera su drop-in. Con el
+escritorio abierto, eso le rompe a GDM el seguimiento de sesiones: abrió dos
+greeters nuevos sin cerrar el anterior y, al iniciar sesión la dueña, su
+`gnome-shell` y el greeter zombi se disputaron el DRM master. El perdedor
+repetía
+
+```
+[atomic] Failed to disable device '/dev/dri/card1': drmModeAtomicCommit: Permiso denegado
+```
+
+y la pantalla se quedaba negra con el cursor del greeter parpadeando. Se
+recupera terminando las sesiones de `seat0` y reiniciando `gdm3`, hasta dejar
+un único compositor.
+
+El reinicio no hacía ninguna falta: un drop-in de `logind.conf.d` se aplica
+solo en el siguiente arranque, y eso bastaba. Si hay que aplicarlo en caliente,
+reiniciar también el gestor de sesión, no solo logind.
+
+## El botón de encendido necesita un solo dueño
+
+Lo que se pedía —toque corto suspende, pulsación larga saca el diálogo de
+sesenta segundos— no lo puede dar ninguna de las dos piezas por separado:
+
+- **logind** distingue la pulsación larga (`HandlePowerKeyLongPress`) pero solo
+  ejecuta acciones fijas suyas, y «mostrar el diálogo de GNOME» no es una;
+- **gnome-settings-daemon** muestra ese diálogo con
+  `power-button-action='interactive'`, pero trata igual todas las pulsaciones.
+
+Repartir la tecla entre ambos produce carreras, porque los dos actúan sobre la
+misma pulsación. `ubuntu-gts9u-powerkey.service` se queda con el evdev del
+`pmic_pwrkey` y decide por duración; a los otros dos se les aparta
+explícitamente (`HandlePowerKey=ignore` y `power-button-action='nothing'`).
+
+La pulsación larga invoca `org.gnome.SessionManager.Shutdown` en la sesión
+activa, que es lo mismo que hace `gnome-session-quit --power-off`.
+
+### La pulsación que despierta no es una orden
+
+Sin tratarla aparte, un solo toque suspendía, la pulsación de despertar se leía
+como otro toque y la tablet volvía a dormirse. `CLOCK_MONOTONIC` no avanza
+durante la suspensión, así que esa pulsación llega —para ese reloj— apenas unos
+segundos después de haberse emitido la suspensión, por mucho que el equipo haya
+dormido horas. Descartar las pulsaciones dentro de esa ventana resuelve el caso
+sin necesidad de escuchar `PrepareForSleep`.
