@@ -904,30 +904,35 @@ static int samsung_pogo_read_event(struct samsung_pogo *pogo)
 	return 0;
 }
 
+static irqreturn_t samsung_pogo_irq(int irq, void *data)
+{
+	struct samsung_pogo *pogo = data;
+	int data_ready;
+
+	atomic64_inc(&pogo->data_irq_count);
+	/*
+	 * Sample DATA in hard-IRQ context, while the falling edge is current.
+	 * Doing this in the threaded handler loses short but valid pulses: DATA
+	 * can be high by the time that thread runs even though the corresponding
+	 * key packet is still queued.  Conversely, a stale pending edge delivered
+	 * after ONESHOT unmasks the line must not poll an empty STM32 queue.
+	 * GPIO75 belongs to TLMM and therefore does not sleep.
+	 */
+	data_ready = gpiod_get_value(pogo->data_ready);
+	if (data_ready <= 0) {
+		atomic64_inc(&pogo->data_irq_deasserted);
+		return IRQ_HANDLED;
+	}
+
+	return IRQ_WAKE_THREAD;
+}
+
 static irqreturn_t samsung_pogo_irq_thread(int irq, void *data)
 {
 	struct samsung_pogo *pogo = data;
 	bool reset = false;
-	int data_ready;
 	int ret;
 
-	atomic64_inc(&pogo->data_irq_count);
-	/*
-	 * Samsung's ISR discards a request when the active-low DATA line has
-	 * already returned high.  Keeping the IRQ edge-triggered avoids losing
-	 * short pulses in mainline TLMM, but reading after the line is deasserted
-	 * polls an empty STM32 queue: the controller then waits until GENI times
-	 * out and requests a complete power cycle on the connection GPIO.
-	 */
-	data_ready = gpiod_get_value_cansleep(pogo->data_ready);
-	if (data_ready <= 0) {
-		atomic64_inc(&pogo->data_irq_deasserted);
-		if (data_ready < 0)
-			dev_warn_ratelimited(&pogo->client->dev,
-					     "cannot read DATA GPIO: %d\n",
-					     data_ready);
-		return IRQ_HANDLED;
-	}
 	pm_wakeup_event(&pogo->client->dev, 1000);
 	mutex_lock(&pogo->lock);
 	ret = pogo->attached ? samsung_pogo_read_event(pogo) : -ENODEV;
@@ -1196,15 +1201,14 @@ static int samsung_pogo_probe(struct i2c_client *client)
 		return dev_err_probe(dev, pogo->data_irq,
 				     "failed to map data-ready IRQ\n");
 
-	ret = devm_request_threaded_irq(dev, pogo->data_irq, NULL,
+	ret = devm_request_threaded_irq(dev, pogo->data_irq,
+					samsung_pogo_irq,
 					samsung_pogo_irq_thread,
 					/*
 					 * The EF-DX920 pulses DATA low and may release it
-					 * before the threaded handler runs.  Mainline TLMM
-					 * then loses a level-low request while the event
-					 * remains queued in the STM32.  Latch the falling
-					 * edge instead; the transaction itself drains the
-					 * complete packet under ONESHOT serialization.
+					 * before the threaded handler runs.  Latch the
+					 * falling edge; the hard handler above decides
+					 * whether that latched edge is still a real request.
 					 */
 					IRQF_TRIGGER_FALLING | IRQF_ONESHOT,
 					dev_name(dev), pogo);

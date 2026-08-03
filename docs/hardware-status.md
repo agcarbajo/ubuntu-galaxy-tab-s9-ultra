@@ -66,7 +66,7 @@ sondea» como prueba de funcionamiento.
 | Luz ambiental STK31610 | ❌ | ❌ | supuesto | El SSC lo descubre pero no emite lux; vía agotada en pmOS |
 | Proximidad | — | — | — | El firmware SSC stock del X910 no instancia el sensor |
 | S Pen (Wacom I²C 0x56) | ❌ | ❌ | supuesto | |
-| Teclado pogo EF-DX920 (STM32 I²C 0x2a) | ❌ | 🟡 | medido | Teclas `EV_KEY` confirmadas; SE15 a 100 kHz estable en tres reinicios y un rebind tras actividad física, pendiente escritura sostenida normal |
+| Teclado pogo EF-DX920 (STM32 I²C 0x2a) | ❌ | 🟡 | medido | Attach/detach y autorrotación correctos; escritura sostenida pierde releases y el hard-IRQ de DATA está en prueba |
 | Huella (EgisTec EL7xx, SPI) | ❌ | ❌ | supuesto | Sin driver mainline |
 | Vibración / hápticos | ❌ | ❌ | supuesto | Hardware sin identificar |
 | Flash / linterna | ❌ | ❌ | supuesto | PM8350C; candidato `leds-qcom-flash` |
@@ -123,9 +123,17 @@ aparecieron decenas de GPIO62, NACK `-6`, timeouts y recreaciones de `event3`.
 Forzar el runtime PM de SE15 a `on` no cambió el patrón, por lo que autosuspend
 quedó descartado. La diferencia temporal mostró transacciones/reintentos de
 ~230–250 ms en el arranque malo. Reducir únicamente `clock-frequency` de SE15
-a 100 kHz eliminó la tormenta en tres arranques consecutivos y tras un rebind del
-driver; una tecla física se recibió en los tres casos. El estado sigue amarillo
-hasta que la dueña pruebe escritura variada a esta frecuencia.
+a 100 kHz eliminó la tormenta en reposo durante tres arranques consecutivos y
+tras un rebind del driver, pero no sobrevivió a escritura sostenida: la dueña
+volvió a observar teclas pegadas y el journal acumuló `-110`, NACK, resets y
+pulsos GPIO62. La frecuencia queda como mejora de reposo, no como causa raíz.
+
+El siguiente kernel de prueba conserva el flanco descendente, pero mueve la
+lectura lógica de GPIO75 desde el hilo al hard-IRQ. Así un pulso corto válido se
+clasifica mientras todavía está activo y despierta el hilo aunque DATA suba
+antes de que se ejecute; una IRQ pendiente que solo llega tras el unmask se
+descarta antes de tocar I²C. Arranque y rebind están comprobados, pero la prueba
+de escritura real de esta variante sigue pendiente.
 
 ## Invariantes heredadas que no se pueden romper
 

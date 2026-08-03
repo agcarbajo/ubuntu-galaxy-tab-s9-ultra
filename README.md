@@ -27,8 +27,10 @@ cover is connected. Physical `EV_KEY` press/release transitions are now proven;
 the driver filters stale DATA IRQs before touching I²C and no longer mistakes
 a legitimately held key for a stalled stream. Release v0.10 also runs the
 STM32 bus at 100 kHz: three cold boots and a driver reconnect remained stable
-after physical key input, without timeout or recovery reset. Normal sustained typing
-still needs final confirmation by the owner. A
+at rest, but sustained typing subsequently reproduced lost releases and transport
+resets. Connection/disconnection and GNOME autorotation gating work correctly.
+The current test kernel samples DATA in the hard-IRQ so short valid pulses are
+not mistaken for stale threaded IRQs; sustained typing still needs confirmation. A
 rollback build of the postmarketOS v1.71 baseline is kept outside Git.
 
 See [docs/hardware-status.md](docs/hardware-status.md) for what is inherited,
@@ -60,7 +62,7 @@ port is expected to reproduce.
 | Ethernet (RTL8153) / UAS | 🟡 / ❓ | ⏳ not tested |
 | Motion sensors and autorotation | ✅ | ✅ |
 | Ambient light (STK31610) | ❌ | ❌ |
-| Pogo keyboard (EF-DX920) | ❌ | 🟡 keys work; 100 kHz stable across reboots, sustained typing pending |
+| Pogo keyboard (EF-DX920) | ❌ | 🟡 attach/detach works; key-release IRQ fix under test |
 | S Pen, fingerprint, haptics | ❌ | ❌ |
 | Speaker protection DSP | ❌ | ❌ |
 | Flash / cameras | ❌ | ❌ |

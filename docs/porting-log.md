@@ -1335,3 +1335,35 @@ son `ubuntu-24.04-gts9uwifi-v0.10-sd.img.xz` (SHA-256
 `8380a22336e4a6b5c8a9e713e105fd1807fc3346930d87662d07f7753fb3aa40`)
 y `ubuntu-24.04-gts9uwifi-v0.10-sm-x910-twrp.zip` (SHA-256
 `895c2f8a526d0bc234490c917349f87d48f739367cc1e74ece634db7ade233fc`).
+
+---
+
+## Sesión 12 — los pulsos DATA deben clasificarse en el hard-IRQ
+
+Fecha: 2026-08-03.
+
+La prueba manual pendiente invalidó la conclusión fuerte de la sesión anterior:
+las teclas seguían quedándose pulsadas aunque conectar/desconectar la funda y la
+aparición de la autorrotación funcionasen correctamente. En nueve minutos de
+escritura, los diagnósticos midieron 174 IRQ DATA, 104 transiciones de tecla,
+17 IRQ descartadas por DATA inactiva, 18 flancos bajos GPIO62 y cuatro resets de
+recuperación. El journal contenía `-110` y `-6`. Durante una captura pasiva
+posterior de 60 segundos, ya sin actividad física, todos los contadores quedaron
+inmóviles. Esto separa el fallo de la ruta de attach/detach y del userspace.
+
+La guarda añadida en la sesión 10 se ejecutaba dentro del handler threaded. Ese
+instante es demasiado tarde para un GPIO que emite pulsos cortos: un flanco
+válido puede haber vuelto a alto mientras el paquete correspondiente permanece
+en la cola, por lo que se perdía una transición —especialmente el release—. A
+la vez, retirar la guarda por completo ya había demostrado que una IRQ pendiente
+obsoleta sondea la cola vacía y provoca un timeout.
+
+Se mantuvo `IRQF_TRIGGER_FALLING | IRQF_ONESHOT`, pero se añadió un handler
+primario que lee GPIO75 con `gpiod_get_value()` en contexto hard-IRQ. Solo si el
+nivel lógico activo sigue presente devuelve `IRQ_WAKE_THREAD`; las pendientes
+ya inactivas se contabilizan y terminan sin I²C. El kernel compiló y se escribió
+solo en `boot`, con SHA-256
+`93e39902057b515017bb705fc6076fc9a35d212eafb35960afd5c054387d0d23` y rollback
+verificado `5e3d577d81c6a74f11b55476555c3d4e37e387e332f6d50a21075900cdcc755b`.
+El primer arranque y un unbind/bind recrearon `event3` con cero recuperaciones;
+faltan transiciones físicas sostenidas para confirmar la corrección.

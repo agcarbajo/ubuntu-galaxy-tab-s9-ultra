@@ -409,8 +409,17 @@ más de 250 ms. Mantener `89c000.i2c/power/control=on` y reinicializar el client
 no lo corrigió, así que no atribuirlo al autosuspend de 250 ms. El downstream
 usa 400 kHz, pero su generador GENI y sus parches de temporización no son los de
 mainline. En esta placa, 100 kHz dio tres arranques y un rebind consecutivos sin
-timeouts ni resets después de recibir una tecla física. Para un teclado la pérdida de ancho
-de banda es irrelevante; no volver a 400 kHz sin una comparación equivalente.
+timeouts ni resets en reposo, pero la escritura sostenida volvió a provocar
+`-110`, NACK y GPIO62. Para un teclado la pérdida de ancho de banda es
+irrelevante, pero 100 kHz no es por sí solo la solución.
+
+La guarda de DATA tampoco puede ejecutarse por primera vez en el handler
+threaded: un pulso corto válido puede haber regresado a alto aunque su paquete
+siga en la cola, y descartarlo pierde sobre todo releases. La clasificación debe
+hacerse en el hard-IRQ de TLMM con `gpiod_get_value()`; solo los flancos que allí
+ya estén inactivos son IRQ pendientes obsoletas. El hilo puede entonces leer el
+paquete aunque el pulso termine mientras se planifica. Esta variante todavía
+requiere validación de escritura física antes de declararla definitiva.
 
 No usar un watchdog basado únicamente en el tiempo durante el que una tecla
 permanece pulsada. Una tecla real puede mantenerse indefinidamente; el
