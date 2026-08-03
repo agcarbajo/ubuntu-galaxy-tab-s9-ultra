@@ -1,0 +1,16 @@
+--- a/drivers/i2c/busses/i2c-qcom-geni.c
++++ b/drivers/i2c/busses/i2c-qcom-geni.c
+@@ -171,7 +171,12 @@ struct geni_i2c_clk_fld {
+  * source_clock = 19.2 MHz
+  */
+ static const struct geni_i2c_clk_fld geni_i2c_clk_map_19p2mhz[] = {
+-	{ I2C_MAX_STANDARD_MODE_FREQ, 7, 10, 12, 26 },
++	/*
++	 * Match the SM-X910 Samsung kernel at standard mode.  Its pogo STM32
++	 * is the only 100 kHz client in the board DTS and is sensitive to the
++	 * extra high counter used by the generic table under sustained bursts.
++	 */
++	{ I2C_MAX_STANDARD_MODE_FREQ, 7, 10, 11, 26 },
+ 	{ I2C_MAX_FAST_MODE_FREQ, 2,  5, 11, 22 },
+ 	{ I2C_MAX_FAST_MODE_PLUS_FREQ, 1, 2,  8, 18 },
+ 	{}

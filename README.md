@@ -21,17 +21,14 @@ host and DisplayPort have all been confirmed on hardware. The current
 reproducible release is **v0.10**.
 
 Bluetooth/A2DP and automatic rotation are also working. The Samsung EF-DX920
-pogo controller now boots its official firmware, identifies the attached
-keyboard as model `0xd6`, and creates a real Linux input device only while the
-cover is connected. Physical `EV_KEY` press/release transitions are now proven;
-the driver filters stale DATA IRQs before touching I²C and no longer mistakes
-a legitimately held key for a stalled stream. Release v0.10 also runs the
-STM32 bus at 100 kHz: three cold boots and a driver reconnect remained stable
-at rest, but sustained typing subsequently reproduced lost releases and transport
-resets. Connection/disconnection and GNOME autorotation gating work correctly.
-The current test kernel samples DATA in the hard-IRQ so short valid pulses are
-not mistaken for stale threaded IRQs; sustained typing still needs confirmation. A
-rollback build of the postmarketOS v1.71 baseline is kept outside Git.
+pogo keyboard boots its official firmware and appears only while the cover is
+physically attached. A v0.11 candidate now matches Samsung's 100 kHz GENI
+timing, level-low DATA IRQ and timeout recovery, releases keys on the first
+failed read, and removes a boot-time ADSP sensor IRQ storm which contended with
+the display and I2C. A clean boot is healthy, but the keyboard remains
+experimental until sustained typing and reconnect are physically repeated on
+that exact candidate. A rollback build of the postmarketOS v1.71 baseline is
+kept outside Git.
 
 See [docs/hardware-status.md](docs/hardware-status.md) for what is inherited,
 what has been proven under Ubuntu, and what is still assumed.
@@ -62,7 +59,7 @@ port is expected to reproduce.
 | Ethernet (RTL8153) / UAS | 🟡 / ❓ | ⏳ not tested |
 | Motion sensors and autorotation | ✅ | ✅ |
 | Ambient light (STK31610) | ❌ | ❌ |
-| Pogo keyboard (EF-DX920) | ❌ | 🟡 attach/detach works; key-release IRQ fix under test |
+| Pogo keyboard (EF-DX920) | ❌ | 🟡 v0.11 candidate awaiting physical test |
 | S Pen, fingerprint, haptics | ❌ | ❌ |
 | Speaker protection DSP | ❌ | ❌ |
 | Flash / cameras | ❌ | ❌ |

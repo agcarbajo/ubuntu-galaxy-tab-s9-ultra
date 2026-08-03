@@ -96,6 +96,12 @@ apply_unless 'default y if ARCH_QCOM' \
 	drivers/pci/pwrctrl/Kconfig build-wcn-pcie-providers-in.patch
 apply_unless 'clk_set_rate(qmp->pipe_clks\[0\].clk, ULONG_MAX)' \
 	drivers/phy/qualcomm/phy-qcom-qmp-pcie.c unpark-pcie0-pipe-mux.patch
+apply_unless 'Match the SM-X910 Samsung kernel at standard mode' \
+	drivers/i2c/busses/i2c-qcom-geni.c \
+	match-samsung-geni-i2c-100khz-timing.patch
+apply_unless "Samsung's SM8550 driver cancels first" \
+	drivers/i2c/busses/i2c-qcom-geni.c \
+	qcom-geni-cancel-before-abort.patch
 apply_unless 'sc8280xp_snd_startup' \
 	sound/soc/qcom/sc8280xp.c set-mi2s-codec-dai-format.patch
 apply_unless 'ret != -ENODEV && ret != -EPROBE_DEFER' \

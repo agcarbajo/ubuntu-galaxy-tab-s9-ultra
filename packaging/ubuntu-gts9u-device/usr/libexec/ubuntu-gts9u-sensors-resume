@@ -19,19 +19,96 @@ set -eu
 
 log() { echo "ubuntu-gts9u-sensors-resume: $*" >&2; }
 
-# A unit can still read as active after a platform PM cycle while its
-# FastRPC/QMI client is stale.  Restarting is cheap and gives SSC one clean
-# attachment, both at boot and after a real resume.
-systemctl restart hexagonrpcd-adsp-sensorspd.service || true
+# The panel cold-boot recovery suspends the machine while userspace is still
+# coming up.  At that point sensorspd may have started only milliseconds ago.
+# Restarting it unconditionally races the first protection-domain attach and
+# can leave the ADSP handover IRQ firing continuously.  Keep an already active
+# daemon; a normal system suspend stops it through Conflicts=suspend.target,
+# so the inactive case below still performs the required fresh attachment.
+started_sensorspd=0
+if ! systemctl is-active --quiet hexagonrpcd-adsp-sensorspd.service; then
+	systemctl start hexagonrpcd-adsp-sensorspd.service || true
+	started_sensorspd=1
+fi
+
+# A newly attached protection domain needs a short settling interval after a
+# real resume.  The boot-time instance is already older by the time this unit
+# runs after panel cold-boot recovery.
+if [ "$started_sensorspd" -eq 1 ]; then
+	log 'waiting 10s for the fresh sensorspd attachment to settle'
+	sleep 10
+fi
+
+fresh_sensor_proxy() {
+	# A stale libssc call can ignore SIGTERM indefinitely.  Do not block a
+	# resume for systemd's default 90 seconds: discard only that userspace
+	# client and let systemd create a fresh QMI connection.
+	systemctl kill --kill-whom=all --signal=KILL \
+		iio-sensor-proxy.service 2>/dev/null || true
+	systemctl stop --no-block iio-sensor-proxy.service 2>/dev/null || true
+	systemctl reset-failed iio-sensor-proxy.service 2>/dev/null || true
+	systemctl start iio-sensor-proxy.service || true
+}
+
+handover_count() {
+	awk '/q6v5 handover/ {
+		sum=0
+		for (i=2; i<=NF; i++) {
+			if ($i !~ /^[0-9]+$/) break
+			sum += $i
+		}
+		print sum
+	}' /proc/interrupts
+}
+
+handover_storm_appears() {
+	previous=$(handover_count)
+	checks=0
+	while [ "$checks" -lt 15 ]; do
+		checks=$((checks + 1))
+		sleep 2
+		current=$(handover_count)
+		if [ -n "$previous" ] && [ -n "$current" ] && \
+			[ $((current - previous)) -gt 2 ]; then
+			log "ADSP handover IRQ storm detected ($((current - previous)) in 2s)"
+			return 0
+		fi
+		previous=$current
+	done
+	return 1
+}
 
 attempt=0
+recovered=0
 while [ "$attempt" -lt 45 ]; do
 	attempt=$((attempt + 1))
 	output=$(timeout 4 ssccli --sensor accelerometer --timeout 2 2>&1 || true)
 	if printf '%s\n' "$output" | grep -q 'Accelerometer sensor measurement:'; then
-		systemctl restart iio-sensor-proxy.service || true
-		log "SSC ready after attempt $attempt; restarted the sensor proxy for a fresh QMI client"
+		fresh_sensor_proxy
+		log "SSC ready after attempt $attempt; started the sensor proxy with a fresh QMI client"
+
+		# The first client after SSC discovery can inherit an asserted handover
+		# notification.  It then spins at roughly four IRQs per second forever,
+		# but its quiet grace period varies between eleven and twenty seconds.
+		# Observe the exact IRQ continuously and replace only a bad client.
+		if handover_storm_appears; then
+			log 'refreshing the sensor proxy once after the handover storm'
+			fresh_sensor_proxy
+			if handover_storm_appears; then
+				log 'handover storm persisted after the one-shot recovery'
+				exit 1
+			fi
+		fi
 		exit 0
+	fi
+
+	# If an apparently active daemon really is stale after a resume, recover it
+	# once, but only after giving the existing attachment time to answer.  This
+	# path is deliberately not taken during the normal cold-boot race above.
+	if [ "$attempt" -eq 5 ] && [ "$recovered" -eq 0 ]; then
+		recovered=1
+		log 'SSC still unavailable; restarting sensorspd once'
+		systemctl restart hexagonrpcd-adsp-sensorspd.service || true
 	fi
 	sleep 2
 done

@@ -1367,3 +1367,126 @@ solo en `boot`, con SHA-256
 verificado `5e3d577d81c6a74f11b55476555c3d4e37e387e332f6d50a21075900cdcc755b`.
 El primer arranque y un unbind/bind recrearon `event3` con cero recuperaciones;
 faltan transiciones físicas sostenidas para confirmar la corrección.
+
+### Confirmación física y persistencia
+
+La prueba manual sostenida confirmó la hipótesis. Durante más de ocho horas el
+driver contabilizó 2.046 transiciones reales de tecla y terminó con
+`keys_down=0`; la dueña pudo escribir con normalidad, usar varias teclas y
+desconectar y reconectar físicamente la funda sin volver a dejar una tecla
+pulsada ni perder el teclado. De 2.099 IRQ DATA, 12 pendientes ya inactivas se
+descartaron en el hard-IRQ sin iniciar I²C. Hubo dos recuperaciones durante el
+asentamiento inicial y una recuperación aislada de SE15 a los 16 minutos, pero
+el driver rehízo el handshake por sí solo y las siguientes reconexiones fueron
+limpias; no hubo degradación visible durante las horas posteriores.
+
+Se reinició la tablet con la funda conectada para descartar que el éxito
+dependiese del rebind de la sesión de prueba. El kernel volvió a crear
+`Book Cover Keyboard Slim (EF-DX920)` desde el arranque, completó
+VERSION/MODE/CRC y recibió otras 61 transiciones físicas con `keys_down=0`.
+Una recuperación temprana por `-110` rehízo automáticamente la aplicación y no
+impidió el funcionamiento. El árbol vivo siguió exponiendo SE15 a 100.000 Hz y
+los hashes de las particiones coincidieron con los payloads reproducibles:
+
+- `boot`: `93e39902057b515017bb705fc6076fc9a35d212eafb35960afd5c054387d0d23`;
+- `vendor_boot`: `1313836dd22c120f7c2bb82a7ec45fba0de1e057e2b6691cb2e453d1bbdef6ba`.
+
+En ese momento la evidencia parecía suficiente para pasar el teclado a soporte
+completo. La sesión siguiente demostró que esa conclusión fue prematura: no se
+publicó la v0.11.
+
+---
+
+## Sesión 13 — la estabilidad prolongada tampoco sobrevivió al reinicio
+
+Fecha: 2026-08-03.
+
+Tras la ventana de más de ocho horas y un primer reinicio correcto, la usuaria
+reinició de nuevo y las teclas volvieron a quedar retenidas; después el teclado
+dejaba de responder. Se compararon las particiones y el árbol vivo: `boot`,
+`vendor_boot` y `clock-frequency=100000` eran idénticos. El arranque estable
+había enlazado de nuevo el driver a los 272 s y se asentó hacia los 363 s; el
+arranque malo lo hizo a los 3 s y acumuló NACK `-6`, timeouts `-110`, resets y
+pulsos GPIO62. Un rebind aislado no garantizó reproducir el estado bueno. La
+diferencia es de estado frío/temporal del STM32 o del transporte, no de una
+imagen distinta.
+
+Se revisó el controlador real de Samsung
+`drivers/i2c/busses/i2c-msm-geni.c`, no solo el driver común más pequeño. Tres
+diferencias están respaldadas por el fuente oficial del SM-X910:
+
+- el DT usa DATA por nivel bajo + ONESHOT;
+- el contador GENI de 100 kHz es `{7, 10, 11, 26}` y mainline usaba
+  `{7, 10, 12, 26}`;
+- ante timeout Samsung envía `M_CMD_CANCEL` y solo aborta si cancelar falla.
+
+La primera prueba con nivel bajo, sin los otros cambios, recibió 109
+transiciones en 60 s pero terminó con cuatro recuperaciones y errores
+`-6/-110`. Añadir únicamente el contador Samsung mejoró otra captura a 57
+transiciones y una recuperación, pero apareció el evento corrupto `0x6767` y
+persistieron dos NACK y un timeout. Ninguna variante se declaró corregida.
+
+Se construyó después una variante limpia que añade el cancel-before-abort. Su
+`boot` tiene SHA-256
+`f3c6a4235e7dcea8e82ce510861eae3eb145e04ff5594005a0e7a42d3ca158d8` y arrancó
+correctamente; en reposo hizo el handshake completo, aunque registró dos NACK
+tempranos. Una captura de 60 s sin pulsaciones físicas no cambió ningún contador
+y, por tanto, no valida el teclado.
+
+Finalmente se observó otra diferencia del driver oficial: cada intento de
+lectura fallido notifica RESET a los consumidores y libera las teclas antes de
+reintentar. El driver propio solo las liberaba tras agotar los tres intentos,
+lo que explicaba que una pulsación quedase visible varios segundos. Se añadió
+la liberación inmediata conservando el reset físico únicamente tras agotar los
+reintentos. Esta última variante está compilándose y queda pendiente de
+escritura sostenida, reinicio y reconexión; la release vigente continúa siendo
+v0.10 y el teclado permanece en amarillo.
+
+---
+
+## Sesión 14 — la recuperación tardía era también una carrera SSC/GNOME
+
+Fecha: 2026-08-03.
+
+La variante final de la sesión anterior compiló correctamente. Su `boot.img`,
+SHA-256
+`df98bc12b74b84db65b2cb2c4bd669fb10d28b498773692e2e2db336be6f03fa`,
+añade la liberación inmediata tras cada lectura fallida sobre el nivel bajo,
+timing Samsung y cancel-before-abort ya descritos. Se escribió únicamente
+`boot`, con copia y hash remoto verificados; el rollback es
+`f3c6a4235e7dcea8e82ce510861eae3eb145e04ff5594005a0e7a42d3ca158d8`.
+
+Antes de escribirlo se encontró una segunda anomalía independiente. El arranque
+malo tenía `iio-sensor-proxy` cerca del 100 % de CPU y
+`irq/16-smp2p-adsp` cerca del 90 %, mientras el kernel repetía
+`Handover signaled, but it already happened` cada ~233 ms. Detener el proxy
+necesitó el timeout completo de 90 s y SIGKILL. Tras un rebind seguro del pogo,
+una captura física entregó 432 transiciones en 60 s, combinaciones incluidas,
+con `keys_down=0`, cero recuperaciones y cero errores.
+
+La primera interpretación —que la tormenta fuese la causa raíz del teclado—
+era demasiado fuerte. El boot anterior que funcionó ocho horas también había
+acumulado 139.497 handovers. Sí es una regresión real: ocupa dos núcleos y
+coincide con timeouts del DPU y GENI, pero solo puede considerarse un agravante
+del transporte pogo.
+
+La cronología localizó la carrera. El helper arrancaba antes de LightDM/GDM,
+consultaba SSC y creaba un proxy antes de que GNOME fuese consumidor. Las
+pruebas de no reiniciar `hexagonrpcd`, esperar 75 s y observar ventanas fijas de
+4 s fallaron: el periodo silencioso del cliente variaba y la tormenta aparecía
+solo después de que el display manager quedara desbloqueado. No repetir esos
+retardos ciegos.
+
+La solución reproducible ordena `ubuntu-gts9u-sensors-resume.service` después
+del display manager. Tras obtener una medida real de acelerómetro inicia un
+cliente limpio y vigila el IRQ de handover cada dos segundos durante 30 s. En
+el arranque limpio `55a9406e-d2e8-4d54-9a87-f75ecb7066b5` detectó 3 IRQ en 2 s,
+mató solo el primer proxy y abrió otro. El segundo superó toda la vigilancia;
+una medida posterior de 10 s dio delta 0, `iio-sensor-proxy` consumía 45 ms de
+CPU y la carga bajó a 0,74. No se reinició el ADSP ni se perdió audio.
+
+En ese mismo arranque el pogo se inicializó desde frío sin rebind manual,
+errores ni recuperaciones y quedó en `keys_down=0`. Eso valida la reproducción
+del estado de arranque, no la escritura: la dueña estaba ausente y aún debe
+probar varias teclas, reconexión física y uso sostenido. La release pública
+sigue siendo v0.10 hasta completar esa validación sobre la candidata v0.11.

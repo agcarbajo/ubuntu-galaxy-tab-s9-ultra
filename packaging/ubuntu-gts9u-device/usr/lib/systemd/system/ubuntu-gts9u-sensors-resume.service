@@ -4,7 +4,11 @@ Documentation=https://github.com/agcarbajo/postmarketos-galaxy-tab-s9-ultra
 After=ubuntu-gts9u-adsp-boot.service pd-mapper.service
 After=ubuntu-gts9u-panel-coldboot-recover.service
 After=hexagonrpcd-adsp-sensorspd.service
-Before=display-manager.service
+# GNOME is the consumer that opens the accelerometer and exposes the delayed
+# ADSP handover storm.  Running before the display manager made the health
+# window end just before the fault appeared, so recover sensors after the real
+# desktop consumer exists instead.
+After=display-manager.service
 ConditionPathExists=/usr/bin/ssccli
 
 [Service]

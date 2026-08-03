@@ -97,11 +97,13 @@ struct samsung_pogo {
 	atomic64_t manual_poll_count;
 	atomic64_t key_event_count;
 	atomic64_t recovery_count;
+	atomic64_t read_retry_release_count;
 };
 
 static int samsung_pogo_input_event(struct input_dev *input,
 				    unsigned int type, unsigned int code, int value);
 static void samsung_pogo_set_data_irq(struct samsung_pogo *pogo, bool enable);
+static void samsung_pogo_release_keys(struct samsung_pogo *pogo);
 
 static void samsung_pogo_power_off_locked(struct samsung_pogo *pogo)
 {
@@ -583,6 +585,16 @@ static int samsung_pogo_app_recv(struct samsung_pogo *pogo, void *data,
 		ret = i2c_master_recv(pogo->client, data, len);
 		if (ret == len)
 			return 0;
+
+		/*
+		 * Samsung notifies every input consumer to release its state on the
+		 * first failed read, before retrying the same transfer.  In particular,
+		 * do not retain a preceding key press for up to three GENI timeouts while
+		 * waiting for its release packet.  The final exhausted-retry path below
+		 * still resets the STM32 exactly as before.
+		 */
+		samsung_pogo_release_keys(pogo);
+		atomic64_inc(&pogo->read_retry_release_count);
 		msleep(10);
 	}
 
@@ -911,10 +923,10 @@ static irqreturn_t samsung_pogo_irq(int irq, void *data)
 
 	atomic64_inc(&pogo->data_irq_count);
 	/*
-	 * Sample DATA in hard-IRQ context, while the falling edge is current.
+	 * Sample DATA in hard-IRQ context, while the active-low request is current.
 	 * Doing this in the threaded handler loses short but valid pulses: DATA
 	 * can be high by the time that thread runs even though the corresponding
-	 * key packet is still queued.  Conversely, a stale pending edge delivered
+	 * key packet is still queued.  Conversely, a stale pending request delivered
 	 * after ONESHOT unmasks the line must not poll an empty STM32 queue.
 	 * GPIO75 belongs to TLMM and therefore does not sleep.
 	 */
@@ -1082,7 +1094,7 @@ static ssize_t diagnostics_show(struct device *dev,
 	struct samsung_pogo *pogo = dev_get_drvdata(dev);
 
 	return sysfs_emit(buf,
-		"attached=%u model=%#04x connected=%d data_ready=%d caps=%u data_irq=%lld data_irq_deasserted=%lld connection_high=%lld connection_low=%lld manual_polls=%lld key_events=%lld last_key=%#06x keys_down=%u recoveries=%lld\n",
+		"attached=%u model=%#04x connected=%d data_ready=%d caps=%u data_irq=%lld data_irq_deasserted=%lld connection_high=%lld connection_low=%lld manual_polls=%lld key_events=%lld last_key=%#06x keys_down=%u recoveries=%lld read_retry_releases=%lld\n",
 		pogo->attached, pogo->model,
 		gpiod_get_value_cansleep(pogo->connected),
 		gpiod_get_value_cansleep(pogo->data_ready),
@@ -1095,7 +1107,8 @@ static ssize_t diagnostics_show(struct device *dev,
 		atomic64_read(&pogo->key_event_count),
 		READ_ONCE(pogo->last_key_event),
 		bitmap_weight(pogo->keys_down, KEY_MAX + 1),
-		atomic64_read(&pogo->recovery_count));
+		atomic64_read(&pogo->recovery_count),
+		atomic64_read(&pogo->read_retry_release_count));
 }
 static DEVICE_ATTR_RO(diagnostics);
 
@@ -1147,6 +1160,7 @@ static int samsung_pogo_probe(struct i2c_client *client)
 	atomic64_set(&pogo->manual_poll_count, 0);
 	atomic64_set(&pogo->key_event_count, 0);
 	atomic64_set(&pogo->recovery_count, 0);
+	atomic64_set(&pogo->read_retry_release_count, 0);
 	mutex_init(&pogo->lock);
 	mutex_init(&pogo->power_lock);
 	INIT_DELAYED_WORK(&pogo->connection_work, samsung_pogo_connection_work);
@@ -1205,12 +1219,14 @@ static int samsung_pogo_probe(struct i2c_client *client)
 					samsung_pogo_irq,
 					samsung_pogo_irq_thread,
 					/*
-					 * The EF-DX920 pulses DATA low and may release it
-					 * before the threaded handler runs.  Latch the
-					 * falling edge; the hard handler above decides
-					 * whether that latched edge is still a real request.
+					 * Samsung wires DATA as level-low + ONESHOT.  This
+					 * retriggers after one packet while more events keep
+					 * DATA asserted, draining press/release bursts instead
+					 * of losing every packet after the first falling edge.
+					 * The hard handler preserves short pulses by deciding
+					 * validity before the threaded I2C reader is scheduled.
 					 */
-					IRQF_TRIGGER_FALLING | IRQF_ONESHOT,
+					IRQF_TRIGGER_LOW | IRQF_ONESHOT,
 					dev_name(dev), pogo);
 	if (ret)
 		return dev_err_probe(dev, ret, "failed to request data-ready IRQ\n");

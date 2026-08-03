@@ -1,6 +1,7 @@
 # Estado de hardware del SM-X910 bajo Ubuntu 24.04
 
-Última actualización: 2026-08-02, durante el bring-up de la funda EF-DX920.
+Última actualización: 2026-08-03, durante la validación de la candidata v0.11
+para la funda EF-DX920.
 
 Ubuntu **ya arranca** en la tablet. Esta matriz distingue explícitamente lo
 heredado de lo comprobado, y ningún componente pasa a ✅ sin observación real.
@@ -56,7 +57,7 @@ sondea» como prueba de funcionamiento.
 | Carga USB-PD/PPS | 🟡 | ⏳ | heredado | SM5714 TCPM + SM5440 2:1; a batería baja sigue sin revalidar |
 | Suspensión profunda | ✅ | ✅ | confirmado | Probada mediante la funda |
 | Funda / Hall `SW_LID` | ✅ | ✅ | confirmado | Cerrar apaga la pantalla |
-| Acelerómetro y autorrotación | ✅ | ✅ | medido | `libssc` + `hexagonrpcd` empaquetados por este port. Acelerómetro leído desde arranque limpio (gravedad 9,76 m/s²) y expuesto en `net.hadess.SensorProxy` como `HasAccelerometer: true` |
+| Acelerómetro y autorrotación | ✅ | ✅ | medido | SSC expuesto a GNOME; la recuperación detecta y elimina una tormenta IRQ del primer cliente tras arrancar |
 | Giroscopio y brújula LSM6DSO | ✅ | ✅ | medido | El mismo canal SSC; `monitor-sensor` sigue el rumbo de la brújula |
 | USB gadget / RNDIS | ✅ | ⏳ | heredado | |
 | USB host, HID y almacenamiento | ✅ | ✅ | confirmado | Con y sin alimentación externa |
@@ -66,7 +67,7 @@ sondea» como prueba de funcionamiento.
 | Luz ambiental STK31610 | ❌ | ❌ | supuesto | El SSC lo descubre pero no emite lux; vía agotada en pmOS |
 | Proximidad | — | — | — | El firmware SSC stock del X910 no instancia el sensor |
 | S Pen (Wacom I²C 0x56) | ❌ | ❌ | supuesto | |
-| Teclado pogo EF-DX920 (STM32 I²C 0x2a) | ❌ | 🟡 | medido | Attach/detach y autorrotación correctos; escritura sostenida pierde releases y el hard-IRQ de DATA está en prueba |
+| Teclado pogo EF-DX920 (STM32 I²C 0x2a) | ❌ | 🟡 | medido | Firmware, attach/detach y teclas funcionan; la estabilidad tras reiniciar sigue en validación |
 | Huella (EgisTec EL7xx, SPI) | ❌ | ❌ | supuesto | Sin driver mainline |
 | Vibración / hápticos | ❌ | ❌ | supuesto | Hardware sin identificar |
 | Flash / linterna | ❌ | ❌ | supuesto | PM8350C; candidato `leds-qcom-flash` |
@@ -96,7 +97,7 @@ realmente.
    correcciones más, todas en el repositorio y ninguna específica de Ubuntu.
    Ver «Autorrotación: los cuatro obstáculos» en el registro de porte.
 
-### Frente abierto: funda con teclado EF-DX920
+### Soporte medido: funda con teclado EF-DX920
 
 La v0.9 reproduce la máquina de estados de Samsung: QUPv3 SE15, VDDO, el
 MAX77816 de SE4, las dos IRQ y la entrada/salida del bootloader ROM. El STM32
@@ -108,15 +109,7 @@ El dispositivo solo existe mientras el modelo real está presente, por lo que
 GNOME no pierde la autorrotación por un teclado fantasma. La fase de aplicación
 stock también responde con versión, modo, CRC y ausencia esperada de touchpad.
 La secuencia correcta —leer VERSION dentro de la IRQ y diferir 10 ms el resto—
-desbloqueó las pulsaciones: `evtest` midió presiones y liberaciones reales. Una
-traza posterior encontró la causa de la tormenta: el flanco descendente de
-GPIO75 podía ejecutarse cuando DATA ya estaba inactiva y provocaba una lectura
-de una cola vacía, timeout GENI y ciclo de alimentación. El handler conserva el
-flanco para no perder pulsos cortos, pero aplica antes la comprobación de nivel
-del driver Samsung. Bajo una tecla colocada como carga permaneció seis minutos
-con cero pulsos GPIO62, cero recuperaciones y cero timeouts. Falta confirmar con
-escritura física sostenida normal que todas las pulsaciones y liberaciones se
-conservan.
+desbloqueó las pulsaciones: `evtest` midió presiones y liberaciones reales.
 
 Ese primer éxito a 400 kHz no sobrevivió al reinicio siguiente: bajo escritura
 aparecieron decenas de GPIO62, NACK `-6`, timeouts y recreaciones de `event3`.
@@ -128,12 +121,21 @@ tras un rebind del driver, pero no sobrevivió a escritura sostenida: la dueña
 volvió a observar teclas pegadas y el journal acumuló `-110`, NACK, resets y
 pulsos GPIO62. La frecuencia queda como mejora de reposo, no como causa raíz.
 
-El siguiente kernel de prueba conserva el flanco descendente, pero mueve la
-lectura lógica de GPIO75 desde el hilo al hard-IRQ. Así un pulso corto válido se
-clasifica mientras todavía está activo y despierta el hilo aunque DATA suba
-antes de que se ejecute; una IRQ pendiente que solo llega tras el unmask se
-descarta antes de tocar I²C. Arranque y rebind están comprobados, pero la prueba
-de escritura real de esta variante sigue pendiente.
+Mover la lectura lógica de GPIO75 desde el hilo al hard-IRQ sí produjo una
+ventana estable importante: 2.046 transiciones durante más de ocho horas,
+`keys_down=0` y reconexión física correcta. Un primer reinicio recibió otras 61
+transiciones. Sin embargo, el reinicio siguiente volvió a dejar teclas pegadas
+y a detener el input con el mismo `boot`, `vendor_boot` y frecuencia DT. Por
+tanto esa prueba no demuestra una causa raíz definitiva: cambia el estado frío
+del STM32/teclado o la fase temporal del transporte, no las imágenes.
+
+La candidata v0.11 vuelve al disparo stock `IRQF_TRIGGER_LOW | IRQF_ONESHOT`,
+usa el contador exacto de 100 kHz del GENI Samsung, cancela una transacción
+expirada antes de abortarla y libera el estado de las teclas en el primer fallo
+de lectura. En un arranque limpio el driver completó el handshake sin rebind,
+errores ni recuperaciones, después de que userspace eliminara la tormenta IRQ
+del primer cliente SSC. Sigue en amarillo hasta superar escritura sostenida y
+reconexión física en esta misma candidata.
 
 ## Invariantes heredadas que no se pueden romper
 

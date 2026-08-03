@@ -185,6 +185,29 @@ arrancado destruye la tarjeta ALSA y los servicios de audio no se vuelven a
 registrar solos. Se recupera reiniciando el sistema. Útil para depurar
 sensores, pero hay que contarlo antes de dejar la tablet en manos de nadie.
 
+## El primer cliente SSC puede dejar afirmado el handover del ADSP
+
+En Ubuntu, la primera consulta `ssccli` seguida del primer
+`iio-sensor-proxy` puede dejar el IRQ `q6v5 handover` disparándose unas cuatro
+veces por segundo. El proxy consume casi un núcleo, el hilo
+`irq/16-smp2p-adsp` otro, y coinciden timeouts DPU y GENI I2C. Reiniciar todo el
+ADSP no es aceptable porque destruye audio; sustituir únicamente el cliente
+`iio-sensor-proxy` después de que SSC responda elimina la tormenta.
+
+La recuperación debe ejecutarse `After=display-manager.service`: GNOME es quien
+abre realmente el acelerómetro. Si la unidad lleva `Before=display-manager`, la
+ventana de salud termina antes de que aparezca el fallo y produce un falso
+positivo. El helper mide el contador `q6v5 handover` cada dos segundos durante
+30 segundos, refresca el proxy una vez solo si crece más de dos veces, y vuelve
+a vigilar el segundo cliente. En el arranque validado el primer cliente produjo
+3 IRQ en 2 s; el segundo terminó con incremento 0, 45 ms de CPU y autorrotación
+activa.
+
+Esta tormenta agrava la contención global, pero **no explica por sí sola toda la
+historia del teclado**: el boot que mantuvo 2.046 transiciones durante ocho
+horas también acumuló handovers. No convertir esa correlación en una causa raíz
+del transporte pogo sin la prueba física final.
+
 ## Lo que no hay que repetir
 
 Heredado de postmarketOS; cada punto costó al menos una iteración física.
@@ -415,11 +438,24 @@ irrelevante, pero 100 kHz no es por sí solo la solución.
 
 La guarda de DATA tampoco puede ejecutarse por primera vez en el handler
 threaded: un pulso corto válido puede haber regresado a alto aunque su paquete
-siga en la cola, y descartarlo pierde sobre todo releases. La clasificación debe
-hacerse en el hard-IRQ de TLMM con `gpiod_get_value()`; solo los flancos que allí
-ya estén inactivos son IRQ pendientes obsoletas. El hilo puede entonces leer el
-paquete aunque el pulso termine mientras se planifica. Esta variante todavía
-requiere validación de escritura física antes de declararla definitiva.
+siga en la cola, y descartarlo pierde sobre todo releases. Moverla al hard-IRQ
+de TLMM produjo más de 2.000 transiciones físicas limpias y una reconexión, pero
+esa estabilidad no sobrevivió al reinicio posterior con imágenes y DT
+idénticos. No llamar definitiva a esa combinación ni atribuir la regresión a
+que una partición haya cambiado.
+
+El DT stock pide `IRQF_TRIGGER_LOW | IRQF_ONESHOT`; esa variante permite que el
+controlador vuelva a disparar mientras queden varios paquetes con DATA bajo. El
+GENI downstream usa en 100 kHz los contadores `{div=7, cycle=10, high=11,
+low=26}`, frente a `high=12` de mainline, y en un timeout envía `M_CMD_CANCEL`
+antes de recurrir a `M_CMD_ABORT`. Son diferencias reales del producto que se
+están probando juntas, no resultados todavía validados.
+
+El driver Samsung también emite su notifier RESET —que libera todas las
+teclas— en **cada** intento de lectura fallido, no solo al agotar tres
+reintentos. Replicar esa semántica evita conservar una pulsación durante varios
+timeouts; el reset físico del STM32 permanece reservado para el agotamiento de
+los reintentos. Esto es distinto de un watchdog por duración de tecla.
 
 No usar un watchdog basado únicamente en el tiempo durante el que una tecla
 permanece pulsada. Una tecla real puede mantenerse indefinidamente; el

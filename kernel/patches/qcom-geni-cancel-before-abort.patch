@@ -1,0 +1,74 @@
+--- a/drivers/i2c/busses/i2c-qcom-geni.c
++++ b/drivers/i2c/busses/i2c-qcom-geni.c
+@@ -119,6 +119,7 @@ struct geni_i2c_dev {
+ 	struct dma_chan *rx_c;
+ 	bool no_dma;
+ 	bool gpi_mode;
++	bool cancel_done;
+ 	bool abort_done;
+ 	bool is_tx_multi_desc_xfer;
+ 	u32 num_msgs;
+@@ -286,7 +287,8 @@ static irqreturn_t geni_i2c_irq(int irq, void *dev)
+ 	cur = gi2c->cur;
+ 
+ 	if (!cur ||
+-	    m_stat & (M_CMD_FAILURE_EN | M_CMD_ABORT_EN) ||
++	    m_stat & (M_CMD_FAILURE_EN | M_CMD_CANCEL_EN |
++		      M_CMD_ABORT_EN) ||
+ 	    dm_rx_st & (DM_I2C_CB_ERR)) {
+ 		if (m_stat & M_GP_IRQ_1_EN)
+ 			geni_i2c_err(gi2c, NACK);
+@@ -301,6 +303,8 @@ static irqreturn_t geni_i2c_irq(int irq, void *dev)
+ 			geni_i2c_err(gi2c, GENI_ILLEGAL_CMD);
+ 		if (m_stat & M_CMD_ABORT_EN)
+ 			geni_i2c_err(gi2c, GENI_ABORT_DONE);
++		if (m_stat & M_CMD_CANCEL_EN)
++			gi2c->cancel_done = true;
+ 		if (m_stat & M_GP_IRQ_0_EN)
+ 			geni_i2c_err(gi2c, GP_IRQ0);
+ 
+@@ -353,7 +357,8 @@ static irqreturn_t geni_i2c_irq(int irq, void *dev)
+ 		writel_relaxed(dm_rx_st, base + SE_DMA_RX_IRQ_CLR);
+ 
+ 	/* if this is err with done-bit not set, handle that through timeout. */
+-	if (m_stat & M_CMD_DONE_EN || m_stat & M_CMD_ABORT_EN ||
++	if (m_stat & M_CMD_DONE_EN || m_stat & M_CMD_CANCEL_EN ||
++	    m_stat & M_CMD_ABORT_EN ||
+ 	    dm_tx_st & TX_DMA_DONE || dm_tx_st & TX_RESET_DONE ||
+ 	    dm_rx_st & RX_DMA_DONE || dm_rx_st & RX_RESET_DONE)
+ 		complete(&gi2c->done);
+@@ -367,17 +372,34 @@ static void geni_i2c_abort_xfer(struct geni_i2c_dev *gi2c)
+ 	unsigned long time_left = ABORT_TIMEOUT;
+ 	unsigned long flags;
+ 
++	/* Samsung's SM8550 driver cancels first and only aborts as fallback. */
+ 	spin_lock_irqsave(&gi2c->lock, flags);
+ 	geni_i2c_err(gi2c, GENI_TIMEOUT);
+ 	gi2c->cur = NULL;
++	gi2c->cancel_done = false;
++	reinit_completion(&gi2c->done);
++	geni_se_cancel_m_cmd(&gi2c->se);
++	spin_unlock_irqrestore(&gi2c->lock, flags);
++
++	time_left = wait_for_completion_timeout(&gi2c->done, time_left);
++	if (time_left && gi2c->cancel_done)
++		return;
++
++	dev_warn(gi2c->se.dev,
++		 "I2C cancel timed out (IOS %#x); falling back to abort\n",
++		 readl_relaxed(gi2c->se.base + SE_GENI_IOS));
++
++	reinit_completion(&gi2c->done);
++	spin_lock_irqsave(&gi2c->lock, flags);
+ 	gi2c->abort_done = false;
+ 	geni_se_abort_m_cmd(&gi2c->se);
+ 	spin_unlock_irqrestore(&gi2c->lock, flags);
+ 
++	time_left = ABORT_TIMEOUT;
+ 	do {
+ 		time_left = wait_for_completion_timeout(&gi2c->done, time_left);
+ 	} while (!gi2c->abort_done && time_left);
+ 
+ 	if (!time_left)
+ 		dev_err(gi2c->se.dev, "Timeout abort_m_cmd\n");
+ }
