@@ -135,8 +135,22 @@ else
 fi
 echo "partitions: $part1 $part2"
 
+# The root filesystem keeps its journal, and says so loudly when it breaks.
+#
+# It was created with -O ^has_journal to spare the microSD some writes.  That
+# is the wrong trade for the root of a tablet the owner power-cycles: without a
+# journal every unclean shutdown can leave unattached inodes and bitmap damage,
+# and it did.  On 2026-08-03 the accumulated damage reached the point where
+# e2fsck refused to fix it unattended, systemd-fsck-root failed, and systemd
+# dropped to emergency.target.  With no display manager running that presents
+# as a tablet that will not turn on, which is a miserable thing to debug from a
+# black screen.
+#
+# errors=remount-ro compounds the point: the default, "continue", lets ext4
+# carry on after detecting corruption, so damage accumulates silently until the
+# day it does not.  Read-only is visible, survivable and repairable.
 mkfs.ext4 -q -F -L "$boot_label" "$part1"
-mkfs.ext4 -q -F -L "$root_label" -O ^has_journal "$part2"
+mkfs.ext4 -q -F -L "$root_label" -e remount-ro "$part2"
 
 mkdir -p "$base/mnt/boot" "$base/mnt/root"
 mount "$part2" "$base/mnt/root"

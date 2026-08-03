@@ -536,7 +536,47 @@ registre pulsaciones, que requiere arrancar el driver sobre SE15.
 ### `CONFIG_GPIO_CDEV_V1` hace falta para las herramientas de Ubuntu
 
 Ubuntu 24.04 trae libgpiod 1.6, que solo habla la ABI v1 del chardev de GPIO.
-Nuestro kernel se compila sin `CONFIG_GPIO_CDEV_V1`, así que `gpioget` devuelve
+El kernel mainline la trae desactivada, así que `gpioget` devolvía
 `Invalid argument` en **todas** las líneas, incluso las que están en uso. El
-síntoma parece un pin reservado y no lo es. Añadir la opción al fragmento de
-escritorio en la próxima reconstrucción del kernel.
+síntoma parece un pin reservado y no lo es. Resuelto: `CONFIG_GPIO_CDEV_V1=y`
+está en `config-ubuntu-desktop.fragment`. Queda como aviso porque el fallo es
+mudo y muy fácil de confundir con un problema de hardware.
+
+## Una tablet que no enciende puede ser modo emergencia
+
+El 2026-08-03 la tablet «no arrancaba»: pantalla negra tras reiniciar. No era
+el panel ni GDM. El sistema arrancaba entero y se paraba aquí:
+
+```
+systemd-fsck-root.service: Failed with result 'exit-code'
+Reached target emergency.target - Emergency Mode
+```
+
+`emergency.target` abre una consola de root en la tty. En un portátil eso se
+ve; aquí el panel sigue oscuro hasta que la recuperación de arranque en frío lo
+reinicia, y sin gestor de sesión no hay nada que dibujar. El resultado es
+indistinguible de un dispositivo muerto.
+
+Cómo diagnosticarlo sin pantalla: montar la raíz desde TWRP en solo lectura,
+sacar **todos** los `system*.journal` —no solo el activo— y leerlos con
+`journalctl -D`. Con un único fichero se ve el tramo final del arranque y es
+fácil concluir que systemd se colgó a mitad, cuando en realidad lo que falta es
+el principio. Aquí pasó exactamente eso y costó una hipótesis equivocada.
+
+La reparación es `e2fsck -fy` sobre la partición desmontada. Antes conviene
+`e2fsck -fn`, que no escribe nada, para ver el alcance: si los pases 2 y 3
+salen limpios la estructura de directorios está intacta y la reparación es
+rutinaria.
+
+### La causa: la raíz se creaba sin journal
+
+`build-sd-image.sh` formateaba la raíz con `-O ^has_journal` para ahorrar
+escrituras a la microSD. Es el intercambio equivocado para la raíz de una
+tablet que se apaga a lo bruto: sin journal, cada apagado sucio puede dejar
+inodos sueltos y bitmaps descuadrados, y eso se acumula. Con
+`Errors behavior: Continue` —el defecto— ext4 además sigue funcionando después
+de detectar corrupción, así que el daño crece en silencio hasta el día en que
+`e2fsck` se planta y el arranque cae a emergencia.
+
+Ahora la raíz lleva journal y `-e remount-ro`. El primer error real deja la
+raíz en solo lectura: molesto, pero visible y reparable antes de componerse.

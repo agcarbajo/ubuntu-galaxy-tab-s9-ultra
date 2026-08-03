@@ -1490,3 +1490,93 @@ errores ni recuperaciones y quedó en `keys_down=0`. Eso valida la reproducción
 del estado de arranque, no la escritura: la dueña estaba ausente y aún debe
 probar varias teclas, reconexión física y uso sostenido. La release pública
 sigue siendo v0.10 hasta completar esa validación sobre la candidata v0.11.
+
+---
+
+## Sesión 15 — la pantalla negra era modo emergencia, no la pantalla
+
+Fecha: 2026-08-03.
+
+La dueña informó de que, tras un reinicio, la tablet se quedaba en negro y no
+acababa de arrancar. La entregó en TWRP.
+
+### El diagnóstico, y una lectura equivocada por el camino
+
+Montada la raíz en solo lectura, el journal activo mostraba un arranque que
+alcanzaba `time-set`, `network` y `nss-lookup` y después callaba dieciséis
+minutos. Se concluyó que systemd se colgaba antes de `basic.target`. **Era
+falso.** Ese fichero contenía solo el tramo final del arranque; el principio
+estaba en un journal rotado, y la propia línea `Startup finished in 12.706s
+(kernel) + 15.085s (userspace)` lo desmentía.
+
+Con todos los `system*.journal` descargados y leídos con `journalctl -D`
+apareció la secuencia real:
+
+```
+systemd-fsck-root.service: Failed with result 'exit-code'
+Failed to start systemd-fsck-root.service
+Reached target emergency.target - Emergency Mode
+```
+
+El sistema arrancaba bien y se detenía en modo emergencia porque el `fsck` de
+la raíz encontraba errores que no podía corregir sin supervisión. Nunca se
+alcanzaban `multi-user` ni `graphical`, de ahí que no hubiera GDM ni imagen.
+
+Lección: no diagnosticar un arranque con un único fichero de journal.
+
+### La reparación
+
+`e2fsck -fn` mostró daño rutinario —dos inodos sueltos, diferencias de bitmap y
+contadores libres— con los pases 2 y 3 limpios, es decir, estructura de
+directorios intacta. `e2fsck -fy` lo corrigió: `Filesystem state: clean` y
+arranque normal. Cinco ficheros acabaron en `lost+found`; los cinco resultaron
+ser texto y bases GVariant de caché, nada del port.
+
+### La causa raíz, en el repositorio
+
+`build-sd-image.sh` creaba la raíz con `-O ^has_journal`. Sin journal, cada
+apagado sucio deja daño, y con `Errors behavior: Continue` ext4 sigue adelante
+en vez de remontar en solo lectura, así que el daño se acumula invisible. La
+imagen ahora se crea con journal y `-e remount-ro`; en la tarjeta viva se
+aplicó `tune2fs -e remount-ro`.
+
+### El teclado, después de la reparación
+
+La dueña avisó de que el teclado había dejado de funcionar. Se descartó primero
+la hipótesis obvia y equivocada: `e2fsck` no se llevó el firmware, que sigue en
+`/lib/firmware/keyboard_stm/stm32_gts9family.bin` con sus 52.132 bytes.
+
+El estado real:
+
+```
+attached=1 model=0x00 connected=1 data_ready=0
+connection_high=129 connection_low=130
+cannot restore keyboard power: -108
+```
+
+El ID de protocolo no llega —`model=0x00` donde antes `0xd6`—, la línea de
+conexión ha rebotado 259 veces y el elevador se reactiva cada 2,1 s
+indefinidamente. El driver enlazó a los 3,7 s.
+
+Esto **coincide con el patrón ya descrito en las sesiones 11 y 13**: los
+arranques malos enlazan pronto y acumulan pulsos de GPIO62, los buenos enlazan
+tarde. No es un fallo nuevo ni consecuencia de la reparación.
+
+Como agravante, la batería estaba al 10 % y 3.716 mV, y el MAX77816 que
+alimenta el teclado cuelga de ella; el propio servicio de firmware se aplazó
+solo por ese motivo. Queda pendiente repetir la medida con carga suficiente
+antes de tocar el driver.
+
+### Defectos del driver anotados, no corregidos
+
+- El reintento de alimentación no tiene freno: reactiva el elevador cada 2 s
+  para siempre, sin espaciado ni rendición.
+- `samsung_pogo_enable_power` emite un backtrace del kernel al fallar. Un fallo
+  de alimentación previsible no debería generar un WARN.
+
+### Cabo suelto: v0.11 no tiene artefactos
+
+La tablet arranca un `boot.img` `df98bc12…` construido en la sesión 14 que no
+corresponde a ninguna release empaquetada: `artifacts/` llega hasta v0.10. Hay
+un kernel en el dispositivo que no es reproducible desde una release. Antes de
+seguir con el teclado conviene cerrar v0.11 o volver a v0.10.
