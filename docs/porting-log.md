@@ -1580,3 +1580,54 @@ La tablet arranca un `boot.img` `df98bc12…` construido en la sesión 14 que no
 corresponde a ninguna release empaquetada: `artifacts/` llega hasta v0.10. Hay
 un kernel en el dispositivo que no es reproducible desde una release. Antes de
 seguir con el teclado conviene cerrar v0.11 o volver a v0.10.
+
+## Sesión 16 — qué cambió desde que el teclado funcionaba: nada nuestro
+
+Fecha: 2026-08-04.
+
+La dueña informó de que el teclado había dejado de funcionar y pidió comparar
+con el estado bueno. Tres hipótesis se descartaron con evidencia, no por
+opinión.
+
+**La batería, no.** Se había apuntado que 10 % y 3.716 mV podían impedir que el
+MAX77816 sostuviera el MCU. La dueña recordó que había funcionado al 15–20 %, y
+un arranque limpio al 39 % reprodujo el fallo idéntico. Descartada.
+
+**El firmware del MCU, no.** `ubuntu-gts9u-pogo-firmware.service` se aplazó en
+**todos** los arranques registrados, incluido uno al 91 %. Nunca escribió en el
+STM32, así que no pudo corromperlo.
+
+**Los cambios de esta sesión, no.** La reparación del sistema de ficheros no
+tocó nada del pogo —el firmware sigue en su sitio con sus 52.132 bytes— y el
+manejador del botón de encendido solo lee `event0` del `pmic_pwrkey`.
+
+### Lo que sí es
+
+El patrón coincide con lo descrito en las sesiones 11 y 13: los arranques malos
+enlazan el driver pronto —aquí a los 3,7 s— y acumulan pulsos de GPIO62 sin que
+llegue el ID de protocolo. `model=0x00` donde el estado bueno da `0xd6`.
+
+Novedad respecto a la sesión 14: **el rebind ya no recupera el estado bueno**.
+Un ciclo completo unbind, 8 s de espera y bind volvió a dejar 12 activaciones
+del elevador en 25 s y ningún dispositivo de entrada. La recuperación que allí
+funcionó no es fiable.
+
+### Una diferencia medida, de interpretación abierta
+
+El driver lee cuatro bytes de la flash del STM32 por el comando de lectura del
+bootloader. En el arranque que funcionó valían `00 37 00 37`; en todos los que
+fallan, `00 34 00 34`, de forma consistente y reproducible.
+
+No se afirma que sea la causa. Es una lectura de memoria por el mismo enlace
+I²C que se sospecha marginal, y difieren en un solo nibble, lo que encaja igual
+de bien con una lectura corrupta que con un contenido distinto. Queda anotado
+como el único discriminante duro encontrado entre ambos estados, y merece
+comprobarse leyendo varias veces seguidas antes de construir nada encima.
+
+### Defectos confirmados y pendientes
+
+El reintento del elevador sigue sin freno: en un arranque llegó a 788
+activaciones. Se detuvo con un unbind reversible. La corrección —espera
+creciente con tope, contador reiniciado al enganchar o al desconectar— está
+especificada y **no aplicada**, porque tocar el driver obliga a compilar,
+escribir `boot` y reiniciar, y antes hay que cerrar el cabo suelto de v0.11.
