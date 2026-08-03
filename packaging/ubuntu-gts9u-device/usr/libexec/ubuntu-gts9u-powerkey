@@ -1,0 +1,175 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+"""Power button: a short press suspends, a long press asks before shutting down.
+
+Neither logind nor GNOME can do this on its own.  logind can tell a short press
+from a long one but can only run its own fixed actions, none of which is "show
+GNOME's shutdown dialog".  GNOME can show that dialog but treats every press
+the same.  Splitting the key between them produces conflicts - both act on the
+same press - so this takes ownership of the key and both halves live here.
+
+For that to hold, the other two owners are told to keep their hands off:
+
+  * logind, through HandlePowerKey=ignore and HandlePowerKeyLongPress=ignore;
+  * gnome-settings-daemon, through power-button-action='nothing'.
+
+The long press invokes org.gnome.SessionManager.Shutdown on the active user's
+session bus, which is the same call gnome-session-quit --power-off makes: the
+dialog with the sixty second countdown, not an immediate power off.
+"""
+import os
+import re
+import select
+import struct
+import subprocess
+import sys
+import time
+
+KEY_POWER = 116
+EV_KEY = 1
+
+# Held for longer than this and it is a long press.  Short enough to feel
+# deliberate, long enough that nobody triggers it while meaning to suspend.
+LONG_PRESS_MS = 1200
+
+# The press that wakes the tablet must not be read as a command, or a single
+# tap would suspend, wake, and suspend again.  CLOCK_MONOTONIC does not advance
+# across suspend, so the wake press arrives only a moment after the suspend was
+# issued as far as this clock is concerned, however long the tablet was asleep.
+# Anything inside this window is the wake press.
+WAKE_GUARD_S = 3.0
+
+EVENT_FORMAT = "llHHi"
+EVENT_SIZE = struct.calcsize(EVENT_FORMAT)
+
+
+def log(message):
+    print("ubuntu-gts9u-powerkey: %s" % message, flush=True)
+
+
+def find_power_key():
+    """Locate the PMIC power key by name, not by a fixed event number."""
+    try:
+        with open("/proc/bus/input/devices") as handle:
+            blocks = handle.read().split("\n\n")
+    except OSError as exc:
+        log("cannot read the input device list: %s" % exc)
+        return None
+
+    for block in blocks:
+        if 'Name="pmic_pwrkey"' not in block:
+            continue
+        match = re.search(r"(event\d+)", block)
+        if match:
+            return "/dev/input/" + match.group(1)
+    return None
+
+
+def active_session():
+    """The uid and name of the user whose graphical session is in front."""
+    try:
+        out = subprocess.check_output(
+            ["loginctl", "list-sessions", "--no-legend"],
+            text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError) as exc:
+        log("cannot list sessions: %s" % exc)
+        return None
+
+    for line in out.splitlines():
+        fields = line.split()
+        if len(fields) < 3:
+            continue
+        session, uid, user = fields[0], fields[1], fields[2]
+        try:
+            state = subprocess.check_output(
+                ["loginctl", "show-session", session, "-p", "Active",
+                 "--value"], text=True, timeout=5).strip()
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if state == "yes":
+            return uid, user
+    return None
+
+
+def short_press():
+    log("short press: suspending")
+    subprocess.Popen(["systemctl", "suspend"])
+    return time.monotonic()
+
+
+def long_press():
+    who = active_session()
+    if who is None:
+        # No desktop to ask.  Do nothing rather than power off behind the
+        # owner's back; holding the button longer still reaches the PMIC.
+        log("long press: no active session, ignoring")
+        return
+    uid, user = who
+    log("long press: asking %s to confirm shutdown" % user)
+    subprocess.Popen(
+        ["runuser", "-u", user, "--",
+         "env", "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/%s/bus" % uid,
+         "gdbus", "call", "--session",
+         "--dest", "org.gnome.SessionManager",
+         "--object-path", "/org/gnome/SessionManager",
+         "--method", "org.gnome.SessionManager.Shutdown"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def main():
+    path = find_power_key()
+    if path is None:
+        log("no pmic_pwrkey input device; nothing to do")
+        return 1
+    log("watching %s (long press at %d ms)" % (path, LONG_PRESS_MS))
+
+    with open(path, "rb", buffering=0) as dev:
+        pressed_at = None
+        fired = False
+        suspended_at = None
+        while True:
+            # When the key is down, wake up in time to fire the long press
+            # without waiting for the release.
+            timeout = None
+            if pressed_at is not None and not fired:
+                remaining = LONG_PRESS_MS / 1000.0 - (time.monotonic() - pressed_at)
+                timeout = max(remaining, 0)
+
+            ready, _, _ = select.select([dev], [], [], timeout)
+
+            if not ready:
+                if pressed_at is not None and not fired:
+                    fired = True
+                    long_press()
+                continue
+
+            data = dev.read(EVENT_SIZE)
+            if not data or len(data) < EVENT_SIZE:
+                continue
+            _, _, etype, code, value = struct.unpack(EVENT_FORMAT, data)
+            if etype != EV_KEY or code != KEY_POWER:
+                continue
+
+            if value == 1:              # down
+                now = time.monotonic()
+                if suspended_at is not None and now - suspended_at < WAKE_GUARD_S:
+                    log("ignoring the press that woke us")
+                    suspended_at = None
+                    pressed_at = None
+                    fired = True        # swallow the matching release too
+                    continue
+                pressed_at = now
+                fired = False
+            elif value == 0:            # up
+                if pressed_at is not None and not fired:
+                    suspended_at = short_press()
+                pressed_at = None
+                fired = False
+            # value == 2 is autorepeat; the timer already covers the long press
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        sys.exit(0)

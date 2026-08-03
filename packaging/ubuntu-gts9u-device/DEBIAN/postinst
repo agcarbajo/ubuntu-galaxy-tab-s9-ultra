@@ -10,6 +10,7 @@ ubuntu-gts9u-grow-rootfs.service:basic.target
 ubuntu-gts9u-panel-coldboot-recover.service:multi-user.target
 ubuntu-gts9u-adsp-boot.service:multi-user.target
 ubuntu-gts9u-sensor-registry.service:multi-user.target
+ubuntu-gts9u-powerkey.service:multi-user.target
 ubuntu-gts9u-bluetooth-address.service:multi-user.target
 ubuntu-gts9u-sensors-resume.service:multi-user.target
 ubuntu-gts9u-pogo-firmware.service:multi-user.target
@@ -26,6 +27,12 @@ case "$1" in
 			fi
 			systemctl enable "$unit" >/dev/null 2>&1 || true
 		done
+
+		# The gsettings override that keeps gnome-settings-daemon off the
+		# power key only takes effect once the schemas are recompiled.
+		if command -v glib-compile-schemas >/dev/null 2>&1; then
+			glib-compile-schemas /usr/share/glib-2.0/schemas >/dev/null 2>&1 || true
+		fi
 
 		# Verify rather than assume: a unit that silently failed to enable
 		# shows up on the tablet only as a feature that quietly does nothing.

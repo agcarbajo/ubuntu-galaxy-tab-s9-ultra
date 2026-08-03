@@ -1,0 +1,9 @@
+# gnome-settings-daemon must not act on the power key: on this device the key
+# is owned by ubuntu-gts9u-powerkey.service, which distinguishes a short press
+# from a long one.  Ubuntu's default here is 'interactive', which shows the
+# shutdown dialog on a single tap and would fire on the way into a long press.
+#
+# This changes the default, so the owner can still pick something else in
+# Settings and that choice will win.
+[org.gnome.settings-daemon.plugins.power]
+power-button-action='nothing'
