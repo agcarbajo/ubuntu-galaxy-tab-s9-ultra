@@ -1005,6 +1005,18 @@ static void samsung_pogo_connection_work(struct work_struct *work)
 	 * debounced attachment state. Its connection ISR switched it off at the
 	 * falling edge below.
 	 */
+	/*
+	 * Instrumentation, not decoration.  The MCU pulses GPIO62 every two
+	 * seconds and nothing so far explains what it is asking for; every fix
+	 * tried has been a remedy chosen without that answer.  Record the state
+	 * each pulse arrives in, rate limited so it cannot become the storm it is
+	 * meant to describe.
+	 */
+	dev_info_ratelimited(dev,
+			     "connection pulse: connected=%d attached=%d powered=%d model=%#04x data_ready=%d\n",
+			     connected, pogo->attached, pogo->powered, pogo->model,
+			     gpiod_get_value_cansleep(pogo->data_ready) > 0);
+
 	if (connected && pogo->attached && !pogo->powered) {
 		ret = samsung_pogo_enable_power(pogo);
 		if (ret)
@@ -1229,6 +1241,19 @@ static int samsung_pogo_probe(struct i2c_client *client)
 	msleep(100);
 
 	samsung_pogo_probe_bootloader(pogo);
+
+	/*
+	 * Release the MCU into its application a second time, now that the rail
+	 * has been up and regulating for a while.
+	 *
+	 * probe_bootloader() ends with its own start_application(), but that one
+	 * follows immediately on the bootloader conversation, and the first reset
+	 * after power-up is evidently not the one that takes: a manual poll later
+	 * did get the MCU answering, which is the same retry path by another
+	 * name.  Doing it explicitly here is cheaper than discovering it by
+	 * accident every few boots.
+	 */
+	samsung_pogo_start_application(pogo);
 
 	pogo->data_ready = devm_gpiod_get(dev, "data-ready", GPIOD_IN);
 	if (IS_ERR(pogo->data_ready))
