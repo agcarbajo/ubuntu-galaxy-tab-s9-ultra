@@ -1,0 +1,25 @@
+Do not advertise the X910 SSC ambient-light sensor to desktop clients.
+
+The Samsung firmware discovers the stk31610 and accepts its enable request but
+never sends the configuration response which completes
+ssc_sensor_light_open_sync().  libssc 0.4.4 waits for synchronous completion by
+spinning the default GLib context without blocking, so GNOME's automatic-light
+claim pins iio-sensor-proxy at one full CPU and aggravates the ADSP handover IRQ
+storm.  The sensor also reports a constant zero lux on this board, so exposing
+it provides no usable feature.
+
+Keep accelerometer and compass through SSC, and leave automatic brightness
+disabled until the light request protocol is understood.
+
+diff --git a/src/iio-sensor-proxy.c b/src/iio-sensor-proxy.c
+index a7dba30..bf3efb1 100644
+--- a/src/iio-sensor-proxy.c
++++ b/src/iio-sensor-proxy.c
+@@ -81,7 +81,6 @@ static const SensorDriver * const drivers[] = {
+ 	&input_proximity,
+ #ifdef HAS_LIBSSC
+ 	&ssc_proximity,
+-	&ssc_light,
+ 	&ssc_accel,
+ 	&ssc_compass,
+ #endif

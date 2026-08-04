@@ -1696,3 +1696,69 @@ pendiente de que ella la autorice.
 Antes de reprogramar conviene confirmar que los cuatro bytes de versión son
 estables: leerlos varias veces seguidas y comprobar que siempre dan
 `00 34 00 34`. Si bailan, son lecturas corruptas y la hipótesis cae.
+
+## Sesión 18 — autorrotación estable y auditoría completa de V34
+
+Fecha: 2026-08-04.
+
+### Sensores: dos carreras distintas
+
+Se hizo reproducible el arreglo que la dueña confirmó físicamente para la
+autorrotación. `iio-sensor-proxy` ya no reclama SSC demasiado pronto y el
+servicio `hexagonrpcd` queda ordenado después de la recuperación cold-boot del
+panel. Además, el parche de `qcom_q6v5` enmascara la IRQ de handover una vez
+completada: una medida de diez segundos quedó en `1 -> 1`, sin la tormenta que
+antes ocupaba CPU y contendía con display e I2C. El sensor de luz SSC roto se
+excluye del proxy; no se presenta como brillo automático funcional.
+
+### Se volvió exactamente al último driver pogo conocido bueno
+
+Se retiraron los experimentos de las sesiones posteriores y
+`kernel/drivers/samsung_stm32_pogo.c` quedó idéntico al commit `504ff29`. El
+estado bueno histórico `df98bc12…` no pudo compararse limpiamente en vivo
+porque no levantó ninguno de los canales de control; no se convirtió esa
+ausencia de red en una conclusión sobre el teclado.
+
+El journal downstream de Samsung mostró que su propio driver también observa
+el ciclo CONN alto, VDD/MAX activos durante unos dos segundos, CONN bajo y
+apagado. Por tanto el periodo de ~2,126 s no nace del debounce mainline: es el
+estado de fallo que comunica la aplicación del accesorio.
+
+### El salto ROM no era la inicialización que faltaba
+
+Sin escribir la flash se añadió temporalmente el comando STM32 ROM
+`GO 0x08000000`. El bootloader lo aceptó. Se repitió con VDDO y MAX77816 ya
+activos y 100 ms de estabilización; también lo aceptó. En ambos casos la
+aplicación mantuvo `model=0x00`, DATA bajo y el mismo pulso de CONN. El
+experimento se eliminó por completo y no forma parte de la fuente final.
+
+### Volcado de solo lectura: V34 es una aplicación real
+
+Una herramienta temporal reclamó exclusivamente BOOT0/NRST, entró al ROM y
+usó únicamente `READ MEMORY` sobre I2C6. Leyó los 64 KiB y restauró el arranque
+normal sin enviar ERASE, WRITE ni UNPROTECT. Resultado:
+
+```
+bytes=65536
+sha256=8937281d2efa08400390f9a2b02e40ca914b634e646d6dd544980c38464533ef
+version_0x200=00 34 00 34
+0037_offsets=
+```
+
+La imagen tiene vectores ARM coherentes y cadenas que dicen
+`TabS9(STM32G0) Series -> V34`. No existe una segunda V37 escondida. La
+conclusión de la sesión 17 —flash posiblemente dañada— queda refutada: One UI
+usa V34, y Ubuntu todavía no reproduce alguna parte de su inicialización fría.
+
+Como defensa adicional, el updater exige ahora la guarda explícita
+`GTS9U_ALLOW_POGO_FLASH=YES`. No se ha escrito el MCU y no se escribirá sin una
+autorización específica.
+
+El `boot.img` final de esta iteración, con el driver pogo devuelto a `504ff29`
+y la corrección q6v5, tiene SHA-256
+`9c4590600d410ca4e68f68a0f51abb9177df438c46ee42dded6bb651b7be956e`. La
+escritura en `boot` se verificó leyendo de vuelta. Tras reiniciar, Ubuntu no
+reapareció en dos barridos completos de la LAN y el gadget USB siguió en Code
+43, así que ese arranque todavía no tiene validación remota. La siguiente
+prueba física debe hacerse sin una tecla mantenida, desconectando y conectando
+la funda una vez, porque V34 contiene rutas de protección por tecla atascada.

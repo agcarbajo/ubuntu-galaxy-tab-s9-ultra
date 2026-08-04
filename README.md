@@ -20,14 +20,13 @@ panel, and display, GPU, touch, buttons, Wi-Fi, battery, lid wake, audio, USB
 host and DisplayPort have all been confirmed on hardware. The current
 reproducible release is **v0.10**.
 
-Bluetooth/A2DP and automatic rotation are also working. The Samsung EF-DX920
-pogo keyboard boots its official firmware and appears only while the cover is
-physically attached. A v0.11 candidate now matches Samsung's 100 kHz GENI
-timing, level-low DATA IRQ and timeout recovery, releases keys on the first
-failed read, and removes a boot-time ADSP sensor IRQ storm which contended with
-the display and I2C. A clean boot is healthy, but the keyboard remains
-experimental until sustained typing and reconnect are physically repeated on
-that exact candidate. A rollback build of the postmarketOS v1.71 baseline is
+Bluetooth/A2DP and automatic rotation are also working. The sensor startup race
+and the repeated ADSP handover IRQ are fixed reproducibly. The Samsung EF-DX920
+pogo keyboard remains experimental: its power rails and STM32 ROM bootloader
+work, but the V34 application currently does not announce the keyboard protocol
+after a cold Ubuntu boot. A complete read-only dump proved that V34 is genuine
+firmware content, not a corrupt version read; accessory firmware is never
+written automatically. A rollback build of the postmarketOS v1.71 baseline is
 kept outside Git.
 
 See [docs/hardware-status.md](docs/hardware-status.md) for what is inherited,
@@ -59,7 +58,7 @@ port is expected to reproduce.
 | Ethernet (RTL8153) / UAS | 🟡 / ❓ | ⏳ not tested |
 | Motion sensors and autorotation | ✅ | ✅ |
 | Ambient light (STK31610) | ❌ | ❌ |
-| Pogo keyboard (EF-DX920) | ❌ | 🟡 v0.11 candidate awaiting physical test |
+| Pogo keyboard (EF-DX920) | ❌ | 🟡 V34 application silent after cold boot |
 | S Pen, fingerprint, haptics | ❌ | ❌ |
 | Speaker protection DSP | ❌ | ❌ |
 | Flash / cameras | ❌ | ❌ |

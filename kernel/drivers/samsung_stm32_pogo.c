@@ -1005,18 +1005,6 @@ static void samsung_pogo_connection_work(struct work_struct *work)
 	 * debounced attachment state. Its connection ISR switched it off at the
 	 * falling edge below.
 	 */
-	/*
-	 * Instrumentation, not decoration.  The MCU pulses GPIO62 every two
-	 * seconds and nothing so far explains what it is asking for; every fix
-	 * tried has been a remedy chosen without that answer.  Record the state
-	 * each pulse arrives in, rate limited so it cannot become the storm it is
-	 * meant to describe.
-	 */
-	dev_info_ratelimited(dev,
-			     "connection pulse: connected=%d attached=%d powered=%d model=%#04x data_ready=%d\n",
-			     connected, pogo->attached, pogo->powered, pogo->model,
-			     gpiod_get_value_cansleep(pogo->data_ready) > 0);
-
 	if (connected && pogo->attached && !pogo->powered) {
 		ret = samsung_pogo_enable_power(pogo);
 		if (ret)
@@ -1075,28 +1063,6 @@ static irqreturn_t samsung_pogo_connection_irq_thread(int irq, void *data)
 		 * which otherwise postpones the acknowledgement and makes the MCU
 		 * repeat the request until the protocol collapses.
 		 */
-		/*
-		 * Only cut the rail for a real disconnect, not for a glitch.
-		 *
-		 * The instrumented trace showed every pulse arriving with
-		 * connected=1 and powered=0: the line dips for a moment, this
-		 * handler drops VDDO, and by the time connection_work looks the line
-		 * is high again, so it powers the MCU back up.  Two seconds later the
-		 * same thing.  The MCU was being power cycled on every glitch and
-		 * never lived long enough to bring its application up, which is why
-		 * it stayed at model=0x00 with a perfectly clean I2C bus.
-		 *
-		 * Re-read after a short settle and keep the rail if the line came
-		 * back.  A genuine disconnect stays low and still cuts power here,
-		 * which is what Samsung's own driver acknowledges the pulse with.
-		 */
-		usleep_range(3000, 4000);
-		if (gpiod_get_value_cansleep(pogo->connected) > 0) {
-			dev_info_ratelimited(&pogo->client->dev,
-					     "connection pulse was a glitch; keeping the rail up\n");
-			return IRQ_HANDLED;
-		}
-
 		samsung_pogo_power_off(pogo);
 		mutex_lock(&pogo->lock);
 		samsung_pogo_release_keys(pogo);
@@ -1232,50 +1198,7 @@ static int samsung_pogo_probe(struct i2c_client *client)
 	if (IS_ERR(pogo->reset))
 		return dev_err_probe(dev, PTR_ERR(pogo->reset), "failed to get reset\n");
 
-	/*
-	 * Power the keyboard before releasing the STM32 into its application.
-	 *
-	 * probe_bootloader() ends with start_application(), which drops BOOT0 and
-	 * pulses NRST.  Until this call was moved ahead of it, that happened with
-	 * VDDO and the MAX77816 still off: connection_work only enabled them
-	 * about twelve milliseconds later, and nothing reset the MCU again
-	 * afterwards.  The application therefore came up on a rail that was not
-	 * there yet and never answered, while the bootloader kept replying
-	 * normally because every probe drives its own reset sequence.
-	 *
-	 * The symptom was a keyboard that read model=0x00 for ever, with a clean
-	 * I2C bus and no GENI errors at all, and that came good or bad depending
-	 * on boot timing.
-	 */
-	ret = samsung_pogo_enable_power(pogo);
-	if (ret)
-		return dev_err_probe(dev, ret, "failed to power the keyboard\n");
-
-	/*
-	 * Let the rail settle before anything resets the MCU.
-	 *
-	 * Powering first was necessary but not sufficient: the MCU stopped being
-	 * mute and started raising data interrupts, yet still reported a partial
-	 * model byte instead of the EF-DX920's 0xd6.  The MAX77816 needs time to
-	 * reach its regulation point, and NRST was being pulsed while it was
-	 * still ramping.
-	 */
-	msleep(100);
-
 	samsung_pogo_probe_bootloader(pogo);
-
-	/*
-	 * Release the MCU into its application a second time, now that the rail
-	 * has been up and regulating for a while.
-	 *
-	 * probe_bootloader() ends with its own start_application(), but that one
-	 * follows immediately on the bootloader conversation, and the first reset
-	 * after power-up is evidently not the one that takes: a manual poll later
-	 * did get the MCU answering, which is the same retry path by another
-	 * name.  Doing it explicitly here is cheaper than discovering it by
-	 * accident every few boots.
-	 */
-	samsung_pogo_start_application(pogo);
 
 	pogo->data_ready = devm_gpiod_get(dev, "data-ready", GPIOD_IN);
 	if (IS_ERR(pogo->data_ready))

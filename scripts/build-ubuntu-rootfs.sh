@@ -205,13 +205,28 @@ chmod +x "$hooks/configure.sh"
 # invocation, so the rootfs never depends on a manual dpkg run afterwards.
 bash "$repo/scripts/build-device-package.sh" >/dev/null
 
+# A package filename is not a valid cache key: the locally patched
+# iio-sensor-proxy deliberately keeps its upstream version, so changing one of
+# our patches used to leave an old .deb silently embedded in a fresh rootfs.
+# Hash every input owned by this repository and rebuild when it changes.
+sensor_stamp=$base/out/packages/.gts9u-sensor-inputs.sha256
+sensor_fingerprint=$(
+	{
+		sha256sum "$repo/scripts/build-sensor-packages.sh"
+		find "$repo/packaging/sensors" -type f -print0 |
+			sort -z | xargs -0 sha256sum
+	} | sha256sum | awk '{print $1}'
+)
+sensor_cached=$(cat "$sensor_stamp" 2>/dev/null || true)
+sensor_missing=0
 for pkg in libssc hexagonrpcd iio-sensor-proxy; do
-	if ! ls "$base"/out/packages/${pkg}_*.deb >/dev/null 2>&1; then
-		echo 'sensor packages are missing; building them first'
-		bash "$repo/scripts/build-sensor-packages.sh" >/dev/null
-		break
-	fi
+	ls "$base"/out/packages/${pkg}_*.deb >/dev/null 2>&1 || sensor_missing=1
 done
+if [ "$sensor_missing" = 1 ] || [ "$sensor_cached" != "$sensor_fingerprint" ]; then
+	echo 'sensor package inputs changed or packages are missing; rebuilding them'
+	bash "$repo/scripts/build-sensor-packages.sh" >/dev/null
+	printf '%s\n' "$sensor_fingerprint" > "$sensor_stamp"
+fi
 
 # Desktop tools that landed in the archive after noble froze, so "apt install"
 # has no candidate for them on 24.04.

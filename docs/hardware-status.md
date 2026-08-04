@@ -1,7 +1,7 @@
 # Estado de hardware del SM-X910 bajo Ubuntu 24.04
 
-Última actualización: 2026-08-03, durante la validación de la candidata v0.11
-para la funda EF-DX920.
+Última actualización: 2026-08-04, tras confirmar la autorrotación y auditar en
+solo lectura toda la flash V34 de la funda EF-DX920.
 
 Ubuntu **ya arranca** en la tablet. Esta matriz distingue explícitamente lo
 heredado de lo comprobado, y ningún componente pasa a ✅ sin observación real.
@@ -67,7 +67,7 @@ sondea» como prueba de funcionamiento.
 | Luz ambiental STK31610 | ❌ | ❌ | supuesto | El SSC lo descubre pero no emite lux; vía agotada en pmOS |
 | Proximidad | — | — | — | El firmware SSC stock del X910 no instancia el sensor |
 | S Pen (Wacom I²C 0x56) | ❌ | ❌ | supuesto | |
-| Teclado pogo EF-DX920 (STM32 I²C 0x2a) | ❌ | 🟡 | medido | Firmware, attach/detach y teclas funcionan; la estabilidad tras reiniciar sigue en validación |
+| Teclado pogo EF-DX920 (STM32 I²C 0x2a) | ❌ | 🟡 | medido | Alimentación y ROM responden; la aplicación V34 pulsa CONN pero no anuncia el protocolo tras un arranque frío |
 | Huella (EgisTec EL7xx, SPI) | ❌ | ❌ | supuesto | Sin driver mainline |
 | Vibración / hápticos | ❌ | ❌ | supuesto | Hardware sin identificar |
 | Flash / linterna | ❌ | ❌ | supuesto | PM8350C; candidato `leds-qcom-flash` |
@@ -129,13 +129,22 @@ y a detener el input con el mismo `boot`, `vendor_boot` y frecuencia DT. Por
 tanto esa prueba no demuestra una causa raíz definitiva: cambia el estado frío
 del STM32/teclado o la fase temporal del transporte, no las imágenes.
 
-La candidata v0.11 vuelve al disparo stock `IRQF_TRIGGER_LOW | IRQF_ONESHOT`,
-usa el contador exacto de 100 kHz del GENI Samsung, cancela una transacción
-expirada antes de abortarla y libera el estado de las teclas en el primer fallo
-de lectura. En un arranque limpio el driver completó el handshake sin rebind,
-errores ni recuperaciones, después de que userspace eliminara la tormenta IRQ
-del primer cliente SSC. Sigue en amarillo hasta superar escritura sostenida y
-reconexión física en esta misma candidata.
+La investigación posterior cambió la conclusión. Un volcado completo y
+estrictamente de solo lectura de los 64 KiB del STM32 dio SHA-256
+`8937281d2efa08400390f9a2b02e40ca914b634e646d6dd544980c38464533ef`, contiene
+`00 34 00 34` en `0x200` y no contiene ninguna copia V37. Es una imagen ARM
+coherente y sus cadenas identifican explícitamente `TabS9(STM32G0) Series ->
+V34`; por tanto V34 no es una lectura marginal ni prueba de corrupción. One UI
+usa esa aplicación, así que el hueco está en la inicialización fría que Ubuntu
+no reproduce todavía.
+
+También se probó, sin escribir flash, el comando ROM `GO 0x08000000`, primero
+solo y después con VDDO/MAX77816 activos y 100 ms de estabilización. El
+bootloader aceptó ambos saltos, pero la aplicación siguió sin levantar DATA ni
+anunciar `0xd6`; GPIO62 continuó pulsando cada ~2,126 s. La fuente final volvió
+exactamente al driver del último estado conocido bueno (`504ff29`). Las
+escrituras automáticas del accesorio están bloqueadas y requieren la guarda
+explícita `GTS9U_ALLOW_POGO_FLASH=YES`, además de autorización separada.
 
 ## Invariantes heredadas que no se pueden romper
 

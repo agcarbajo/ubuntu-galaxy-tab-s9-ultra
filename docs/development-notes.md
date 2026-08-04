@@ -648,3 +648,24 @@ Era el estado previo del directorio de compilación.
 pero **una release debe construirse así**: sin eso, comparar hashes entre dos
 builds no significa nada y no se puede demostrar que lo que arranca el
 dispositivo salga del árbol que dice el manifiesto.
+
+## La versión V34 del teclado es contenido real, no una lectura marginal
+
+La diferencia `00 37 00 37` frente a `00 34 00 34` se interpretó primero como
+posible corrupción de lectura o de flash. Un volcado completo, repetible y de
+solo lectura de los 64 KiB del STM32 cerró esa hipótesis: SHA-256
+`8937281d2efa08400390f9a2b02e40ca914b634e646d6dd544980c38464533ef`, versión
+V34 en `0x200`, ninguna copia V37 y tabla de vectores ARM coherente. Las cadenas
+del binario nombran expresamente `TabS9(STM32G0) Series -> V34`.
+
+One UI hace funcionar la funda con V34. El fallo bajo Ubuntu es, por tanto, una
+diferencia de inicialización o de estado frío, no evidencia de firmware roto.
+El comando reversible del bootloader ROM `GO 0x08000000` fue aceptado tanto sin
+como con los raíles ya estabilizados, pero no cambió el bucle de CONN de ~2,126
+s ni produjo DATA/modelo. No repetir ese salto esperando que por sí solo sea la
+inicialización que falta.
+
+El updater no puede escribir el accesorio por accidente: además de sus
+condiciones de seguridad exige `GTS9U_ALLOW_POGO_FLASH=YES`. No se debe definir
+esa guarda ni programar el STM32 sin autorización explícita y separada de las
+particiones de arranque.

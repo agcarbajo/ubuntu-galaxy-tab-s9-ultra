@@ -1,0 +1,82 @@
+Handle D-Bus sensor claims that arrive while SSC discovery is in progress.
+
+The service registers its D-Bus objects in bus_acquired_handler(), but only
+allocates sensor_startup_dbus_invocations_delayed[] and opens the devices later
+in name_acquired_handler().  SSC discovery spins the main context, so a desktop
+client can call ClaimAccelerometer in between.  The claim then dereferences a
+NULL GPtrArray and a NULL SensorDevice; on the X910 this leaves
+HasAccelerometer true but its orientation permanently undefined.
+
+Initialize all D-Bus bookkeeping before publishing the objects, treat a driver
+which is discovered but not open yet as pending, and start it after open when a
+client already claimed it.
+
+diff --git a/src/iio-sensor-proxy.c b/src/iio-sensor-proxy.c
+index 2c7433d..a7dba30 100644
+--- a/src/iio-sensor-proxy.c
++++ b/src/iio-sensor-proxy.c
+@@ -522,7 +522,8 @@ handle_generic_method_call (SensorData            *data,
+ 							   NULL);
+ 		g_hash_table_insert (ht, g_strdup (sender), GUINT_TO_POINTER (watch_id));
+ 
+-		if (driver_type_exists (data, driver_type)) {
++		if (driver_type_exists (data, driver_type) &&
++		    DEVICE_FOR_TYPE(driver_type) != NULL) {
+ 			SensorDevice *sensor_device = DEVICE_FOR_TYPE(driver_type);
+ 
+ 			/* No other clients for this sensor? Start it */
+@@ -723,6 +724,17 @@ bus_acquired_handler (GDBusConnection *connection,
+ 	    };
+ 	guint i;
+ 
++	/*
++	 * SSC discovery runs the main context.  Prepare claim bookkeeping before
++	 * exposing the D-Bus objects, otherwise a fast desktop client can claim a
++	 * driver between discovery and driver_open().
++	 */
++	data->client = g_udev_client_new (subsystems);
++	for (i = 0; i < NUM_SENSOR_TYPES; i++) {
++		data->clients[i] = create_clients_hash_table ();
++		data->sensor_startup_dbus_invocations_delayed[i] = g_ptr_array_new ();
++	}
++
+ 	g_dbus_connection_register_object (connection,
+ 					   SENSOR_PROXY_DBUS_PATH,
+ 					   data->introspection_data->interfaces[0],
+@@ -739,12 +750,6 @@ bus_acquired_handler (GDBusConnection *connection,
+ 					   NULL,
+ 					   NULL);
+ 
+-	/* Initialize DBus clients hash table before DBus is fully exposed */
+-	data->client = g_udev_client_new (subsystems);
+-
+-	for (guint i = 0; i < NUM_SENSOR_TYPES; i++)
+-		data->clients[i] = create_clients_hash_table ();
+-
+ 	data->connection = g_object_ref (connection);
+ }
+ 
+@@ -765,8 +770,6 @@ name_acquired_handler (GDBusConnection *connection,
+ 	for (i = 0; i < NUM_SENSOR_TYPES; i++) {
+ 		SensorDevice *sensor_device;
+ 
+-		data->sensor_startup_dbus_invocations_delayed[i] = g_ptr_array_new ();
+-
+ 		if (!driver_type_exists (data, i))
+ 			continue;
+ 
+@@ -779,6 +782,14 @@ name_acquired_handler (GDBusConnection *connection,
+ 		}
+ 
+ 		DEVICE_FOR_TYPE(i) = sensor_device;
++
++		/* A client may have claimed the sensor while synchronous SSC
++		 * discovery was spinning the main context.  The claim was accepted
++		 * as pending; start the freshly opened device now. */
++		if (g_hash_table_size (data->clients[i]) > 0) {
++			data->sensor_startup_dbus_event_delayed[i] = TRUE;
++			driver_set_polling (sensor_device, TRUE);
++		}
+ 	}
+ 
+ 	if (!any_sensors_left (data))

@@ -128,6 +128,9 @@ apply_unless 'adopt_retained_source_ufp' \
 	include/linux/usb/tcpm.h tcpm-adopt-retained-source-ufp-role.patch
 apply_unless 'consume_retained_sink_dfp' \
 	include/linux/usb/tcpm.h tcpm-use-retained-sink-data-role.patch
+apply_unless 'disable_irq_nosync(irq)' \
+	drivers/remoteproc/qcom_q6v5.c \
+	qcom-q6v5-mask-completed-handover-irq.patch
 
 # The Goodix patch has two variants: a full one for a pristine tree and an
 # upgrade for a tree that already carries the partial Samsung decoder.

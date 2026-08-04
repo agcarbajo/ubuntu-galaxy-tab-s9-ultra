@@ -26,5 +26,17 @@ if [ "$capacity" -lt 50 ] || [ "$status" != Charging ]; then
 	exit 0
 fi
 
+# Flashing the MCU is an explicit maintenance operation, not a boot task.
+# A forced tablet reset while this helper was running can leave the accessory
+# application unavailable even though its ROM bootloader remains healthy.
+# Keep the installed service as a harmless validator and require a deliberate
+# one-shot invocation for the destructive path:
+#   sudo env GTS9U_ALLOW_POGO_FLASH=YES \
+#     /usr/libexec/ubuntu-gts9u-pogo-firmware-update
+if [ "${GTS9U_ALLOW_POGO_FLASH:-}" != YES ]; then
+	echo 'ubuntu-gts9u-pogo: automatic firmware writes disabled; explicit authorization required' >&2
+	exit 0
+fi
+
 printf '1\n' > "$control"
 echo 'ubuntu-gts9u-pogo: firmware is current and the controller is ready' >&2

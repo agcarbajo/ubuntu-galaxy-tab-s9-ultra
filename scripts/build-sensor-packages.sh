@@ -260,6 +260,8 @@ package_tree /build/stage-hexagonrpcd hexagonrpcd "$hexagonrpc_ver" \
 
 # ---------------------------------------------------------------------------
 step "iio-sensor-proxy $isp_ver with SSC support"
+cp "$patches/fix-early-ssc-claim-race.patch" "$buildroot/build/"
+cp "$patches/disable-broken-ssc-light.patch" "$buildroot/build/"
 run "cd /build
 rm -rf iio-sensor-proxy stage-isp isp.tar.gz
 curl -fsSL -o isp.tar.gz \
@@ -267,6 +269,8 @@ curl -fsSL -o isp.tar.gz \
 tar xf isp.tar.gz
 mv iio-sensor-proxy-$isp_ver iio-sensor-proxy
 cd iio-sensor-proxy
+patch -p1 < /build/fix-early-ssc-claim-race.patch
+patch -p1 < /build/disable-broken-ssc-light.patch
 meson setup output --prefix=/usr \
 	-Dssc-support=enabled \
 	-Dsystemdsystemunitdir=/usr/lib/systemd/system

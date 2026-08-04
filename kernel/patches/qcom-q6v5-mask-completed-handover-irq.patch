@@ -1,0 +1,35 @@
+From: Ubuntu gts9uwifi port contributors <noreply@example.invalid>
+Subject: [PATCH] remoteproc: qcom_q6v5: mask handover IRQ after first signal
+
+The handover interrupt is a one-shot notification for each remoteproc start.
+Samsung's SM8550 ADSP keeps pulsing the SMP2P handover edge after sensor clients
+attach.  The first edge performs the handover correctly; every later edge only
+logs "Handover signaled, but it already happened" and can consume most of one
+CPU in the threaded IRQ handler.
+
+Mask the IRQ after completing the first handover.  Avoid adding a second
+disable depth in unprepare(), so prepare() continues to rearm it exactly once
+for the next remoteproc start.
+
+diff --git a/drivers/remoteproc/qcom_q6v5.c b/drivers/remoteproc/qcom_q6v5.c
+index be9ac697893a..97787ac6b54f 100644
+--- a/drivers/remoteproc/qcom_q6v5.c
++++ b/drivers/remoteproc/qcom_q6v5.c
+@@ -78,7 +78,8 @@ int qcom_q6v5_prepare(struct qcom_q6v5 *q6v5)
+  */
+ int qcom_q6v5_unprepare(struct qcom_q6v5 *q6v5)
+ {
+-	disable_irq(q6v5->handover_irq);
++	if (!q6v5->handover_issued)
++		disable_irq(q6v5->handover_irq);
+ 	q6v5_load_state_toggle(q6v5, false);
+ 
+ 	/* Disable interconnect vote, in case handover never happened */
+@@ -174,6 +175,7 @@ static irqreturn_t q6v5_handover_interrupt(int irq, void *data)
+ 	icc_set_bw(q6v5->path, 0, 0);
+ 
+ 	q6v5->handover_issued = true;
++	disable_irq_nosync(irq);
+ 
+ 	return IRQ_HANDLED;
+ }
