@@ -1631,3 +1631,68 @@ activaciones. Se detuvo con un unbind reversible. La corrección —espera
 creciente con tope, contador reiniciado al enganchar o al desconectar— está
 especificada y **no aplicada**, porque tocar el driver obliga a compilar,
 escribir `boot` y reiniciar, y antes hay que cerrar el cabo suelto de v0.11.
+
+## Sesión 17 — v0.11 cerrada, y el teclado apunta a la flash del MCU
+
+Fecha: 2026-08-04. Sesión desatendida, con autorización explícita de la dueña
+para escribir `boot`, `init_boot`, `vendor_boot`, `dtbo` y `vbmeta`.
+
+### v0.11 cerrada
+
+Construida con `KERNEL_CLEAN=1`. Antes de sobrescribir nada se respaldaron las
+cinco particiones en `artifacts/backup-preV011/`, incluido el `boot.img`
+`df98bc12…` de la sesión 14, que no existía en ninguna release y es el kernel
+con el que la dueña vio el teclado funcionar mejor.
+
+Se escribieron con `dd` en vez de con el ZIP: `twrp install` derriba adb y no
+volvió la vez anterior, lo que en una sesión desatendida dejaría el dispositivo
+sin forma de reiniciarse. Cuatro particiones verificadas leyendo de vuelta.
+`vbmeta` copió cero bytes —es de solo lectura en este TWRP, ya documentado— y
+quedó intacta; la que hay es la que lleva arrancando siempre.
+
+No se reescribió la microSD: la dueña tiene datos y snaps instalados, y v0.11
+no necesitaba rootfs nuevo. Sí hubo que reemplazar a mano los dos módulos
+`ath12k` firmados, que viven en la tarjeta y no en el ZIP; sin eso, kernel
+nuevo con módulos viejos deja el Wi-Fi fuera y con él el acceso por SSH.
+
+Arranque verificado: sistema `running`, cero unidades fallidas, Wi-Fi con los
+módulos nuevos, audio, sensores y el manejador del botón activos.
+
+Pendiente de honestidad: que el build limpio sea **reproducible** no está
+demostrado. Haría falta una segunda build limpia idéntica. Lo que sí está
+demostrado es que el incremental no lo era.
+
+### El teclado: el bootloader responde, la aplicación no
+
+`event_poll`, el gancho de diagnóstico del propio driver, provocó
+`read_retry_releases=9` sobre `manual_polls=3`: tres reintentos por sondeo, y
+ninguna respuesta. El MCU no contesta al protocolo del teclado ni preguntándole
+directamente.
+
+En cambio su bootloader contesta perfectamente en cada arranque, leyendo el
+product id `0x460` y las option bytes sin un solo error.
+
+Eso separa las dos mitades: **bootloader vivo, aplicación muda**, y reencuadra
+la diferencia de flash ya observada. Donde el arranque bueno leía
+`00 37 00 37`, todos los malos leen `00 34 00 34`, de forma consistente. Si
+esos bytes son contenido real y no una lectura corrupta, la aplicación del
+teclado está dañada en la flash del STM32.
+
+Encaja con todo lo observado: el bootloader responde, la aplicación no; ningún
+reinicio ni rebind lo recupera; y la dueña describe que antes **sí enganchaba**
+y solo fallaba a medias con teclas pegadas, mientras que ahora no engancha en
+absoluto. Son fallos distintos, no el mismo agravado.
+
+### Lo que no se ha hecho, y por qué
+
+El driver expone `firmware_update` y el blob de Samsung está en la tarjeta con
+sus 52.132 bytes, así que reprogramar el MCU es posible. **No se ha hecho.** La
+autorización de la dueña cubría las particiones de arranque de la tablet,
+enumeradas una a una; reescribir la flash de un accesorio es otra cosa,
+potencialmente irreversible, y el propio servicio de firmware está escrito para
+aplazarse solo salvo condiciones seguras. Queda como la acción recomendada,
+pendiente de que ella la autorice.
+
+Antes de reprogramar conviene confirmar que los cuatro bytes de versión son
+estables: leerlos varias veces seguidas y comprobar que siempre dan
+`00 34 00 34`. Si bailan, son lecturas corruptas y la hipótesis cae.
