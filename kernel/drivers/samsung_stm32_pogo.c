@@ -1217,6 +1217,17 @@ static int samsung_pogo_probe(struct i2c_client *client)
 	if (ret)
 		return dev_err_probe(dev, ret, "failed to power the keyboard\n");
 
+	/*
+	 * Let the rail settle before anything resets the MCU.
+	 *
+	 * Powering first was necessary but not sufficient: the MCU stopped being
+	 * mute and started raising data interrupts, yet still reported a partial
+	 * model byte instead of the EF-DX920's 0xd6.  The MAX77816 needs time to
+	 * reach its regulation point, and NRST was being pulsed while it was
+	 * still ramping.
+	 */
+	msleep(100);
+
 	samsung_pogo_probe_bootloader(pogo);
 
 	pogo->data_ready = devm_gpiod_get(dev, "data-ready", GPIOD_IN);
