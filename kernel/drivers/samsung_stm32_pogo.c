@@ -1198,6 +1198,25 @@ static int samsung_pogo_probe(struct i2c_client *client)
 	if (IS_ERR(pogo->reset))
 		return dev_err_probe(dev, PTR_ERR(pogo->reset), "failed to get reset\n");
 
+	/*
+	 * Power the keyboard before releasing the STM32 into its application.
+	 *
+	 * probe_bootloader() ends with start_application(), which drops BOOT0 and
+	 * pulses NRST.  Until this call was moved ahead of it, that happened with
+	 * VDDO and the MAX77816 still off: connection_work only enabled them
+	 * about twelve milliseconds later, and nothing reset the MCU again
+	 * afterwards.  The application therefore came up on a rail that was not
+	 * there yet and never answered, while the bootloader kept replying
+	 * normally because every probe drives its own reset sequence.
+	 *
+	 * The symptom was a keyboard that read model=0x00 for ever, with a clean
+	 * I2C bus and no GENI errors at all, and that came good or bad depending
+	 * on boot timing.
+	 */
+	ret = samsung_pogo_enable_power(pogo);
+	if (ret)
+		return dev_err_probe(dev, ret, "failed to power the keyboard\n");
+
 	samsung_pogo_probe_bootloader(pogo);
 
 	pogo->data_ready = devm_gpiod_get(dev, "data-ready", GPIOD_IN);
