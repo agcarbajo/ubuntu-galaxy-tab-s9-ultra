@@ -16,6 +16,19 @@ kernel_tree=${KERNEL_WORKTREE:-$base/build/linux-src-gts9uwifi}
 build_dir=${KERNEL_BUILD_DIR:-$base/build/linux-gts9uwifi}
 out_dir=${KERNEL_OUT_DIR:-$base/out/kernel-gts9uwifi}
 
+# The build directory is reused between runs, which is what makes an ordinary
+# rebuild quick.  It also makes the resulting image depend on what was in the
+# tree beforehand: on 2026-08-04, building v0.11 from sources identical to the
+# ones behind the running kernel produced a different boot.img, and this was
+# why.  A release that cannot be reproduced from its own tree is not a release.
+#
+# KERNEL_CLEAN=1 discards the directory first.  Slow, so it is opt-in, but it
+# is what a release build should use and what any hash comparison requires.
+if [ "${KERNEL_CLEAN:-0}" = 1 ] && [ -d "$build_dir" ]; then
+	echo "KERNEL_CLEAN=1: discarding $build_dir for a from-scratch build"
+	rm -rf -- "$build_dir"
+fi
+
 dts=$repo/kernel/dts
 drv=$repo/kernel/drivers
 pat=$repo/kernel/patches

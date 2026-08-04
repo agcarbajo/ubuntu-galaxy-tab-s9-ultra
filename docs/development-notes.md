@@ -628,3 +628,23 @@ durante la suspensión, así que esa pulsación llega —para ese reloj— apena
 segundos después de haberse emitido la suspensión, por mucho que el equipo haya
 dormido horas. Descartar las pulsaciones dentro de esa ventana resuelve el caso
 sin necesidad de escuchar `PrepareForSleep`.
+
+## El build del kernel es incremental, y por eso las releases no eran reproducibles
+
+`build-mainline-kernel.sh` reutiliza `$build_dir` entre ejecuciones. Eso hace
+rápida una recompilación normal, pero también hace que la imagen dependa de lo
+que hubiera antes en el árbol.
+
+Se descubrió al cerrar v0.11. La tablet arrancaba un `boot.img` `df98bc12…`
+construido en la sesión 14 que no correspondía a ninguna release. Al construir
+v0.11 desde el repositorio —con **todo** el código de las sesiones 13 y 14
+commiteado y `kernel/` limpio— salió `e7d65812…`. Fuentes idénticas, binario
+distinto.
+
+No era `SOURCE_DATE_EPOCH`: se deriva del commit del kernel, que está fijado.
+Era el estado previo del directorio de compilación.
+
+`KERNEL_CLEAN=1` lo descarta antes de empezar. Es lento, así que es opcional,
+pero **una release debe construirse así**: sin eso, comparar hashes entre dos
+builds no significa nada y no se puede demostrar que lo que arranca el
+dispositivo salga del árbol que dice el manifiesto.
