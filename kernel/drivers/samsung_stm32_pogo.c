@@ -1075,6 +1075,28 @@ static irqreturn_t samsung_pogo_connection_irq_thread(int irq, void *data)
 		 * which otherwise postpones the acknowledgement and makes the MCU
 		 * repeat the request until the protocol collapses.
 		 */
+		/*
+		 * Only cut the rail for a real disconnect, not for a glitch.
+		 *
+		 * The instrumented trace showed every pulse arriving with
+		 * connected=1 and powered=0: the line dips for a moment, this
+		 * handler drops VDDO, and by the time connection_work looks the line
+		 * is high again, so it powers the MCU back up.  Two seconds later the
+		 * same thing.  The MCU was being power cycled on every glitch and
+		 * never lived long enough to bring its application up, which is why
+		 * it stayed at model=0x00 with a perfectly clean I2C bus.
+		 *
+		 * Re-read after a short settle and keep the rail if the line came
+		 * back.  A genuine disconnect stays low and still cuts power here,
+		 * which is what Samsung's own driver acknowledges the pulse with.
+		 */
+		usleep_range(3000, 4000);
+		if (gpiod_get_value_cansleep(pogo->connected) > 0) {
+			dev_info_ratelimited(&pogo->client->dev,
+					     "connection pulse was a glitch; keeping the rail up\n");
+			return IRQ_HANDLED;
+		}
+
 		samsung_pogo_power_off(pogo);
 		mutex_lock(&pogo->lock);
 		samsung_pogo_release_keys(pogo);
