@@ -70,6 +70,17 @@ case "$state" in
 	;;
 esac
 
+# Kernels before the version was exported cannot be asked what the controller
+# runs.  The driver still refuses to write a controller that is already on V37,
+# so the write stays correct; only the confirmation below has to be skipped
+# rather than reported as a failure.
+reports_version=no
+case "$state" in
+*flash_version=*)
+	reports_version=yes
+	;;
+esac
+
 # Programming and verifying 52 KiB over the bootloader's I2C link takes about
 # sixteen seconds.  Half a charge is ample for that; demanding an external
 # supply as well only meant the restore never ran.
@@ -82,6 +93,11 @@ fi
 
 echo "ubuntu-gts9u-pogo: restoring the V37 application (battery=$capacity%, status=$status)" >&2
 printf '1\n' > "$control"
+
+if [ "$reports_version" = no ]; then
+	echo 'ubuntu-gts9u-pogo: write accepted; this kernel does not report the version' >&2
+	exit 0
+fi
 
 state=$(cat "$diagnostics" 2>/dev/null || echo)
 case "$state" in
