@@ -1,7 +1,8 @@
 # Estado de hardware del SM-X910 bajo Ubuntu 24.04
 
-Última actualización: 2026-08-06, tras devolver el MCU pogo a V37 y ver el
-teclado EF-DX920 escribiendo desde un arranque en frío.
+Última actualización: 2026-08-06, tras devolver el MCU pogo a V37, ver el
+teclado EF-DX920 escribiendo desde un arranque en frío, y cerrar la v0.16, que
+restaura V37 por su cuenta en el primer arranque tras instalar.
 
 Ubuntu **ya arranca** en la tablet. Esta matriz distingue explícitamente lo
 heredado de lo comprobado, y ningún componente pasa a ✅ sin observación real.
@@ -67,7 +68,7 @@ sondea» como prueba de funcionamiento.
 | Luz ambiental STK31610 | ❌ | ❌ | supuesto | El SSC lo descubre pero no emite lux; vía agotada en pmOS |
 | Proximidad | — | — | — | El firmware SSC stock del X910 no instancia el sensor |
 | S Pen (Wacom I²C 0x56) | ❌ | ❌ | supuesto | |
-| Teclado pogo EF-DX920 (STM32 I²C 0x2a) | ❌ | ✅ | confirmado | Requiere V37 en el MCU: con V34 la aplicación pulsa CONN y no anuncia el protocolo. Reprogramado a V37, teclea desde arranque en frío y sobrevive a desconectar y reconectar la funda |
+| Teclado pogo EF-DX920 (STM32 I²C 0x2a) | ❌ | ✅ | confirmado | Requiere V37 en el MCU: con V34 la aplicación pulsa CONN y no anuncia el protocolo. Reprogramado a V37, teclea desde arranque en frío y sobrevive a desconectar y reconectar la funda. Desde v0.16 la restauración es automática en el primer arranque |
 | Huella (EgisTec EL7xx, SPI) | ❌ | ❌ | supuesto | Sin driver mainline |
 | Vibración / hápticos | ❌ | ❌ | supuesto | Hardware sin identificar |
 | Flash / linterna | ❌ | ❌ | supuesto | PM8350C; candidato `leds-qcom-flash` |

@@ -1853,3 +1853,90 @@ worktree y el `sgdisk --zap-all` de `twrp-write-sd.sh`— son de la sesión
 anterior y **nunca llegaron a la tablet**: `/proc/device-tree` no tiene la
 propiedad. Quedan en el árbol sin validar. La causa que se buscaba con ellos ya
 no está en pie, así que conviene revalidarlos por su cuenta antes de adoptarlos.
+
+## Sesión 20 — v0.16: una release que instala el teclado funcionando
+
+Fecha: 2026-08-06.
+
+### Se descartó el experimento GENI antes de construir nada
+
+`samsung,restore-output-on-resume` y su parche de `i2c-qcom-geni` perseguían la
+hipótesis de que al MCU le faltaba que se le restauraran los drivers de salida
+del serial engine tras cada runtime resume. Se comprobó primero que nunca
+llegaron a la tablet —`/proc/device-tree` no tenía la propiedad— y después se
+retiraron junto con el interruptor A/B `GTS9U_DISABLE_Q6_HANDOVER_PATCH`, que
+solo existía para esa comparación, y con el `sgdisk --zap-all` sin probar de
+`twrp-write-sd.sh`, que además aborta si el recovery no trae `sgdisk` y está
+justo en el camino de reinstalar desde cero.
+
+Se conservó una sola cosa de ese lote, porque una release la necesita:
+`KERNEL_CLEAN=1` recrea también el worktree de fuentes. `apply_unless()` deja el
+árbol acumulando todo parche probado alguna vez, así que borrar solo los objetos
+no da una build limpia.
+
+### La guarda estaba puesta al revés
+
+Restaurar V37 exigía `GTS9U_ALLOW_POGO_FLASH=YES`. Eso, en una instalación
+nueva, significa un sistema recién puesto con el teclado mudo y sin pista de por
+qué: exactamente el problema que se acababa de diagnosticar, servido de fábrica.
+La guarda pasa a ser opt-out.
+
+Lo que hace segura la escritura no es elegir el momento, sino dónde puede caer.
+El bootloader ROM del STM32 vive en memoria de sistema, no se puede borrar y
+responde en todos los arranques; el driver relee los 52 KiB antes de darla por
+buena. Una escritura interrumpida se completa en el arranque siguiente, así que
+el servicio es autorreparable. Lo único que no puede pasar es escribir algo que
+no sea el blob de Samsung, y de eso sigue encargándose el hash fijado.
+
+Se retiró también la exigencia de alimentación externa. Programar y verificar
+lleva unos dieciséis segundos; medio depósito sobra, y pedir además el cargador
+era justo lo que hacía que la restauración no se ejecutara nunca.
+
+`flash_version` sale ahora en `diagnostics`, con `bootloader`. Es el campo que
+separa un controlador con el que se puede hablar de uno con el que no, y hasta
+ahora había que rescatarlo de una línea de `dmesg` del arranque.
+
+### Verificación estática de la release, antes de tocar la tablet
+
+La imagen SD terminada se montó en solo lectura: paquete de dispositivo **1.5**,
+`ubuntu-gts9u-pogo-firmware.service` enlazado en `multi-user.target.wants` y sin
+enmascarar, el helper idéntico byte a byte al del repositorio, y
+`pogo-keyboard.md` instalado. El blob de Samsung no vive en la imagen sino en el
+overlay del ZIP; se extrajo del ZIP y se comprobó: 52.132 bytes y el hash
+fijado. El árbol de fuentes que compiló esta release lleva `flash_version`.
+
+### En hardware
+
+Se escribieron `boot`, `init_boot`, `vendor_boot` y `dtbo` con `dd`, con
+respaldo previo de las cuatro y relectura de cada una. Los dos módulos `ath12k`
+se sustituyeron **antes** que el kernel: viven en la tarjeta, no en el ZIP, y un
+kernel nuevo con módulos viejos deja el Wi-Fi fuera y con él el acceso por SSH.
+
+Tras el reinicio, sin que nadie ejecutara nada:
+
+```
+ubuntu-gts9u-pogo-firmware.service: controller already on V37   (status=0)
+attached=1 model=0xd6 connected=1 connection_high=0 connection_low=0
+  bootloader=1 flash_version=00370037
+N: Name="Book Cover Keyboard Slim (EF-DX920)"
+```
+
+Cero pulsos de CONN desde el arranque, donde el estado malo acumulaba una
+activación del elevador cada dos segundos. El servicio no retrasa el arranque:
+`graphical.target` a los 54,5 s y la unidad no aparece en el `blame`.
+
+Artefactos de la v0.16, construida con `KERNEL_CLEAN=1`:
+
+- ZIP TWRP: `aa945ae57694df0056d1f06fc492a85e3291a8b07793e4c98451a3fc7c220397`
+- imagen SD comprimida:
+  `631c0f8be83b18fe50a771963fb8de0ba6212350e7e5d071a08c1350d5d02079`
+- `boot.img`: `d57eb0994876a22aeaebfcc09e127a8b4a202f4ef9491209154caa9275374c31`
+
+### Lo que esta sesión no demuestra
+
+Que la build limpia sea **reproducible** sigue sin demostrarse: haría falta una
+segunda build limpia idéntica. Y no se ha reinstalado desde cero de verdad —la
+tarjeta lleva datos y snaps de la dueña—, así que la garantía del teclado en una
+instalación nueva se apoya en la verificación estática de la imagen y del ZIP,
+no en haberla ejecutado. Lo que sí se ejecutó, y funcionó solo, es el servicio
+de restauración en un arranque real.

@@ -18,16 +18,16 @@ Ubuntu boots on the tablet. Milestones 1 to 3 are done: the build is
 reproducible from source, the system reaches a GNOME desktop on the native
 panel, and display, GPU, touch, buttons, Wi-Fi, battery, lid wake, audio, USB
 host and DisplayPort have all been confirmed on hardware. The current
-reproducible release is **v0.10**.
+reproducible release is **v0.16**, built from a clean tree.
 
 Bluetooth/A2DP and automatic rotation are also working. The sensor startup race
 and the repeated ADSP handover IRQ are fixed reproducibly. The Samsung EF-DX920
-pogo keyboard remains experimental: its power rails and STM32 ROM bootloader
-work, but the V34 application currently does not announce the keyboard protocol
-after a cold Ubuntu boot. A complete read-only dump proved that V34 is genuine
-firmware content, not a corrupt version read; accessory firmware is never
-written automatically. A rollback build of the postmarketOS v1.71 baseline is
-kept outside Git.
+pogo keyboard types: it needs the V37 application on the tablet's STM32
+controller, which this release restores by itself on the first boot after an
+install. A controller left on V34 — which booting One UI or Ubuntu Touch appears
+to cause — boots normally and never announces the keyboard protocol, which is
+what made this look for several sessions like a wiring or timing fault. A
+rollback build of the postmarketOS v1.71 baseline is kept outside Git.
 
 See [docs/hardware-status.md](docs/hardware-status.md) for what is inherited,
 what has been proven under Ubuntu, and what is still assumed.
