@@ -1953,3 +1953,26 @@ comando I²C real a la aplicación del STM32: las cuatro conmutaciones llegaron,
 el valor que el driver publica en `caps=` siguió a cada una, y el contador de
 errores del pogo en todo el arranque siguió en **cero**. Queda pendiente la
 dirección de lectura, que es la que necesita una tecla física.
+
+### Cierre de la apostilla: la v0.16 sí teclea
+
+Fecha: 2026-08-07.
+
+El hueco de la apostilla anterior no era un problema del teclado: la dueña
+estaba ausente y no había dejado nada encima. Con uso real quedó medido sobre
+el mismo arranque, ya con más de siete horas de vida:
+
+```
+key_events=306 last_key=0x0042 keys_down=0
+data_irq=318 connection_high=4 connection_low=4
+recoveries=0 read_retry_releases=0 bootloader=1 flash_version=00370037
+```
+
+Cuatro transiciones de CONN en siete horas, ninguna recuperación y ningún
+reintento de lectura. Es la ventana estable más larga registrada en este port,
+y contrasta con las decenas de activaciones del elevador por minuto del estado
+malo.
+
+Se comprobó además que lo que corre es la release y no un `boot` suelto: las
+cuatro particiones de arranque de la tablet coinciden byte a byte con el
+manifiesto de la v0.16, y el paquete de dispositivo instalado es el 1.5.
