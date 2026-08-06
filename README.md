@@ -58,7 +58,7 @@ port is expected to reproduce.
 | Ethernet (RTL8153) / UAS | 🟡 / ❓ | ⏳ not tested |
 | Motion sensors and autorotation | ✅ | ✅ |
 | Ambient light (STK31610) | ❌ | ❌ |
-| Pogo keyboard (EF-DX920) | ❌ | 🟡 V34 application silent after cold boot |
+| Pogo keyboard (EF-DX920) | ❌ | ✅ needs V37 on the controller; restored automatically |
 | S Pen, fingerprint, haptics | ❌ | ❌ |
 | Speaker protection DSP | ❌ | ❌ |
 | Flash / cameras | ❌ | ❌ |
@@ -76,6 +76,25 @@ Installation has two manual steps, exactly as in the postmarketOS baseline:
 The build tooling never writes to a partition or to a card. The exact boot
 chain, safe iteration procedure and recovery paths are in
 [docs/boot-strategy.md](docs/boot-strategy.md).
+
+### The pogo keyboard needs one thing after a fresh install
+
+The Book Cover Keyboard talks to an STM32G0 **inside the tablet**, and that
+controller runs one of two applications. This port only speaks the V37 one; a
+controller left on V34 boots normally, pulses its connection line every two
+seconds and never announces itself, so the cover looks broken.
+
+Booting One UI or Ubuntu Touch appears to put it back to V34. The first boot
+after an install restores V37 by itself — `ubuntu-gts9u-pogo-firmware.service`,
+using Samsung's own hash-pinned blob — as long as the cover is attached and the
+battery is at least half full. To check afterwards:
+
+```
+grep -o 'flash_version=[0-9]*' /sys/bus/i2c/devices/6-002a/diagnostics
+```
+
+`00370037` is healthy. See
+[pogo-keyboard.md](packaging/ubuntu-gts9u-device/usr/share/doc/ubuntu-gts9u-device/pogo-keyboard.md).
 
 ## Documentation
 
