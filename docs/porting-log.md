@@ -1940,3 +1940,16 @@ tarjeta lleva datos y snaps de la dueña—, así que la garantía del teclado e
 instalación nueva se apoya en la verificación estática de la imagen y del ZIP,
 no en haberla ejecutado. Lo que sí se ejecutó, y funcionó solo, es el servicio
 de restauración en un arranque real.
+
+### Apostilla: qué se pudo comprobar sin un dedo delante
+
+En la v0.16 quedó sin observarse una pulsación real: un vigilante de cinco
+minutos sobre `key_events` no registró nada porque no había nadie tecleando.
+No es un fallo, es ausencia de dato, y conviene no confundirlos.
+
+Sí se ejercitó la mitad del enlace que no necesita un dedo. Conmutar el LED de
+bloqueo de mayúsculas de la funda —`/sys/class/leds/input3::capslock`— envía un
+comando I²C real a la aplicación del STM32: las cuatro conmutaciones llegaron,
+el valor que el driver publica en `caps=` siguió a cada una, y el contador de
+errores del pogo en todo el arranque siguió en **cero**. Queda pendiente la
+dirección de lectura, que es la que necesita una tecla física.
