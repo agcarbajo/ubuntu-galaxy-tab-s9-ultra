@@ -681,3 +681,52 @@ El updater no puede escribir el accesorio por accidente: además de sus
 condiciones de seguridad exige `GTS9U_ALLOW_POGO_FLASH=YES`. No se debe definir
 esa guarda ni programar el STM32 sin autorización explícita y separada de las
 particiones de arranque.
+
+## La build limpia no es reproducible, y ya se sabe exactamente por qué
+
+Medido el 2026-08-07 con dos builds limpias de un árbol idéntico (se verificó
+antes que desde `f078c39`, el `port_revision` de la v0.16, no había cambiado
+nada en `kernel/`, `scripts/`, `configs/` ni `packaging/`).
+
+Coinciden el DTB, `vendor_boot`, `init_boot` y `dtbo`. **No coinciden `Image.gz`
+ni, por arrastre, `boot.img`.** Hay dos causas, y conviene no confundirlas:
+
+**1. La clave de firma de módulos.** `CONFIG_MODULE_SIG_KEY` apunta a
+`certs/signing_key.pem`, *dentro* del directorio de objetos. Cuando falta,
+kbuild la fabrica con `openssl req`, y el certificado se enlaza en la imagen.
+`KERNEL_CLEAN=1` borra ese directorio, así que acuña una clave nueva cada vez.
+
+**2. BTF, que es la de verdad.** Con la clave fijada fuera del directorio de
+objetos, `config` sí pasó a coincidir, pero `Image.gz` seguía difiriendo. La
+diferencia se aisló en un módulo de 1 MB en lugar de en una imagen de 67 MB:
+
+| Región | Bytes distintos |
+|---|---|
+| Todo lo anterior a `.BTF` | **0** |
+| Dentro de `.BTF` | 184.688 |
+| Después de `.BTF` | 255 |
+
+El código compilado ya es determinista. Los 255 bytes finales son la firma
+PKCS#7 del módulo, calculada sobre un contenido que cambió: consecuencia, no
+causa. El mecanismo está en `scripts/Makefile.btf` del propio kernel, que con
+pahole v1.25 pasa `--btf_gen_floats -j$(JOBS)`; el codificador BTF paralelo
+produce una salida distinta en cada ejecución.
+
+### Qué haría falta, si algún día importa
+
+Un envoltorio de `pahole` que reescriba `-jN` a `-j1`, sin tocar el paralelismo
+del resto de la compilación. Envoltorio y no `PAHOLE_FLAGS` sobrescrito: el
+kernel elige esos flags según la versión de pahole, y fijar hoy el conjunto se
+pudriría en cuanto se actualice. No puede ir por el entorno, porque el Makefile
+raíz asigna `PAHOLE` con `=`, que gana a una variable exportada; tiene que ir en
+cada línea de `make`.
+
+**Nada de esto está aplicado.** Se probó y se revirtió: el árbol se mantiene
+igual al que construyó la v0.16, que es la que funciona en la tablet. Aplicarlo
+cambia el kernel, y por tanto obliga a una release nueva y a reflashear, que es
+un precio que hoy no compra nada — el teclado y el resto funcionan. Queda aquí
+medido para el día que se quiera cobrar.
+
+Si se aplica, la reproducibilidad seguiría siendo **por máquina**: la clave de
+firma es privada y no puede entrar en Git, y una clave publicada no sería una
+firma.
