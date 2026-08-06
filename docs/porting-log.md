@@ -1762,3 +1762,94 @@ reapareció en dos barridos completos de la LAN y el gadget USB siguió en Code
 43, así que ese arranque todavía no tiene validación remota. La siguiente
 prueba física debe hacerse sin una tecla mantenida, desconectando y conectando
 la funda una vez, porque V34 contiene rutas de protección por tecla atascada.
+
+## Sesión 19 — el teclado vuelve: el STM32 había vuelto a V34
+
+Fecha: 2026-08-06.
+
+### El discriminante ya estaba medido; lo que faltaba era leerlo al derecho
+
+Desde la sesión 16 constaba, arranque tras arranque, la misma diferencia dura:
+el estado bueno leía `flash version 00 37 00 37` y **todos** los malos leían
+`00 34 00 34`. La sesión 18 volcó los 64 KiB en solo lectura, comprobó que V34
+es una aplicación ARM coherente y de ahí dedujo que One UI usa V34 y que el
+hueco estaba en nuestra inicialización fría.
+
+Esa deducción tenía un salto. Que V34 sea una imagen válida no dice quién la
+puso. El único blob que existe en este proyecto —el de la firmware oficial
+X910 `X910XXS5CYG1`, el mismo que empaqueta pmOS en
+`firmware-samsung-gts9uwifi`— es V37, 52.132 bytes, SHA-256
+`1b48d88c23523ae205cd960e6d42725268638a15a47d8a5e52854eb01108caa3`. La sesión 8
+lo programó en el MCU y **ese** fue el arranque en el que aparecieron las
+primeras pulsaciones reales. El MCU había vuelto a V34 por su cuenta; nunca se
+demostró que el driver mainline hablara con V34.
+
+### La reparación
+
+Con la tablet al 64 % y cargando —las dos condiciones que el propio actualizador
+exige— se invocó el actualizador del driver. El registro es completo:
+
+```
+erasing STM32 application pages
+STM32 programmed 256/52132 bytes
+...
+STM32 firmware programmed and fully verified (52132 bytes, version 00 37 00 37)
+keyboard attached, model 0xd6 (EF-DX920)
+EF-DX920 protocol confirmed; input enabled
+application initialized: version 04 01 05 01, mode 1,
+  CRC cd 0b f7 cf, accessory 09 00 ff 00 00 00
+```
+
+`Book Cover Keyboard Slim (EF-DX920)` volvió a `/proc/bus/input/devices` en el
+acto. La tormenta de CONN se detuvo en seco: `connection_high` quedó congelado
+durante los 30 s siguientes, donde antes acumulaba una activación del elevador
+cada dos segundos.
+
+### Verificado desde arranque en frío y con la dueña escribiendo
+
+Un reinicio completo lo confirmó sin tocar nada más. El driver leyó
+`00 37 00 37` a los 3,8 s, anunció `0xd6` a los 4,5 s y completó la
+inicialización de aplicación a los 7,6 s. En una ventana de 20 s de uso real el
+contador pasó de 1.063 a 1.174 pulsaciones, con `keys_down=1` en mitad de una
+tecla y `last_key=0x0017`. `recoveries=0`, `read_retry_releases=3` y cinco
+líneas de error en todo el arranque. Además la funda se desconectó y reconectó
+físicamente: el driver la soltó y la volvió a enganchar con la inicialización
+completa. La dueña lo dio por funcionando.
+
+### Lo que sigue sin saberse
+
+**Quién devolvió el MCU a V34.** No hay ningún V34 en este árbol, así que no
+salió de aquí. Las dos fuentes plausibles son One UI y el port de Ubuntu Touch,
+que cargan el `stm32_pogo_v3.ko` de Samsung con los blobs de su propio vendor.
+Encaja con la cronología —el fallo apareció tras arrancar otros sistemas— y con
+que la funda funcione en ambos: el driver de Samsung sí habla V34. Mientras no
+se mida, **arrancar One UI o Ubuntu Touch puede volver a degradar el MCU**.
+
+La recuperación es de un solo comando, y está pensada para eso:
+
+```
+sudo env GTS9U_ALLOW_POGO_FLASH=YES \
+  /usr/libexec/ubuntu-gts9u-pogo-firmware-update
+```
+
+El actualizador con esa guarda quedó instalado en la tablet (SHA-256
+`854599b3bb89142fdaae6f6af4e4849f1485554540dd6d9c4790498618d96e53`), y
+`ubuntu-gts9u-pogo-firmware.service` sigue **enmascarado**: ninguna escritura
+del accesorio ocurre en el arranque, que es justo el escenario en el que un
+reinicio forzado podría interrumpirla.
+
+### Dos cabos que esta sesión no tocó a propósito
+
+El `boot` que corre en la tablet es `8fb31817…`, que no figura en ningún
+manifiesto de `artifacts/` y **no lleva** el parche de la IRQ de handover de
+`qcom_q6v5`: el journal repite `Handover signaled, but it already happened`
+varias veces por segundo. Reescribir `boot` para corregirlo habría arriesgado el
+estado bueno recién recuperado, así que se dejó para una sesión con la dueña
+presente.
+
+Los cambios sin commitear del árbol —`samsung,restore-output-on-resume` en el
+DTS con su parche de `i2c-qcom-geni`, el `KERNEL_CLEAN` que también recrea el
+worktree y el `sgdisk --zap-all` de `twrp-write-sd.sh`— son de la sesión
+anterior y **nunca llegaron a la tablet**: `/proc/device-tree` no tiene la
+propiedad. Quedan en el árbol sin validar. La causa que se buscaba con ellos ya
+no está en pie, así que conviene revalidarlos por su cuenta antes de adoptarlos.

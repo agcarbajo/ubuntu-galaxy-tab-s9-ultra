@@ -1,7 +1,7 @@
 # Estado de hardware del SM-X910 bajo Ubuntu 24.04
 
-Última actualización: 2026-08-04, tras confirmar la autorrotación y auditar en
-solo lectura toda la flash V34 de la funda EF-DX920.
+Última actualización: 2026-08-06, tras devolver el MCU pogo a V37 y ver el
+teclado EF-DX920 escribiendo desde un arranque en frío.
 
 Ubuntu **ya arranca** en la tablet. Esta matriz distingue explícitamente lo
 heredado de lo comprobado, y ningún componente pasa a ✅ sin observación real.
@@ -67,7 +67,7 @@ sondea» como prueba de funcionamiento.
 | Luz ambiental STK31610 | ❌ | ❌ | supuesto | El SSC lo descubre pero no emite lux; vía agotada en pmOS |
 | Proximidad | — | — | — | El firmware SSC stock del X910 no instancia el sensor |
 | S Pen (Wacom I²C 0x56) | ❌ | ❌ | supuesto | |
-| Teclado pogo EF-DX920 (STM32 I²C 0x2a) | ❌ | 🟡 | medido | Alimentación y ROM responden; la aplicación V34 pulsa CONN pero no anuncia el protocolo tras un arranque frío |
+| Teclado pogo EF-DX920 (STM32 I²C 0x2a) | ❌ | ✅ | confirmado | Requiere V37 en el MCU: con V34 la aplicación pulsa CONN y no anuncia el protocolo. Reprogramado a V37, teclea desde arranque en frío y sobrevive a desconectar y reconectar la funda |
 | Huella (EgisTec EL7xx, SPI) | ❌ | ❌ | supuesto | Sin driver mainline |
 | Vibración / hápticos | ❌ | ❌ | supuesto | Hardware sin identificar |
 | Flash / linterna | ❌ | ❌ | supuesto | PM8350C; candidato `leds-qcom-flash` |
@@ -134,17 +134,35 @@ estrictamente de solo lectura de los 64 KiB del STM32 dio SHA-256
 `8937281d2efa08400390f9a2b02e40ca914b634e646d6dd544980c38464533ef`, contiene
 `00 34 00 34` en `0x200` y no contiene ninguna copia V37. Es una imagen ARM
 coherente y sus cadenas identifican explícitamente `TabS9(STM32G0) Series ->
-V34`; por tanto V34 no es una lectura marginal ni prueba de corrupción. One UI
-usa esa aplicación, así que el hueco está en la inicialización fría que Ubuntu
-no reproduce todavía.
+V34`; por tanto V34 no es una lectura marginal ni prueba de corrupción.
+
+De ahí se dedujo que One UI usaba V34 y que el hueco estaba en nuestra
+inicialización fría. **Era un salto**: que la imagen sea válida no dice quién la
+puso. El único blob del proyecto —el oficial del X910, el mismo que empaqueta
+pmOS— es V37, y fue el que la sesión 8 programó para obtener las primeras
+pulsaciones reales. El MCU había vuelto a V34 por su cuenta.
+
+Reprogramarlo a V37 con el actualizador del propio driver restauró el teclado en
+el acto y sobrevivió a un arranque en frío: `0xd6` a los 4,5 s, inicialización de
+aplicación a los 7,6 s, escritura real de la dueña y reconexión física correcta
+de la funda. Sigue sin medirse **qué** devolvió el MCU a V34; lo más probable es
+el `stm32_pogo_v3.ko` de Samsung bajo One UI o Ubuntu Touch, así que arrancar
+esos sistemas puede volver a degradarlo. La recuperación es de un comando:
+
+```
+sudo env GTS9U_ALLOW_POGO_FLASH=YES \
+  /usr/libexec/ubuntu-gts9u-pogo-firmware-update
+```
 
 También se probó, sin escribir flash, el comando ROM `GO 0x08000000`, primero
 solo y después con VDDO/MAX77816 activos y 100 ms de estabilización. El
 bootloader aceptó ambos saltos, pero la aplicación siguió sin levantar DATA ni
-anunciar `0xd6`; GPIO62 continuó pulsando cada ~2,126 s. La fuente final volvió
-exactamente al driver del último estado conocido bueno (`504ff29`). Las
-escrituras automáticas del accesorio están bloqueadas y requieren la guarda
-explícita `GTS9U_ALLOW_POGO_FLASH=YES`, además de autorización separada.
+anunciar `0xd6`; GPIO62 continuó pulsando cada ~2,126 s. Eso era la aplicación
+V34, que el driver mainline no sabe hablar. La fuente final volvió exactamente
+al driver del último estado conocido bueno (`504ff29`). Las escrituras
+automáticas del accesorio siguen bloqueadas: exigen la guarda explícita
+`GTS9U_ALLOW_POGO_FLASH=YES` y el servicio queda enmascarado, de modo que
+ninguna programación del MCU ocurre durante el arranque.
 
 ## Invariantes heredadas que no se pueden romper
 

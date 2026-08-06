@@ -658,12 +658,24 @@ solo lectura de los 64 KiB del STM32 cerró esa hipótesis: SHA-256
 V34 en `0x200`, ninguna copia V37 y tabla de vectores ARM coherente. Las cadenas
 del binario nombran expresamente `TabS9(STM32G0) Series -> V34`.
 
-One UI hace funcionar la funda con V34. El fallo bajo Ubuntu es, por tanto, una
-diferencia de inicialización o de estado frío, no evidencia de firmware roto.
+De ahí se concluyó que One UI usa V34 y que el fallo era nuestro, de estado
+frío. **La conclusión no se sostenía.** Una imagen válida no dice quién la
+escribió, y en este proyecto no existe ningún V34: el blob oficial del X910 —el
+mismo de pmOS— es V37, y es el que la sesión 8 programó para obtener las
+primeras pulsaciones reales. La regla útil es más simple: *el driver mainline
+solo habla V37*. Con V34 la aplicación pulsa CONN y calla; devolver V37 al MCU
+recuperó el teclado en el acto y a través de un arranque en frío.
+
 El comando reversible del bootloader ROM `GO 0x08000000` fue aceptado tanto sin
 como con los raíles ya estabilizados, pero no cambió el bucle de CONN de ~2,126
-s ni produjo DATA/modelo. No repetir ese salto esperando que por sí solo sea la
-inicialización que falta.
+s ni produjo DATA/modelo. Era la aplicación V34 arrancando bien y hablando otro
+protocolo. No repetir ese salto esperando que por sí solo sea la inicialización
+que falta.
+
+Queda sin medir qué devuelve el MCU a V34. Ningún blob del árbol lo hace, así
+que el sospechoso es el `stm32_pogo_v3.ko` de Samsung con los blobs de su propio
+vendor, bajo One UI o bajo el port de Ubuntu Touch. Si el teclado vuelve a
+callar, lo primero que hay que mirar es `flash version` en el `dmesg` del pogo.
 
 El updater no puede escribir el accesorio por accidente: además de sus
 condiciones de seguridad exige `GTS9U_ALLOW_POGO_FLASH=YES`. No se debe definir
