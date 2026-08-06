@@ -1093,8 +1093,14 @@ static ssize_t diagnostics_show(struct device *dev,
 {
 	struct samsung_pogo *pogo = dev_get_drvdata(dev);
 
+	/*
+	 * flash_version is the one field that separates a controller this
+	 * driver can talk to from one it cannot: the mainline sequence only
+	 * drives the V37 application.  Exposing it here means the check costs
+	 * a cat instead of grepping a boot-time dmesg line that rotates away.
+	 */
 	return sysfs_emit(buf,
-		"attached=%u model=%#04x connected=%d data_ready=%d caps=%u data_irq=%lld data_irq_deasserted=%lld connection_high=%lld connection_low=%lld manual_polls=%lld key_events=%lld last_key=%#06x keys_down=%u recoveries=%lld read_retry_releases=%lld\n",
+		"attached=%u model=%#04x connected=%d data_ready=%d caps=%u data_irq=%lld data_irq_deasserted=%lld connection_high=%lld connection_low=%lld manual_polls=%lld key_events=%lld last_key=%#06x keys_down=%u recoveries=%lld read_retry_releases=%lld bootloader=%u flash_version=%*phN\n",
 		pogo->attached, pogo->model,
 		gpiod_get_value_cansleep(pogo->connected),
 		gpiod_get_value_cansleep(pogo->data_ready),
@@ -1108,7 +1114,9 @@ static ssize_t diagnostics_show(struct device *dev,
 		READ_ONCE(pogo->last_key_event),
 		bitmap_weight(pogo->keys_down, KEY_MAX + 1),
 		atomic64_read(&pogo->recovery_count),
-		atomic64_read(&pogo->read_retry_release_count));
+		atomic64_read(&pogo->read_retry_release_count),
+		pogo->bootloader_reachable,
+		(int)sizeof(pogo->flash_version), pogo->flash_version);
 }
 static DEVICE_ATTR_RO(diagnostics);
 

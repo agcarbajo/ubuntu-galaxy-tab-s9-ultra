@@ -1,11 +1,28 @@
 #!/bin/sh
 # SPDX-License-Identifier: MIT
-# Update the tablet-side STM32 pogo controller from Samsung's own X910 blob.
+# Keep the tablet-side STM32 pogo controller on Samsung's own X910 application.
+#
+# The mainline driver only speaks the V37 application.  A controller left on
+# V37 needs nothing from this script; one that has been put back to V34 —
+# something One UI or the Ubuntu Touch port appear to do with Samsung's own
+# stm32_pogo_v3 — announces no protocol ID at all and the cover is dead.
+# Restoring V37 is therefore part of making a fresh install work, not an
+# optional maintenance step, and it runs unattended.
+#
+# What makes that safe is not caution about when to write, but where the write
+# can land.  The STM32 ROM bootloader lives in system memory, cannot be erased
+# and answers on every boot; the driver programs and then re-reads all 52 KiB
+# before declaring success.  An interrupted write leaves the application
+# invalid and this unit simply completes it on the next boot.  The one thing
+# that must never happen is writing something that is not Samsung's blob, so
+# the hash is pinned and checked before anything else.
 set -eu
 
 firmware=/lib/firmware/keyboard_stm/stm32_gts9family.bin
 expected=1b48d88c23523ae205cd960e6d42725268638a15a47d8a5e52854eb01108caa3
-control=/sys/bus/i2c/devices/6-002a/firmware_update
+device=/sys/bus/i2c/devices/6-002a
+control=$device/firmware_update
+diagnostics=$device/diagnostics
 battery=/sys/class/power_supply/sm5714-battery
 
 [ -w "$control" ] || exit 0
@@ -17,26 +34,62 @@ if [ "$actual" != "$expected" ]; then
 	exit 1
 fi
 
-# A current controller returns immediately, but a real update erases and
-# verifies 52 KiB.  Only permit that operation with ample battery and power.
+# The escape hatch is opt-out, not opt-in.  Requiring an opt-in was what left a
+# reinstalled system with a silent keyboard and no indication why.
+if [ "${GTS9U_ALLOW_POGO_FLASH:-YES}" = NO ]; then
+	echo 'ubuntu-gts9u-pogo: writes disabled by GTS9U_ALLOW_POGO_FLASH=NO' >&2
+	exit 0
+fi
+
+# The driver binds around four seconds into the boot and the update needs the
+# connection GPIO high, so wait for the cover — but bounded, because a tablet
+# used without the cover must not hold anything up.
+attempt=0
+while [ "$attempt" -lt 20 ]; do
+	state=$(cat "$diagnostics" 2>/dev/null || echo)
+	case "$state" in
+	*connected=1*)
+		break
+		;;
+	esac
+	attempt=$((attempt + 1))
+	sleep 1
+done
+
+state=$(cat "$diagnostics" 2>/dev/null || echo)
+case "$state" in
+*flash_version=00370037*)
+	echo 'ubuntu-gts9u-pogo: controller already on V37' >&2
+	exit 0
+	;;
+*connected=1*)
+	;;
+*)
+	echo 'ubuntu-gts9u-pogo: no cover connected; nothing to do' >&2
+	exit 0
+	;;
+esac
+
+# Programming and verifying 52 KiB over the bootloader's I2C link takes about
+# sixteen seconds.  Half a charge is ample for that; demanding an external
+# supply as well only meant the restore never ran.
 capacity=$(cat "$battery/capacity" 2>/dev/null || echo 0)
 status=$(cat "$battery/status" 2>/dev/null || echo Unknown)
-if [ "$capacity" -lt 50 ] || [ "$status" != Charging ]; then
-	echo "ubuntu-gts9u-pogo: deferred (battery=$capacity%, status=$status)" >&2
+if [ "$capacity" -lt 50 ]; then
+	echo "ubuntu-gts9u-pogo: deferred to the next boot (battery=$capacity%, status=$status)" >&2
 	exit 0
 fi
 
-# Flashing the MCU is an explicit maintenance operation, not a boot task.
-# A forced tablet reset while this helper was running can leave the accessory
-# application unavailable even though its ROM bootloader remains healthy.
-# Keep the installed service as a harmless validator and require a deliberate
-# one-shot invocation for the destructive path:
-#   sudo env GTS9U_ALLOW_POGO_FLASH=YES \
-#     /usr/libexec/ubuntu-gts9u-pogo-firmware-update
-if [ "${GTS9U_ALLOW_POGO_FLASH:-}" != YES ]; then
-	echo 'ubuntu-gts9u-pogo: automatic firmware writes disabled; explicit authorization required' >&2
-	exit 0
-fi
-
+echo "ubuntu-gts9u-pogo: restoring the V37 application (battery=$capacity%, status=$status)" >&2
 printf '1\n' > "$control"
-echo 'ubuntu-gts9u-pogo: firmware is current and the controller is ready' >&2
+
+state=$(cat "$diagnostics" 2>/dev/null || echo)
+case "$state" in
+*flash_version=00370037*)
+	echo 'ubuntu-gts9u-pogo: controller is on V37 and verified' >&2
+	;;
+*)
+	echo "ubuntu-gts9u-pogo: the controller did not report V37 after the write: $state" >&2
+	exit 1
+	;;
+esac

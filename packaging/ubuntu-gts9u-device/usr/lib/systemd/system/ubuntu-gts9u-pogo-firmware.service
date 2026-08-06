@@ -1,6 +1,9 @@
 [Unit]
-Description=Validate Samsung STM32 pogo keyboard firmware
-After=local-fs.target
+Description=Restore the Samsung STM32 pogo keyboard application
+Documentation=file:/usr/share/doc/ubuntu-gts9u-device/pogo-keyboard.md
+# Ordered after the target it belongs to, so waiting for the cover delays
+# nothing else: by the time this runs the desktop is already coming up.
+After=local-fs.target multi-user.target
 ConditionPathExists=/lib/firmware/keyboard_stm/stm32_gts9family.bin
 ConditionPathExists=/sys/bus/i2c/devices/6-002a/firmware_update
 

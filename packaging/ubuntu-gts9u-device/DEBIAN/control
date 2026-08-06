@@ -1,5 +1,5 @@
 Package: ubuntu-gts9u-device
-Version: 1.4
+Version: 1.5
 Section: admin
 Priority: optional
 Architecture: arm64
@@ -18,7 +18,8 @@ Description: Device support for the Samsung Galaxy Tab S9 Ultra Wi-Fi
   * the UCM profile for the four CS35L45 speakers and the digital microphones;
   * the sensor recovery that hands the DSP accelerometer to the desktop, and
     the accelerometer mount matrix this panel needs;
-  * safe, hash-pinned STM32 firmware validation for the EF-DX920 pogo keyboard;
+  * automatic, hash-pinned restore of the EF-DX920 pogo keyboard application,
+    without which a controller left on V34 makes the cover silent;
   * initramfs pruning for this device's 8 MiB init_boot partition.
  .
  Hardware enablement lives in the kernel and in the firmware overlay installed

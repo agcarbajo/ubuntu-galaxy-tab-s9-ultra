@@ -22,11 +22,20 @@ out_dir=${KERNEL_OUT_DIR:-$base/out/kernel-gts9uwifi}
 # ones behind the running kernel produced a different boot.img, and this was
 # why.  A release that cannot be reproduced from its own tree is not a release.
 #
-# KERNEL_CLEAN=1 discards the directory first.  Slow, so it is opt-in, but it
-# is what a release build should use and what any hash comparison requires.
+# KERNEL_CLEAN=1 discards both the object directory and the disposable source
+# worktree.  Removing only the objects is not enough: apply_unless() makes the
+# source tree accumulate every patch ever tested, so an A/B build can otherwise
+# claim to omit a patch while still compiling the copy left by an earlier run.
+# Slow, so it is opt-in, but it is what a release build and any source-level
+# comparison require.
 if [ "${KERNEL_CLEAN:-0}" = 1 ] && [ -d "$build_dir" ]; then
 	echo "KERNEL_CLEAN=1: discarding $build_dir for a from-scratch build"
 	rm -rf -- "$build_dir"
+fi
+if [ "${KERNEL_CLEAN:-0}" = 1 ] && [ -e "$kernel_tree/.git" ]; then
+	echo "KERNEL_CLEAN=1: recreating disposable source worktree from pinned HEAD"
+	git -C "$kernel_src" worktree remove --force "$kernel_tree"
+	git -C "$kernel_src" worktree prune
 fi
 
 dts=$repo/kernel/dts
