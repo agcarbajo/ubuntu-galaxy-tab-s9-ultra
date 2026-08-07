@@ -33,6 +33,7 @@ postmarketOS v1.71 baseline is kept outside Git.
 | **Buttons** | ✅ | Power and volume; a short press on power suspends |
 | **Keyboard cover** | ✅ | Samsung EF-DX920 pogo keyboard; the tablet's STM32 controller is repaired automatically if another OS has downgraded it ([details](packaging/ubuntu-gts9u-device/usr/share/doc/ubuntu-gts9u-device/pogo-keyboard.md)) |
 | **Cover / lid switch** | ✅ | Closing the cover blanks the screen |
+| **S Pen** | ✅ | Wacom EMR digitiser: hover, pressure, tilt and the side button, with this port's own driver. Docking, charge level and the BLE gestures are not done |
 | **Wi-Fi** | ✅ | WCN7850 / ath12k, official firmware and the QRD board data |
 | **Bluetooth** | ✅ | Controller and A2DP, with the tablet's own address from the Samsung EFS |
 | **Speakers / microphones** | ✅ | Four CS35L45 and the digital microphones, natively through PipeWire |
@@ -52,7 +53,6 @@ postmarketOS v1.71 baseline is kept outside Git.
 | **Waydroid** | ❔ | Never tried |
 | **Ambient light** | ❌ | STK31610 is discovered by the SSC but emits no lux |
 | **Speaker protection** | ❌ | Cirrus protection firmware not loaded; hardware volume kept conservative |
-| **S Pen** | ❌ | Wacom digitiser not brought up |
 | **Fingerprint** | ❌ | No mainline driver for the EgisTec sensor |
 | **Vibration / haptics** | ❌ | Hardware not identified |
 | **Flash / cameras** | ❌ | Not started |
