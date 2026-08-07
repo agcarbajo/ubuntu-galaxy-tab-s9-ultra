@@ -27,10 +27,21 @@ restored.
 ## Restoring
 
 `ubuntu-gts9u-pogo-firmware.service` does it automatically, once per boot,
-whenever the version is not V37, the cover is attached and the battery is at
-least 50 %.  It needs no supervision: the STM32 ROM bootloader cannot be erased
-and answers on every boot, and the driver re-reads all 52 KiB before reporting
-success, so an interrupted write is simply completed on the next boot.
+whenever the version is not V37.  **Nothing else is required** — in particular
+not the cover and not a charger.
+
+The cover used to be required, on the assumption that the controller shared the
+accessory's power rail.  Measured with the cover detached and `pogo_vddo`
+disabled, the ROM bootloader still answered with its product id and flash
+version: the rail that gets cut feeds the keyboard, while the controller sits on
+the tablet's own I2C6.  So a controller found on V34 is repaired on the first
+boot after an install whether or not the cover is anywhere near the tablet.
+
+The only remaining condition is 15 % battery, and that is not protecting the
+flash: the STM32 ROM bootloader cannot be erased, it answers on every boot, and
+the driver re-reads all 52 KiB before reporting success, so an interrupted write
+is simply completed on the next boot.  The threshold only avoids starting the
+job on a tablet that is about to die mid-boot.
 
 To run it by hand:
 

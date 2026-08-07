@@ -31,7 +31,7 @@ postmarketOS v1.71 baseline is kept outside Git.
 | **GPU** | ✅ | Adreno 740 through Mesa (Freedreno/Turnip); no Android graphics stack |
 | **Touchscreen** | ✅ | Goodix Berlin / GT9916, Samsung 16-byte event layout |
 | **Buttons** | ✅ | Power and volume; a short press on power suspends |
-| **Keyboard cover** | ✅ | Samsung EF-DX920 pogo keyboard |
+| **Keyboard cover** | ✅ | Samsung EF-DX920 pogo keyboard; the tablet's STM32 controller is repaired automatically if another OS has downgraded it ([details](packaging/ubuntu-gts9u-device/usr/share/doc/ubuntu-gts9u-device/pogo-keyboard.md)) |
 | **Cover / lid switch** | ✅ | Closing the cover blanks the screen |
 | **Wi-Fi** | ✅ | WCN7850 / ath12k, official firmware and the QRD board data |
 | **Bluetooth** | ✅ | Controller and A2DP, with the tablet's own address from the Samsung EFS |
@@ -92,25 +92,6 @@ ideally to install it **alongside Android rather than instead of it**, so the
 tablet can dual boot. Neither is implemented, and neither is promised here;
 they are the direction, and the boot chain has been kept deliberately close to
 Samsung's so that the move stays possible.
-
-### The pogo keyboard needs one thing after a fresh install
-
-The Book Cover Keyboard talks to an STM32G0 **inside the tablet**, and that
-controller runs one of two applications. This port only speaks the V37 one; a
-controller left on V34 boots normally, pulses its connection line every two
-seconds and never announces itself, so the cover looks broken.
-
-Booting One UI or Ubuntu Touch appears to put it back to V34. The first boot
-after an install restores V37 by itself — `ubuntu-gts9u-pogo-firmware.service`,
-using Samsung's own hash-pinned blob — as long as the cover is attached and the
-battery is at least half full. To check afterwards:
-
-```
-grep -o 'flash_version=[0-9]*' /sys/bus/i2c/devices/6-002a/diagnostics
-```
-
-`00370037` is healthy. See
-[pogo-keyboard.md](packaging/ubuntu-gts9u-device/usr/share/doc/ubuntu-gts9u-device/pogo-keyboard.md).
 
 ## Documentation
 

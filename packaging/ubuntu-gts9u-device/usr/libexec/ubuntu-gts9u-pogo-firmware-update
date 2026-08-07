@@ -41,31 +41,20 @@ if [ "${GTS9U_ALLOW_POGO_FLASH:-YES}" = NO ]; then
 	exit 0
 fi
 
-# The driver binds around four seconds into the boot and the update needs the
-# connection GPIO high, so wait for the cover — but bounded, because a tablet
-# used without the cover must not hold anything up.
-attempt=0
-while [ "$attempt" -lt 20 ]; do
-	state=$(cat "$diagnostics" 2>/dev/null || echo)
-	case "$state" in
-	*connected=1*)
-		break
-		;;
-	esac
-	attempt=$((attempt + 1))
-	sleep 1
-done
-
+# The cover does not have to be attached.  Measured with it detached and
+# pogo_vddo disabled: the ROM bootloader still answered with its product id and
+# flash version, because the rail that gets cut feeds the keyboard while the
+# controller sits on the tablet's own I2C6.  So there is nothing to wait for,
+# and a controller found on V34 is repaired on the first boot after an install
+# whether or not the owner has the cover in their hands.
 state=$(cat "$diagnostics" 2>/dev/null || echo)
 case "$state" in
 *flash_version=00370037*)
 	echo 'ubuntu-gts9u-pogo: controller already on V37' >&2
 	exit 0
 	;;
-*connected=1*)
-	;;
-*)
-	echo 'ubuntu-gts9u-pogo: no cover connected; nothing to do' >&2
+'')
+	echo 'ubuntu-gts9u-pogo: no controller to talk to; nothing to do' >&2
 	exit 0
 	;;
 esac
@@ -82,11 +71,14 @@ case "$state" in
 esac
 
 # Programming and verifying 52 KiB over the bootloader's I2C link takes about
-# sixteen seconds.  Half a charge is ample for that; demanding an external
-# supply as well only meant the restore never ran.
+# sixteen seconds, and an interrupted write is completed on the next boot
+# because the ROM bootloader cannot be erased.  So this threshold is not
+# protecting the flash; it only avoids starting the job on a tablet that is
+# about to die mid-boot.  It used to be 50 % plus an external supply, which in
+# practice meant the restore never ran at all.
 capacity=$(cat "$battery/capacity" 2>/dev/null || echo 0)
 status=$(cat "$battery/status" 2>/dev/null || echo Unknown)
-if [ "$capacity" -lt 50 ]; then
+if [ "$capacity" -lt 15 ]; then
 	echo "ubuntu-gts9u-pogo: deferred to the next boot (battery=$capacity%, status=$status)" >&2
 	exit 0
 fi

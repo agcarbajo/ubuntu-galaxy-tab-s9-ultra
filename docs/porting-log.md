@@ -1976,3 +1976,73 @@ malo.
 Se comprobó además que lo que corre es la release y no un `boot` suelto: las
 cuatro particiones de arranque de la tablet coinciden byte a byte con el
 manifiesto de la v0.16, y el paquete de dispositivo instalado es el 1.5.
+
+## Sesión 21 — el teclado deja de pedir cosas, y los nombres comerciales
+
+Fecha: 2026-08-07.
+
+### El requisito de la funda era una suposición, y era falsa
+
+El actualizador rechazaba escribir si la línea de conexión estaba baja. La
+justificación asumida —que el controlador colgaba del mismo raíl que el
+accesorio— nunca se había medido. La dueña preguntó lo obvio: si lo que se
+programa está en la tablet, ¿para qué hace falta la funda?
+
+Se midió. Con la funda fuera, `connected=0` y `pogo_vddo` en `disabled`:
+
+```
+STM32 bootloader reachable, product id 0x460, flash version 00 37 00 37
+STM32 pogo controller ready (connected=0, data-ready=0)
+```
+
+El ROM contesta igual sin funda y sin raíl. Lo que se corta al desconectar
+alimenta al teclado; el microcontrolador va por el I2C6 de la tablet y es
+independiente. La comprobación se retira: escribir sin funda es incluso más
+tranquilo, porque no hay pulsos de conexión compitiendo.
+
+El umbral de batería baja de 50 % a 15 %. No defiende la flash —una escritura
+interrumpida se completa en el arranque siguiente porque el bootloader ROM no
+se puede borrar— solo evita empezar en una tablet a punto de apagarse. La
+exigencia de cargador ya se había retirado antes, y era justo lo que impedía
+que la restauración se ejecutara nunca.
+
+Con eso, la sección del README que explicaba qué tenía que hacer el usuario
+desaparece: no tiene que hacer nada.
+
+### Los nombres comerciales: dos fuentes, una por capa
+
+Cada herramienta preguntaba a un sitio distinto y ninguna daba un nombre.
+
+**CPU.** La línea `model name` de `/proc/cpuinfo` es la convención universal en
+Linux, y arm64 solo la emite para tareas compat. Rellenarla desde una tabla
+indexada por el compatible de la máquina —no por una propiedad nueva del DTS,
+que obligaría a reescribir `vendor_boot`— hace que GNOME y todo lo que lea ese
+fichero reciba «Qualcomm Snapdragon 8 Gen 2». Se habilita además
+`QCOM_SOCINFO`, que estaba en `=m` y por tanto no existía; ahora `soc0` publica
+familia `Snapdragon` y máquina `SM8550`.
+
+**GPU.** `force_gl_renderer` es una opción soportada de Mesa —su configuración
+de fábrica la usa con otras Adreno— así que no hizo falta un Mesa propio.
+OpenGL pasa de `FD740` a `Adreno (TM) 740`, que es lo que muestra el F3 de
+Minecraft. Una trampa que costó una sesión: un `--` dentro de un comentario XML
+es ilegal, y Mesa descarta el fichero entero sin decir nada.
+
+Vulkan sigue diciendo `Turnip Adreno (TM) 740`: esa cadena sale de un formato
+fijo dentro del driver, sin opción de configuración.
+
+**fastfetch** no leía ninguna de las dos. Un `strace` lo mostró abriendo
+`/sys/firmware/devicetree/base/compatible` y nunca `/proc/cpuinfo`: en ARM
+rellena el nombre desde el device tree y, una vez puesto, se salta la lectura
+entera. Como este port ya compila fastfetch desde fuente, se parchea el orden
+de precedencia, que además es el correcto. El paquete pasa a `2.66.0-gts9u1`
+para que una actualización del archivo no se lleve el parche por delante.
+
+### La build limpia no es reproducible, y ya se sabe por qué
+
+Dos builds limpias del mismo árbol dan el mismo DTB, `vendor_boot`, `init_boot`
+y `dtbo`, pero distinto `Image.gz`. Aislada la diferencia en un módulo de 1 MB,
+**todo lo anterior a `.BTF` coincide byte a byte**: el código compilado ya es
+determinista y lo que baila es el codificador BTF paralelo que
+`scripts/Makefile.btf` invoca con `-j$(JOBS)`. El detalle y el arreglo —sin
+aplicar, porque cambiaría el kernel a cambio de nada que hoy haga falta— están
+en las notas de desarrollo.

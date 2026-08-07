@@ -474,7 +474,6 @@ static ssize_t firmware_update_store(struct device *dev,
 	static const u8 expected_version[] = { 0x00, 0x37, 0x00, 0x37 };
 	struct samsung_pogo *pogo = dev_get_drvdata(dev);
 	const struct firmware *firmware;
-	bool connected;
 	int ret;
 
 	if (!sysfs_streq(buf, "1"))
@@ -501,20 +500,26 @@ static ssize_t firmware_update_store(struct device *dev,
 		goto out_release;
 	}
 
-	/* Keep the noisy connection GPIO from racing the atomic update. */
+	/*
+	 * No cover required.  This used to refuse unless the connection GPIO was
+	 * high, on the assumption that the controller rode the same rail as the
+	 * accessory.  Measured with the cover detached, pogo_vddo disabled and
+	 * connected=0, the ROM bootloader still answered with its product id and
+	 * flash version: the rail that is cut feeds the keyboard, not the MCU,
+	 * which is on the tablet's own I2C6 and independent of it.
+	 *
+	 * Dropping the check is what lets a fresh install repair itself without
+	 * the owner knowing there was anything to repair, and writing with no
+	 * cover attached is if anything quieter: no connection pulses to race.
+	 */
 	disable_irq(pogo->connection_irq);
 	cancel_delayed_work_sync(&pogo->connection_work);
 	samsung_pogo_set_data_irq(pogo, false);
 	cancel_delayed_work_sync(&pogo->application_work);
 	mutex_lock(&pogo->lock);
-	connected = gpiod_get_value_cansleep(pogo->connected) > 0;
-	if (!connected) {
-		ret = -ENODEV;
-	} else {
-		ret = samsung_pogo_update_firmware(pogo, firmware);
-		pogo->attached = false;
-		pogo->model = 0;
-	}
+	ret = samsung_pogo_update_firmware(pogo, firmware);
+	pogo->attached = false;
+	pogo->model = 0;
 	mutex_unlock(&pogo->lock);
 	enable_irq(pogo->connection_irq);
 	mod_delayed_work(system_dfl_wq, &pogo->connection_work, 0);
