@@ -769,6 +769,22 @@
 		bias-disable;
 	};
 
+	/*
+	 * S Pen digitiser interrupt lines, copied from Samsung's epen-int-active
+	 * and epen-pdct-active: gpio154 is the data interrupt, gpio137 their pen
+	 * detect.  Both are inputs with the pull disabled.  gpio137 is configured
+	 * but not claimed by anything yet; leaving it floating with an unknown
+	 * bias while its neighbour is in use is a worse default than matching
+	 * what the stock firmware sets.
+	 */
+	epen_irqs: epen-irqs-state {
+		pins = "gpio154", "gpio137";
+		function = "gpio";
+		drive-strength = <2>;
+		input-enable;
+		bias-disable;
+	};
+
 	/* Panel tear-effect (TE) line routed to the MDP vsync input. */
 	sde_te: sde-te-state {
 		pins = "gpio86";
@@ -1176,6 +1192,35 @@
 /* QUP wrapper 2 / SE12 carries the board's PS5169 combo redriver. */
 &gpi_dma2 {
 	status = "okay";
+};
+
+/*
+ * SE3 carries the Wacom EMR digitiser behind the S Pen.  Samsung's overlay puts
+ * it at wacom@56 on qupv3_se3_i2c, which is this bus: their SE numbering and
+ * mainline's i2cN agree, as the pogo controller on SE15 already showed.
+ *
+ * The compatible looks odd on purpose.  Mainline's wacom_i2c carries no
+ * of_match_table at all, only an i2c_device_id named "WAC_I2C_EMR", so the only
+ * way to reach it from a device tree is the I2C core's fallback, which matches
+ * a compatible's part after the vendor prefix against that table.
+ *
+ * AVDD is not declared: the driver has no supply handling, and the rail is
+ * LDO13 of PMIC B, which the panel already holds up as its VCI.  Samsung's
+ * pdct and fwe lines are likewise not wired here -- pdct is their pen-detect
+ * shortcut and fwe enables flash writes, and neither belongs in a first
+ * bring-up whose only question is whether the digitiser answers at all.
+ */
+&i2c3 {
+	clock-frequency = <400000>;
+	status = "okay";
+
+	digitizer@56 {
+		compatible = "wacom,WAC_I2C_EMR";
+		reg = <0x56>;
+		interrupts-extended = <&tlmm 154 IRQ_TYPE_LEVEL_LOW>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&epen_irqs>;
+	};
 };
 
 &i2c4 {

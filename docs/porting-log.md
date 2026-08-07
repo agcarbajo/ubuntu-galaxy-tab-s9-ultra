@@ -2073,3 +2073,91 @@ carrera no deja rastro.
 
 Verificado desde arranque en frío: `ConditionResult=yes`, la unidad arranca a
 las 04:57:16 y termina un segundo después con «controller already on V37».
+
+## Sesión 22 — el digitalizador del S Pen responde, pero todavía no habla
+
+Fecha: 2026-08-07.
+
+### Dónde estaba escondido
+
+`vendor_boot` no menciona el digitalizador ni una vez, y por eso constaba como
+«sin driver mainline» sin más detalle. Está en el **`dtbo` de Samsung**, que
+nadie había abierto: se extrae del paquete AP del firmware oficial y contiene
+dos overlays, ambos con el nodo.
+
+```
+wacom@56   compatible = "wacom,w90xx"   bus: qupv3_se3_i2c
+  irq = gpio154   pdct = gpio137   fwe = gpio179
+  avdd = pm_humu_l13              firmware = wez01_gts9u.bin
+```
+
+El bus es nuestro `i2c3`: Samsung numera los SE igual que mainline, como ya
+demostraba el pogo en `qupv3_se15_i2c` = `i2c15`. `gpio40/41` (los pines del
+bus) y `gpio154/137` estaban libres, y `gpi_dma1` ya habilitado.
+
+### El chip está vivo
+
+Habilitado `i2c3` con el nodo, `i2cdetect` ve **0x56** contestando. La consulta
+estilo HID devuelve un registro estable, y decodificarlo confirma que es el
+dispositivo correcto: el registro empieza en el offset **17** y es
+**big-endian**.
+
+| Campo | Leído | DT de Samsung |
+|---|---|---|
+| x_max | `0x4c85` = 19589 | — |
+| y_max | `0x7a90` = 31376 | — |
+| presión | `0x0fff` = 4095 | `max_pressure = 0xfff` |
+| tilt | `0x3f 0x3f` | `max_tilt = <0x3f 0x3f>` |
+| altura | `0xff` | `max_height = 0xff` |
+| módulo | `0x02` | `module_ver = 0x02` |
+| boot addr | `0x09` | `boot_addr = 0x09` |
+
+La proporción 19589/31376 es 0,6243, exactamente 1848/2960 del panel. El
+decodificado no es una casualidad.
+
+### Por qué el driver de mainline no sirve, y por qué callaba
+
+`wacom_i2c` lee **19 bytes en little-endian** desde offsets 3, 5 y 11. Este
+chip pone su registro en el 17 y en big-endian, así que la consulta falla. Y
+falla **en silencio**: el probe hace `error = wacom_query_device(); if (error)
+return error;` sin un solo `dev_err`. De ahí que no hubiera ni una línea en
+dmesg, lo que al principio parecía que ni siquiera había casado.
+
+El driver de Samsung para esta pieza es `wez01.ko`, con `alias:
+i2c:wacom_w90xx`. Sus cadenas dan dos requisitos que mainline no cumple:
+
+- `fwe gpio is high, change low and reset device` — la línea de habilitación de
+  flash debe estar baja.
+- `failed to send wacom i2c mode` — hay un **comando de modo** que arranca el
+  reporte.
+
+Sus notificadores enumeran justo el alcance pedido: `PEN_HOVER_IN/OUT`,
+`PEN_INSERT/REMOVE`, `PEN_CHARGING_STARTED/FINISHED`.
+
+### Lo que no funcionó, anotado para no repetirlo
+
+Los comandos de un byte al estilo Samsung (`0x2a`, `0x31`, `0x32`, `0x33`)
+**hacen que el chip deje de reconocer su dirección**: durante un rato todas las
+transferencias dieron `ENXIO`. Se recupera solo, pero no es su protocolo. La
+consulta de seis bytes con registro y opcode sí funciona, así que la interfaz
+es de estilo HID-sobre-I2C, no la de bytes sueltos.
+
+Se sospechó que la suspensión cortaba el raíl del panel, que es quien alimenta
+al digitalizador. **Falso**: `vreg_l13b_3p0` seguía habilitado, el panel
+encendido, y solo hubo la suspensión de recuperación del arranque.
+
+### Estado: responde, no reporta
+
+Con el lápiz apoyado en la tablet no llega ningún evento; las lecturas dan una
+cabecera fija `0d 03 11` que nunca cambia. Hay tres explicaciones y no se pueden
+separar sin mover el lápiz: que un EMR **tumbado** acople mal por quedar su
+bobina paralela a la rejilla, que falte el comando de modo, o que FWE esté alta.
+
+Queda un grabador de solo lectura corriendo en la tablet
+(`/tmp/spen-record.sh` a `/tmp/spen-capture.log`) que registra cualquier cambio
+con marca de tiempo. En cuanto la dueña coja el lápiz y lo sostenga en
+perpendicular, el formato del informe queda capturado sin necesidad de estar
+delante.
+
+Nada de lo que ya funcionaba se ha tocado: cero líneas de error de I²C en todo
+el arranque, y pantalla, GPU, sensores y el controlador pogo intactos.

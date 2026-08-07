@@ -80,3 +80,11 @@ CONFIG_NETLINK_DIAG=y
 # inherited config leaves it =m, and this port ships no modules other than the
 # two signed ath12k ones, so it was simply never there.
 CONFIG_QCOM_SOCINFO=y
+
+# --- S Pen digitiser ---------------------------------------------------------
+# The Wacom EMR digitiser on SE3.  Both mainline candidates are built in: the
+# generic EMR driver is the one the device tree currently reaches, and the
+# W9000 driver is a second guess worth having available on the device rather
+# than one rebuild away.
+CONFIG_TOUCHSCREEN_WACOM_I2C=y
+CONFIG_TOUCHSCREEN_WACOM_W9000=y
