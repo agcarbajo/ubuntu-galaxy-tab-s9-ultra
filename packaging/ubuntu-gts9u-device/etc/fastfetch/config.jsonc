@@ -1,0 +1,55 @@
+// System default for the SM-X910.
+//
+// fastfetch's automatic GPU detection reads the DRM device's device-tree
+// compatible and prints "Qcom adreno-43050a01", which is the binding string,
+// not a name.  Mesa knows the real one, so it is asked instead of guessing;
+// no answer is hard-coded here.
+//
+// OpenGL rather than Vulkan on purpose.  Vulkan reports "Turnip Adreno (TM)
+// 740" and that driver name is baked into a format string with no knob, while
+// the GL strings come from drirc.d/99-gts9u-adreno-name.conf, which this port
+// does control.  Through GL the answer reads "Qualcomm Adreno (TM) 740".
+//
+// The CPU needs nothing: the kernel reports "Qualcomm Snapdragon 8 Gen 2" in
+// /proc/cpuinfo, which fastfetch reads like everything else does.
+//
+// The module list is fastfetch's own default, reproduced because a module can
+// only take options in object form. A user config in ~/.config/fastfetch
+// replaces this file entirely.
+{
+  "$schema": "https://github.com/fastfetch-cli/fastfetch/raw/master/doc/json_schema.json",
+  "modules": [
+    "title",
+    "separator",
+    "os",
+    "host",
+    "kernel",
+    "uptime",
+    "packages",
+    "shell",
+    "display",
+    "de",
+    "wm",
+    "wmtheme",
+    "theme",
+    "icons",
+    "font",
+    "cursor",
+    "terminal",
+    "terminalfont",
+    "cpu",
+    {
+      "type": "gpu",
+      "detectionMethod": "opengl"
+    },
+    "memory",
+    "swap",
+    "disk",
+    "localip",
+    "battery",
+    "poweradapter",
+    "locale",
+    "break",
+    "colors"
+  ]
+}

@@ -73,3 +73,10 @@ CONFIG_NF_TABLES=y
 CONFIG_UNIX_DIAG=y
 CONFIG_PACKET_DIAG=y
 CONFIG_NETLINK_DIAG=y
+
+# --- SoC identity ------------------------------------------------------------
+# The Qualcomm socinfo driver is what populates /sys/bus/soc/devices/soc0,
+# which is the standard place userspace asks who the SoC is on ARM.  The
+# inherited config leaves it =m, and this port ships no modules other than the
+# two signed ath12k ones, so it was simply never there.
+CONFIG_QCOM_SOCINFO=y

@@ -1,0 +1,75 @@
+Report the SoC's commercial name in /proc/cpuinfo on arm64
+
+Userspace has exactly one conventional place to learn which processor it is
+running on: the "model name" line of /proc/cpuinfo.  x86 has always had it, so
+everything reads it -- libgtop behind GNOME's About panel, OSHI behind
+Minecraft's F3 overlay, fastfetch, inxi, htop.  arm64 emits it only for compat
+tasks, so on this tablet each of those tools falls back to a different guess:
+"sm8550" from the device tree, the per-core Cortex names, or nothing at all.
+
+Filling that line in is what makes one change serve every consumer, instead of
+teaching each program separately about this board.
+
+--- a/arch/arm64/kernel/cpuinfo.c	2026-08-07 02:51:30.937700985 +0200
++++ b/arch/arm64/kernel/cpuinfo.c	2026-08-07 02:51:30.937700985 +0200
+@@ -17,6 +17,7 @@
+ #include <linux/elf.h>
+ #include <linux/init.h>
+ #include <linux/kernel.h>
++#include <linux/of.h>
+ #include <linux/personality.h>
+ #include <linux/preempt.h>
+ #include <linux/printk.h>
+@@ -219,6 +220,43 @@
+ };
+ #endif /* CONFIG_COMPAT */
+ 
++/*
++ * A SoC is sold under a name that appears nowhere in the hardware: the silicon
++ * knows it is an SM8550, buyers know it as a Snapdragon 8 Gen 2.  Neither the
++ * MIDR nor the device tree carries the latter, so it has to come from a table.
++ *
++ * Keyed off the machine compatible rather than a new device tree property on
++ * purpose: changing the DTS forces vendor_boot to be rewritten, and a cosmetic
++ * string is a poor reason to move a partition.  Adding a SoC is one line.
++ */
++static const struct {
++	const char *compatible;
++	const char *name;
++} soc_marketing_names[] = {
++	{ "qcom,sm8550", "Qualcomm Snapdragon 8 Gen 2" },
++};
++
++static const char *soc_marketing_name;
++
++static int __init soc_marketing_name_init(void)
++{
++	int i;
++
++	for (i = 0; i < ARRAY_SIZE(soc_marketing_names); i++) {
++		if (of_machine_is_compatible(soc_marketing_names[i].compatible)) {
++			soc_marketing_name = soc_marketing_names[i].name;
++			break;
++		}
++	}
++
++	return 0;
++}
++/*
++ * Anything that reads /proc/cpuinfo needs userspace, which comes far later
++ * than this; the device tree is unflattened long before it.
++ */
++early_initcall(soc_marketing_name_init);
++
+ static int c_show(struct seq_file *m, void *v)
+ {
+ 	int j;
+@@ -236,6 +274,8 @@
+ 	if (compat)
+ 		seq_printf(m, "model name\t: ARMv8 Processor rev %d (%s)\n",
+ 			   MIDR_REVISION(midr), COMPAT_ELF_PLATFORM);
++	else if (soc_marketing_name)
++		seq_printf(m, "model name\t: %s\n", soc_marketing_name);
+ 
+ 	seq_printf(m, "BogoMIPS\t: %lu.%02lu\n",
+ 		   loops_per_jiffy / (500000UL/HZ),

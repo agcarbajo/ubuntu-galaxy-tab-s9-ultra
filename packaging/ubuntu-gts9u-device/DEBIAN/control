@@ -1,5 +1,5 @@
 Package: ubuntu-gts9u-device
-Version: 1.5
+Version: 1.6
 Section: admin
 Priority: optional
 Architecture: arm64
@@ -20,6 +20,8 @@ Description: Device support for the Samsung Galaxy Tab S9 Ultra Wi-Fi
     the accelerometer mount matrix this panel needs;
   * automatic, hash-pinned restore of the EF-DX920 pogo keyboard application,
     without which a controller left on V34 makes the cover silent;
+  * the commercial names for this SoC and GPU, so every tool that asks the
+    system what it is running on gets an answer a person recognises;
   * initramfs pruning for this device's 8 MiB init_boot partition.
  .
  Hardware enablement lives in the kernel and in the firmware overlay installed

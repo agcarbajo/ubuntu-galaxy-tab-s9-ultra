@@ -140,6 +140,9 @@ apply_unless 'consume_retained_sink_dfp' \
 apply_unless 'disable_irq_nosync(irq)' \
 	drivers/remoteproc/qcom_q6v5.c \
 	qcom-q6v5-mask-completed-handover-irq.patch
+apply_unless 'soc_marketing_names' \
+	arch/arm64/kernel/cpuinfo.c \
+	arm64-report-soc-marketing-name.patch
 
 # The Goodix patch has two variants: a full one for a pristine tree and an
 # upgrade for a tree that already carries the partial Samsung decoder.
