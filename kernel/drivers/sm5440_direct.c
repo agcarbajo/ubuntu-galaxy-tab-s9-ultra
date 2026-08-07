@@ -52,7 +52,17 @@
 #define SM5440_RETRY_MS			30000
 #define SM5440_INITIAL_IBUS_MA		1800
 #define SM5440_INITIAL_PPS_MA		2000
-#define SM5440_INITIAL_HEADROOM_MV	700
+/*
+ * Headroom above twice the pack, and it has to survive the cable.  At 1.8 A the
+ * adapter and lead give up about 400 mV, so a nominal 700 left roughly 290 mV
+ * at the chip -- measured vbus 8291-8332 mV against a 4003 mV pack -- and any
+ * further dip reversed the current and latched REVBLK, which is INT3 bit 1 and
+ * exactly what the chip reported when it shut down.
+ *
+ * Raising the current is what exposed this: at 1 A the same nominal headroom
+ * was ample, because the drop was half.
+ */
+#define SM5440_INITIAL_HEADROOM_MV	1100
 #define SM5440_VBATREG_MV		4400
 #define SM5440_FREQUENCY_KHZ		450
 
@@ -255,6 +265,19 @@ static int sm5440_hw_init(struct sm5440_direct *sm)
 	return 0;
 }
 
+/*
+ * The input a 2:1 pump needs is twice the pack plus enough to cover the drop
+ * across cable and switches.  Both numbers move while charging, which is why
+ * this is computed rather than remembered.
+ */
+static int sm5440_target_mv(int battery_uv)
+{
+	int mv = DIV_ROUND_UP((battery_uv / 1000) * 2 +
+			      SM5440_INITIAL_HEADROOM_MV, 20) * 20;
+
+	return clamp(mv, 8200, 10500);
+}
+
 static int sm5440_start(struct sm5440_direct *sm)
 {
 	int battery_uv, target_mv, target_ma;
@@ -268,9 +291,7 @@ static int sm5440_start(struct sm5440_direct *sm)
 	if (battery_uv < 0)
 		return battery_uv;
 
-	target_mv = DIV_ROUND_UP((battery_uv / 1000) * 2 +
-				 SM5440_INITIAL_HEADROOM_MV, 20) * 20;
-	target_mv = clamp(target_mv, 8200, 10500);
+	target_mv = sm5440_target_mv(battery_uv);
 	target_ma = max(SM5440_INITIAL_PPS_MA,
 			DIV_ROUND_UP(DIV_ROUND_UP(15000000, target_mv),
 				     50) * 50);
@@ -394,7 +415,27 @@ static void sm5440_work(struct work_struct *work)
 	 * seconds and the resulting VBUS step tripped REVBLK.
 	 */
 	if (++sm->pps_ticks >= 2) {
+		int want;
+
 		sm->pps_ticks = 0;
+
+		/*
+		 * Re-aim at the pack before each refresh.  Sending the voltage
+		 * chosen at start over and over is what made the current decay:
+		 * the pack rises as it charges, the headroom above twice it
+		 * shrinks, and the pump eventually cannot hold the ratio and
+		 * drops out.  Measured on the way down: 1047 mA, 995, 1050, 775,
+		 * then CHG_ON clear with the bus at 8334 mV against a 3840 mV
+		 * pack.  Twenty millivolts is the adapter's own step size, so
+		 * anything smaller would be asking for a change it cannot make.
+		 */
+		want = sm5440_psy_get(sm->battery, POWER_SUPPLY_PROP_VOLTAGE_NOW);
+		if (want > 0) {
+			want = sm5440_target_mv(want);
+			if (abs(want - sm->target_mv) >= 20)
+				sm->target_mv = want;
+		}
+
 		ret = sm5440_refresh_pps(sm);
 		if (ret) {
 			dev_warn(sm->dev, "failed to refresh PPS: %d\n", ret);
@@ -419,10 +460,29 @@ static void sm5440_work(struct work_struct *work)
 	    !(op_mode & SM5440_CNTL5_CHG_ON) ||
 	    !(status3 & SM5440_STATUS3_VBUSPOK) ||
 	    vbus > 10800 || vbat > 4450 || die_temp >= 1100) {
+		/*
+		 * The part clears CHG_ON on its own and the reason is latched in
+		 * the interrupt registers, which until now were only read once at
+		 * init.  Two stops with opposite electrics -- one at 1085 mA and
+		 * one at zero -- are not going to be told apart by guessing, so
+		 * read the latches here and say what the hardware complained
+		 * about.  They clear on read, which is why this happens once, at
+		 * the point of failure.
+		 */
+		int int1, int2, int3, int4, status1;
+
+		int1 = i2c_smbus_read_byte_data(sm->client, 0x00);
+		int2 = i2c_smbus_read_byte_data(sm->client, 0x01);
+		int3 = i2c_smbus_read_byte_data(sm->client, 0x02);
+		int4 = i2c_smbus_read_byte_data(sm->client, 0x03);
+		status1 = i2c_smbus_read_byte_data(sm->client, SM5440_REG_STATUS1);
+
 		dev_warn(sm->dev,
 			 "stopping direct charge: cap=%d temp=%d mode=%#x "
-			 "st3=%#x vbus=%d ibus=%d vbat=%d die=%d\n",
-			 capacity, pack_temp, op_mode, status3,
+			 "st1=%#x st3=%#x int=%#x/%#x/%#x/%#x "
+			 "vbus=%d ibus=%d vbat=%d die=%d\n",
+			 capacity, pack_temp, op_mode, status1, status3,
+			 int1, int2, int3, int4,
 			 vbus, ibus, vbat, die_temp);
 		sm5440_restore_switching(sm);
 		delay = msecs_to_jiffies(SM5440_RETRY_MS);
@@ -510,6 +570,43 @@ static int sm5440_probe(struct i2c_client *client)
 	return 0;
 }
 
+static int sm5440_suspend(struct device *dev)
+{
+	struct sm5440_direct *sm = dev_get_drvdata(dev);
+
+	/*
+	 * The poll loop talks I2C once a second, and system suspend tears the
+	 * bus down underneath it.  Left running it produced "Transfer while
+	 * suspended" on both this device and the PD controller next to it, and
+	 * the failed transfers took the whole USB-PD contract with them: the
+	 * port dropped to a 5 V DCP fallback and stayed there.  The panel's
+	 * cold-boot recovery suspends at about 21 s into every boot, which is
+	 * exactly when the charger is negotiating, so this was not a rare race.
+	 *
+	 * Handing the battery back to the switching charger first is the safe
+	 * order.  The pump's own watchdog would drop it within thirty seconds
+	 * anyway once nothing services it, and coming back through the normal
+	 * eligibility check on resume is cheaper than trying to prove what the
+	 * hardware did while nobody was watching.
+	 */
+	if (sm->active)
+		sm5440_restore_switching(sm);
+	cancel_delayed_work_sync(&sm->work);
+
+	return 0;
+}
+
+static int sm5440_resume(struct device *dev)
+{
+	struct sm5440_direct *sm = dev_get_drvdata(dev);
+
+	schedule_delayed_work(&sm->work, msecs_to_jiffies(SM5440_RETRY_MS));
+
+	return 0;
+}
+
+static DEFINE_SIMPLE_DEV_PM_OPS(sm5440_pm_ops, sm5440_suspend, sm5440_resume);
+
 static const struct of_device_id sm5440_of_match[] = {
 	{ .compatible = "siliconmitus,sm5440" },
 	{ }
@@ -520,6 +617,7 @@ static struct i2c_driver sm5440_driver = {
 	.driver = {
 		.name = "sm5440-direct",
 		.of_match_table = sm5440_of_match,
+		.pm = pm_sleep_ptr(&sm5440_pm_ops),
 	},
 	.probe = sm5440_probe,
 };

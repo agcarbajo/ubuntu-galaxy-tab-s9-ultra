@@ -2287,3 +2287,92 @@ que hizo falta un reinicio. Con eso, correcto en las cuatro orientaciones.
 Vale la pena retener que **esta parte es userspace**: va en el paquete de
 dispositivo, no en el kernel, así que iterar aquí cuesta un minuto y no obliga a
 reflashear.
+
+## Sesión 24 — la carga lenta eran tres fallos encadenados
+
+Fecha: 2026-08-07.
+
+La dueña reportó que la tablet cargaba muy despacio con el cargador oficial de
+45 W. Medido al empezar: **4,7 W** entrando a la batería, y un 1 % cada siete
+minutos. El cargador anunciaba 5V/3A, 9V/3A, 15V/3A, 20V/2,25A y **PPS hasta
+11 V a 5 A**; nosotros negociábamos 9 V a 1,66 A.
+
+### El SM5440 estaba ahí, y su driver también
+
+Ni el chip ni el driver faltaban: `0-0063 -> sm5440`, «direct charger device ID
+0x21», y `sm5440_direct.c` ya sabía pedir PPS, refrescarlo y volver al cargador
+conmutado. El fallo no era de ausencia sino de comportamiento.
+
+### Primero: I2C durante la suspensión, que tumbaba el puerto entero
+
+```
+i2c i2c-0: Transfer while suspended     ← el SM5440
+i2c i2c-4: Transfer while suspended     ← y detrás el controlador PD
+```
+
+El lazo de sondeo de un segundo se ejecutaba durante la suspensión del sistema,
+y las transferencias fallidas **se llevaban por delante el contrato USB-PD**: el
+puerto caía a 5 V de DCP y se quedaba ahí. No era una carrera rara — la
+recuperación en frío del panel suspende a los ~21 s de cada arranque, que es
+justo cuando el cargador está negociando.
+
+Es la misma lección de la sesión 9 con el pogo. Allí se pudo quitar el sondeo;
+aquí no, porque la carga directa necesita su lazo, así que se para alrededor de
+la suspensión devolviendo antes la batería al conmutado.
+
+### Segundo: no había lazo cerrado
+
+Con el PD ya estable se vio el siguiente: el driver calculaba la tensión
+objetivo **una vez al arrancar** y luego reenviaba siempre la misma. Según sube
+la batería, el margen sobre 2×Vbat se estrecha y la corriente se apaga sola:
+
+```
+ibus: 970 → 1047 → 995 → 1050 → 775 → se suelta
+```
+
+Ahora recalcula el objetivo antes de cada refresco, en pasos de 20 mV, que es la
+resolución del propio cargador.
+
+### Tercero: REVBLK, y el chip lo dijo por su boca
+
+Seguía soltándose, con firmas contradictorias —una parada con 1085 mA
+circulando y otra con cero— y sin periodo fijo. En vez de una tercera conjetura
+se añadió instrumentación: leer los cuatro pestillos de interrupción en el
+momento del fallo, que es cuando sirven porque se borran al leerlos.
+
+```
+int=0x0/0x0/0x2/0x0   →  INT3 bit 1
+```
+
+El orden de bits salió de las cadenas del `sm5440-charger.ko` de Samsung, en el
+orden del binario, y **se valida solo**: `VBUSPOK` cae en el bit 5, que es
+exactamente lo que ya definía nuestro driver. El bit 1 es **REVBLK**, bloqueo
+por corriente inversa.
+
+La causa: a 1,8 A el cargador y el cable ceden unos 400 mV, así que de los
+700 mV nominales de margen quedaban ~290 mV en el chip —vbus 8291-8332 contra un
+pack de 4003— y cualquier bajón invertía la corriente. **Subir la corriente fue
+lo que destapó esto**: a 1 A la caída era la mitad y sobraba margen.
+
+Margen a 1100 mV. Resultado: de tramos de 22-43 s a **más de 350 s seguidos**, y
+de 4,7 W a **~10 W** entrando a la batería, con la capacidad subiendo un 2 % en
+seis minutos.
+
+### Sobre el método
+
+Dos hipótesis propias cayeron por el camino —el margen de tensión y el perro
+guardián—, ambas deducidas de datos indirectos. La primera incluso se revirtió a
+propósito para no mezclar un arreglo demostrado con una inferencia sacada de
+lecturas que podían estar corruptas por el fallo de suspensión; resultó ir en la
+dirección correcta pero con el signo cambiado, y solo se recuperó cuando el
+hardware nombró la causa.
+
+Añadir instrumentación en lugar de probar una conjetura más fue lo que desatascó
+el asunto.
+
+### Lo que queda
+
+Los 45 W. Los topes actuales son del driver: 2200 mA de petición PPS y 1800 mA
+de límite de entrada. Subirlos exige cuidado porque **la caída del cable crece
+con la corriente**, que es precisamente lo que provocó el REVBLK: cada escalón
+de corriente se come más margen y acerca otra vez el borde.

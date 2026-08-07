@@ -1209,9 +1209,19 @@
  * and fwe enables flash writes, and the device reports position, pressure, tilt
  * and both buttons without either.
  *
- * The touchscreen properties are the same ones the Goodix node carries: the
- * digitiser grid runs the other way round from the panel in exactly the same
- * way, so both end up in one orientation for userspace.
+ * The same orientation properties as the Goodix node, and they are measured
+ * rather than assumed.  With the tablet in its native landscape, where the
+ * compositor applies no rotation of its own, the pen held on two opposite
+ * corners reads:
+ *
+ *   top-left      ABS_X   7 %   ABS_Y  97 %
+ *   bottom-right  ABS_X  92 %   ABS_Y   6 %
+ *
+ * so the long axis already counts left to right and only the short one runs
+ * backwards.  Dropping the inversion on the strength of how the pen behaved in
+ * portrait was a mistake: what is visible there is this transform *and* the
+ * compositor's rotation, and attributing the whole of it to the device tree
+ * broke the orientation that had been right all along.
  */
 &i2c3 {
 	clock-frequency = <400000>;
