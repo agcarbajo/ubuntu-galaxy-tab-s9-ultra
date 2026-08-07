@@ -2376,3 +2376,37 @@ Los 45 W. Los topes actuales son del driver: 2200 mA de petición PPS y 1800 mA
 de límite de entrada. Subirlos exige cuidado porque **la caída del cable crece
 con la corriente**, que es precisamente lo que provocó el REVBLK: cada escalón
 de corriente se come más margen y acerca otra vez el borde.
+
+### El lazo definitivo: regular sobre la corriente, no sobre la tensión
+
+Quedaba entender qué limitaba la corriente. No era ningún tope del driver: pedía
+2000 mA, el limitador del chip estaba en 1800 y solo circulaban 1300.
+
+El patrón sale de los propios datos. Un convertidor 2:1 de condensadores
+conmutados **se comporta como una resistencia**: la corriente la fija la
+diferencia entre la entrada y el doble del pack.
+
+| vbus | 2×vbat | ΔV | ibus | ΔV/I |
+|---|---|---|---|---|
+| 8623 | 8396 | 227 mV | 1321 mA | 0,172 Ω |
+| 8455 | 8228 | 227 mV | 1325 mA | 0,171 Ω |
+| 8291 | 8006 | 285 mV | 1720 mA | 0,166 Ω |
+| 8332 | 8006 | 326 mV | 1805 mA | 0,181 Ω |
+
+Cuatro puntos, 0,17 Ω constante. Subir los topes no habría servido de nada
+porque nunca se tocaban; lo que hacía falta era **empujar la tensión hasta que
+la corriente llegue**.
+
+Hay además un desajuste sin explicar entre lo que se pide al cargador y lo que
+el chip mide en su entrada: ~900 mV, y **crece cuando la corriente baja**, que
+descarta la caída de cable. El cable es el original y funciona bien en One UI.
+No hizo falta resolverlo: regulando sobre la corriente medida, la exactitud
+absoluta del ADC de tensión deja de importar. Queda anotado como pendiente, no
+como bloqueo.
+
+Resultado con la batería al 28 %: **18,8 W** entrando al pack, 4,76 A a 3,96 V,
+sin un solo corte en cinco minutos, chip a 43 °C y pack a 33,9 °C. La capacidad
+subió del 28 % al 32 % en cinco minutos.
+
+De 4,7 W a 18,8 W: **cuatro veces**, y el ritmo pasa de 1 % cada siete minutos a
+1 % cada minuto y cuarto.

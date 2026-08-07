@@ -50,8 +50,31 @@
 
 #define SM5440_POLL_MS			1000
 #define SM5440_RETRY_MS			30000
-#define SM5440_INITIAL_IBUS_MA		1800
-#define SM5440_INITIAL_PPS_MA		2000
+#define SM5440_INITIAL_IBUS_MA		3000
+
+/*
+ * What the loop aims for at the pump's input; the pack gets about twice this.
+ * The chip's own limit above is the hard ceiling and stays well clear of it.
+ */
+#define SM5440_TARGET_IBUS_MA		2200
+#define SM5440_IBUS_TOLERANCE_MA	150
+
+/*
+ * One PPS step is 20 mV.  Two per second, so a full swing across the useful
+ * range takes a few seconds: fast enough to follow a pack that is charging,
+ * slow enough not to chase the ADC's own noise.
+ */
+#define SM5440_VSTEP_MV			40
+
+/*
+ * How far above twice the pack the loop may push.  A switched-capacitor
+ * converter behaves like a resistor -- measured here at a very consistent
+ * 0.17 ohm across four operating points -- so this bounds the current as well
+ * as the ratio: 2000 mV of headroom is about 11 A, far past anything the
+ * thermal limits would allow to persist.
+ */
+#define SM5440_MAX_HEADROOM_MV		2000
+#define SM5440_INITIAL_PPS_MA		3000
 /*
  * Headroom above twice the pack, and it has to survive the cable.  At 1.8 A the
  * adapter and lead give up about 400 mV, so a nominal 700 left roughly 290 mV
@@ -295,7 +318,7 @@ static int sm5440_start(struct sm5440_direct *sm)
 	target_ma = max(SM5440_INITIAL_PPS_MA,
 			DIV_ROUND_UP(DIV_ROUND_UP(15000000, target_mv),
 				     50) * 50);
-	target_ma = min(target_ma, 2200);
+	target_ma = min(target_ma, 3000);
 
 	/*
 	 * Open the SM5714 switching path while VBUS is still at its safe fixed
@@ -431,9 +454,34 @@ static void sm5440_work(struct work_struct *work)
 		 */
 		want = sm5440_psy_get(sm->battery, POWER_SUPPLY_PROP_VOLTAGE_NOW);
 		if (want > 0) {
-			want = sm5440_target_mv(want);
-			if (abs(want - sm->target_mv) >= 20)
-				sm->target_mv = want;
+			int floor_mv = sm5440_target_mv(want);
+			int ceil_mv = min((want / 1000) * 2 +
+					  SM5440_MAX_HEADROOM_MV, 10500);
+			int measured = sm5440_adc_ibus_ma(sm);
+
+			/*
+			 * Aim at the current, not the voltage.  The chip's VBUS ADC
+			 * disagrees with what the adapter says it is producing by
+			 * hundreds of millivolts, and the gap grows as the current
+			 * falls, so it is not a cable drop and cannot be corrected
+			 * with a constant.  The current reading needs no such trust:
+			 * push the voltage until the current arrives.
+			 */
+			if (measured >= 0) {
+				if (measured < SM5440_TARGET_IBUS_MA -
+					       SM5440_IBUS_TOLERANCE_MA)
+					sm->target_mv += SM5440_VSTEP_MV;
+				else if (measured > SM5440_TARGET_IBUS_MA +
+						SM5440_IBUS_TOLERANCE_MA)
+					sm->target_mv -= SM5440_VSTEP_MV;
+			}
+
+			/*
+			 * The floor still tracks the pack: never ask for less than
+			 * twice it plus the headroom that keeps REVBLK away, however
+			 * little current the loop thinks it needs.
+			 */
+			sm->target_mv = clamp(sm->target_mv, floor_mv, ceil_mv);
 		}
 
 		ret = sm5440_refresh_pps(sm);
