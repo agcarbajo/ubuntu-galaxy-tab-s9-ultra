@@ -82,9 +82,9 @@ CONFIG_NETLINK_DIAG=y
 CONFIG_QCOM_SOCINFO=y
 
 # --- S Pen digitiser ---------------------------------------------------------
-# The Wacom EMR digitiser on SE3.  Both mainline candidates are built in: the
-# generic EMR driver is the one the device tree currently reaches, and the
-# W9000 driver is a second guess worth having available on the device rather
-# than one rebuild away.
-CONFIG_TOUCHSCREEN_WACOM_I2C=y
-CONFIG_TOUCHSCREEN_WACOM_W9000=y
+# This port's own driver for the Wacom EMR digitiser on SE3.  The two mainline
+# candidates were tried first and are deliberately left out: wacom_i2c reads the
+# query little-endian from the wrong offsets, and wacom_w9000 only covers the
+# W9002 and W9007A.  Carrying them would only make it ambiguous which driver a
+# future failure came from.
+CONFIG_TOUCHSCREEN_SAMSUNG_WACOM_W90XX=y

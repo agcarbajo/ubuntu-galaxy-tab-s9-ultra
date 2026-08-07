@@ -281,6 +281,26 @@ grep -q 'samsung_stm32_pogo.o' "$keyboard_dir/Makefile" || \
 	printf 'obj-$(CONFIG_KEYBOARD_SAMSUNG_STM32_POGO) += samsung_stm32_pogo.o\n' \
 		>> "$keyboard_dir/Makefile"
 
+touch_dir=$kernel_tree/drivers/input/touchscreen
+install -m 0644 "$drv/samsung_wacom_w90xx.c" \
+	"$touch_dir/samsung_wacom_w90xx.c"
+if ! grep -q 'TOUCHSCREEN_SAMSUNG_WACOM_W90XX' "$touch_dir/Kconfig"; then
+	cat >> "$touch_dir/Kconfig" <<'EOF'
+
+config TOUCHSCREEN_SAMSUNG_WACOM_W90XX
+	tristate "Samsung SM-X910 Wacom W90xx EMR digitiser"
+	depends on I2C
+	help
+	  Driver for the Wacom EMR digitiser behind the S Pen on Samsung's
+	  Galaxy Tab S9 Ultra.  Mainline's wacom_i2c cannot drive it: this
+	  controller answers big-endian from different offsets, and
+	  wacom_w9000 only covers the W9002 and W9007A.
+EOF
+fi
+grep -q 'samsung_wacom_w90xx.o' "$touch_dir/Makefile" || \
+	printf 'obj-$(CONFIG_TOUCHSCREEN_SAMSUNG_WACOM_W90XX) += samsung_wacom_w90xx.o\n' \
+		>> "$touch_dir/Makefile"
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------

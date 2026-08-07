@@ -2161,3 +2161,84 @@ delante.
 
 Nada de lo que ya funcionaba se ha tocado: cero líneas de error de I²C en todo
 el arranque, y pantalla, GPU, sensores y el controlador pogo intactos.
+
+## Sesión 23 — el S Pen escribe: driver propio, y tres defectos que la dueña encontró
+
+Fecha: 2026-08-07.
+
+### El formato del informe, decodificado de 5.200 fotogramas
+
+Con el bus levantado y un grabador de solo lectura corriendo, mover el lápiz
+bastó para capturar el protocolo. La cabecera fija `0d 03 11` que se veía en
+reposo no era el informe: los informes aparecen solo con el lápiz en rango.
+
+```
+[0]    estado: 0x80 en rango · 0x20 botón lateral · 0x10 punta · 0x01 siempre
+[1:2]  X          big endian        [7]   inclinación X (con signo)
+[3:4]  Y          big endian        [8]   inclinación Y (con signo)
+[5:6]  presión    big endian        [9]   distancia
+       bit15 marca el campo         [10]  contador de secuencia
+```
+
+Lo que hace el decodificado seguro no es que encaje, sino que cada campo se
+valida contra algo independiente: la presión es distinta de cero **exactamente**
+en los fotogramas con bit4 y cero en los otros 5.059; la inclinación Y recorre
+−63…21, que es el ±63 del árbol de Samsung; y no queda ni un bit sin explicar.
+
+El botón lateral necesitó una captura aparte, porque en la primera no se pulsó
+ni una vez. Aparecieron dos estados nuevos, `0xa1` y `0xb1`: bit5.
+
+### Driver propio, y por qué no valía ninguno de mainline
+
+`wacom_i2c` lee 19 bytes little-endian desde los offsets 3, 5 y 11; este chip
+responde big-endian desde el 17. Y falla **en silencio**: su probe devuelve el
+error de la consulta sin imprimir nada, así que un fallo es indistinguible de no
+haber casado, lo que despistó al principio. `wacom_w9000` solo cubre W9002 y
+W9007A. Se retiran los dos del kernel: conservarlos solo haría ambiguo de cuál
+viene un fallo futuro.
+
+### Tres defectos, todos encontrados usándolo
+
+La dueña probó y describió tres síntomas. Los tres eran reales y ninguno era el
+que yo habría mirado primero.
+
+**«Se ignoran los toques» y «deja de pillar el lápiz al mover rápido».** El
+mismo defecto: mi driver soltaba el lápiz ante cualquier fotograma sin el bit de
+rango, y el chip intercala cabeceras de estado y lecturas rotas entre los
+buenos. Medido: **75 pérdidas en quince minutos**. Descartando lo que no es un
+informe de lápiz y exigiendo tres fotogramas seguidos antes de creerse una
+salida de rango, **bajaron a cero**.
+
+**«El hover va con retraso, sobre todo al mover rápido».** Esa descripción era
+la pista: es la firma de una tasa de muestreo baja, no de un driver lento. El
+intervalo medía 25,0 ms a tres cifras, que son 40 Hz exactos, que es literalmente
+`COM_SAMPLERATE_40` de Samsung. Enviar `0x31` lo llevó a ~440 Hz de posiciones
+**distintas** —5.385 X nuevas en 5.637 paquetes, así que no son repeticiones—.
+Y la tasa **se revierte sola**, que es lo que `wez01` llama «samplerate state is
+%d, need to recovery», así que el driver la pide también en cada entrada en
+rango.
+
+**«Al rotar la pantalla el lápiz se queda girado 90º».** Aquí el instinto de
+mirar las propiedades de orientación era el equivocado: si la base estuviera
+mal, fallaría también sin rotar. La comparación con el táctil lo cerró en un
+vistazo: mismo árbol, mismas propiedades, pero `PROP=2` frente a `PROP=0`. Sin
+`INPUT_PROP_DIRECT`, libinput archiva el lápiz como tableta gráfica externa, que
+se mapea al escritorio entero y **deliberadamente** no sigue la orientación de
+la salida.
+
+### El arranque
+
+El primer intento no enganchaba: NACK a los 3,887 s. La alimentación es LDO13
+del PMIC B, compartida con el VCI del panel, y yo había decidido no declararla
+razonando que «el panel ya la mantiene encendida». Cierto en régimen
+permanente, falso durante el arranque, que es justo cuando el driver sondea.
+Declarada y encendida desde el driver, con reintentos, engancha a los 3,97 s sin
+que nadie haga nada.
+
+### Lo que queda
+
+Las partes 2 y 3 —acoplamiento y carga del lápiz, y los gestos por BLE—. El
+`wez01` de Samsung depende de `stm32_pogo_v3`, `hall_ic_notifier` y
+`usb_typec_manager`, y sus notificadores nombran `PEN_INSERT`, `PEN_REMOVE`,
+`PEN_CHARGING_STARTED` y `PEN_CHARGING_FINISHED`, así que esa parte pasa por el
+mismo sitio que la funda.

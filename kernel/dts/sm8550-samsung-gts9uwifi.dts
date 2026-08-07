@@ -1199,27 +1199,33 @@
  * it at wacom@56 on qupv3_se3_i2c, which is this bus: their SE numbering and
  * mainline's i2cN agree, as the pogo controller on SE15 already showed.
  *
- * The compatible looks odd on purpose.  Mainline's wacom_i2c carries no
- * of_match_table at all, only an i2c_device_id named "WAC_I2C_EMR", so the only
- * way to reach it from a device tree is the I2C core's fallback, which matches
- * a compatible's part after the vendor prefix against that table.
+ * Neither mainline Wacom driver can drive it, so this port carries its own;
+ * the reasons are in kernel/drivers/samsung_wacom_w90xx.c.
  *
- * AVDD is not declared: the driver has no supply handling, and the rail is
- * LDO13 of PMIC B, which the panel already holds up as its VCI.  Samsung's
- * pdct and fwe lines are likewise not wired here -- pdct is their pen-detect
- * shortcut and fwe enables flash writes, and neither belongs in a first
- * bring-up whose only question is whether the digitiser answers at all.
+ * AVDD is LDO13 of PMIC B, shared with the panel's VCI.  Letting the panel own
+ * it was not enough: the display comes up long after this probe, and the first
+ * attempt was answered with a NACK at 3.9 s for exactly that reason.  Samsung's
+ * pdct and fwe lines are still not wired -- pdct is their pen-detect shortcut
+ * and fwe enables flash writes, and the device reports position, pressure, tilt
+ * and both buttons without either.
+ *
+ * The touchscreen properties are the same ones the Goodix node carries: the
+ * digitiser grid runs the other way round from the panel in exactly the same
+ * way, so both end up in one orientation for userspace.
  */
 &i2c3 {
 	clock-frequency = <400000>;
 	status = "okay";
 
 	digitizer@56 {
-		compatible = "wacom,WAC_I2C_EMR";
+		compatible = "samsung,gts9u-wacom-w90xx";
 		reg = <0x56>;
+		avdd-supply = <&vreg_l13b_3p0>;
 		interrupts-extended = <&tlmm 154 IRQ_TYPE_LEVEL_LOW>;
 		pinctrl-names = "default";
 		pinctrl-0 = <&epen_irqs>;
+		touchscreen-inverted-x;
+		touchscreen-swapped-x-y;
 	};
 };
 
