@@ -2046,3 +2046,30 @@ determinista y lo que baila es el codificador BTF paralelo que
 `scripts/Makefile.btf` invoca con `-j$(JOBS)`. El detalle y el arreglo —sin
 aplicar, porque cambiaría el kernel a cambio de nada que hoy haga falta— están
 en las notas de desarrollo.
+
+### Una carrera propia, que se comió el servicio entero
+
+Al desplegar el kernel sin el requisito de funda, el servicio de restauración no
+llegó a ejecutarse: `ConditionResult=no` y ni una línea en el journal.
+
+La causa es un cambio de la sesión 20. La unidad llevaba
+`After=multi-user.target` **y** `WantedBy=multi-user.target`, con la idea de que
+corriera tarde para poder esperar a la funda sin retrasar el arranque. systemd
+no puede ordenar una unidad detrás del propio target que la arrastra: ignora esa
+ordenación sin avisar y la lanza junto a las demás, sobre los tres segundos. El
+driver engancha a los 3,9 s, así que
+`ConditionPathExists=/sys/bus/i2c/devices/6-002a/firmware_update` perdía la
+carrera y la unidad quedaba marcada como no aplicable. En silencio: una
+condición que falla no es un error.
+
+En la v0.16 y la v0.17 sí corrió, pero por suerte de carrera, no por diseño. La
+red de seguridad llevaba un día existiendo solo a ratos.
+
+La reparación tiene dos partes. La ordenación vuelve a `After=local-fs.target`,
+que además ya no cuesta nada: quitado el requisito de funda, el helper no tiene
+que esperar a nada. Y la espera por el dispositivo baja al helper, acotada a
+15 s y con mensaje, en vez de vivir como condición de systemd, donde perder una
+carrera no deja rastro.
+
+Verificado desde arranque en frío: `ConditionResult=yes`, la unidad arranca a
+las 04:57:16 y termina un segundo después con «controller already on V37».

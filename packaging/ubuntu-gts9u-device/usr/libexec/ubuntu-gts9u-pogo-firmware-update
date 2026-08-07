@@ -25,8 +25,22 @@ control=$device/firmware_update
 diagnostics=$device/diagnostics
 battery=/sys/class/power_supply/sm5714-battery
 
-[ -w "$control" ] || exit 0
 [ -r "$firmware" ] || exit 0
+
+# The driver binds around four seconds into the boot, and this unit can start
+# before that.  Asserting the controller's sysfs node as a systemd condition
+# instead was what silently skipped the whole restore on one boot: a condition
+# that loses a race just marks the unit as not applicable and says nothing.
+# Waiting here is bounded, and it reports what it decided.
+attempt=0
+while [ ! -w "$control" ] && [ "$attempt" -lt 15 ]; do
+	attempt=$((attempt + 1))
+	sleep 1
+done
+if [ ! -w "$control" ]; then
+	echo "ubuntu-gts9u-pogo: no controller after ${attempt}s; nothing to do" >&2
+	exit 0
+fi
 
 actual=$(sha256sum "$firmware" | cut -d' ' -f1)
 if [ "$actual" != "$expected" ]; then
