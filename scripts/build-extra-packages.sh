@@ -18,6 +18,10 @@ suite=${UBUNTU_SUITE:-noble}
 mirror=${UBUNTU_MIRROR:-http://ports.ubuntu.com/ubuntu-ports}
 
 fastfetch_ver=${FASTFETCH_VERSION:-2.66.0}
+# This port carries a patch, so the package must not claim to be the stock
+# upstream release: a plain "2.66.0" would compare equal to the archive's
+# and let an upgrade quietly drop the patch.
+fastfetch_pkgver=${fastfetch_ver}-gts9u1
 
 mkdir -p "$out"
 
@@ -73,11 +77,21 @@ echo 'build dependencies present'"
 
 # ---------------------------------------------------------------------------
 step "fastfetch $fastfetch_ver"
+
+# On ARM, fastfetch takes the CPU name from the device tree compatible and then
+# skips /proc/cpuinfo entirely, which on this tablet prints "sm8550".  The
+# kernel states "Qualcomm Snapdragon 8 Gen 2" in the conventional place; the
+# patch makes fastfetch look there first.  Copied into the chroot because the
+# repository lives on a path the chroot cannot see.
+install -m 0644 "$repo/packaging/patches/fastfetch-prefer-cpuinfo-model-name.patch" \
+	"$buildroot/tmp/fastfetch-prefer-cpuinfo-model-name.patch"
+
 run "cd /build 2>/dev/null || mkdir -p /build && cd /build
 rm -rf fastfetch stage-fastfetch
 git clone --quiet --depth 1 --branch $fastfetch_ver \
 	https://github.com/fastfetch-cli/fastfetch.git fastfetch
 cd fastfetch
+patch -p1 < /tmp/fastfetch-prefer-cpuinfo-model-name.patch
 cmake -S . -B output \
 	-DCMAKE_BUILD_TYPE=Release \
 	-DCMAKE_INSTALL_PREFIX=/usr \
@@ -110,7 +124,7 @@ mkdir -p "$pkgdir/DEBIAN"
 cp -a "$buildroot/build/stage-fastfetch/." "$pkgdir/"
 cat > "$pkgdir/DEBIAN/control" <<EOF
 Package: fastfetch
-Version: $fastfetch_ver
+Version: $fastfetch_pkgver
 Section: utils
 Priority: optional
 Architecture: arm64
@@ -127,5 +141,5 @@ find "$pkgdir" -type f -exec chmod 0644 {} +
 [ -d "$pkgdir/usr/bin" ] && find "$pkgdir/usr/bin" -type f -exec chmod 0755 {} +
 find "$pkgdir" -exec touch -h -d '@0' {} +
 dpkg-deb --root-owner-group --build "$pkgdir" \
-	"$out/fastfetch_${fastfetch_ver}_arm64.deb" >/dev/null
-echo "built fastfetch_${fastfetch_ver}_arm64.deb"
+	"$out/fastfetch_${fastfetch_pkgver}_arm64.deb" >/dev/null
+echo "built fastfetch_${fastfetch_pkgver}_arm64.deb"

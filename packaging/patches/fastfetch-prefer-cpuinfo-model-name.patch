@@ -1,0 +1,36 @@
+Prefer the kernel's own SoC name over the device tree compatible
+
+On ARM, fastfetch fills the CPU name from /sys/firmware/devicetree/base/
+compatible before it ever looks at /proc/cpuinfo, and the rest of the
+detection is skipped once the name is set.  On this tablet that produces
+"sm8550": correct as a driver binding string, useless as a name.
+
+The kernel here reports "Qualcomm Snapdragon 8 Gen 2" in the "model name"
+line of /proc/cpuinfo, which is the conventional place every other tool
+looks.  Consult it first and keep the device tree as the fallback it was
+meant to be.
+
+--- a/src/detection/cpu/cpu_linux.c	2026-08-07 04:15:10.962828880 +0200
++++ b/src/detection/cpu/cpu_linux.c	2026-08-07 04:15:10.962828880 +0200
+@@ -838,6 +838,21 @@
+         return;
+     }
+ 
++    // A kernel that states the SoC's name outright beats a device tree
++    // compatible.  "qcom,sm8550" is the string drivers match on; "Qualcomm
++    // Snapdragon 8 Gen 2" is what the chip is called and what a person asked
++    // to see.  x86 has always had this line and every tool reads it, so when
++    // an arm64 kernel fills it in too it should win here as well.
++    {
++        FF_STRBUF_AUTO_DESTROY cpuinfo = ffStrbufCreateA(PROC_FILE_BUFFSIZ);
++        if (ffReadFileBuffer(FF_CPUINFO_PATH, &cpuinfo) &&
++            ffParsePropLines(cpuinfo.chars, "model name :", &cpu->name) &&
++            cpu->name.length > 0)
++        {
++            return;
++        }
++    }
++
+     // [x-vendor,x-model\0]*N
+     char content[512];
+     ssize_t length = ffReadFileData("/sys/firmware/devicetree/base/compatible", ARRAY_SIZE(content), content);
