@@ -14,54 +14,56 @@ software, and later Vulkan/Turnip-based gaming stacks, become usable.
 
 ## Status
 
-Ubuntu boots on the tablet. Milestones 1 to 3 are done: the build is
-reproducible from source, the system reaches a GNOME desktop on the native
-panel, and display, GPU, touch, buttons, Wi-Fi, battery, lid wake, audio, USB
-host and DisplayPort have all been confirmed on hardware. The current
-reproducible release is **v0.16**, built from a clean tree.
+Ubuntu boots and is usable as a desktop tablet: GNOME on the native panel, with
+display, GPU, touch, audio, Wi-Fi, Bluetooth, sensors, USB host, DisplayPort and
+the pogo keyboard all confirmed on the physical hardware. The current
+reproducible release is **v0.17**, built from a clean tree.
 
-Bluetooth/A2DP and automatic rotation are also working. The sensor startup race
-and the repeated ADSP handover IRQ are fixed reproducibly. The Samsung EF-DX920
-pogo keyboard types: it needs the V37 application on the tablet's STM32
-controller, which this release restores by itself on the first boot after an
-install. A controller left on V34 — which booting One UI or Ubuntu Touch appears
-to cause — boots normally and never announces the keyboard protocol, which is
-what made this look for several sessions like a wiring or timing fault. A
-rollback build of the postmarketOS v1.71 baseline is kept outside Git.
+Evidence level per component, what is still inherited from the postmarketOS
+baseline rather than proven under Ubuntu, and the open problems are in
+[docs/hardware-status.md](docs/hardware-status.md). A rollback build of the
+postmarketOS v1.71 baseline is kept outside Git.
 
-See [docs/hardware-status.md](docs/hardware-status.md) for what is inherited,
-what has been proven under Ubuntu, and what is still assumed.
-
-## Hardware support
-
-Nothing below is claimed for Ubuntu until it has been observed on the physical
-tablet. The "postmarketOS" column records the validated baseline that this
-port is expected to reproduce.
-
-| Component | postmarketOS v1.71 | Ubuntu 24.04 |
+| Component | Status | Notes |
 |---|---|---|
-| Display 2960×1848@120 (DSI + DSC + TE) | ✅ | ✅ |
-| GPU Adreno 740 (Mesa/Freedreno/Turnip) | ✅ | ✅ |
-| Desktop (GNOME/Wayland) | ✅ | ✅ |
-| Touchscreen (Goodix GT9916) | ✅ | ✅ |
-| Buttons (power, volume) | ✅ | ✅ |
-| microSD rootfs | ✅ | ✅ |
-| Wi-Fi (WCN7850 / ath12k) | ✅ | ✅ |
-| Speakers (4× CS35L45) and DMIC | ✅ | ✅ |
-| Battery telemetry | ✅ | ✅ |
-| Suspend / resume, lid wake | ✅ | ✅ |
-| USB host | ✅ | ✅ |
-| USB-C DisplayPort | ✅ | ✅ |
-| Bluetooth + A2DP | ✅ | ✅ |
-| USB-PD/PPS charging | 🟡 | ⏳ not tested |
-| USB gadget / RNDIS | ✅ | ⏳ not tested |
-| Ethernet (RTL8153) / UAS | 🟡 / ❓ | ⏳ not tested |
-| Motion sensors and autorotation | ✅ | ✅ |
-| Ambient light (STK31610) | ❌ | ❌ |
-| Pogo keyboard (EF-DX920) | ❌ | ✅ needs V37 on the controller; restored automatically |
-| S Pen, fingerprint, haptics | ❌ | ❌ |
-| Speaker protection DSP | ❌ | ❌ |
-| Flash / cameras | ❌ | ❌ |
+| **Display** | ✅ | 2960×1848 at 120 Hz, DSI + DSC + TE, native panel |
+| **Desktop** | ✅ | GNOME 46 on Wayland with GDM3, stock Ubuntu packages |
+| **GPU** | ✅ | Adreno 740 through Mesa (Freedreno/Turnip); no Android graphics stack |
+| **Touchscreen** | ✅ | Goodix Berlin / GT9916, Samsung 16-byte event layout |
+| **Buttons** | ✅ | Power and volume; a short press on power suspends |
+| **Keyboard cover** | ✅ | Samsung EF-DX920 pogo keyboard |
+| **Cover / lid switch** | ✅ | Closing the cover blanks the screen |
+| **Wi-Fi** | ✅ | WCN7850 / ath12k, official firmware and the QRD board data |
+| **Bluetooth** | ✅ | Controller and A2DP, with the tablet's own address from the Samsung EFS |
+| **Speakers / microphones** | ✅ | Four CS35L45 and the digital microphones, natively through PipeWire |
+| **Motion sensors** | ✅ | Accelerometer, gyroscope, compass and autorotation via the SSC DSP |
+| **Battery** | ✅ | SM5714 telemetry: percentage, voltage, current and pack temperature |
+| **Suspend / resume** | ✅ | Deep suspend, validated with the cover |
+| **USB host** | ✅ | HID and storage, with and without external power |
+| **USB-C DisplayPort** | ✅ | Video output confirmed |
+| **Audio/sensor DSPs** | ✅ | ADSP and SSC both reach `running`; prerequisite for audio and sensors |
+| **Package management** | ✅ | A stock Ubuntu userspace: `apt`, PPAs and snaps all work |
+| **SSH over Wi-Fi** | ✅ | Used for development throughout |
+| **Storage** | 🟡 | Root filesystem on microSD; the internal UFS carries only the boot partitions |
+| **Backlight** | ❔ | Inherited from postmarketOS, not re-validated here. Automatic brightness works on no distribution |
+| **Charging (USB-PD/PPS)** | ❔ | SM5714 TCPM and SM5440; inherited, not re-validated |
+| **USB gadget / RNDIS** | ❔ | Inherited, not re-validated |
+| **Ethernet (RTL8153)** | ❔ | Enumerates and loads firmware; real link and traffic untested |
+| **Waydroid** | ❔ | Never tried |
+| **Ambient light** | ❌ | STK31610 is discovered by the SSC but emits no lux |
+| **Speaker protection** | ❌ | Cirrus protection firmware not loaded; hardware volume kept conservative |
+| **S Pen** | ❌ | Wacom digitiser not brought up |
+| **Fingerprint** | ❌ | No mainline driver for the EgisTec sensor |
+| **Vibration / haptics** | ❌ | Hardware not identified |
+| **Flash / cameras** | ❌ | Not started |
+| **Modem** | — | Not applicable to the Wi-Fi-only model |
+
+✅ tested on the physical tablet · 🟡 partially working · ❌ known not to work
+or not integrated · ❔ not tested yet · — not applicable
+
+Every ✅ entry was observed on the physical tablet. A driver merely binding is
+not considered proof that a subsystem works, and nothing is marked ✅ because it
+works under another operating system on the same hardware.
 
 ## Installing
 
@@ -76,6 +78,20 @@ Installation has two manual steps, exactly as in the postmarketOS baseline:
 The build tooling never writes to a partition or to a card. The exact boot
 chain, safe iteration procedure and recovery paths are in
 [docs/boot-strategy.md](docs/boot-strategy.md).
+
+### The microSD is the starting point, not the destination
+
+Installing to a card was chosen because it leaves the tablet's own storage
+alone: nothing on the internal UFS is written except the boot partitions, so
+going back to One UI is an Odin flash and nothing else. That safety is worth a
+lot while a port is still moving, but it costs speed and it makes a removable
+card a single point of failure.
+
+The intent is to move the root filesystem onto the **internal UFS**, and
+ideally to install it **alongside Android rather than instead of it**, so the
+tablet can dual boot. Neither is implemented, and neither is promised here;
+they are the direction, and the boot chain has been kept deliberately close to
+Samsung's so that the move stays possible.
 
 ### The pogo keyboard needs one thing after a fresh install
 
