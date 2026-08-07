@@ -2242,3 +2242,48 @@ Las partes 2 y 3 —acoplamiento y carga del lápiz, y los gestos por BLE—. El
 `usb_typec_manager`, y sus notificadores nombran `PEN_INSERT`, `PEN_REMOVE`,
 `PEN_CHARGING_STARTED` y `PEN_CHARGING_FINISHED`, así que esa parte pasa por el
 mismo sitio que la funda.
+
+### La rotación del lápiz no estaba en el kernel, y la pista la dio el dedo
+
+Con el driver funcionando, la dueña encontró que el lápiz no seguía la rotación
+de la pantalla. Costó tres iteraciones porque **estuve mirando donde no era**.
+
+El error de método: ella describía el fallo **en vertical**, donde lo que se ve
+es la transformación del driver *más* la del compositor. Atribuí la diferencia
+entera al árbol de dispositivos, quité `touchscreen-inverted-x` y rompí el
+horizontal, que llevaba bien desde el principio.
+
+La medida que había que hacer desde el primer momento es en la orientación
+nativa, donde el compositor no rota nada. Dos esquinas opuestas con el lápiz:
+
+```
+superior izquierda   ABS_X   7 %   ABS_Y  97 %
+inferior derecha     ABS_X  92 %   ABS_Y   6 %
+```
+
+`ABS_X` crece de izquierda a derecha; `ABS_Y` decrece de arriba a abajo. Luego
+la configuración original —invertir X y luego intercambiar— era correcta, y una
+sola esquina no habría bastado para saberlo: distingue mal entre «el eje está
+invertido» y «me he equivocado al interpretar qué esquina es».
+
+La pista buena la dio ella: **el táctil giraba bien en todas las orientaciones**.
+Eso descarta el compositor y señala lo único que el dedo y el lápiz no comparten:
+
+- un **táctil** se calibra contra su salida, y GNOME le aplica la matriz sin
+  consultar nada más;
+- una **tableta** se *asigna* a una salida, y para saber a cuál —o si le toca
+  alguna— GNOME pregunta a **libwacom**.
+
+Nuestro digitalizador no estaba en su base de datos. Una tableta desconocida se
+asume externa, y una tableta externa **deliberadamente** no sigue la orientación
+de la pantalla: es lo correcto para una Intuos sobre la mesa y justo lo
+contrario cuando la tableta *es* la pantalla.
+
+La entrada `samsung-gts9u-spen.tablet` lo dice en una línea,
+`IntegratedIn=Display;System`, y libwacom pasó a devolver `integration flags=0x3`.
+No bastó con reenlazar el driver: el compositor lee esa base al arrancar, así
+que hizo falta un reinicio. Con eso, correcto en las cuatro orientaciones.
+
+Vale la pena retener que **esta parte es userspace**: va en el paquete de
+dispositivo, no en el kernel, así que iterar aquí cuesta un minuto y no obliga a
+reflashear.

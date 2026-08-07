@@ -1,0 +1,37 @@
+# Samsung Galaxy Tab S9 Ultra (SM-X910), S Pen
+#
+# The Wacom W90xx EMR digitiser sits under the panel and is reached over I2C at
+# address 0x56 by this port's samsung_wacom_w90xx driver.
+#
+# This file exists because of what happens without it.  GNOME asks libwacom
+# what a tablet is, and a tablet libwacom does not recognise is assumed to be
+# an external one; external tablets are mapped to the desktop and deliberately
+# do not follow the screen's orientation.  The symptom was a pen that stayed
+# where it was while the display rotated, correct in the panel's native
+# landscape and ninety degrees out in portrait, while the Goodix touchscreen
+# beside it rotated correctly the whole time -- because a touchscreen is
+# calibrated against its output rather than mapped to one, and never goes
+# through libwacom at all.
+#
+# IntegratedIn=Display is the line that matters.  The rest is description.
+#
+# Width and Height are inches: the panel is 14.6 in diagonal at 2960 x 1848,
+# which is 12.4 by 7.7.
+#
+# Touch=false is deliberate.  The finger digitiser is a separate Goodix
+# controller with its own driver and its own input device; claiming it here
+# would make GNOME look for touch on the pen.
+
+[Device]
+Name=Samsung Galaxy Tab S9 Ultra S Pen
+ModelName=EJ-PX910
+DeviceMatch=i2c:056a:0000
+Class=ISDV4
+Width=12
+Height=8
+IntegratedIn=Display;System
+Styli=@generic-no-eraser;
+
+[Features]
+Stylus=true
+Touch=false
