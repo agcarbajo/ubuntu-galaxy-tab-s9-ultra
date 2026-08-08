@@ -57,7 +57,7 @@ sondea» como prueba de funcionamiento.
 | Carga USB-PD/PPS | 🟡 | ⏳ | heredado | SM5714 TCPM + SM5440 2:1; a batería baja sigue sin revalidar |
 | Suspensión profunda | ✅ | ✅ | confirmado | Probada mediante la funda |
 | Funda / Hall `SW_LID` | ✅ | ✅ | confirmado | Cerrar apaga la pantalla |
-| Acelerómetro y autorrotación | ✅ | ✅ | medido | SSC expuesto a GNOME. `iio-sensor-proxy` ya no gira: la espera síncrona de libssc bloquea en `poll()` en vez de iterar el contexto sin bloquear. 1 tick/2 s frente a 199, y 48,9 °C frente a 94,7 |
+| Acelerómetro y autorrotación | ✅ | ✅ | confirmado | SSC expuesto a GNOME. `iio-sensor-proxy` ya no gira: la espera síncrona de libssc bloquea en `poll()` en vez de iterar el contexto sin bloquear. 1 tick/2 s frente a 199, y 48,9 °C frente a 94,7. La usuaria confirmó girando la tablet que la rotación sigue bien tras el cambio |
 | Giroscopio y brújula LSM6DSO | ✅ | ✅ | medido | El mismo canal SSC; `monitor-sensor` sigue el rumbo de la brújula |
 | USB gadget / RNDIS | ✅ | ⏳ | heredado | |
 | USB host, HID y almacenamiento | ✅ | ✅ | confirmado | Con y sin alimentación externa |
