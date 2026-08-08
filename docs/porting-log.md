@@ -2572,3 +2572,80 @@ El sustituto, `work/flash-boot-password.sh`, usa contraseña y ejecuta el payloa
 desde un fichero por ruta, conservando las comprobaciones que importan: sha de
 la imagen subida, exigir que el destino resuelva a `/dev/sd*`, y releer la
 partición para compararla.
+
+## Sesión 27 — 25 W: el techo estaba en lo que pedíamos, no en lo que empujábamos
+
+Fecha: 2026-08-08.
+
+Con el bucle de sensores fuera, tocaba reintentar la carga. La sesión 24 había
+dejado 18,8 W y una nota diciendo que 3200 mA de objetivo hundieron el bus, que
+2200 era «prudencia, no un límite medido», y que convenía reintentarlo con
+batería baja y el cargador recién enchufado. Se dieron las tres condiciones:
+batería al 6 %, cargador oficial de 45 W recién conectado, y nada pinando un
+núcleo.
+
+Primer dato, gratis: **19,4-20,9 W** sin tocar nada. El bucle de
+`iio-sensor-proxy` valía casi dos vatios.
+
+### El barrido que no movía nada
+
+Para no gastar un ciclo de compilar-flashear-reiniciar por escalón, se expuso
+`SM5440_TARGET_IBUS_MA` como parámetro escribible. El barrido salió plano:
+`ibus` 2587, 2596, 2600 mA con el objetivo en 2200, 2600 y 2800. Un lazo que no
+reacciona a su consigna está saturado en otro sitio.
+
+Forzándolo a 3400 la petición sí subió —`in0_input` a 9860 mV— pero **bajaron a
+la vez tensión y corriente**, hasta 1867 mA. Eso no es un lazo flojo: es una
+fuente plegándose porque ya está en su límite.
+
+Aquí hubo que retirar una interpretación propia: la diferencia entre lo pedido
+y lo medido parecía 0,55 Ω de resistencia serie, pero **crece cuando baja la
+corriente**, que es lo contrario de lo que hace una resistencia. El propio
+driver ya advertía de que el ADC de `vbus` del chip se desvía así.
+
+### Lo que sí era
+
+```c
+target_ma = min(target_ma, 3000);
+```
+
+La corriente del contrato PPS, fijada. `dmesg` lo llevaba diciendo desde el
+arranque: `direct charge started: PPS 8760 mV/3000 mA`. El adaptador anuncia
+5 A, TCPM no añade tope propio, y el suelo que el lazo pedía ya quería ~4,1 A.
+Pedíamos 3 A y nos daban 2,9.
+
+Dos detalles hicieron falta para que el knob equivalente sirviese: el
+`max(SM5440_INITIAL_PPS_MA, …)` de delante habría dejado el resultado en 3000
+igualmente, y el refresco periódico es el único sitio que reenvía la corriente,
+así que hay que recalcularla ahí para que el cambio surta efecto sobre la
+sesión viva.
+
+### Resultado
+
+| contrato | pack | ibus | vbus | die |
+|---|---|---|---|---|
+| 3000 mA | 21,4 W | 2601 mA | 8556 mV | 45,5 °C |
+| 3200 mA | 22,8 W | 2864 mA | 8611 mV | 46,5 °C |
+| **3400 mA** | **25,0 W** | 2960 mA | 8652 mV | 48,5 °C |
+| 3600 mA | 24,2 W | 3141 mA | 8801 mV | 54,0 °C |
+| 3800 mA | 24,2 W | 3128 mA | 8780 mV | 55,0 °C |
+| 4000 mA | 24,2 W | 3167 mA | 8835 mV | 55,0 °C |
+
+Por encima de 3400 sube `ibus` y no la potencia: pérdida en la bomba, pagada en
+seis grados de die. Soak de cinco minutos a 3400: **25,2-25,5 W** planos, die
+49,5 °C, pack 36,4 °C, del 45 % al 49 % de batería.
+
+De 18,8 a 25,2 W. Queda por ver si a batería más baja da más, que es la
+condición que se gastó cargando mientras compilaba.
+
+### Sobre parar a tiempo
+
+A mitad de camino se llegó a la conclusión de que subir de 3 A exigía probar el
+cable por SOP', y que sin `port0-cable` ni VCONN no era legítimo. Media
+conclusión estaba mal: siendo *sink* y *UFP*, quien interroga al cable es el
+cargador, no la tablet, así que la ausencia de esos nodos es normal en este rol
+y no prueba nada sobre el cable.
+
+Lo que sí se sostiene es la parte de fondo, y por eso el knob se queda con
+bandas y con el aviso en el comentario: el que es de 5 A es *este* cable, y por
+encima de 3 A lo que está en riesgo es el conector, no el silicio.

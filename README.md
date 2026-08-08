@@ -39,6 +39,7 @@ postmarketOS v1.71 baseline is kept outside Git.
 | **Speakers / microphones** | ✅ | Four CS35L45 and the digital microphones, natively through PipeWire |
 | **Motion sensors** | ✅ | Accelerometer, gyroscope, compass and autorotation via the SSC DSP, at idle CPU cost |
 | **Battery** | ✅ | SM5714 telemetry: percentage, voltage, current and pack temperature |
+| **Charging (USB-PD/PPS)** | ✅ | 25 W into the pack over PPS with the SM5440 2:1 pump, sustained and thermally flat |
 | **Suspend / resume** | ✅ | Deep suspend, validated with the cover |
 | **USB host** | ✅ | HID and storage, with and without external power |
 | **USB-C DisplayPort** | ✅ | Video output confirmed |
@@ -47,7 +48,6 @@ postmarketOS v1.71 baseline is kept outside Git.
 | **SSH over Wi-Fi** | ✅ | Used for development throughout |
 | **Storage** | 🟡 | Root filesystem on microSD; the internal UFS carries only the boot partitions |
 | **Backlight** | ❔ | Inherited from postmarketOS, not re-validated here. Automatic brightness works on no distribution |
-| **Charging (USB-PD/PPS)** | ❔ | SM5714 TCPM and SM5440; inherited, not re-validated |
 | **USB gadget / RNDIS** | ❔ | Inherited, not re-validated |
 | **Ethernet (RTL8153)** | ❔ | Enumerates and loads firmware; real link and traffic untested |
 | **Waydroid** | ❔ | Never tried |

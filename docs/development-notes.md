@@ -304,6 +304,65 @@ que los descarta es userspace; si no llegan, es el Goodix y el lápiz no pinta
 nada. La herramienta está validada contra un toque real, para que un «0
 contactos» signifique algo.
 
+## La carga no la limitaba el lazo, la limitaba lo que pedíamos en el contrato
+
+Durante dos sesiones se buscó el techo de carga en el sitio equivocado. El
+comentario de `SM5440_TARGET_IBUS_MA` decía que 3200 había hundido el bus y que
+2200 era «prudencia, no un límite medido», así que lo natural era volver a
+subir ese objetivo. **No sirve de nada**, y ahora se sabe por qué.
+
+Con `TARGET_IBUS_MA` en 2200, 2600 y 2800, la `ibus` medida no se movía: 2587,
+2596, 2600 mA. Y al forzarlo a 3400 la petición sí subió —`in0_input` llegó a
+9860 mV, casi el techo— pero bajaron **a la vez** la tensión y la corriente,
+que es la firma de una fuente plegándose, no de un lazo que no empuja.
+
+El motivo estaba dos líneas más allá, en `sm5440_start()`:
+
+```c
+target_ma = min(target_ma, 3000);
+```
+
+La corriente del **contrato PPS** estaba fijada a 3000 mA. `dmesg` lo decía
+desde el principio: `direct charge started: PPS 8760 mV/3000 mA`. La `ibus`
+topaba en 2895 porque el adaptador estaba en límite de corriente, y el suelo
+que el propio lazo pedía —unos 700 mV sobre `2×vbat`, que a 0,17 Ω son ~4,1 A—
+ya quería más de lo que teníamos derecho a tomar.
+
+TCPM no añadía ningún tope: `tcpm.c` recorta la petición contra lo que anuncia
+la fuente (`min(src_ma, req_op_curr)`), y ésta anuncia 5 A.
+
+Barrido en hardware, 41-44 % de carga, 20 s por escalón:
+
+| contrato | pack | ibus | vbus | die |
+|---|---|---|---|---|
+| 3000 mA | 21,4 W | 2601 mA | 8556 mV | 45,5 °C |
+| 3200 mA | 22,8 W | 2864 mA | 8611 mV | 46,5 °C |
+| **3400 mA** | **25,0 W** | 2960 mA | 8652 mV | 48,5 °C |
+| 3600 mA | 24,2 W | 3141 mA | 8801 mV | 54,0 °C |
+| 3800 mA | 24,2 W | 3128 mA | 8780 mV | 55,0 °C |
+| 4000 mA | 24,2 W | 3167 mA | 8835 mV | 55,0 °C |
+
+Por encima de 3400 la corriente de entrada sigue subiendo y la potencia
+entregada no: eso es pérdida en la bomba, y se paga en seis grados de die a
+cambio de nada. 3400 aguantó **25,2-25,5 W durante cinco minutos** con el die
+plano en 49,5 °C y el pack en 36,4 °C.
+
+Tres cosas que llevarse:
+
+- **Un lazo que no reacciona a su consigna está saturado en otro sitio.** La
+  señal fue que `ibus` no se movía entre 2200 y 2800; eso ya decía que el
+  objetivo no era el limitador, antes de tocar nada más.
+- **Pedir más tensión contra una fuente en límite de corriente la pliega.** Es
+  lo que se interpretó en su día como resistencia serie del cable. La caída
+  entre lo pedido y lo medido *crece cuando baja la corriente*, que es justo lo
+  contrario de lo que hace una resistencia — el propio driver ya lo advertía
+  del ADC de `vbus`.
+- **Diez minutos de compilación, no cuarenta.** Medido: `.config` a `boot.img`
+  en 10 min 38 s, 5269 objetos en 16 núcleos. Aun así conviene exponer lo que
+  se va a barrer como parámetro (`/sys/module/sm5440_direct/parameters/`): un
+  escalón pasa de once minutos más un reinicio a dos segundos, y el reinicio
+  además corta la carga y mueve las condiciones de la medida.
+
 ## Lo que no hay que repetir
 
 Heredado de postmarketOS; cada punto costó al menos una iteración física.

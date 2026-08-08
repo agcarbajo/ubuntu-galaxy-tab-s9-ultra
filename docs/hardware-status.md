@@ -54,7 +54,7 @@ sondea» como prueba de funcionamiento.
 | Altavoces 4× CS35L45 y DMIC | ✅ | ✅ | confirmado | PipeWire nativo, sin PulseAudio. Requiere el arranque tardío del ADSP y `protection-domain-mapper` |
 | Protección DSP de altavoces | ❌ | ❌ | supuesto | Firmware Cirrus sin cargar; volumen de hardware conservador |
 | Batería | ✅ | ✅ | confirmado | SM5714: porcentaje, voltaje, corriente y temperatura del pack |
-| Carga USB-PD/PPS | 🟡 | ⏳ | heredado | SM5714 TCPM + SM5440 2:1; a batería baja sigue sin revalidar |
+| Carga USB-PD/PPS | ✅ | ✅ | medido | SM5714 TCPM + SM5440 2:1. **25,2-25,5 W** sostenidos cinco minutos con el EP-T4510, die a 49,5 °C y pack a 36,4 °C. El techo lo ponía la corriente pedida en el contrato PPS, fijada a 3000 mA; barrida en hardware, el óptimo está en 3400 (por encima sube `ibus` y no la potencia, sólo el die). Ajustable en `/sys/module/sm5440_direct/parameters/pps_op_curr_ma` |
 | Suspensión profunda | ✅ | ✅ | confirmado | Probada mediante la funda |
 | Funda / Hall `SW_LID` | ✅ | ✅ | confirmado | Cerrar apaga la pantalla |
 | Acelerómetro y autorrotación | ✅ | ✅ | confirmado | SSC expuesto a GNOME. `iio-sensor-proxy` ya no gira: la espera síncrona de libssc bloquea en `poll()` en vez de iterar el contexto sin bloquear. 1 tick/2 s frente a 199, y 48,9 °C frente a 94,7. La usuaria confirmó girando la tablet que la rotación sigue bien tras el cambio |

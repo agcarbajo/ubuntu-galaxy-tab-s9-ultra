@@ -79,6 +79,36 @@
 #define SM5440_IBUS_TOLERANCE_MA	150
 
 /*
+ * Finding the real ceiling means changing this and measuring, and with the
+ * value baked in that is a kernel rebuild and a partition flash per step --
+ * forty minutes for one data point, on a pack that is charging the whole time,
+ * so the conditions have moved by the time the next step is ready.
+ *
+ * Expose it instead:
+ *
+ *	/sys/module/sm5440_direct/parameters/target_ibus_ma
+ *
+ * The bounds below are sanity, not policy.  Nothing here relaxes a guard: the
+ * loop still refuses to ask for less than twice the pack, still stops at
+ * 10.5 V, and still hands back to the switching charger on VBUSPOK, die
+ * temperature, pack temperature or capacity.  Raising this only changes what
+ * the loop aims for; whether the bus can deliver it is still measured.
+ */
+#define SM5440_TARGET_IBUS_MIN_MA	800
+#define SM5440_TARGET_IBUS_MAX_MA	4000
+
+static unsigned int target_ibus_ma = SM5440_TARGET_IBUS_MA;
+module_param(target_ibus_ma, uint, 0644);
+MODULE_PARM_DESC(target_ibus_ma,
+		 "pump input current the PPS loop aims for, in mA (default 2200; the pack gets about twice this)");
+
+static int sm5440_target_ibus(void)
+{
+	return clamp_t(int, target_ibus_ma, SM5440_TARGET_IBUS_MIN_MA,
+		       SM5440_TARGET_IBUS_MAX_MA);
+}
+
+/*
  * One PPS step is 20 mV.  Two per second, so a full swing across the useful
  * range takes a few seconds: fast enough to follow a pack that is charging,
  * slow enough not to chase the ADC's own noise.
@@ -94,6 +124,67 @@
  */
 #define SM5440_MAX_HEADROOM_MV		2000
 #define SM5440_INITIAL_PPS_MA		3000
+
+/*
+ * The operating current asked for in the PPS Request, and the real ceiling on
+ * this board.  It was 3000, and that was the whole limit: the pump settled at
+ * 2895 mA and stayed there whatever the regulation loop aimed for, because the
+ * adapter was in current limit and pushing the voltage from there only made it
+ * fold back.  The loop's own floor is about 700 mV above twice the pack, which
+ * at the measured 0.17 ohm is around 4.1 A, so the driver already wanted more
+ * than it was asking for.  TCPM adds no limit of its own -- it clamps the
+ * request to what the source advertises, and this one advertises 5 A.
+ *
+ * Swept on the hardware at 41-44 % charge, 20 s per step, EP-T4510 and its
+ * own cable:
+ *
+ *	contract  pack     ibus      vbus      die
+ *	3000 mA   21.4 W   2601 mA   8556 mV   45.5 C
+ *	3200 mA   22.8 W   2864 mA   8611 mV   46.5 C
+ *	3400 mA   25.0 W   2960 mA   8652 mV   48.5 C
+ *	3600 mA   24.2 W   3141 mA   8801 mV   54.0 C
+ *	3800 mA   24.2 W   3128 mA   8780 mV   55.0 C
+ *	4000 mA   24.2 W   3167 mA   8835 mV   55.0 C
+ *
+ * Above 3400 the input current still rises and the power delivered does not:
+ * that is loss in the pump, and it shows up as six degrees of die temperature
+ * bought for nothing.  3400 held 25.2-25.5 W for five minutes with the die
+ * flat at 49.5 C and the pack at 36.4 C.
+ *
+ * At that setting the measured input current sits right around 3 A
+ * (2950-3080), which is where an unmarked USB-C cable's rating ends.  It is
+ * not beyond it, and the adapter this was measured with ships a 5 A cable, but
+ * anyone reaching for more should note that the connector, not the silicon, is
+ * what the next step puts at risk.  Hence the knob stays:
+ *
+ *	/sys/module/sm5440_direct/parameters/pps_op_curr_ma
+ */
+#define SM5440_PPS_OP_CURR_DEFAULT_MA	3400
+#define SM5440_PPS_OP_CURR_MIN_MA	1000
+#define SM5440_PPS_OP_CURR_MAX_MA	5000
+
+static unsigned int pps_op_curr_ma = SM5440_PPS_OP_CURR_DEFAULT_MA;
+module_param(pps_op_curr_ma, uint, 0644);
+MODULE_PARM_DESC(pps_op_curr_ma,
+		 "operating current requested in the PPS contract, in mA (default 3400, the measured optimum; only raise it with a cable rated for more)");
+
+static int sm5440_pps_op_curr(void)
+{
+	return clamp_t(int, pps_op_curr_ma, SM5440_PPS_OP_CURR_MIN_MA,
+		       SM5440_PPS_OP_CURR_MAX_MA);
+}
+
+/*
+ * What to ask for in the Request, at a given bus voltage.  The knob decides,
+ * but never below the current the 15 W floor needs at that voltage, rounded to
+ * the 50 mA the PPS message can express.
+ */
+static int sm5440_request_ma(int target_mv)
+{
+	int floor_ma = DIV_ROUND_UP(DIV_ROUND_UP(15000000, target_mv), 50) * 50;
+
+	return max(sm5440_pps_op_curr(), floor_ma);
+}
 /*
  * Headroom above twice the pack, and it has to survive the cable.  At 1.8 A the
  * adapter and lead give up about 400 mV, so a nominal 700 left roughly 290 mV
@@ -334,10 +425,7 @@ static int sm5440_start(struct sm5440_direct *sm)
 		return battery_uv;
 
 	target_mv = sm5440_target_mv(battery_uv);
-	target_ma = max(SM5440_INITIAL_PPS_MA,
-			DIV_ROUND_UP(DIV_ROUND_UP(15000000, target_mv),
-				     50) * 50);
-	target_ma = min(target_ma, 3000);
+	target_ma = sm5440_request_ma(target_mv);
 
 	/*
 	 * Open the SM5714 switching path while VBUS is still at its safe fixed
@@ -487,10 +575,11 @@ static void sm5440_work(struct work_struct *work)
 			 * push the voltage until the current arrives.
 			 */
 			if (measured >= 0) {
-				if (measured < SM5440_TARGET_IBUS_MA -
-					       SM5440_IBUS_TOLERANCE_MA)
+				int target = sm5440_target_ibus();
+
+				if (measured < target - SM5440_IBUS_TOLERANCE_MA)
 					sm->target_mv += SM5440_VSTEP_MV;
-				else if (measured > SM5440_TARGET_IBUS_MA +
+				else if (measured > target +
 						SM5440_IBUS_TOLERANCE_MA)
 					sm->target_mv -= SM5440_VSTEP_MV;
 			}
@@ -501,6 +590,14 @@ static void sm5440_work(struct work_struct *work)
 			 * little current the loop thinks it needs.
 			 */
 			sm->target_mv = clamp(sm->target_mv, floor_mv, ceil_mv);
+
+			/*
+			 * The Request carries the operating current too, and
+			 * this is the only place it is re-sent.  Recomputing it
+			 * here is what lets the knob take effect on a live
+			 * session instead of only at the next start.
+			 */
+			sm->target_ma = sm5440_request_ma(sm->target_mv);
 		}
 
 		ret = sm5440_refresh_pps(sm);
