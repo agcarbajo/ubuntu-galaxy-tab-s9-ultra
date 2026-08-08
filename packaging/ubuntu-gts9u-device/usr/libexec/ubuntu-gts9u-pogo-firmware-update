@@ -20,9 +20,10 @@ set -eu
 
 firmware=/lib/firmware/keyboard_stm/stm32_gts9family.bin
 expected=1b48d88c23523ae205cd960e6d42725268638a15a47d8a5e52854eb01108caa3
-device=/sys/bus/i2c/devices/6-002a
-control=$device/firmware_update
-diagnostics=$device/diagnostics
+driver=/sys/bus/i2c/drivers/samsung-gts9u-stm32-pogo
+device=
+control=
+diagnostics=
 battery=/sys/class/power_supply/sm5714-battery
 
 [ -r "$firmware" ] || exit 0
@@ -33,11 +34,19 @@ battery=/sys/class/power_supply/sm5714-battery
 # that loses a race just marks the unit as not applicable and says nothing.
 # Waiting here is bounded, and it reports what it decided.
 attempt=0
-while [ ! -w "$control" ] && [ "$attempt" -lt 15 ]; do
+while [ "$attempt" -lt 15 ]; do
+	for candidate in "$driver"/*-002a; do
+		[ -e "$candidate" ] || continue
+		device=$candidate
+		control=$device/firmware_update
+		diagnostics=$device/diagnostics
+		break
+	done
+	[ -n "$control" ] && [ -w "$control" ] && break
 	attempt=$((attempt + 1))
 	sleep 1
 done
-if [ ! -w "$control" ]; then
+if [ -z "$control" ] || [ ! -w "$control" ]; then
 	echo "ubuntu-gts9u-pogo: no controller after ${attempt}s; nothing to do" >&2
 	exit 0
 fi

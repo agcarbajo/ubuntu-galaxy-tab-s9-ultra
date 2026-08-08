@@ -38,6 +38,8 @@ copia de origen para poder detectar divergencias futuras.
 | `kernel/config/config-gts9uwifi.fragment` | `pmaports/device/testing/linux-samsung-gts9uwifi-mainline/config-gts9uwifi.fragment` | `c6b57032a2171dec1c847385adee5d4263769c3578acba629c0fa023285f9b8f` |
 | `kernel/config/config-mainline.aarch64` | `/root/pmos-gts9u/pmaports/device/main/linux-postmarketos-mainline/config-mainline.aarch64` | `661c45023794690f38609be08e5a2a0b77eef5224f48f971f6d709a1871d132b` |
 | `kernel/drivers/panel-samsung-ana38407.c` | `pmaports/device/testing/linux-samsung-gts9uwifi-mainline/panel-samsung-ana38407.c` | `354a5dad9aa119475971d6b7bb347293c2afaff1384f9c79c589f065cddeae24` |
+| `kernel/drivers/hi1337_gts9u.c` | Obra propia sobre las interfaces V4L2/I²C de Linux; secuencias eléctricas y variantes contrastadas con el CamX stock del SM-X910 | — (no es una copia importada) |
+| `kernel/drivers/hi1337_gts9u_tables.h` | Generado de forma determinista desde los blobs Parameter Parser V3 del CamX stock del SM-X910; 1.476 registros globales y los modos exactos de sus tres módulos HI1337 | — (datos derivados del firmware de la propietaria) |
 | `kernel/drivers/ps5169.c` | `pmaports/device/testing/linux-samsung-gts9uwifi-mainline/ps5169.c` | `9002b6a8b6794749dedb42e2530f040995916638f2af51d4fa9f898dfc997b74` |
 | `kernel/drivers/sm5440_direct.c` | `pmaports/device/testing/linux-samsung-gts9uwifi-mainline/sm5440_direct.c` | `fd6ce815cfa8718d2ad0d01ea3cc712d93e73b7b2acb2a1ac18e6b7537852a34` |
 | `kernel/drivers/sm5714_battery.c` | `pmaports/device/testing/linux-samsung-gts9uwifi-mainline/sm5714_battery.c` | `91e5766a09c91df4cdfb0f7ffbe297e68ab8e2b8c0392d777995fc56e50a656f` |
@@ -51,6 +53,7 @@ copia de origen para poder detectar divergencias futuras.
 | `kernel/patches/expose-separate-gpu-kms-resources.patch` | `pmaports/device/testing/linux-samsung-gts9uwifi-mainline/expose-separate-gpu-kms-resources.patch` | `9578cd1687a11d9780a617cb4335a2780b16ccb1d0835856d9e85e40213d872d` |
 | `kernel/patches/ignore-console-null.patch` | `pmaports/device/testing/linux-samsung-gts9uwifi-mainline/ignore-console-null.patch` | `70b4930e1bdcd99769e59de783ddafafbfe5ec377e3d6c166ef9c63197906123` |
 | `kernel/patches/keep-sec-log-previous-index-current.patch` | `pmaports/device/testing/linux-samsung-gts9uwifi-mainline/keep-sec-log-previous-index-current.patch` | `11b21da7037440b0726c40becd7c5165fe00fcd69bf0165904a3b9b6a61512cd` |
+| `kernel/patches/hi847-add-devicetree-power.patch` | Obra propia sobre `drivers/media/i2c/hi847.c` de Linux 7.2-rc3 para añadir enlace DT y la secuencia eléctrica medida del SM-X910 | — (derivado del kernel fijado arriba) |
 | `kernel/patches/match-samsung-sm8550-eusb2-phy-init.patch` | `pmaports/device/testing/linux-samsung-gts9uwifi-mainline/match-samsung-sm8550-eusb2-phy-init.patch` | `187d3d425c06ce1c1a204e5655457e39c9771457ad6cb2279243aec49a295990` |
 | `kernel/patches/msm-dp-allow-unresolved-usbc-bridge.patch` | `pmaports/device/testing/linux-samsung-gts9uwifi-mainline/msm-dp-allow-unresolved-usbc-bridge.patch` | `3a1561c3377e7ad825d2f1e147e6ab3a24376f366a9610061c2c7cc3fd9d591c` |
 | `kernel/patches/msm-dp-associate-bridge-of-node.patch` | `pmaports/device/testing/linux-samsung-gts9uwifi-mainline/msm-dp-associate-bridge-of-node.patch` | `998f27d4ae3d44c175268150850e62a33e87c4a87bb57e175e93eae69289a746` |

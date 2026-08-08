@@ -2649,3 +2649,135 @@ y no prueba nada sobre el cable.
 Lo que sí se sostiene es la parte de fondo, y por eso el knob se queda con
 bandas y con el aviso en el comentario: el que es de 5 A es *este* cable, y por
 encima de 3 A lo que está en riesgo es el conector, no el silicio.
+
+## Sesión 28 — cuatro sensores, cuatro fotos y luz real
+
+Fecha: 2026-08-08.
+
+El criterio se fijó antes de empezar: identificar por I²C o crear
+`/dev/video0` no cerraba nada. Cada objetivo tenía que entregar un frame físico
+reconocible y el flash tenía que iluminar la escena, no solo aceptar un valor en
+sysfs.
+
+### Primero, el flash
+
+El bloque stock llamado `pm8350c-flash-led` está en el PM8550 de SID 1. En
+mainline corresponde a `qcom,spmi-flash-led`. Los canales 0 y 1 están conectados
+a los dos emisores traseros y Samsung los acciona juntos; el DT los expone como
+un solo LED blanco con `led-sources = <1>, <2>` y límites conservadores.
+
+Se probó primero linterna mantenida y después estrobo sincronizado con la clase
+V4L2 flash. Las dos rutas encendieron físicamente y cambiaron la iluminación y
+los reflejos de la mesa:
+
+- [captura con estrobo](../work/resultado-flash.jpg);
+- [captura con linterna](../work/resultado-linterna.jpg).
+
+### Qué sensores había realmente
+
+El DTS público stock no contiene los módulos: Samsung los entrega como blobs
+CamX Parameter Parser V3. El inventario real resultó ser tres HI1337 —principal
+trasero, principal frontal y angular frontal— y un HI847 angular trasero.
+
+El HI847 upstream solo enlazaba por ACPI y suponía alimentación gestionada por
+plataforma. Se añadió DT y su secuencia VDDIO/enable/reset/MCLK. Para HI1337 se
+escribió un driver V4L2 pequeño y específico de la X910. Un extractor local
+decodificó de los blobs la tabla global exacta de 1.476 registros y los tres
+modos exactos; el header generado queda en `kernel/drivers/` para que el build
+sea reproducible sin depender del árbol stock en `work/`.
+
+Los fallos intermedios que cambiaron el resultado fueron concretos:
+
+- `slaveAddress = 0x40` del frontal principal era una dirección de ocho bits;
+  Linux necesita `0x20`;
+- CCI1 master 1 usa el par AON GPIO208/209, no el pinmux CCI ordinario;
+- PM8550VS-C L1 y PM8550B L11 necesitan el paso representable de 1.104 V;
+- los dos frontales comparten MCLK4/GPIO104, por lo que solo el principal puede
+  poseer su pinctrl;
+- los GPIO de módulo/reset no pueden quedar reclamados durante toda la vida del
+  subdispositivo: se toman al encender y se sueltan al apagar.
+
+Al final los cuatro IDs físicos respondieron:
+
+```
+rear-main       1-0021  model=0x1337 vendor=0x2000
+front-main      3-0020  model=0x1337 vendor=0x2000
+front-ultrawide 9-0021  model=0x1337 vendor=0x2000
+rear-ultrawide  0-0021  HI847
+```
+
+### Cuatro capturas, no cuatro enumeraciones
+
+Cada sensor se condujo solo por `msm_csiphyN → msm_csid0 → msm_vfe0_rdi0 →
+/dev/video0`. Cinco frames consecutivos de cada ruta llegaron a unos 30 fps.
+El primer frame guardado y entregado dio:
+
+| objetivo | subdev / CSIPHY | frame | SHA-256 RAW10 |
+|---|---|---|---|
+| trasera principal | `/dev/v4l-subdev32` / 1 | 4128×3096, 16.000.128 B | `104333e0d777448cb3857343a58bf6abbdcf1d4effefee70f7382f77d771ac43` |
+| trasera angular | `/dev/v4l-subdev33` / 2 | 3264×2448, 9.987.840 B | `c72f2fb32c1f21d541b62f85b5cacbc86f1738e5405010864979738987ac4997` |
+| frontal principal | `/dev/v4l-subdev31` / 4 | 3408×2556, 10.919.232 B | `876575b51473f80df986bb6b899a40b1bc93995f6de1baec09127f985fbd7a96` |
+| frontal angular | `/dev/v4l-subdev30` / 5 | 4000×3000, 15.024.000 B | `4978876d3572e11855ee2fa9badc7f89f7cd3ba230d76e8a9d10554ec9c4176a` |
+
+Las pruebas se repitieron tras un arranque posterior: las cuatro volvieron a
+dar cinco frames, sin errores y con hashes nuevos —por tanto no eran buffers
+congelados—. El revelado Bayer manual produjo las evidencias:
+
+- [trasera principal](../work/resultado-trasera-principal.jpg);
+- [trasera angular](../work/resultado-trasera-angular.jpg);
+- [frontal principal](../work/resultado-frontal-principal.jpg);
+- [frontal angular](../work/resultado-frontal-angular.jpg).
+
+La mesa/ventilador y el techo/lámpara coinciden con las referencias y el campo
+de las angulares es claramente mayor. La trasera principal está desenfocada:
+falta el driver de su actuador. El color es conversión Bayer manual. Se entrega
+así porque es evidencia honesta de la capa que funciona, no se llama a esto una
+cámara de escritorio terminada.
+
+### Regresión de audio y una comparación A/B que salió cara
+
+Dos arranques dieron micrófono enumerado pero silencioso. Los dos tenían el APM
+sin contestar `APM_CMD_GET_SPF_STATE` y el pinctrl LPASS rechazado con
+`-EACCES`. Para distinguir regresión de carrera se probó temporalmente un
+`boot`/`vendor_boot` anterior, con backup, escritura y relectura. Fue una mala
+comparación: el kernel antiguo no coincidía con los módulos ath12k instalados y
+la tablet se quedó sin Wi‑Fi. La dueña la dejó en TWRP; por ADB se restauraron
+exclusivamente `/dev/sda21` y `/dev/sda24`, verificando los hashes
+`579bf1ec…` y `9293c93b…`. No se tocó ninguna otra partición.
+
+El arranque completo desde TWRP cerró la duda: con la misma imagen de cámaras,
+PipeWire grabó 729.285 muestras no nulas antes de usar CAMSS y 733.706 después
+de capturar con los cuatro sensores. Las cámaras no silencian los DMIC; el fallo
+del APM es una carrera de arranque preexistente que debe medirse por sus logs,
+no inferirse de un solo WAV cero.
+
+### Build limpia final, teclado y regresión cerrada
+
+La build final se hizo con `KERNEL_CLEAN=1` desde el checkout fijado de
+7.2-rc3. Produjo `boot.img` SHA-256
+`f24fce56c9cbb816f15c61f907369ccc5d0fdae516dcfd219e2f4fdb920503b6` y
+`vendor_boot.img`
+`9293c93b0ab1a1d0ad90353ec50969a120046aa2835aa2a05a28528c3ca3702d`.
+Los dos se escribieron y releyeron completos; los módulos ath12k firmados se
+instalaron desde esa misma compilación.
+
+El arranque desde TWRP reveló una regresión lateral real: el STM32 del teclado
+había vuelto a V34 y el restaurador automático no lo encontraba. CAMSS añade
+adaptadores CCI y desplazó la numeración Linux del pogo de `6-002a` a
+`11-002a`; el helper asumía el primer número. Ahora localiza `*-002a` bajo el
+driver `samsung-gts9u-stm32-pogo`, que es la identidad estable. Restauró y
+releyó los 52.132 bytes oficiales, confirmó `00370037`, recibió el modelo
+`0xd6` y creó de nuevo `Book Cover Keyboard Slim (EF-DX920)`. Un reinicio
+posterior conservó V37 y el servicio concluyó sin escribir.
+
+Sobre la build limpia se hicieron dos pasadas de cinco frames por cada sensor,
+siempre a unos 30 fps y con hashes distintos. También se repitieron el estrobo
+de veinte frames y la linterna a dos intensidades, terminando ambos apagados.
+La regresión consolidada dejó Wi-Fi con 3/3 respuestas, Bluetooth activo,
+teclado, Wacom, Goodix, DSI, acelerómetro, brújula y audio presentes. El
+micrófono dio 756.694 muestras no nulas antes de CAMSS y 757.065 después de las
+cuatro capturas; una tercera toma consolidada dio 455.636. Otro arranque de la
+misma imagen volvió a caer en la carrera APM y produjo ceros, confirmando que el
+problema sigue siendo intermitente y anterior al uso de cámaras. El único
+servicio fallido fue el `lxc-net` preexistente. La batería estaba al 98 %, por
+lo que se verificó el contrato PD de 5 V/3 A, no una sesión térmica de 25 W.

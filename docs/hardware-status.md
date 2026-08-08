@@ -1,7 +1,7 @@
 # Estado de hardware del SM-X910 bajo Ubuntu 24.04
 
-Última actualización: 2026-08-08, tras quitar el bucle de espera activa de
-`iio-sensor-proxy` sin perder la autorrotación.
+Última actualización: 2026-08-08, tras capturar imágenes físicas con los cuatro
+sensores y comprobar flash y linterna.
 
 Ubuntu **ya arranca** en la tablet. Esta matriz distingue explícitamente lo
 heredado de lo comprobado, y ningún componente pasa a ✅ sin observación real.
@@ -75,9 +75,34 @@ sondea» como prueba de funcionamiento.
 | Teclado pogo EF-DX920 (STM32 I²C 0x2a) | ❌ | ✅ | confirmado | Requiere V37 en el MCU: con V34 la aplicación pulsa CONN y no anuncia el protocolo. Reprogramado a V37, teclea desde arranque en frío y sobrevive a desconectar y reconectar la funda. Desde v0.16 la restauración es automática en el primer arranque |
 | Huella (EgisTec EL7xx, SPI) | ❌ | ❌ | supuesto | Sin driver mainline |
 | Vibración / hápticos | ❌ | ❌ | supuesto | Hardware sin identificar |
-| Flash / linterna | ❌ | ❌ | supuesto | PM8350C; candidato `leds-qcom-flash` |
-| Cámaras | ❌ | ❌ | supuesto | No iniciadas |
+| Flash / linterna | ❌ | ✅ | observado | PM8550 SID 1, canales 0+1 agrupados por `leds-qcom-flash`; iluminación real observada en modo estrobo y linterna, con una foto capturada en cada caso |
+| Cámaras | ❌ | 🟡 | observado | Los cuatro sensores entregan RAW10 real por CAMSS: trasera principal y las dos frontales HI1337, trasera angular HI847. Falta actuador de enfoque, autoexposición/AWB, procesado ISP, `libcamera` y aplicación; no se presenta todavía como cámara de escritorio completa |
 | Módem | — | — | — | No aplica al modelo Wi-Fi |
+
+### Cámaras y flash: alcance exacto de la validación
+
+La enumeración no se tomó como prueba. Se configuró cada enlace físico por
+separado hacia `msm_csid0` → `msm_vfe0_rdi0` → `/dev/video0` y se guardó un
+fotograma completo. La relación observada es:
+
+| objetivo | sensor / subdispositivo | CSIPHY | formato capturado |
+|---|---|---|---|
+| trasera principal | HI1337 `1-0021`, `/dev/v4l-subdev32` | `msm_csiphy1` | 4128×3096 RAW10, 16.000.128 bytes |
+| trasera angular | HI847 `0-0021`, `/dev/v4l-subdev33` | `msm_csiphy2` | 3264×2448 RAW10, 9.987.840 bytes |
+| frontal principal | HI1337 `3-0020`, `/dev/v4l-subdev31` | `msm_csiphy4` | 3408×2556 RAW10, 10.919.232 bytes |
+| frontal angular | HI1337 `9-0021`, `/dev/v4l-subdev30` | `msm_csiphy5` | 4000×3000 RAW10, 15.024.000 bytes |
+
+`/dev/video0` es el nodo de captura común: no identifica por sí solo una lente;
+el sensor se elige cambiando los enlaces y formatos del grafo de medios. Las
+fotos convertidas en el host son reconocibles y distinguen sin ambigüedad la
+mesa trasera del techo frontal y el mayor campo de las angulares. El color es
+un revelado Bayer manual, no calibración de fábrica. La trasera principal queda
+desenfocada porque el actuador todavía no tiene driver.
+
+El flash se verificó en sus dos rutas de hardware. El estrobo se armó mediante
+la clase V4L2 flash y disparó durante una captura; la linterna mantuvo los dos
+canales encendidos durante otra. Las dos imágenes muestran reflejos e
+iluminación que no aparecen en la captura sin luz.
 
 ## Riesgos de Ubuntu: cómo quedaron
 

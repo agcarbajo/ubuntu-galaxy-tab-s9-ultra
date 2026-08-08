@@ -64,7 +64,7 @@ openssh-server,avahi-daemon,
 protection-domain-mapper,qrtr-tools,
 iputils-ping,curl,wget,ca-certificates,
 nano,less,htop,rsync,
-usbutils,pciutils,ethtool,evtest,i2c-tools,
+usbutils,pciutils,ethtool,evtest,i2c-tools,v4l-utils,
 strace,tree
 '
 

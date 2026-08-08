@@ -59,7 +59,7 @@ postmarketOS v1.71 baseline is kept outside Git.
 | **Speaker protection** | ❌ | Cirrus protection firmware not loaded; hardware volume kept conservative |
 | **Fingerprint** | ❌ | No mainline driver for the EgisTec sensor |
 | **Vibration / haptics** | ❌ | Hardware not identified |
-| **Flash / cameras** | ❌ | Not started |
+| **Flash / cameras** | 🟡 | Four sensors deliver real RAW10 frames through CAMSS and both strobe/torch illuminate physically; low-level V4L2 only, without libcamera tuning, autofocus or a camera app |
 | **Modem** | — | Not applicable to the Wi-Fi-only model |
 
 ✅ tested on the physical tablet · 🟡 partially working · ❌ known not to work

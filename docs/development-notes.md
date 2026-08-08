@@ -924,3 +924,84 @@ medido para el día que se quiera cobrar.
 Si se aplica, la reproducibilidad seguiría siendo **por máquina**: la clave de
 firma es privada y no puede entrar en Git, y una clave publicada no sería una
 firma.
+
+## Las cuatro cámaras no son cuatro pipelines independientes
+
+En el SM-X910, CAMSS expone diecisiete nodos de vídeo porque cada RDI del VFE es
+un destino posible. Eso no significa que `/dev/video0` sea una lente concreta.
+La identificación estable está en el subdispositivo del sensor y su enlace
+físico:
+
+| módulo | bus | subdispositivo observado | CSIPHY |
+|---|---|---|---|
+| HI1337 trasero principal | CCI0 master 1, `0x21` | `/dev/v4l-subdev32` | 1 |
+| HI847 trasero angular | CCI0 master 0, `0x21` | `/dev/v4l-subdev33` | 2 |
+| HI1337 frontal principal | CCI1 master 1, `0x20` | `/dev/v4l-subdev31` | 4 |
+| HI1337 frontal angular | QUP I²C9, `0x21` | `/dev/v4l-subdev30` | 5 |
+
+Cada prueba deshabilita los enlaces anteriores y conduce **un** sensor por
+`csiphyN → csid0 → vfe0_rdi0 → /dev/video0`. Juzgar el objetivo por el número
+de `/dev/video*` es incorrecto y dejar varios enlaces activos hace que una
+captura aparentemente válida pueda venir del sensor anterior.
+
+### Los `slaveAddress` de CamX son de ocho bits
+
+El frontal principal fue la excepción que destapó la regla. Su descriptor stock
+da `slaveAddress = 0x40`; usarlo literalmente como dirección Linux no encuentra
+nada. Es la dirección de ocho bits: en el DT corresponde a `reg = <0x20>`. Los
+otros tres módulos declaran `0x42`, que se convierte en `0x21`.
+
+CCI1 master 1 tampoco usa los pines CCI ordinarios: el stock lo lleva por el par
+AON GPIO208/209. Sin ese pinmux el controlador enumera, pero cada lectura de
+identidad falla; no es un problema del registro de chip.
+
+### Los tres HI1337 necesitan tablas distintas, no una inicialización genérica
+
+Los blobs de Samsung usan Parameter Parser V3. Decodificarlos dio una tabla
+global exacta de 1.476 escrituras y un modo exacto para cada módulo: 4128×3096,
+3408×2556 y 4000×3000. Con una secuencia aproximada el sensor puede contestar
+por I²C y aun así no emitir CSI-2: leer `0x0716 = 0x1337` solo prueba identidad,
+no streaming.
+
+Las secuencias de alimentación stock también importan. VIO y VDIG reciben sus
+retardos, después se habilita el módulo, MCLK se estabiliza 10 ms y solo entonces
+sale de reset. PM8550VS-C L1 no representa 1.100 V exactamente; 1.104 V es el
+paso NLDO más cercano. PM8550B L11 es el raíl compartido de 1,1 V para display y
+cámaras frontales, también votado a 1.104 V, no el antiguo nombre de 1,2 V.
+
+Los dos frontales comparten MCLK4/GPIO104. El principal, que sonda primero,
+mantiene la propiedad del pinctrl y el angular reutiliza el reloj; intentar que
+los dos reclamen el mismo grupo deja al segundo bloqueado antes de leer su ID.
+Los GPIO de enable/reset se solicitan solo mientras el sensor está alimentado y
+se liberan al terminar el stream.
+
+### RAW10 visible no equivale todavía a una cámara de escritorio
+
+Las cuatro rutas entregaron cinco fotogramas consecutivos a unos 30 fps y las
+fotos Bayer reveladas en el host son reconocibles. Eso cierra sensor, reloj,
+alimentación, CSI-2, CSIPHY, CSID, VFE y DMA. No cierra autoexposición, balance
+de blancos, actuador de enfoque, calibración del ISP ni integración con
+`libcamera`. La trasera principal queda desenfocada porque su actuador no tiene
+driver; los colores son un revelado manual y no deben presentarse como tuning
+de fábrica.
+
+### El APM de audio puede fallar en un arranque sin que lo cause la cámara
+
+Durante la regresión, dos arranques mostraron `APM_CMD_GET_SPF_STATE` agotado,
+el pinctrl LPASS en `-EACCES` y micrófonos con todos los samples a cero. No se
+reinició el ADSP en caliente. Tras un arranque completo desde TWRP, la misma
+imagen de cámara produjo 729.285 muestras no nulas antes de usar CAMSS y
+733.706 después de capturar con los cuatro sensores. Por tanto, tomar un único
+buffer silencioso como regresión de cámara habría sido otro falso positivo; hay
+que exigir además los mensajes del APM y repetir desde arranque completo.
+
+### Los números de adaptador I²C no son una ABI
+
+Al habilitar los controladores CCI de cámara, el STM32 pogo siguió siendo el
+mismo dispositivo físico a `0x2a`, pero Linux pasó a enumerarlo como
+`11-002a` en lugar de `6-002a`. El restaurador de V37 tenía la segunda ruta
+codificada y, tras volver el MCU a V34, terminó correctamente diciendo que no
+había controlador. La ruta estable es el enlace del dispositivo bajo
+`/sys/bus/i2c/drivers/samsung-gts9u-stm32-pogo/`, no el número de adaptador.
+Servicios, diagnósticos y documentación deben buscar allí `*-002a`; añadir un
+bus no puede convertir un accesorio existente en ausente.

@@ -17,8 +17,12 @@ like a wiring or timing problem, which is why it cost several sessions.
 ## Checking
 
 ```
-cat /sys/bus/i2c/devices/6-002a/diagnostics
+cat /sys/bus/i2c/drivers/samsung-gts9u-stm32-pogo/*-002a/diagnostics
 ```
+
+The Linux I2C adapter number is not stable when other controllers are added to
+the kernel, so diagnostics and the automatic restorer locate the device through
+its bound driver rather than assuming that it will always be `6-002a`.
 
 `flash_version=00370037` is healthy.  `flash_version=00340034` means the
 controller has been put back to V34 and the cover will not work until it is

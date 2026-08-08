@@ -144,6 +144,14 @@ apply_unless 'soc_marketing_names' \
 	arch/arm64/kernel/cpuinfo.c \
 	arm64-report-soc-marketing-name.patch
 
+# Upstream HI847 currently only binds through ACPI and assumes platform power
+# resources.  The X910 exposes it through CCI/DT and needs explicit VDDIO,
+# module-enable, reset and MCLK sequencing.
+if ! grep -q 'Samsung.s module must remain powered' \
+	"$kernel_tree/drivers/media/i2c/hi847.c"; then
+	git -C "$kernel_tree" apply --recount "$pat/hi847-add-devicetree-power.patch"
+fi
+
 # The Goodix patch has two variants: a full one for a pristine tree and an
 # upgrade for a tree that already carries the partial Samsung decoder.
 goodix=drivers/input/touchscreen/goodix_berlin_core.c
@@ -175,6 +183,24 @@ fi
 # Out-of-tree drivers, shipped into the pristine tree with their Kconfig and
 # Makefile entries, exactly as the reference port does.
 # ---------------------------------------------------------------------------
+
+camera_dir=$kernel_tree/drivers/media/i2c
+install -m 0644 "$drv/hi1337_gts9u.c" "$camera_dir/hi1337_gts9u.c"
+install -m 0644 "$drv/hi1337_gts9u_tables.h" \
+	"$camera_dir/hi1337_gts9u_tables.h"
+if ! grep -q 'VIDEO_HI1337_GTS9U' "$camera_dir/Kconfig"; then
+	sed -i '/^config VIDEO_HI847/i \
+config VIDEO_HI1337_GTS9U\
+\ttristate "Hynix HI1337 sensors on Samsung Galaxy Tab S9 Ultra"\
+\tdepends on I2C && VIDEO_DEV\
+\tselect V4L2_FWNODE\
+\thelp\
+\t  Four-lane RAW10 HI1337 camera modules used by the SM-X910.\
+' "$camera_dir/Kconfig"
+fi
+grep -q 'hi1337_gts9u.o' "$camera_dir/Makefile" || \
+	printf 'obj-$(CONFIG_VIDEO_HI1337_GTS9U) += hi1337_gts9u.o\n' \
+		>> "$camera_dir/Makefile"
 
 panel_dir=$kernel_tree/drivers/gpu/drm/panel
 install -m 0644 "$drv/panel-samsung-ana38407.c" \

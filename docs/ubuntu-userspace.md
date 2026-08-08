@@ -87,9 +87,16 @@ iio-sensor-proxy, upower, power-profiles-daemon
 Diagnóstico durante el bring-up:
 
 ```
-gdb, strace, evtest, i2c-tools, usbutils, pciutils, ethtool, tree,
+gdb, strace, evtest, i2c-tools, v4l-utils, usbutils, pciutils, ethtool, tree,
 libdrm-tests, drm-info, edid-decode
 ```
+
+`v4l-utils` es parte del rootfs reproducible desde la puesta en marcha de las
+cámaras. `media-ctl` configura la ruta CAMSS y `v4l2-ctl` captura RAW10 sin
+depender de una aplicación ni de una pila Android. No se instala `libcamera`
+todavía: exponer nodos V4L2 no proporciona por sí solo autoexposición, balance
+de blancos, enfoque ni procesado ISP, y este hardware aún no tiene un *pipeline
+handler* y *tuning* integrados.
 
 `ubuntu-desktop-minimal` en lugar de `ubuntu-desktop` deja fuera ofimática y
 snaps de escritorio que no aportan nada al bring-up. Snap se evalúa como tema
