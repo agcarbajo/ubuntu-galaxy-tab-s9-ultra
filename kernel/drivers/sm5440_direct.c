@@ -56,6 +56,25 @@
  * What the loop aims for at the pump's input; the pack gets about twice this.
  * The chip's own limit above is the hard ceiling and stays well clear of it.
  */
+/*
+ * 2200 mA in, about 4.4 A to the pack, is what has been measured stable: 18.8 W
+ * at 28 % charge with no dropout, and 16.7 W still at 81 %, where a pack this
+ * full would normally have tapered away.
+ *
+ * 3200 was tried and the bus collapsed to 4888 mV within 36 s, latching
+ * VBUSUVLO and REVBLK and taking the PD contract down to a 5 V DCP fallback.
+ * That is *not* established as a hard limit, and the value here is
+ * conservatism rather than a measured ceiling.  Two things were wrong with the
+ * test: the adapter had latched a protection that only a mains unplug cleared,
+ * and iio-sensor-proxy was busy-looping on a full core, which both heats the
+ * board and steals current that never reaches the pack.  With those cleared
+ * the gap between the requested and the measured input fell from about 900 mV
+ * at 1.3 A to about 230 mV at 2.4 A, so the series resistance that seemed to
+ * cap everything was mostly an artefact of the degraded state.
+ *
+ * Re-testing higher is worthwhile, but only from a low pack, on a freshly
+ * power-cycled adapter, with nothing pinning a core.
+ */
 #define SM5440_TARGET_IBUS_MA		2200
 #define SM5440_IBUS_TOLERANCE_MA	150
 
