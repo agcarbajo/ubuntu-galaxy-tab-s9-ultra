@@ -2781,3 +2781,65 @@ misma imagen volvió a caer en la carrera APM y produjo ceros, confirmando que e
 problema sigue siendo intermitente y anterior al uso de cámaras. El único
 servicio fallido fue el `lxc-net` preexistente. La batería estaba al 98 %, por
 lo que se verificó el contrato PD de 5 V/3 A, no una sesión térmica de 25 W.
+
+## Sesión 29 — color procesado y cámaras para aplicaciones
+
+Fecha: 2026-08-09.
+
+El siguiente criterio fue más alto que el de la sesión anterior: las fotos ya
+no podían ser un revelado Bayer manual. Las cuatro cámaras tenían que converger
+en exposición y balance de blancos, abrir sin root y presentarse al escritorio
+como fuentes repetibles.
+
+Se fijó `libcamera` en `62d4bfc` (0.7.2 + 53 commits) y se compiló solo el
+pipeline `simple`, su software ISP, `cam` y el plugin GStreamer. HI1337 e HI847
+recibieron ayudantes con la ganancia real `(code + 16) / 16` y pedestal 64 de
+RAW10. El tuning común parte de ganancias roja/azul `[1, 4]`, usa AWB de mundo
+gris, AE y una CCM conservadora. Esto eliminó la dominante de canales de la
+primera conversión y permitió que paredes, techo, metal, blancos y el objeto
+rojo conservaran relaciones de color coherentes.
+
+PipeWire Noble necesitó tres backports acotados. El mapper 1.0.5 no entendía el
+`string_view` de libcamera 0.7, trataba `ColourGains` array como escalar y
+abortaba, y confundía nombres DRM RGB con orden de bytes en memoria. El último
+fallo era la causa directa de la imagen magenta. Se empaquetó el SPA corregido
+sin reemplazar el resto de PipeWire. Una regla udev entrega `/dev/udmabuf` al
+grupo `video`, así que GStreamer y el software ISP funcionan como `ubuntu`, no
+como root.
+
+Las pruebas físicas finales fueron:
+
+- 150/150 frames RGB de cada una de las cuatro cámaras, con imágenes finales
+  [frontal angular](../work/resultado-frontal-angular.jpg),
+  [frontal principal](../work/resultado-frontal-principal.jpg),
+  [trasera principal](../work/resultado-trasera-principal.jpg) y
+  [trasera angular](../work/resultado-trasera-angular.jpg);
+- 99 frames por PipeWire y una [captura de esa ruta](../work/resultado-pipewire-app.jpg);
+- 30 frames negociados en cada fuente PipeWire y otros 30 al reabrir la
+  frontal angular; PipeWire, `pipewire-pulse` y WirePlumber siguieron activos;
+- GNOME Cámara (`Snapshot` 46.2) abierta en una sesión gráfica, con su stream
+  mostrado por WirePlumber como `active`;
+- linterna en niveles 32 y 128, estrobo durante una secuencia de 20 frames y
+  comprobación final `strobe=0`, `torch=0`, sin fallo latente.
+
+Los paquetes instalados son `libcamera-gts9u 0.7.2+53.g62d4bfc-gts9u1`,
+`libspa-0.2-libcamera-gts9u 1.0.5-gts9u1` y `ubuntu-gts9u-device 2.0`. La build
+limpia final produjo `boot.img`
+`d4323b9acd26a8b2179af1fda58536a1d8e622cde787a86406293e71d47b3eba` y
+`vendor_boot.img`
+`4441ae918f878a9592b2e5c863833d20dfefb44e50bb29645de97aa1f33eef5d`;
+ambos se escribieron y releyeron con esos mismos hashes.
+
+La última corrección fue de metadatos, no de imagen: el valor DT `2` significa
+cámara externa, no trasera. Las dos traseras pasaron a `orientation = <1>` y el
+DTB tuvo que llegar mediante `vendor_boot`. El DT vivo, los controles V4L2,
+`cam --list` y PipeWire coinciden ahora: dos `Internal/Built-in Front Camera` y
+dos `Internal/Built-in Back Camera`.
+
+Tras reiniciar, Wi-Fi respondió 3/3, el teclado volvió a enumerar como
+`Book Cover Keyboard Slim (EF-DX920)` con firmware V37, Bluetooth estaba
+encendido, Wacom/Goodix presentes, DSI conectado, acelerómetro y brújula
+entregando datos, y el micrófono produjo 438.846 muestras no nulas. El único
+servicio fallido siguió siendo `lxc-net`, anterior y ajeno a cámaras. Queda
+abierto el actuador de enfoque de la trasera principal; color, exposición y
+ruta de aplicaciones ya no son el bloqueo.

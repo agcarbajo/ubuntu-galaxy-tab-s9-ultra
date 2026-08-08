@@ -151,6 +151,8 @@ if ! grep -q 'Samsung.s module must remain powered' \
 	"$kernel_tree/drivers/media/i2c/hi847.c"; then
 	git -C "$kernel_tree" apply --recount "$pat/hi847-add-devicetree-power.patch"
 fi
+apply_unless 'Export the DT rotation and front/back location to libcamera' \
+	drivers/media/i2c/hi847.c hi847-libcamera-compliance.patch
 
 # The Goodix patch has two variants: a full one for a pristine tree and an
 # upgrade for a tree that already carries the partial Samsung decoder.

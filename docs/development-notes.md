@@ -975,15 +975,29 @@ los dos reclamen el mismo grupo deja al segundo bloqueado antes de leer su ID.
 Los GPIO de enable/reset se solicitan solo mientras el sensor está alimentado y
 se liberan al terminar el stream.
 
-### RAW10 visible no equivale todavía a una cámara de escritorio
+### De RAW10 a cámara de escritorio: las cuatro capas que faltaban
 
-Las cuatro rutas entregaron cinco fotogramas consecutivos a unos 30 fps y las
-fotos Bayer reveladas en el host son reconocibles. Eso cierra sensor, reloj,
-alimentación, CSI-2, CSIPHY, CSID, VFE y DMA. No cierra autoexposición, balance
-de blancos, actuador de enfoque, calibración del ISP ni integración con
-`libcamera`. La trasera principal queda desenfocada porque su actuador no tiene
-driver; los colores son un revelado manual y no deben presentarse como tuning
-de fábrica.
+RAW10 había cerrado sensor, reloj, alimentación, CSI-2, CSIPHY, CSID, VFE y
+DMA, pero no era una interfaz de aplicación. La ruta terminada añade cuatro
+capas reproducibles:
+
+1. los drivers exportan selección, orientación y ubicación V4L2 para que
+   `libcamera` distinga frontal/trasera y no tenga que adivinar el recorte;
+2. `libcamera` 0.7.2 usa pipeline `simple` y software ISP con ayudantes HI1337 y
+   HI847. Ambos codifican ganancia como `(code + 16) / 16` y tienen pedestal 64
+   en RAW10 (`4096` al normalizar a 16 bits);
+3. los tuning YAML activan AE, AWB gris, pedestal, ajuste y CCM. El arranque
+   parte de ganancias `[1, 4]`; el AWB converge sobre estadísticas reales;
+4. el SPA libcamera de PipeWire 1.0.5 lleva los backports imprescindibles para
+   libcamera 0.7 y para el orden de bytes RGB. Sin saltar `ColourGains` (array),
+   WirePlumber aborta; con el mapa RGB antiguo, la imagen sale magenta.
+
+`/dev/udmabuf` debe ser `root:video 0660` y llevar `uaccess`; de otro modo el
+ISP funciona como root y falla justamente en las aplicaciones. La validación
+final exigió 150 frames procesados por sensor, 99 por PipeWire, apertura de las
+cuatro fuentes, reapertura de una de ellas y un stream `active` de GNOME
+Cámara. La trasera principal queda desenfocada porque su actuador aún no tiene
+driver; eso sigue siendo la limitación real, no el color ni la integración.
 
 ### El APM de audio puede fallar en un arranque sin que lo cause la cámara
 

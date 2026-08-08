@@ -788,7 +788,7 @@
 		pinctrl-0 = <&cam1_default>;
 		pinctrl-1 = <&cam1_sleep>;
 		pinctrl-names = "default", "sleep";
-		orientation = <2>;
+		orientation = <1>;
 		rotation = <90>;
 
 		port {
@@ -816,7 +816,7 @@
 		pinctrl-0 = <&cam2_default>;
 		pinctrl-1 = <&cam2_sleep>;
 		pinctrl-names = "default", "sleep";
-		orientation = <2>;
+		orientation = <1>;
 		rotation = <90>;
 
 		port {

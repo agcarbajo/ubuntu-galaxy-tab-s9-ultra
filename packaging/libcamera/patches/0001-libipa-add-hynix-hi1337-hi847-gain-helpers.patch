@@ -1,0 +1,52 @@
+From: Galaxy Tab S9 Ultra Ubuntu port <noreply@example.com>
+Subject: [PATCH] libipa: add Hynix HI1337 and HI847 sensor helpers
+
+Both sensors encode analogue gain in sixteenths above unity:
+
+    gain = (code + 16) / 16
+
+They also use the conventional 64-code black pedestal in their 10-bit
+output.  Without helpers the simple IPA treats the raw register value as a
+linear gain, which makes AGC converge to the wrong exposure and leaves AWB
+statistics biased by the pedestal.
+---
+ src/ipa/libipa/camera_sensor_helper.cpp | 24 ++++++++++++++++++++++++
+ 1 file changed, 24 insertions(+)
+
+diff --git a/src/ipa/libipa/camera_sensor_helper.cpp b/src/ipa/libipa/camera_sensor_helper.cpp
+index 5ba2d2b0..f95d1b92 100644
+--- a/src/ipa/libipa/camera_sensor_helper.cpp
++++ b/src/ipa/libipa/camera_sensor_helper.cpp
+@@ -520,6 +520,30 @@ public:
+ };
+ REGISTER_CAMERA_SENSOR_HELPER("gc08a3", CameraSensorHelperGc08a3)
+ 
++class CameraSensorHelperHi1337 : public CameraSensorHelper
++{
++public:
++	CameraSensorHelperHi1337()
++	{
++		/* 64 at 10 bits; analogue gain is (code + 16) / 16. */
++		blackLevel_ = 4096;
++		gain_ = AnalogueGainLinear{ 1, 16, 0, 16 };
++	}
++};
++REGISTER_CAMERA_SENSOR_HELPER("hi1337-gts9u", CameraSensorHelperHi1337)
++
++class CameraSensorHelperHi847 : public CameraSensorHelper
++{
++public:
++	CameraSensorHelperHi847()
++	{
++		/* 64 at 10 bits; analogue gain is (code + 16) / 16. */
++		blackLevel_ = 4096;
++		gain_ = AnalogueGainLinear{ 1, 16, 0, 16 };
++	}
++};
++REGISTER_CAMERA_SENSOR_HELPER("hi847", CameraSensorHelperHi847)
++
+ class CameraSensorHelperHm1246 : public CameraSensorHelper
+ {
+ public:
+-- 
+2.43.0

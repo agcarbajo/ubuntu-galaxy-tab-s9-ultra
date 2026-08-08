@@ -82,6 +82,7 @@ strace,tree
 desktop_packages='
 ubuntu-desktop-minimal,gdm3,gnome-shell,gnome-session,gnome-control-center,
 gnome-terminal,nautilus,gnome-text-editor,
+gnome-snapshot,gstreamer1.0-gl,
 mutter,xdg-desktop-portal-gnome,xdg-user-dirs,
 yaru-theme-icon,yaru-theme-gtk,yaru-theme-sound,yaru-theme-gnome-shell,
 gnome-keyring,libpam-gnome-keyring,
@@ -228,6 +229,25 @@ if [ "$sensor_missing" = 1 ] || [ "$sensor_cached" != "$sensor_fingerprint" ]; t
 	printf '%s\n' "$sensor_fingerprint" > "$sensor_stamp"
 fi
 
+camera_stamp=$base/out/packages/.gts9u-camera-inputs.sha256
+camera_fingerprint=$(
+	{
+		sha256sum "$repo/scripts/build-camera-packages.sh"
+		find "$repo/packaging/libcamera" "$repo/packaging/pipewire" \
+			-type f -print0 | sort -z | xargs -0 sha256sum
+	} | sha256sum | awk '{print $1}'
+)
+camera_cached=$(cat "$camera_stamp" 2>/dev/null || true)
+camera_missing=0
+for pkg in libcamera-gts9u libspa-0.2-libcamera-gts9u; do
+	ls "$base"/out/packages/${pkg}_*.deb >/dev/null 2>&1 || camera_missing=1
+done
+if [ "$camera_missing" = 1 ] || [ "$camera_cached" != "$camera_fingerprint" ]; then
+	echo 'camera package inputs changed or packages are missing; rebuilding them'
+	bash "$repo/scripts/build-camera-packages.sh" >/dev/null
+	printf '%s\n' "$camera_fingerprint" > "$camera_stamp"
+fi
+
 # Desktop tools that landed in the archive after noble froze, so "apt install"
 # has no candidate for them on 24.04.
 if ! ls "$base"/out/packages/fastfetch_*.deb >/dev/null 2>&1; then
@@ -239,7 +259,9 @@ fi
 stage_debs=$base/out/local-debs
 rm -rf -- "$stage_debs"
 mkdir -p "$stage_debs"
-for pkg in libssc hexagonrpcd iio-sensor-proxy ubuntu-gts9u-device fastfetch; do
+for pkg in libssc hexagonrpcd iio-sensor-proxy \
+	libcamera-gts9u libspa-0.2-libcamera-gts9u \
+	ubuntu-gts9u-device fastfetch; do
 	deb=$(ls -t "$base"/out/packages/${pkg}_*.deb 2>/dev/null | head -1 || true)
 	if [ -z "$deb" ]; then
 		echo "missing local package: $pkg" >&2
@@ -255,10 +277,10 @@ set -eu
 target="\$1"
 mkdir -p "\$target/tmp/local-debs"
 cp $stage_debs/*.deb "\$target/tmp/local-debs/"
-# One dpkg call so it works out the order itself: iio-sensor-proxy needs
-# libssc, and the device package depends on all three.  Our iio-sensor-proxy is
-# version 3.9 against Ubuntu's 3.5, so it replaces the archive one.
-chroot "\$target" sh -c 'dpkg -i /tmp/local-debs/*.deb || apt-get -y -f install'
+# Install one local transaction so APT resolves both dependency order and the
+# archive camera packages replaced by our ABI-matched builds.  Plain dpkg
+# cannot remove an already installed package that a local .deb Conflicts with.
+chroot "\$target" sh -c 'apt-get install -y /tmp/local-debs/*.deb'
 rm -rf "\$target/tmp/local-debs"
 HOOK
 chmod +x "$hooks/local-packages.sh"

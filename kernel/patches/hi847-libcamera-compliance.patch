@@ -1,0 +1,70 @@
+diff --git a/drivers/media/i2c/hi847.c b/drivers/media/i2c/hi847.c
+--- a/drivers/media/i2c/hi847.c
++++ b/drivers/media/i2c/hi847.c
+@@ -2486,9 +2486,10 @@ static int hi847_init_controls(struct hi847 *hi847)
+ {
+ 	struct v4l2_ctrl_handler *ctrl_hdlr;
++	struct v4l2_fwnode_device_properties props;
+ 	s64 exposure_max, h_blank;
+ 	int ret;
+ 
+ 	ctrl_hdlr = &hi847->ctrl_handler;
+-	ret = v4l2_ctrl_handler_init(ctrl_hdlr, 8);
++	ret = v4l2_ctrl_handler_init(ctrl_hdlr, 10);
+ 	if (ret)
+ 		return ret;
+@@ -2545,6 +2546,15 @@ static int hi847_init_controls(struct hi847 *hi847)
+ 					 V4L2_CID_HFLIP, 0, 1, 1, 0);
+ 	hi847->vflip = v4l2_ctrl_new_std(ctrl_hdlr, &hi847_ctrl_ops,
+ 					 V4L2_CID_VFLIP, 0, 1, 1, 0);
++
++	/* Export the DT rotation and front/back location to libcamera. */
++	ret = v4l2_fwnode_device_parse(hi847->dev, &props);
++	if (ret)
++		return ret;
++	ret = v4l2_ctrl_new_fwnode_properties(ctrl_hdlr,
++					       &hi847_ctrl_ops, &props);
++	if (ret)
++		return ret;
+ 
+ 	if (ctrl_hdlr->error)
+ 		return ctrl_hdlr->error;
+@@ -2740,11 +2751,38 @@ static int hi847_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
+ 	return 0;
+ }
+ 
++static int hi847_get_selection(struct v4l2_subdev *sd,
++			       struct v4l2_subdev_state *state,
++			       struct v4l2_subdev_selection *selection)
++{
++	struct hi847 *hi847 = to_hi847(sd);
++
++	if (selection->pad)
++		return -EINVAL;
++
++	switch (selection->target) {
++	case V4L2_SEL_TGT_CROP:
++	case V4L2_SEL_TGT_CROP_DEFAULT:
++	case V4L2_SEL_TGT_CROP_BOUNDS:
++	case V4L2_SEL_TGT_NATIVE_SIZE:
++		mutex_lock(&hi847->mutex);
++		selection->r.left = 0;
++		selection->r.top = 0;
++		selection->r.width = hi847->cur_mode->width;
++		selection->r.height = hi847->cur_mode->height;
++		mutex_unlock(&hi847->mutex);
++		return 0;
++	default:
++		return -EINVAL;
++	}
++}
++
+ static const struct v4l2_subdev_video_ops hi847_video_ops = {
+ 	.s_stream = hi847_set_stream,
+ };
+ 
+ static const struct v4l2_subdev_pad_ops hi847_pad_ops = {
++	.get_selection = hi847_get_selection,
+ 	.set_fmt = hi847_set_format,
+ 	.get_fmt = hi847_get_format,
+ 	.enum_mbus_code = hi847_enum_mbus_code,

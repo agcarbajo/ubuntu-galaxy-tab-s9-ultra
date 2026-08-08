@@ -306,11 +306,12 @@ static const struct v4l2_ctrl_ops hi1337_ctrl_ops = {
 static int hi1337_init_controls(struct hi1337 *sensor)
 {
 	const struct hi1337_mode *mode = &sensor->variant->mode;
+	struct v4l2_fwnode_device_properties props;
 	static const s64 link_freq_menu[] = { HI1337_LINK_FREQ };
 	u32 vblank = mode->frame_length - mode->height;
 	int ret;
 
-	ret = v4l2_ctrl_handler_init(&sensor->ctrl_handler, 6);
+	ret = v4l2_ctrl_handler_init(&sensor->ctrl_handler, 8);
 	if (ret)
 		return ret;
 
@@ -335,6 +336,15 @@ static int hi1337_init_controls(struct hi1337 *sensor)
 		mode->frame_length - HI1337_EXPOSURE_MARGIN);
 	v4l2_ctrl_new_std(&sensor->ctrl_handler, &hi1337_ctrl_ops,
 			  V4L2_CID_ANALOGUE_GAIN, 0, 240, 1, 0);
+
+	/* Export the DT rotation and front/back location to libcamera. */
+	ret = v4l2_fwnode_device_parse(sensor->dev, &props);
+	if (ret)
+		return ret;
+	ret = v4l2_ctrl_new_fwnode_properties(&sensor->ctrl_handler,
+					       &hi1337_ctrl_ops, &props);
+	if (ret)
+		return ret;
 
 	if (sensor->ctrl_handler.error)
 		return sensor->ctrl_handler.error;
@@ -460,6 +470,30 @@ static int hi1337_enum_frame_size(struct v4l2_subdev *sd,
 	return 0;
 }
 
+static int hi1337_get_selection(struct v4l2_subdev *sd,
+				struct v4l2_subdev_state *state,
+				struct v4l2_subdev_selection *selection)
+{
+	struct hi1337 *sensor = to_hi1337(sd);
+
+	if (selection->pad)
+		return -EINVAL;
+
+	switch (selection->target) {
+	case V4L2_SEL_TGT_CROP:
+	case V4L2_SEL_TGT_CROP_DEFAULT:
+	case V4L2_SEL_TGT_CROP_BOUNDS:
+	case V4L2_SEL_TGT_NATIVE_SIZE:
+		selection->r.left = 0;
+		selection->r.top = 0;
+		selection->r.width = sensor->variant->mode.width;
+		selection->r.height = sensor->variant->mode.height;
+		return 0;
+	default:
+		return -EINVAL;
+	}
+}
+
 static int hi1337_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 {
 	hi1337_fill_format(to_hi1337(sd),
@@ -476,6 +510,7 @@ static const struct v4l2_subdev_pad_ops hi1337_pad_ops = {
 	.set_fmt = hi1337_set_format,
 	.enum_mbus_code = hi1337_enum_mbus_code,
 	.enum_frame_size = hi1337_enum_frame_size,
+	.get_selection = hi1337_get_selection,
 };
 
 static const struct v4l2_subdev_ops hi1337_subdev_ops = {

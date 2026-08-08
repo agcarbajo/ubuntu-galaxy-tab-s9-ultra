@@ -1,0 +1,4 @@
+# libcamera's software ISP allocates frame buffers through /dev/udmabuf.
+# The desktop user already belongs to video; expose the allocator to that
+# group and let logind grant an ACL to the active graphical session as well.
+SUBSYSTEM=="misc", KERNEL=="udmabuf", GROUP="video", MODE="0660", TAG+="uaccess"

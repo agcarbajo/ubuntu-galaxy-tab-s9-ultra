@@ -1,0 +1,31 @@
+From: Galaxy Tab S9 Ultra Ubuntu port <noreply@example.com>
+Subject: [PATCH] spa: libcamera: skip array controls in the legacy mapper
+
+libcamera controls retain their scalar element type when the value is an
+array. The PipeWire 1.0.5 SPA mapper only supports scalar controls, but used
+the element type alone and called ControlValue::get<T>() on arrays such as
+ColourGains. With libcamera 0.7 this correctly asserts and aborts PipeWire as
+soon as a camera node is exported.
+
+Do not advertise array controls until the SPA mapper supports their shape.
+They remain managed internally by libcamera (including AWB colour gains).
+---
+ spa/plugins/libcamera/libcamera-utils.cpp | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/spa/plugins/libcamera/libcamera-utils.cpp b/spa/plugins/libcamera/libcamera-utils.cpp
+index 818e70c756ba..bcad7fc233b6 100644
+--- a/spa/plugins/libcamera/libcamera-utils.cpp
++++ b/spa/plugins/libcamera/libcamera-utils.cpp
+@@ -508,6 +508,9 @@ spa_libcamera_enum_controls(struct impl *impl, struct port *port, int seq,
+ 			SPA_PROP_INFO_description, SPA_POD_String(ctrl_id->name().c_str()),
+ 			0);
+ 
++	if (ctrl_id->isArray())
++		goto next;
++
+ 	switch (ctrl_id->type()) {
+ 	case ControlTypeBool: {
+ 		bool def;
+-- 
+2.43.0

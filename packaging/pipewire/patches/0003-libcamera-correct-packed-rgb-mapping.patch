@@ -1,0 +1,46 @@
+From: Galaxy Tab S9 Ultra Ubuntu port <noreply@example.com>
+Subject: [PATCH] spa: libcamera: correct packed RGB memory format mapping
+
+libcamera names packed RGB formats by DRM channel significance, while SPA
+names them by byte order in memory. The original PipeWire 1.0.5 table mapped
+the names one-to-one, swapping red and blue and misplacing alpha/padding on
+little-endian systems. This produced strongly magenta camera frames.
+
+Backport the mapping used by current PipeWire.
+---
+ spa/plugins/libcamera/libcamera-utils.cpp | 20 ++++++++++----------
+ 1 file changed, 10 insertions(+), 10 deletions(-)
+
+diff --git a/spa/plugins/libcamera/libcamera-utils.cpp b/spa/plugins/libcamera/libcamera-utils.cpp
+index bcad7fc233b6..9b7d7f547df1 100644
+--- a/spa/plugins/libcamera/libcamera-utils.cpp
++++ b/spa/plugins/libcamera/libcamera-utils.cpp
+@@ -151,16 +151,16 @@ static const struct format_info format_info[] = {
+ 	/* RGB formats */
+ 	MAKE_FMT(formats::RGB565, RGB16, video, raw),
+ 	MAKE_FMT(formats::RGB565_BE, RGB16, video, raw),
+-	MAKE_FMT(formats::RGB888, RGB, video, raw),
+-	MAKE_FMT(formats::BGR888, BGR, video, raw),
+-	MAKE_FMT(formats::XRGB8888, xRGB, video, raw),
+-	MAKE_FMT(formats::XBGR8888, xBGR, video, raw),
+-	MAKE_FMT(formats::RGBX8888, RGBx, video, raw),
+-	MAKE_FMT(formats::BGRX8888, BGRx, video, raw),
+-	MAKE_FMT(formats::ARGB8888, ARGB, video, raw),
+-	MAKE_FMT(formats::ABGR8888, ABGR, video, raw),
+-	MAKE_FMT(formats::RGBA8888, RGBA, video, raw),
+-	MAKE_FMT(formats::BGRA8888, BGRA, video, raw),
++	MAKE_FMT(formats::RGB888, BGR, video, raw),
++	MAKE_FMT(formats::BGR888, RGB, video, raw),
++	MAKE_FMT(formats::XRGB8888, BGRx, video, raw),
++	MAKE_FMT(formats::XBGR8888, RGBx, video, raw),
++	MAKE_FMT(formats::RGBX8888, xBGR, video, raw),
++	MAKE_FMT(formats::BGRX8888, xRGB, video, raw),
++	MAKE_FMT(formats::ARGB8888, BGRA, video, raw),
++	MAKE_FMT(formats::ABGR8888, RGBA, video, raw),
++	MAKE_FMT(formats::RGBA8888, ABGR, video, raw),
++	MAKE_FMT(formats::BGRA8888, ARGB, video, raw),
+ 
+ 	MAKE_FMT(formats::YUYV, YUY2, video, raw),
+ 	MAKE_FMT(formats::YVYU, YVYU, video, raw),
+-- 
+2.43.0

@@ -1,7 +1,7 @@
 # Estado de hardware del SM-X910 bajo Ubuntu 24.04
 
-Última actualización: 2026-08-08, tras capturar imágenes físicas con los cuatro
-sensores y comprobar flash y linterna.
+Última actualización: 2026-08-09, tras procesar imágenes físicas de los cuatro
+sensores, exponerlos a PipeWire/GNOME Cámara y repetir la regresión completa.
 
 Ubuntu **ya arranca** en la tablet. Esta matriz distingue explícitamente lo
 heredado de lo comprobado, y ningún componente pasa a ✅ sin observación real.
@@ -76,7 +76,7 @@ sondea» como prueba de funcionamiento.
 | Huella (EgisTec EL7xx, SPI) | ❌ | ❌ | supuesto | Sin driver mainline |
 | Vibración / hápticos | ❌ | ❌ | supuesto | Hardware sin identificar |
 | Flash / linterna | ❌ | ✅ | observado | PM8550 SID 1, canales 0+1 agrupados por `leds-qcom-flash`; iluminación real observada en modo estrobo y linterna, con una foto capturada en cada caso |
-| Cámaras | ❌ | 🟡 | observado | Los cuatro sensores entregan RAW10 real por CAMSS: trasera principal y las dos frontales HI1337, trasera angular HI847. Falta actuador de enfoque, autoexposición/AWB, procesado ISP, `libcamera` y aplicación; no se presenta todavía como cámara de escritorio completa |
+| Cámaras | ❌ | 🟡 | observado | Los cuatro sensores pasan por `libcamera` simple + software ISP, con AE/AWB, pedestal y ganancia propios, y aparecen como cuatro fuentes PipeWire. GNOME Cámara abrió un stream real. Falta solo el actuador de enfoque de la trasera principal y una calibración de fábrica |
 | Módem | — | — | — | No aplica al modelo Wi-Fi |
 
 ### Cámaras y flash: alcance exacto de la validación
@@ -93,11 +93,30 @@ fotograma completo. La relación observada es:
 | frontal angular | HI1337 `9-0021`, `/dev/v4l-subdev30` | `msm_csiphy5` | 4000×3000 RAW10, 15.024.000 bytes |
 
 `/dev/video0` es el nodo de captura común: no identifica por sí solo una lente;
-el sensor se elige cambiando los enlaces y formatos del grafo de medios. Las
-fotos convertidas en el host son reconocibles y distinguen sin ambigüedad la
-mesa trasera del techo frontal y el mayor campo de las angulares. El color es
-un revelado Bayer manual, no calibración de fábrica. La trasera principal queda
-desenfocada porque el actuador todavía no tiene driver.
+el sensor se elige cambiando los enlaces y formatos del grafo de medios. Sobre
+esa capa se empaqueta `libcamera` 0.7.2 con el pipeline `simple`, software ISP y
+ayudantes de ganancia HI1337/HI847. El tuning aplica pedestal RAW10, AE, AWB de
+mundo gris y una matriz de color conservadora. Tras 150 frames de convergencia,
+las cuatro salidas RGB mostraron exposición útil y blancos/grises sin la
+dominante magenta de la conversión inicial:
+
+- [frontal angular](../work/resultado-frontal-angular.jpg);
+- [frontal principal](../work/resultado-frontal-principal.jpg);
+- [trasera principal](../work/resultado-trasera-principal.jpg);
+- [trasera angular](../work/resultado-trasera-angular.jpg).
+
+La trasera principal sigue desenfocada porque el actuador todavía no tiene
+driver. Las dos traseras también quedaron parcialmente tapadas por la posición
+física de la tablet durante esta prueba; eso no impidió verificar color,
+exposición ni continuidad.
+
+`/dev/udmabuf` se entrega a `video` mediante udev y las cuatro cámaras se
+publican como fuentes PipeWire. Cada una dio 30 frames negociados por la ruta de
+aplicaciones, la frontal se reabrió una segunda vez y los servicios quedaron
+activos. Una captura completa de 99 frames por esa ruta produjo esta
+[evidencia PipeWire](../work/resultado-pipewire-app.jpg). GNOME Cámara
+(`Snapshot` 46.2) se mantuvo abierta con su stream marcado `active` durante la
+prueba de escritorio.
 
 El flash se verificó en sus dos rutas de hardware. El estrobo se armó mediante
 la clase V4L2 flash y disparó durante una captura; la linterna mantuvo los dos

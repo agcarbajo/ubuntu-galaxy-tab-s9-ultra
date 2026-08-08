@@ -1,0 +1,22 @@
+From: Galaxy Tab S9 Ultra Ubuntu port <noreply@example.com>
+Subject: [PATCH] spa: libcamera: convert the model string view explicitly
+
+libcamera 0.7 exposes string controls and properties as string_view. C++17
+does not implicitly convert that view to std::string in a return statement.
+---
+ spa/plugins/libcamera/libcamera-device.cpp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/spa/plugins/libcamera/libcamera-device.cpp b/spa/plugins/libcamera/libcamera-device.cpp
+index b25a4eb728d8312b789a5d2d72ee462b94f231bc..41483b28efa18e8e7e1276409ff7beca3db71356 100644
+--- a/spa/plugins/libcamera/libcamera-device.cpp
++++ b/spa/plugins/libcamera/libcamera-device.cpp
+@@ -74,7 +74,7 @@ static std::string cameraModel(const Camera *camera)
+ 	const ControlList &props = camera->properties();
+ 
+ 	if (auto model = props.get(properties::Model))
+-		return std::move(model.value());
++		return std::string(model.value());
+ 
+ 	return camera->id();
+ }

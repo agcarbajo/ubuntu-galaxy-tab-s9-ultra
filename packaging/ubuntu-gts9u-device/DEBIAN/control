@@ -1,12 +1,13 @@
 Package: ubuntu-gts9u-device
-Version: 1.9
+Version: 2.0
 Section: admin
 Priority: optional
 Architecture: arm64
 Maintainer: Ubuntu gts9uwifi port contributors <noreply@example.invalid>
 Depends: systemd, e2fsprogs, gdisk, parted, util-linux, cloud-guest-utils,
  protection-domain-mapper, bluez, alsa-ucm-conf,
- hexagonrpcd, libssc, iio-sensor-proxy
+ hexagonrpcd, libssc, iio-sensor-proxy,
+ libcamera-gts9u, libspa-0.2-libcamera-gts9u
 Description: Device support for the Samsung Galaxy Tab S9 Ultra Wi-Fi
  Board-specific integration for the SM-X910 (gts9uwifi) running an Ubuntu
  userspace on a mainline kernel:
@@ -24,6 +25,7 @@ Description: Device support for the Samsung Galaxy Tab S9 Ultra Wi-Fi
     system what it is running on gets an answer a person recognises;
   * the libwacom description without which the desktop treats the S Pen as
     an external tablet and never rotates it with the screen;
+  * camera device permissions needed by libcamera's software ISP;
   * initramfs pruning for this device's 8 MiB init_boot partition.
  .
  Hardware enablement lives in the kernel and in the firmware overlay installed
