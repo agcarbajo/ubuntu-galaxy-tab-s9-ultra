@@ -363,6 +363,45 @@ Tres cosas que llevarse:
   escalón pasa de once minutos más un reinicio a dos segundos, y el reinicio
   además corta la carga y mueve las condiciones de la medida.
 
+## Los gestos del S Pen no los puede cubrir GNOME, y Ajustes no admite paneles
+
+Anotado antes de empezarlo, para no volver a investigarlo desde cero.
+
+**Lo que GNOME ya da gratis.** Reconoce el lápiz y le guarda ajustes por
+dispositivo: `dconf dump /org/gnome/desktop/peripherals/` muestra
+`[stylus/default-056a:0000]` con `button-action` y `pressure-curve`, y
+`[tablets/056a:0000]` con `area`. O sea que el panel «Wacom Tablet» funciona
+con nuestro digitalizador sin tocar nada. Merece la pena definir un stylus real
+en la entrada libwacom en vez de `@generic-no-eraser`, o el panel ofrece tres
+botones para un lápiz que tiene uno.
+
+**Dónde se acaba.** Las acciones que admite un botón de stylus son sólo
+`default, middle, right, back, forward`. El valor `keybinding` —el único que
+permitiría «gesto → acción arbitraria»— pertenece a
+`GDesktopPadButtonAction`, que es para los botones del cuerpo de una tableta
+Wacom, no para el lápiz. No hay forma de mapear un gesto desde GNOME.
+
+**Ajustes no admite secciones de terceros.** Los paneles se registran en
+`cc-panel-loader.c`, compilados dentro del binario; no hay directorio de
+paneles externos ni API de plugins en 46.7. Añadir una sección exigiría
+bifurcar `gnome-control-center` y recompilarlo en cada actualización de Ubuntu,
+lo que además nos dejaría atrás en seguridad. Descartado para este port.
+
+**Forma recomendada, si se retoma.** Demonio en la sesión (`systemd --user`)
+que abra el GATT y escriba en `/dev/uinput`, esquema GSettings propio en el
+paquete de dispositivo, y app GTK4/libadwaita aparte. En Wayland una aplicación
+normal no puede sintetizar pulsaciones: uinput es la salida que no depende de
+portales ni de consentimiento por sesión, y el acceso al nodo se resuelve con
+una regla udev — el mismo patrón que ya usa `10-fastrpc.rules` para el usuario
+`fastrpc`.
+
+**Y el orden.** El botón lateral ya es visible como `BTN_STYLUS` en `event2`,
+así que clic, doble clic y pulsación larga se pueden implementar **sin BLE**.
+Esa porción valida el camino entero —demonio, uinput, GSettings, app— contra
+hardware que ya funciona, antes de entrar en el GATT, que es la parte de coste
+no acotable. La UI es el último 10 %, y la lista de gestos la dicta el
+protocolo: diseñarla antes de conocerlo es inventarse la mitad.
+
 ## Lo que no hay que repetir
 
 Heredado de postmarketOS; cada punto costó al menos una iteración física.

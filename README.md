@@ -33,7 +33,7 @@ postmarketOS v1.71 baseline is kept outside Git.
 | **Buttons** | ✅ | Power and volume; a short press on power suspends |
 | **Keyboard cover** | ✅ | Samsung EF-DX920 pogo keyboard; the tablet's STM32 controller is repaired automatically if another OS has downgraded it ([details](packaging/ubuntu-gts9u-device/usr/share/doc/ubuntu-gts9u-device/pogo-keyboard.md)) |
 | **Cover / lid switch** | ✅ | Closing the cover blanks the screen |
-| **S Pen** | ✅ | Wacom EMR digitiser: hover, pressure, tilt and the side button, with this port's own driver. Docking, charge level and the BLE gestures are not done |
+| **S Pen (writing)** | ✅ | Wacom EMR digitiser: hover, pressure, tilt and the side button, with this port's own driver |
 | **Wi-Fi** | ✅ | WCN7850 / ath12k, official firmware and the QRD board data |
 | **Bluetooth** | ✅ | Controller and A2DP, with the tablet's own address from the Samsung EFS |
 | **Speakers / microphones** | ✅ | Four CS35L45 and the digital microphones, natively through PipeWire |
@@ -51,6 +51,10 @@ postmarketOS v1.71 baseline is kept outside Git.
 | **USB gadget / RNDIS** | ❔ | Inherited, not re-validated |
 | **Ethernet (RTL8153)** | ❔ | Enumerates and loads firmware; real link and traffic untested |
 | **Waydroid** | ❔ | Never tried |
+| **S Pen docking** | ❌ | Going into and out of the silo is not detected |
+| **S Pen battery / charging** | ❌ | The pen's charge level is neither read nor exposed |
+| **S Pen pairing (BLE)** | ❌ | The pen is not paired; its Bluetooth side is untouched |
+| **S Pen gestures** | ❌ | Needs the Samsung GATT profile, plus a daemon and settings of this port's own: GNOME can only map a stylus button to five mouse actions |
 | **Ambient light** | ❌ | STK31610 is discovered by the SSC but never completes its enable, so it is not exposed |
 | **Speaker protection** | ❌ | Cirrus protection firmware not loaded; hardware volume kept conservative |
 | **Fingerprint** | ❌ | No mainline driver for the EgisTec sensor |
