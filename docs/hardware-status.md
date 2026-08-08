@@ -1,7 +1,7 @@
 # Estado de hardware del SM-X910 bajo Ubuntu 24.04
 
-Última actualización: 2026-08-07, tras dejar el S Pen escribiendo con driver
-propio y orientación correcta en las cuatro rotaciones.
+Última actualización: 2026-08-08, tras quitar el bucle de espera activa de
+`iio-sensor-proxy` sin perder la autorrotación.
 
 Ubuntu **ya arranca** en la tablet. Esta matriz distingue explícitamente lo
 heredado de lo comprobado, y ningún componente pasa a ✅ sin observación real.
@@ -57,14 +57,14 @@ sondea» como prueba de funcionamiento.
 | Carga USB-PD/PPS | 🟡 | ⏳ | heredado | SM5714 TCPM + SM5440 2:1; a batería baja sigue sin revalidar |
 | Suspensión profunda | ✅ | ✅ | confirmado | Probada mediante la funda |
 | Funda / Hall `SW_LID` | ✅ | ✅ | confirmado | Cerrar apaga la pantalla |
-| Acelerómetro y autorrotación | ✅ | ✅ | medido | SSC expuesto a GNOME; la recuperación detecta y elimina una tormenta IRQ del primer cliente tras arrancar |
+| Acelerómetro y autorrotación | ✅ | ✅ | medido | SSC expuesto a GNOME. `iio-sensor-proxy` ya no gira: la espera síncrona de libssc bloquea en `poll()` en vez de iterar el contexto sin bloquear. 1 tick/2 s frente a 199, y 48,9 °C frente a 94,7 |
 | Giroscopio y brújula LSM6DSO | ✅ | ✅ | medido | El mismo canal SSC; `monitor-sensor` sigue el rumbo de la brújula |
 | USB gadget / RNDIS | ✅ | ⏳ | heredado | |
 | USB host, HID y almacenamiento | ✅ | ✅ | confirmado | Con y sin alimentación externa |
 | DisplayPort USB-C | ✅ | ✅ | confirmado | Salida de vídeo confirmada por la usuaria |
 | Ethernet RTL8153 | 🟡 | ⏳ | heredado | Enumera y carga firmware; falta enlace y tráfico reales |
 | UAS | ❓ | ❓ | supuesto | Nunca probado: no hubo unidad con interfaz UAS |
-| Luz ambiental STK31610 | ❌ | ❌ | supuesto | El SSC lo descubre pero no emite lux; vía agotada en pmOS |
+| Luz ambiental STK31610 | ❌ | ❌ | medido | El SSC lo descubre, acepta el `enable` y nunca manda la respuesta de configuración, así que `ssc_sensor_light_open_sync()` no termina jamás. El driver `ssc-light` ya no se ofrece; vía agotada también en pmOS |
 | Proximidad | — | — | — | El firmware SSC stock del X910 no instancia el sensor |
 | S Pen (Wacom I²C 0x56) | ❌ | ✅ | confirmado | Driver propio: hover con distancia, presión 0–4095, inclinación ±63 y botón lateral. Enganche automático, ~440 Hz y rotación correcta en las cuatro orientaciones. Acoplamiento, carga y gestos BLE, pendientes |
 | Teclado pogo EF-DX920 (STM32 I²C 0x2a) | ❌ | ✅ | confirmado | Requiere V37 en el MCU: con V34 la aplicación pulsa CONN y no anuncia el protocolo. Reprogramado a V37, teclea desde arranque en frío y sobrevive a desconectar y reconectar la funda. Desde v0.16 la restauración es automática en el primer arranque |

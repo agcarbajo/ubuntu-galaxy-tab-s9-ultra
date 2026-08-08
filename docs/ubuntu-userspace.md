@@ -107,12 +107,15 @@ Estas piezas deben probarse nativas antes de portar nada:
 | Topología GPU/DPU partida | Xorg parcheado + reverse PRIME | Mutter/Wayland gestiona `card0` (Adreno, render) y `card1` (DPU, KMS) sin parches; el stack Xorg de pmOS **no** se porta |
 | Rotación | Mutter r6 parcheado | Mutter de Ubuntu tal cual; el parche solo se porta si reaparece la regresión concreta (ratón externo desactiva la autorrotación) |
 | Escalado | ajustes GTK/Xft manuales de XFCE | `scale-monitor-framebuffer` de Mutter y escalado 200 % de GNOME |
-| Sensores | `iio-sensor-proxy` 3.9 parcheado + `libssc` + `hexagonrpcd` | `iio-sensor-proxy` de Ubuntu; `libssc`/`hexagonrpcd` **sí** hay que empaquetarlos porque no existen en Ubuntu |
+| Sensores | `iio-sensor-proxy` 3.9 parcheado + `libssc` + `hexagonrpcd` | `iio-sensor-proxy` de Ubuntu; `libssc`/`hexagonrpcd` **sí** hay que empaquetarlos porque no existen en Ubuntu. Los tres llevan parches propios, `libssc` incluido |
 | Gestión de red | NetworkManager | NetworkManager con netplan como frontend (por defecto en Ubuntu) |
 
 Lo que **no** se traduce y hay que reempaquetar como `.deb`:
 
-- `libssc` y `hexagonrpcd` (cliente SSC/FastRPC de los sensores);
+- `libssc` y `hexagonrpcd` (cliente SSC/FastRPC de los sensores). `libssc`
+  lleva parche propio: su espera síncrona giraba el contexto GLib sin bloquear,
+  lo que costaba un núcleo entero en cuanto el SSC dejaba una petición sin
+  contestar;
 - `pd-mapper` (imprescindible: sin él el ADSP no publica `servreg locator` y no
   aparece la tarjeta ALSA);
 - el paquete de dispositivo con udev, UCM, servicios de recuperación y

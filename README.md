@@ -37,7 +37,7 @@ postmarketOS v1.71 baseline is kept outside Git.
 | **Wi-Fi** | ✅ | WCN7850 / ath12k, official firmware and the QRD board data |
 | **Bluetooth** | ✅ | Controller and A2DP, with the tablet's own address from the Samsung EFS |
 | **Speakers / microphones** | ✅ | Four CS35L45 and the digital microphones, natively through PipeWire |
-| **Motion sensors** | ✅ | Accelerometer, gyroscope, compass and autorotation via the SSC DSP |
+| **Motion sensors** | ✅ | Accelerometer, gyroscope, compass and autorotation via the SSC DSP, at idle CPU cost |
 | **Battery** | ✅ | SM5714 telemetry: percentage, voltage, current and pack temperature |
 | **Suspend / resume** | ✅ | Deep suspend, validated with the cover |
 | **USB host** | ✅ | HID and storage, with and without external power |
@@ -51,7 +51,7 @@ postmarketOS v1.71 baseline is kept outside Git.
 | **USB gadget / RNDIS** | ❔ | Inherited, not re-validated |
 | **Ethernet (RTL8153)** | ❔ | Enumerates and loads firmware; real link and traffic untested |
 | **Waydroid** | ❔ | Never tried |
-| **Ambient light** | ❌ | STK31610 is discovered by the SSC but emits no lux |
+| **Ambient light** | ❌ | STK31610 is discovered by the SSC but never completes its enable, so it is not exposed |
 | **Speaker protection** | ❌ | Cirrus protection firmware not loaded; hardware volume kept conservative |
 | **Fingerprint** | ❌ | No mainline driver for the EgisTec sensor |
 | **Vibration / haptics** | ❌ | Hardware not identified |

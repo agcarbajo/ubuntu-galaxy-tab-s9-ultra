@@ -135,11 +135,17 @@ EOF
 
 # ---------------------------------------------------------------------------
 step "libssc $libssc_ver"
+mkdir -p "$buildroot/build"
+cp "$patches/fix-ssc-sync-wait-busy-loop.patch" "$buildroot/build/"
 run "cd /build 2>/dev/null || mkdir -p /build && cd /build
 rm -rf libssc stage-libssc
 git clone --quiet --depth 1 --branch v$libssc_ver \
 	https://codeberg.org/DylanVanAssche/libssc.git libssc
 cd libssc
+# Upstream's synchronous wait iterates the main context without blocking, which
+# is a spin, not a wait: a request the Sensor Core never answers pins a core for
+# the life of the process.  See the patch header for the measurement.
+patch -p1 < /build/fix-ssc-sync-wait-busy-loop.patch
 meson setup output --prefix=/usr --libdir=lib/aarch64-linux-gnu
 meson compile -C output
 DESTDIR=/build/stage-libssc meson install --no-rebuild -C output

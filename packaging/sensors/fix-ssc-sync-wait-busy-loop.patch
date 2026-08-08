@@ -1,0 +1,71 @@
+Wait for the Sensor Core instead of spinning on it.
+
+ssc_common_wait_sync_context() drives the default GLib context with
+g_main_context_iteration(..., FALSE).  When may_block is FALSE, GLib forces the
+poll timeout to zero, so the loop is not a wait at all: it is a spin that runs
+as fast as the CPU allows.  Any request the Sensor Core does not answer
+therefore pins a whole core for as long as the process lives.
+
+Measured on the X910 (SM8550, kernel 7.2-rc3): iio-sensor-proxy 3.9 stuck in
+ssc_sensor_light_open_sync() burned 100 % of one core from boot, 35 000 loop
+iterations per second, 106 941 ppoll() calls in three seconds, all with
+{tv_sec=0, tv_nsec=0} and all returning 0 (Timeout), 99,64 % of process time.
+That cost ~90 degrees on the hottest thermal zone at idle and about a third of
+the charging current.
+
+Blocking in poll() costs nothing in behaviour: the completion callback is
+dispatched from this very context, so whatever wakes the poll is what ends the
+wait, and every other source -- D-Bus, the accelerometer stream -- keeps being
+dispatched from the nested iteration exactly as before.
+
+Only the thread that drives the context may block on it, so acquire it first
+and fall back to the condition variable the callback already signals for a
+caller on any other thread.
+
+diff --git a/src/libssc-common.c b/src/libssc-common.c
+index 3648f47..3fbca7a 100644
+--- a/src/libssc-common.c
++++ b/src/libssc-common.c
+@@ -50,13 +50,39 @@ ssc_common_init_sync_context (SyncContext *ctx) {
+
+ void
+ ssc_common_wait_sync_context (SyncContext *ctx) {
++	GMainContext *context = g_main_context_default ();
++	gboolean owner;
++
++	/*
++	 * Iterating the context without blocking makes this a spin rather than a
++	 * wait: GLib forces the poll timeout to zero whenever may_block is FALSE,
++	 * so the loop runs as fast as the CPU allows.  A request the Sensor Core
++	 * never answers therefore pins a whole core for the life of the process.
++	 *
++	 * Block in poll() instead.  The completion callback is dispatched from
++	 * this same context, so whatever wakes the poll also ends the wait, and
++	 * every other source keeps being dispatched meanwhile exactly as before.
++	 *
++	 * Only the thread that drives the context may block on it.  A caller on
++	 * any other thread sleeps on the condition the callback already signals,
++	 * instead of fighting the owner for iterations.
++	 */
++	owner = g_main_context_acquire (context);
++
+ 	g_mutex_lock (&ctx->mutex);
+ 	while (!ctx->finished) {
+-		g_mutex_unlock (&ctx->mutex);
+-		g_main_context_iteration (g_main_context_default (), FALSE);
+-		g_mutex_lock (&ctx->mutex);
++		if (owner) {
++			g_mutex_unlock (&ctx->mutex);
++			g_main_context_iteration (context, TRUE);
++			g_mutex_lock (&ctx->mutex);
++		} else {
++			g_cond_wait (&ctx->condition, &ctx->mutex);
++		}
+ 	}
+ 	g_mutex_unlock (&ctx->mutex);
++
++	if (owner)
++		g_main_context_release (context);
+ }
+
+ void

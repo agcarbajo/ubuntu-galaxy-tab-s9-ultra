@@ -2410,3 +2410,98 @@ subió del 28 % al 32 % en cinco minutos.
 
 De 4,7 W a 18,8 W: **cuatro veces**, y el ritmo pasa de 1 % cada siete minutos a
 1 % cada minuto y cuarto.
+
+## Sesión 25 — el bucle de `iio-sensor-proxy` era una espera que no esperaba
+
+Fecha: 2026-08-08.
+
+`iio-sensor-proxy` quemaba **un núcleo entero de forma permanente**, desde el
+arranque. Línea base medida al empezar, con 18 minutos de uptime: `cpu-time
+00:17:27` — es decir, el 96 % del tiempo transcurrido—, 199 ticks/2 s, **94,7 °C**
+en la zona térmica más caliente con la tablet en reposo, y la corriente de carga
+hundida.
+
+Lo difícil no era encontrarlo, era que **el demonio que giraba funcionaba**:
+`AccelerometerOrientation = "normal"`, `HasAccelerometer = true`, autorrotación
+correcta. Y matarlo no valía: la instancia nueva pierde el sensor hasta que
+vuelve la sesión gráfica, y vuelve a girar igual. La sesión anterior ya se había
+estrellado contra eso construyendo un servicio de recuperación que ni curaba el
+bucle ni conservaba la rotación, y que quedó retirado.
+
+### El `strace` apuntaba al llamante, no al bucle de eventos
+
+La evidencia previa decía: 106.941 `ppoll` en tres segundos, 99,64 % del tiempo
+de proceso, **todas** con `{tv_sec=0, tv_nsec=0}` y **todas** devolviendo
+`0 (Timeout)`. La lectura natural es un `GSource` cuyo `prepare()` se declara
+listo en cada pasada. Es la lectura equivocada.
+
+Un timeout de cero en cada vuelta no lo produce una fuente mal armada: lo
+produce `g_main_context_iteration (ctx, FALSE)`. Con `may_block` a `FALSE` GLib
+**fuerza** el timeout a cero, mire lo que mire. La firma acusaba al llamante.
+
+### Un `gdb` sobre el proceso vivo cerró el caso en una traza
+
+No había gdb en la tablet; instalarlo costó un `apt-get`. El hilo principal:
+
+```
+#3 ssc_common_wait_sync_context (ctx=…) at ../src/libssc-common.c:56
+#4 ssc_sensor_light_open_sync (…)      at ../src/libssc-sensor-light.c:225
+#5 ssc_light_set_polling (…)           at ../src/drv-ssc-light.c:94
+#6 handle_method_call (… method_name="ClaimLight" …)
+#10 g_main_loop_run
+```
+
+Dos cosas a la vez. La primera, que libssc 0.4.4 implementa sus esperas
+síncronas girando el contexto por defecto sin bloquear:
+
+```c
+while (!ctx->finished) {
+        g_main_context_iteration (g_main_context_default (), FALSE);
+}
+```
+
+Eso no es esperar, es girar. Cualquier petición que el SSC no conteste clava un
+núcleo mientras viva el proceso.
+
+La segunda, que el que no contestaba era el **sensor de luz**: el firmware
+Samsung descubre el STK31610, acepta el `enable` y nunca manda la respuesta de
+configuración, así que `ssc_sensor_light_open_sync()` no termina jamás. GNOME
+llama a `ClaimLight` al abrir sesión y ahí se quedaba.
+
+Y así se explica por fin la paradoja: como el bucle itera el contexto principal,
+D-Bus y el flujo del acelerómetro **se despachaban desde dentro de la espera**.
+El demonio giraba y funcionaba porque girar era, literalmente, lo que lo hacía
+funcionar.
+
+### El arreglo, y por qué no cambia nada más
+
+`packaging/sensors/fix-ssc-sync-wait-busy-loop.patch`: bloquear en `poll()`. La
+callback que termina la espera se despacha desde ese mismo contexto, así que lo
+que despierta el poll es exactamente lo que acaba la espera, y las demás fuentes
+se siguen despachando igual desde la iteración anidada. Sólo el hilo que conduce
+el contexto puede bloquearse en él, de ahí el `g_main_context_acquire()` y el
+respaldo sobre la `GCond` que la callback ya señalaba.
+
+El disparador concreto ya tenía parche desde la sesión anterior
+(`disable-broken-ssc-light.patch`, que saca `ssc-light` de la tabla de drivers),
+pero **nunca se había instalado en la tablet**: el binario que corría era
+anterior. Se comprobó comparando el sha256 del `.deb` construido con el de
+`/usr/libexec/iio-sensor-proxy` en el dispositivo. Van los dos juntos: uno quita
+la petición que no se contesta, el otro hace que ninguna petición sin contestar
+vuelva a costar un núcleo.
+
+### Resultado, medido tras arranque en frío
+
+| | antes | después |
+|---|---|---|
+| ticks/2 s | 199 | 1 |
+| CPU acumulada / uptime | 00:17:27 en 1094 s | 00:00:01 en 222 s |
+| zona térmica más caliente | 94,7 °C | 46,9 °C |
+| corriente de batería | −908 mA | +1505 mA |
+| `AccelerometerOrientation` | `"normal"` | `"normal"` |
+
+La medición es de tasa, no de contador acumulado sobre un proceso recién
+nacido: ese fue justamente el error de método de la sesión anterior.
+
+Queda pendiente reintentar la subida de corriente de carga a 3200 mA, que se
+había medido con el bus contaminado por este bucle.

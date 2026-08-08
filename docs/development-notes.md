@@ -208,6 +208,61 @@ historia del teclado**: el boot que mantuvo 2.046 transiciones durante ocho
 horas también acumuló handovers. No convertir esa correlación en una causa raíz
 del transporte pogo sin la prueba física final.
 
+## La espera síncrona de libssc no era una espera, era un bucle
+
+`ssc_common_wait_sync_context()` en libssc 0.4.4 gira el contexto GLib por
+defecto con `g_main_context_iteration (..., FALSE)`. Con `may_block` a `FALSE`
+GLib fuerza el timeout del poll a cero, así que eso no espera: itera tan
+rápido como dé la CPU. Cualquier petición que el SSC no conteste **clava un
+núcleo entero durante toda la vida del proceso**.
+
+En el X910 el que no contestaba era el sensor de luz. Con el driver
+`ssc-light` todavía ofrecido, GNOME llamaba a `ClaimLight` y
+`iio-sensor-proxy` se quedaba dentro de `ssc_sensor_light_open_sync()` para
+siempre:
+
+```
+#3 ssc_common_wait_sync_context (ctx=…) at ../src/libssc-common.c:56
+#4 ssc_sensor_light_open_sync (…)      at ../src/libssc-sensor-light.c:225
+#5 ssc_light_set_polling (…)           at ../src/drv-ssc-light.c:94
+#6 handle_method_call (… method_name="ClaimLight" …)
+```
+
+Coste medido, tablet en reposo: 199 ticks/2 s (un núcleo al 100 %) desde el
+arranque, ~35.000 vueltas por segundo, 106.941 `ppoll` en tres segundos —
+99,64 % del tiempo de proceso— todas con `{tv_sec=0, tv_nsec=0}` y todas
+devolviendo `0 (Timeout)`, **94,7 °C** en la zona térmica más caliente y la
+corriente de carga hundida.
+
+Lo desconcertante era que **el demonio que giraba funcionaba**: la
+autorrotación iba bien mientras quemaba el núcleo. Ahora se entiende: como el
+bucle itera el contexto principal, D-Bus y el flujo del acelerómetro se
+despachaban desde dentro de la espera. Y por eso matarlo tampoco servía —
+reiniciarlo pierde el sensor hasta que vuelve la sesión, y la instancia nueva
+gira igual.
+
+El arreglo es bloquear en `poll()` (`packaging/sensors/fix-ssc-sync-wait-busy-loop.patch`).
+No cambia el comportamiento: la callback que termina la espera se despacha
+desde ese mismo contexto, así que lo que despierta el poll es justo lo que
+acaba la espera, y las demás fuentes se siguen despachando igual. Sólo el hilo
+que conduce el contexto puede bloquearse en él, de ahí el
+`g_main_context_acquire()` y el respaldo sobre la `GCond` que la callback ya
+señalaba.
+
+Con eso, y con `ssc-light` fuera de la tabla de drivers
+(`disable-broken-ssc-light.patch`), el mismo arranque da **1 tick/2 s** y
+48,9 °C con la autorrotación intacta.
+
+Dos lecciones más allá de este fallo:
+
+- **Un `ppoll` con timeout cero que devuelve `Timeout` siempre no es un
+  `GSource` mal armado**: es alguien iterando el contexto sin bloquear. La
+  firma apunta al llamante, no al bucle de eventos.
+- **La pila de sensores la compilamos nosotros**, así que un bucle así se
+  corrige donde está. Domesticar el proceso desde fuera —`renice`, cgroups,
+  reinicios vigilados— sólo esconde el consumo, y en este caso además rompía
+  la rotación.
+
 ## Lo que no hay que repetir
 
 Heredado de postmarketOS; cada punto costó al menos una iteración física.
