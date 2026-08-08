@@ -2505,3 +2505,70 @@ nacido: ese fue justamente el error de método de la sesión anterior.
 
 Queda pendiente reintentar la subida de corriente de carga a 3200 mA, que se
 había medido con el bus contaminado por este bucle.
+
+## Sesión 26 — el lápiz se quedaba «presente», y la explicación bonita era falsa
+
+Fecha: 2026-08-08.
+
+La dueña reportó un fallo anterior a todo esto: usando el lápiz, **una parte de
+la pantalla deja de responder al dedo**. El detalle que lo hacía interesante es
+que un arrastre iniciado en la zona buena **sí** atraviesa la zona muerta;
+empezar dentro, no. Intermitente, y se va al reiniciar.
+
+### Lo que se encontró, que es real
+
+Ese detalle describe con precisión el arbitraje táctil de libinput: con una
+herramienta en proximidad descarta los contactos **nuevos** dentro de un
+rectángulo y no cancela los que ya están en curso. Y los dos dispositivos están
+emparejados: `udevadm info /dev/input/event4` da
+`LIBINPUT_DEVICE_GROUP=18/0/0:input/ts`, donde `18/0/0` son el bus y los IDs del
+**lápiz**.
+
+Con eso en la cabeza, se miró el estado real del digitalizador y estaba clavado:
+`BTN_TOOL_PEN` a 1 sin lápiz cerca. Y no era que el driver perdiese un evento:
+**0 interrupciones en 5 s**, `ABS_DISTANCE` congelado, último frame válido con
+distancia 235 de 255. El controlador se calla al irse el lápiz, y
+`samsung_wacom_w90xx` sólo sabía sintetizar la salida contando frames que ya no
+llegan. Se queda a 1 hasta el siguiente reinicio.
+
+Arreglado con un `timer_list` de 250 ms que trata el silencio como una marcha.
+Verificado tras flashear: sube a 1 al dibujar y vuelve a 0 solo al apartar el
+lápiz, y sigue a 0 tras 90 s de muestreo.
+
+### Lo que no era
+
+La historia encajaba tan bien que casi se cierra ahí. Pero antes de darla por
+buena se pidió la comprobación física, y con el flag clavado —clavado y
+verificado clavado— **la dueña no encontró ninguna zona muerta**.
+
+O sea: la marca de proximidad pegada es un defecto real y está corregido, pero
+**no es la causa del fallo del táctil**, o al menos no basta. El fallo sigue
+abierto.
+
+La lección no es nueva pero volvió a aparecer con otra cara: una explicación que
+predice el síntoma con todo detalle sigue siendo una hipótesis mientras no se
+contraste. Aquí lo barato era preguntar, y preguntar la tumbó.
+
+Queda `work/catch-dead-zone.sh` para el próximo episodio. Parte el problema en
+dos según una sola medida —si los toques de la zona muerta llegan al kernel o
+no— y está validado contra un toque real, para que un «0 contactos» no pueda
+confundirse con una herramienta rota.
+
+### De paso: dos scripts de `work/` que no hacían nada
+
+`flash-boot-ssh.sh` no podía funcionar por dos motivos independientes. La tablet
+**no tiene `authorized_keys`**, y el script fuerza clave con `BatchMode=yes`. Y
+aunque autenticase, su payload nunca se ejecutaría: en
+`ssh host "echo PW | sudo -S bash -s" <<'EOF'`, el stdin de `sudo` es el pipe de
+`echo`, que sólo lleva la contraseña; `sudo` se la come y a `bash -s` le llega
+EOF. Reproducido con un payload inofensivo: salida vacía.
+
+Lo peligroso es la combinación: imprimiría `pushed`, luego nada, y saldría con
+código 0 **sin haber escrito la partición**. `work/restore-tree-and-test.sh`
+tiene el mismo patrón, así que lo que se concluyera de ejecutarlo se concluyó de
+un no-op. Ninguno de los dos está en el repo publicado; se comprobó.
+
+El sustituto, `work/flash-boot-password.sh`, usa contraseña y ejecuta el payload
+desde un fichero por ruta, conservando las comprobaciones que importan: sha de
+la imagen subida, exigir que el destino resuelva a `/dev/sd*`, y releer la
+partición para compararla.

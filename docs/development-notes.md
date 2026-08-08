@@ -263,6 +263,47 @@ Dos lecciones más allá de este fallo:
   reinicios vigilados— sólo esconde el consumo, y en este caso además rompía
   la rotación.
 
+## El digitalizador no anuncia que se va: enmudece
+
+`samsung_wacom_w90xx` sintetiza la salida de rango contando frames válidos con
+el bit `IN_RANGE` apagado, tres seguidos. Eso cubre el caso en que el
+controlador sigue hablando, pero no el otro: **cuando apartas el lápiz, el
+controlador puede callarse sin más**. Medido: 0 interrupciones en 5 s con
+`BTN_TOOL_PEN` todavía a 1 y `ABS_DISTANCE` congelado. El último frame válido
+traía distancia 235 de 255 — el lápiz al borde mismo del rango— y ahí se acabó
+la conversación.
+
+Sin timeout, `in_range` se queda a `true` **hasta el siguiente reinicio**.
+
+Importa más de lo que parece porque libinput agrupa este digitalizador con el
+táctil Goodix: `udevadm info /dev/input/event4` muestra
+`LIBINPUT_DEVICE_GROUP=18/0/0:input/ts`, y ese `18/0/0` son el bus y los IDs
+**del lápiz**, no del Goodix. Con una herramienta que cree en proximidad,
+libinput arbitra el táctil.
+
+El arreglo es un `timer_list` de 250 ms que trata el silencio como una marcha
+(el contador de frames se queda como camino rápido). Los informes en reposo
+llegan cada 25 ms, así que son diez frames perdidos: demasiado para dispararse
+con el lápiz presente, poco para notarlo cuando no está. `exc3000.c` en
+mainline hace exactamente esto por el mismo motivo.
+
+Verificado en hardware tras flashear: el flag sube a 1 al dibujar, y vuelve a 0
+solo al apartar el lápiz, y se queda a 0 durante 90 s de muestreo continuo.
+
+**Cuidado con la conclusión fácil, que casi la doy por buena.** Todo esto
+explicaba tan bien el síntoma que la dueña reportaba —una zona de la pantalla
+que responde al lápiz y no al dedo, salvo arrastrando desde fuera, que es
+exactamente cómo se comporta el rectángulo de arbitraje— que estuve a punto de
+darlo por causa. No lo es, o no basta: con el flag clavado y comprobado clavado,
+ella no encontró ninguna zona muerta. La marca de proximidad pegada es un
+defecto real y está corregido; **el fallo del táctil sigue abierto**.
+
+Para el próximo episodio, la pregunta que lo parte en dos está en
+`work/catch-dead-zone.sh`: si los toques en la zona muerta llegan al kernel, el
+que los descarta es userspace; si no llegan, es el Goodix y el lápiz no pinta
+nada. La herramienta está validada contra un toque real, para que un «0
+contactos» signifique algo.
+
 ## Lo que no hay que repetir
 
 Heredado de postmarketOS; cada punto costó al menos una iteración física.

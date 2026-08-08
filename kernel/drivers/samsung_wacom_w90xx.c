@@ -31,6 +31,8 @@
 #include <linux/of.h>
 #include <linux/regulator/consumer.h>
 #include <linux/slab.h>
+#include <linux/spinlock.h>
+#include <linux/timer.h>
 #include <linux/unaligned.h>
 
 /*
@@ -61,6 +63,26 @@
  * fake it.
  */
 #define WACOM_OUT_OF_RANGE_FRAMES	3
+
+/*
+ * And the frames may simply stop.  When the pen is taken away the controller
+ * can fall silent without ever sending the out-of-range frames the counter
+ * above waits for, and then nothing clears BTN_TOOL_PEN: measured on the
+ * device, 0 interrupts in five seconds with the tool still reported in range
+ * and ABS_DISTANCE frozen at its last value.
+ *
+ * That is not cosmetic.  libinput groups this digitiser with the Goodix
+ * touchscreen, so a tool it believes is in proximity makes it arbitrate touch
+ * away around the last pen position: new contacts inside that rectangle are
+ * dropped while contacts already in progress are not, which reads as a part of
+ * the screen that answers the pen but not a finger, unless the finger is
+ * dragged in from outside.  It lasts until the next reboot.
+ *
+ * So silence has to count as leaving too.  Idle reports arrive every 25 ms, so
+ * a quarter of a second is ten missed frames: far too long to fire while the
+ * pen is really there, far too short to be noticed when it is not.
+ */
+#define WACOM_PROXIMITY_TIMEOUT_MS	250
 
 /* Field offsets within an input report. */
 #define WACOM_REPORT_STATUS	0
@@ -115,6 +137,9 @@ struct samsung_wacom {
 	struct i2c_client *client;
 	struct input_dev *input;
 	struct touchscreen_properties props;
+	/* Guards in_range and out_of_range against the proximity timer. */
+	spinlock_t lock;
+	struct timer_list prox_timer;
 	bool in_range;
 	unsigned int out_of_range;
 };
@@ -185,13 +210,58 @@ static void samsung_wacom_set_max_rate(struct samsung_wacom *wacom)
 			"could not raise the sample rate: %d\n", ret);
 }
 
+/*
+ * Leaving range is synthesised, never announced, so it is emitted from two
+ * places -- the frame counter and the silence timer -- and lives here once.
+ */
+static void samsung_wacom_report_leave(struct samsung_wacom *wacom)
+{
+	struct input_dev *input = wacom->input;
+
+	input_report_key(input, BTN_TOUCH, 0);
+	input_report_key(input, BTN_STYLUS, 0);
+	input_report_key(input, BTN_TOOL_PEN, 0);
+	input_report_abs(input, ABS_PRESSURE, 0);
+	input_sync(input);
+}
+
+/* Returns true if this call is the one that took the pen out of range. */
+static bool samsung_wacom_leave_range(struct samsung_wacom *wacom)
+{
+	unsigned long flags;
+	bool leaving;
+
+	spin_lock_irqsave(&wacom->lock, flags);
+	leaving = wacom->in_range;
+	wacom->in_range = false;
+	wacom->out_of_range = 0;
+	spin_unlock_irqrestore(&wacom->lock, flags);
+
+	if (leaving)
+		samsung_wacom_report_leave(wacom);
+
+	return leaving;
+}
+
+static void samsung_wacom_prox_timeout(struct timer_list *t)
+{
+	struct samsung_wacom *wacom = timer_container_of(wacom, t, prox_timer);
+
+	if (samsung_wacom_leave_range(wacom))
+		dev_dbg(&wacom->client->dev,
+			"no report in %u ms; synthesising proximity out\n",
+			WACOM_PROXIMITY_TIMEOUT_MS);
+}
+
 static irqreturn_t samsung_wacom_irq(int irq, void *dev_id)
 {
 	struct samsung_wacom *wacom = dev_id;
 	struct input_dev *input = wacom->input;
 	u8 data[WACOM_REPORT_SIZE];
 	unsigned int pressure;
-	bool in_range, tip, barrel;
+	unsigned long flags;
+	bool in_range, tip, barrel, first;
+	unsigned int missed;
 	int ret;
 
 	ret = i2c_master_recv(wacom->client, data, sizeof(data));
@@ -218,21 +288,32 @@ static irqreturn_t samsung_wacom_irq(int irq, void *dev_id)
 		 * frames when idle, and reporting each one would flood the
 		 * input layer.
 		 */
-		if (wacom->in_range &&
-		    ++wacom->out_of_range >= WACOM_OUT_OF_RANGE_FRAMES) {
-			wacom->in_range = false;
-			wacom->out_of_range = 0;
-			input_report_key(input, BTN_TOUCH, 0);
-			input_report_key(input, BTN_STYLUS, 0);
-			input_report_key(input, BTN_TOOL_PEN, 0);
-			input_report_abs(input, ABS_PRESSURE, 0);
-			input_sync(input);
+		spin_lock_irqsave(&wacom->lock, flags);
+		missed = wacom->in_range ? ++wacom->out_of_range : 0;
+		spin_unlock_irqrestore(&wacom->lock, flags);
+
+		if (missed >= WACOM_OUT_OF_RANGE_FRAMES) {
+			timer_delete(&wacom->prox_timer);
+			samsung_wacom_leave_range(wacom);
 		}
 		return IRQ_HANDLED;
 	}
 
+	/*
+	 * A frame arrived, so the pen is here: push the silence deadline out
+	 * again.  Doing it on every frame rather than on the transition is what
+	 * makes the timer measure silence instead of dwell time.
+	 */
+	mod_timer(&wacom->prox_timer,
+		  jiffies + msecs_to_jiffies(WACOM_PROXIMITY_TIMEOUT_MS));
+
+	spin_lock_irqsave(&wacom->lock, flags);
+	first = !wacom->in_range;
+	wacom->in_range = true;
 	wacom->out_of_range = 0;
-	if (!wacom->in_range) {
+	spin_unlock_irqrestore(&wacom->lock, flags);
+
+	if (first) {
 		/*
 		 * Entering range is where the rate has reverted, so this is
 		 * where it has to be asked for again.  One byte, and only on
@@ -244,8 +325,6 @@ static irqreturn_t samsung_wacom_irq(int irq, void *dev_id)
 	barrel = data[WACOM_REPORT_STATUS] & WACOM_STATUS_BARREL;
 	pressure = get_unaligned_be16(&data[WACOM_REPORT_PRESSURE]) &
 		   WACOM_PRESSURE_MASK;
-
-	wacom->in_range = true;
 
 	touchscreen_report_pos(input, &wacom->props,
 			       get_unaligned_be16(&data[WACOM_REPORT_X]),
@@ -261,6 +340,13 @@ static irqreturn_t samsung_wacom_irq(int irq, void *dev_id)
 	input_sync(input);
 
 	return IRQ_HANDLED;
+}
+
+static void samsung_wacom_stop_timer(void *data)
+{
+	struct samsung_wacom *wacom = data;
+
+	timer_shutdown_sync(&wacom->prox_timer);
 }
 
 static int samsung_wacom_probe(struct i2c_client *client)
@@ -317,6 +403,16 @@ static int samsung_wacom_probe(struct i2c_client *client)
 
 	wacom->client = client;
 	wacom->input = input;
+	spin_lock_init(&wacom->lock);
+	timer_setup(&wacom->prox_timer, samsung_wacom_prox_timeout, 0);
+
+	/*
+	 * Registered before the interrupt so that teardown runs the other way
+	 * round: the handler that arms the timer goes first, then the timer.
+	 */
+	error = devm_add_action_or_reset(dev, samsung_wacom_stop_timer, wacom);
+	if (error)
+		return error;
 
 	input->name = "Wacom EMR Digitizer";
 	input->id.bustype = BUS_I2C;
