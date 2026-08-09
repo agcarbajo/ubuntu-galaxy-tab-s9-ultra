@@ -3,6 +3,7 @@ Description=Galaxy Tab S9 Ultra standard V4L2 cameras
 After=systemd-modules-load.service systemd-user-sessions.service user@1000.service
 Wants=user@1000.service
 ConditionPathExists=/dev/video20
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple

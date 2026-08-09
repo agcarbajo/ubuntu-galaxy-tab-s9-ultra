@@ -312,6 +312,10 @@ chroot "\$target" useradd -m -s /bin/bash -G sudo,adm,dialout,cdrom,audio,video,
 echo '$username:$password' | chroot "\$target" chpasswd
 chroot "\$target" passwd -l root
 chroot "\$target" /usr/libexec/ubuntu-gts9u-enable-flashlight '$username' || true
+# Camera relays are system services backed by this user's PipeWire graph. Keep
+# its user manager alive from boot, including before the first graphical login.
+install -d -m 0755 "\$target/var/lib/systemd/linger"
+install -m 0644 /dev/null "\$target/var/lib/systemd/linger/$username"
 
 chroot "\$target" systemctl enable ssh.service
 chroot "\$target" systemctl enable NetworkManager.service

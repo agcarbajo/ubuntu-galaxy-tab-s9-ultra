@@ -18,13 +18,26 @@ stop_relays() {
 }
 trap stop_relays TERM INT EXIT
 
-# The PipeWire socket belongs to the graphical user. Waiting here makes a cold
-# boot deterministic without forcing the user service ordering into PID 1.
+# The PipeWire socket belongs to the desktop user. Waiting for both the socket
+# and its service makes a cold boot deterministic without racing user@1000.
+pipewire_main_pid() {
+	systemctl --user show pipewire.service -p MainPID --value 2>/dev/null || true
+}
+
+pipewire_pid=
 for unused in {1..30}; do
-	[ -S "$XDG_RUNTIME_DIR/pipewire-0" ] && break
+	pipewire_pid=$(pipewire_main_pid)
+	if [ -S "$XDG_RUNTIME_DIR/pipewire-0" ] &&
+		[ -n "$pipewire_pid" ] && [ "$pipewire_pid" != 0 ] &&
+		kill -0 "$pipewire_pid" 2>/dev/null; then
+		break
+	fi
 	sleep 1
 done
 [ -S "$XDG_RUNTIME_DIR/pipewire-0" ]
+[ -n "$pipewire_pid" ]
+[ "$pipewire_pid" != 0 ]
+kill -0 "$pipewire_pid"
 
 for index in 0 1 2 3; do
 	node=$((20 + index))
@@ -34,7 +47,22 @@ for index in 0 1 2 3; do
 	pids+=("$!")
 done
 
-# Any unexpected relay exit restarts the complete set. This also releases the
-# single physical CAMSS pipeline before systemd launches the replacements.
-wait -n "${pids[@]}"
-exit 1
+# A PipeWire restart does not always surface as a fatal GStreamer error. Watch
+# its real service PID explicitly so the relays cannot remain attached to a
+# dead socket and silently publish black frames. Any relay exit has the same
+# effect. systemd then restarts the complete set, releasing the single CAMSS
+# pipeline before replacements are launched.
+while true; do
+	sleep 1
+	if ! kill -0 "$pipewire_pid" 2>/dev/null; then
+		current_pipewire_pid=$(pipewire_main_pid)
+		echo "PipeWire changed from $pipewire_pid to ${current_pipewire_pid:-unavailable}; restarting relays" >&2
+		exit 1
+	fi
+	for pid in "${pids[@]}"; do
+		if ! kill -0 "$pid" 2>/dev/null; then
+			echo "Camera relay $pid exited; restarting relay set" >&2
+			exit 1
+		fi
+	done
+done

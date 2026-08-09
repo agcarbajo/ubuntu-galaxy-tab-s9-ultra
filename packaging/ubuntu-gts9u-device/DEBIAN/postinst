@@ -51,6 +51,16 @@ case "$1" in
 		# the same helper after useradd for the first case.
 		/usr/libexec/ubuntu-gts9u-enable-flashlight ubuntu || true
 
+		# The system camera relays consume the desktop user's PipeWire graph.
+		# Keep that user manager alive before login too: otherwise an SSH login
+		# can create a temporary PipeWire socket which disappears on logout and
+		# leaves all four persistent V4L2 nodes serving black frames.
+		if getent passwd ubuntu >/dev/null 2>&1; then
+			install -d -m 0755 /var/lib/systemd/linger
+			install -m 0644 /dev/null /var/lib/systemd/linger/ubuntu
+			loginctl enable-linger ubuntu >/dev/null 2>&1 || true
+		fi
+
 		# Verify rather than assume: a unit that silently failed to enable
 		# shows up on the tablet only as a feature that quietly does nothing.
 		for pair in $UNITS; do
