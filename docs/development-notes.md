@@ -975,10 +975,10 @@ los dos reclamen el mismo grupo deja al segundo bloqueado antes de leer su ID.
 Los GPIO de enable/reset se solicitan solo mientras el sensor está alimentado y
 se liberan al terminar el stream.
 
-### De RAW10 a cámara de escritorio: las cuatro capas que faltaban
+### De RAW10 a cámara de escritorio: las seis capas que faltaban
 
 RAW10 había cerrado sensor, reloj, alimentación, CSI-2, CSIPHY, CSID, VFE y
-DMA, pero no era una interfaz de aplicación. La ruta terminada añade cuatro
+DMA, pero no era una interfaz de aplicación. La ruta terminada añade seis
 capas reproducibles:
 
 1. los drivers exportan selección, orientación y ubicación V4L2 para que
@@ -990,13 +990,42 @@ capas reproducibles:
    parte de ganancias `[1, 4]`; el AWB converge sobre estadísticas reales;
 4. el SPA libcamera de PipeWire 1.0.5 lleva los backports imprescindibles para
    libcamera 0.7 y para el orden de bytes RGB. Sin saltar `ColourGains` (array),
-   WirePlumber aborta; con el mapa RGB antiguo, la imagen sale magenta.
+   WirePlumber aborta; con el mapa RGB antiguo, la imagen sale magenta;
+5. un `v4l2loopback` parcheado y firmado crea `/dev/video20`–`23`, mientras
+   cuatro relés bajo demanda traducen las fuentes PipeWire a YUYV 1280×960;
+6. OBS conserva su fuente V4L2 estándar, pero su lista omite los nodos RAW
+   `Qualcomm Camera Subsystem` que no son cámaras listas para aplicaciones.
 
 `/dev/udmabuf` debe ser `root:video 0660` y llevar `uaccess`; de otro modo el
 ISP funciona como root y falla justamente en las aplicaciones. La validación
-final exigió 720 frames alternando las cuatro fuentes, dos ciclos completos en
-GNOME Cámara, cuatro aperturas WebRTC en Chrome y cuatro escenas de OBS. No
-hubo reinicios de PipeWire, errores de descriptores ni buffers duplicados.
+final exigió dos rondas consecutivas de 12 aperturas sobre los cuatro nodos,
+240 frames en total, cuatro aperturas WebRTC en Chrome y las cuatro selecciones
+de la fuente V4L2 estándar de OBS. PipeWire y el servicio de relés conservaron
+sus PID y el sistema mantuvo exactamente cuatro relés.
+
+El software ISP ya no usa un escalado *cover* que recortaba los laterales al
+pedir una relación distinta. Calcula el menor factor, centra la imagen y limpia
+el resto a negro; de este modo una salida 4:3 conserva todo el sensor y una
+salida 16:9 puede mostrar barras en vez de fingir zoom. Esto no amplía el campo
+óptico de la trasera principal, que físicamente es más estrecho.
+
+### La compatibilidad V4L2 necesita serializar el único ISP
+
+Los cuatro nombres no representan cuatro pipelines físicos. Todos terminan en
+el mismo CAMSS/ISP y abrir dos entradas libcamera durante la cola asíncrona de
+liberación puede hacer caer PipeWire. Cada relé toma por ello un `flock` común,
+agrupa durante 500 ms los cierres breves de negociación y conserva el bloqueo
+dos segundos después de llevar su pipeline a `NULL`. La misma guarda se aplica
+a la ruta de error: soltar inmediatamente un input fallido dejó callbacks
+CAMSS en vuelo y reprodujo un `SIGSEGV` en la duodécima conmutación.
+
+OBS añadió otro fallo independiente. En Noble, si `/dev/v4l/by-id` o
+`/dev/v4l/by-path` no existen, `v4l2-input.c` libera un `namelist` sin
+inicializar; además, la ruta de deduplicación asumía una lista no vacía. El
+parche inicializa el puntero a `NULL`, recorre la lista con condición nula y
+filtra por el nombre de tarjeta exacto de CAMSS. El diálogo probado contiene
+sólo las cuatro GTS9U y sigue permitiendo resoluciones, formatos y controles
+V4L2 normales.
 
 ### El DW9808 necesita un canal separado de los controles del sensor
 

@@ -2924,3 +2924,51 @@ Al cerrar las pruebas, Snapshot, Chrome y OBS estaban cerrados, el flash en
 `off`, PipeWire/PipeWire Pulse/WirePlumber activos y las cuatro fuentes
 libcamera publicadas. `lxc-net` seguía siendo el único servicio fallido,
 preexistente y ajeno a este trabajo.
+
+## Sesión 32 — cámaras V4L2 de sistema, campo completo y OBS estable
+
+Fecha: 2026-08-09.
+
+Las escenas GStreamer de OBS demostraban que los píxeles llegaban, pero no
+resolvían la interfaz de sistema: navegadores y la fuente «Dispositivo de
+captura de video (V4L2)» no podían descubrir las cuatro cámaras en una
+instalación limpia. Se sustituyó esa integración por cuatro nodos
+`v4l2loopback`, `/dev/video20`–`23`, con nombres GTS9U estables. El módulo queda
+fijado en `9ef83fb9`, recibe dos correcciones de eventos/colas, se compila contra
+el kernel exacto y se firma con su clave de build. Cuatro `v4l2-relayd` de
+sistema conectan esos nodos bajo demanda con las fuentes libcamera de PipeWire.
+
+CAMSS sólo permite una entrada física activa. El relé serializa por ello las
+cuatro entradas con un bloqueo común, agrupa cierres de negociación durante
+500 ms y destruye la entrada entre clientes reales. Una primera guarda de
+750 ms pasó una ronda pero PipeWire terminó en `SIGSEGV` al acumular cambios:
+el registro mostró dos configuraciones casi simultáneas y callbacks CAMSS aún
+en vuelo. La guarda final de dos segundos se aplica también a la ruta de error.
+Dos rondas consecutivas completaron después 24 aperturas, diez frames cada una,
+con los mismos PID de PipeWire y del servicio y cuatro relés vivos.
+
+Chrome, sin habilitar un backend de cámara especial, enumeró exactamente
+`GTS9U-Front-Ultra-Wide`, `GTS9U-Front-Main`, `GTS9U-Rear-Main` y
+`GTS9U-Rear-Ultra-Wide`; abrió las cuatro por WebRTC a 1280×720/30 fps. OBS
+reprodujo primero el cierre comunicado por la usuaria. Sus nodos CAMSS RAW
+aparecían antes que las cámaras procesadas y, además, el plugin de Noble
+liberaba un puntero sin inicializar cuando faltaban los directorios V4L
+`by-id`/`by-path`. `obs-v4l2-gts9u` corrige ambos casos y oculta únicamente las
+tarjetas `Qualcomm Camera Subsystem`. El diálogo estándar mostró sólo las
+cuatro GTS9U, abrió cada una y permaneció estable; no se instala ninguna escena
+ni configuración de OBS.
+
+La sensación de zoom tenía otra causa reproducible. El software ISP escalaba
+para cubrir el destino y recortaba los laterales cuando cambiaba la relación de
+aspecto. `libcamera-gts9u 0.7.2+53.g62d4bfc-gts9u3` usa ahora ajuste *contain*,
+centrado y fondo negro: la salida V4L2 1280×960 conserva el sensor 4:3 completo
+y los clientes 16:9 deciden si añaden barras o recortan. Las capturas físicas
+confirmaron el campo mucho mayor de ambas ultra gran angular; la trasera
+principal sigue siendo ópticamente más estrecha.
+
+La integración limpia queda en `v4l2-relayd-gts9u 0.1.2-gts9u3`,
+`obs-v4l2-gts9u 30.0.2+dfsg-3build1-gts9u1` y
+`ubuntu-gts9u-device 2.5`. `build-ubuntu-rootfs.sh` incluye esos tres paquetes y
+su huella de entradas, y ya no incluye `obs-gstreamer-gts9u`. Al cerrar la
+validación, Chrome y OBS estaban cerrados, el flash estaba en `off`, PipeWire y
+los cuatro relés seguían activos.

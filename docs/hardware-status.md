@@ -76,7 +76,7 @@ sondea» como prueba de funcionamiento.
 | Huella (EgisTec EL7xx, SPI) | ❌ | ❌ | supuesto | Sin driver mainline |
 | Vibración / hápticos | ❌ | ❌ | supuesto | Hardware sin identificar |
 | Flash / linterna | ❌ | ✅ | observado | PM8550 SID 1, canales 0+1 agrupados por `leds-qcom-flash`; iluminación real observada en modo estrobo y linterna. El mosaico **Linterna** de ajustes rápidos está instalado, activo y probado físicamente |
-| Cámaras | ❌ | 🟡 | observado | Los cuatro sensores pasan por `libcamera` simple + software ISP y aparecen como cuatro fuentes PipeWire. GNOME Cámara, Chrome WebRTC y OBS abrieron las cuatro; la trasera principal enfoca con su DW9808. Quedan calibración de fábrica y flash fotográfico automático |
+| Cámaras | ❌ | 🟡 | observado | Los cuatro sensores pasan por `libcamera` simple + software ISP y aparecen como cuatro cámaras V4L2 normales y nombradas. GNOME Cámara, Chrome WebRTC y OBS abrieron las cuatro; la trasera principal enfoca con su DW9808. Quedan calibración de fábrica y flash fotográfico automático |
 | Módem | — | — | — | No aplica al modelo Wi-Fi |
 
 ### Cámaras y flash: alcance exacto de la validación
@@ -105,18 +105,34 @@ dominante magenta de la conversión inicial:
 - [trasera principal](../work/resultado-trasera-principal.jpg);
 - [trasera angular](../work/resultado-trasera-angular.jpg).
 
+El escalado del ISP conserva ahora el rectángulo completo del sensor: usa
+ajuste *contain* centrado y relleno negro si la relación solicitada no coincide,
+en vez de recortar los laterales para llenar la salida. La interfaz V4L2 base es
+1280×960 (4:3); un cliente que pida 16:9 puede aplicar después su propio
+`crop-and-scale`. La trasera principal sigue teniendo un campo óptico
+naturalmente más estrecho que las ultra gran angular.
+
 La trasera principal enlaza el actuador DW9808 `2-000c` como lente del HI1337.
 El driver expone `focus_absolute` 0–1023 y la IPA software hace un barrido de
 contraste grueso y otro fino antes de mantener la mejor posición. Con la luz
 continua, el texto del billete quedó legible tanto en GNOME Cámara como en OBS.
 
-`/dev/udmabuf` se entrega a `video` mediante udev y las cuatro cámaras se
-publican como fuentes PipeWire. La regresión final alternó 16 aperturas de 45
-frames —720 en total— sin fallos, errores de descriptores ni reinicios de
-PipeWire. GNOME Cámara hizo dos ciclos completos, ocho selecciones y ocho
-fotos; Chrome abrió cuatro dispositivos WebRTC distintos a 1280×720/30 fps; y
-OBS produjo cuatro capturas mediante fuentes GStreamer/PipeWire. En los tres
-casos las imágenes quedaron derechas y los servicios siguieron activos.
+`/dev/udmabuf` se entrega a `video` mediante udev. PipeWire conserva las cuatro
+fuentes libcamera y cuatro procesos `v4l2-relayd` las conectan bajo demanda con
+`/dev/video20`–`23`, creados por un `v4l2loopback` parcheado, firmado y compilado
+contra el kernel exacto. Las cámaras se llaman `GTS9U-Front-Ultra-Wide`,
+`GTS9U-Front-Main`, `GTS9U-Rear-Main` y `GTS9U-Rear-Ultra-Wide`; no requieren
+escenas ni configuración por usuario.
+
+Los cuatro sensores comparten CAMSS/ISP, por lo que los relés serializan sus
+entradas y mantienen dos segundos de guarda tras soltar una cámara. Dos rondas
+consecutivas alternaron 24 aperturas V4L2, diez frames por apertura, manteniendo
+los mismos PID de PipeWire y del servicio y exactamente cuatro relés. Chrome
+enumeró sólo esas cuatro cámaras y abrió cada una a 1280×720/30 fps mediante
+WebRTC. El selector V4L2 estándar de OBS mostró las mismas cuatro y capturó cada
+`/dev/video20`–`23`. Su complemento empaquetado oculta únicamente los endpoints
+RAW internos `Qualcomm Camera Subsystem` y corrige el caso en que no existen
+los directorios `by-id`/`by-path`, que antes terminaba en `SIGSEGV`.
 
 El flash se verificó en sus dos rutas de hardware. El estrobo se armó mediante
 la clase V4L2 flash y disparó durante una captura; la linterna mantuvo los dos

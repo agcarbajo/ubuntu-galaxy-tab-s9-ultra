@@ -94,7 +94,8 @@ libdrm-tests, drm-info, edid-decode
 `v4l-utils` sigue siendo la herramienta de diagnóstico de CAMSS, pero la ruta
 normal ya no termina en RAW10. `scripts/build-camera-packages.sh` fija y
 empaqueta `libcamera` 0.7.2 (`62d4bfc`) con pipeline `simple`, software ISP,
-GStreamer, tuning HI1337/HI847 y autofoco por contraste para el DW9808. También
+GStreamer, tuning HI1337/HI847, preservación del campo de visión completo y
+autofoco por contraste para el DW9808. También
 recompila únicamente el SPA libcamera de PipeWire 1.0.5 (`a2287be`) con siete
 backports: compatibilidad con libcamera 0.7, mapa RGB correcto, reutilización
 segura de requests y buffers, descriptores prestados y entrega de completados
@@ -103,10 +104,14 @@ en el bucle de datos. Los `.deb` resultantes son
 de cámara del archivo y conservan el PipeWire/WirePlumber de Noble.
 
 El paquete de dispositivo instala además la regla udev de `/dev/udmabuf`,
-necesaria para que el software ISP pueda asignar buffers sin privilegios. La
-imagen de escritorio incluye GNOME Cámara, `gstreamer1.0-gl`, OBS Studio y el
-plugin `obs-gstreamer-gts9u`; así una build limpia arranca con las cuatro
-fuentes ya disponibles para aplicaciones.
+necesaria para que el software ISP pueda asignar buffers sin privilegios. El
+kernel incluye un `v4l2loopback` fijado y firmado para crear cuatro nodos de
+captura, y `v4l2-relayd-gts9u` los alimenta bajo demanda desde las fuentes
+PipeWire. La imagen de escritorio incluye GNOME Cámara, `gstreamer1.0-gl`, OBS
+Studio y `obs-v4l2-gts9u`; este último conserva la fuente V4L2 normal de OBS,
+pero oculta sus endpoints CAMSS RAW internos. Una build limpia ofrece así las
+cuatro cámaras nombradas a navegadores, OBS y aplicaciones V4L2 sin escenas ni
+ajustes por usuario.
 
 `ubuntu-desktop-minimal` en lugar de `ubuntu-desktop` deja fuera ofimática y
 snaps de escritorio que no aportan nada al bring-up. Snap se evalúa como tema
@@ -233,8 +238,9 @@ en una partición.
 | 0 | `fetch-mainline.sh` | checkout fijado en `a13c140c` (7.2-rc3) |
 | 0 | `stage-android-tools.sh` | `mkbootimg`, `mkdtboimg`, `avbtool` |
 | 0 | `import-kernel-sources.sh` | reimporta DTS, drivers y parches con hash de origen |
-| 1 | `build-mainline-kernel.sh` | `Image.gz`, DTB, config y módulos ath12k |
+| 1 | `build-mainline-kernel.sh` | `Image.gz`, DTB, config y módulos ath12k + `v4l2loopback` firmado |
 | 1b | `build-camera-packages.sh` | `libcamera-gts9u` y SPA libcamera para PipeWire |
+| 1c | `build-extra-packages.sh` | Fastfetch, relé V4L2 y complemento V4L2 seguro de OBS |
 | 2 | `build-ubuntu-rootfs.sh` | rootfs Ubuntu arm64 con `mmdebstrap` |
 | 3 | `build-rootfs-overlay.sh` | overlay de módulos y firmware para la microSD |
 | 4 | `build-sd-image.sh` | initramfs Ubuntu e imagen de dos particiones |
