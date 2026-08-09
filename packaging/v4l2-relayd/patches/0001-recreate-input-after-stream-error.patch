@@ -1,0 +1,150 @@
+Subject: relayd: serialize and recreate camera input pipelines
+
+All four logical cameras share the tablet's single CAMSS/ISP path. Serialize
+their active PipeWire inputs with an advisory lock. Coalesce short V4L2 probe
+gaps for 500 ms, then destroy the input so the next application gets a fresh
+connection instead of stale state. Failed inputs are dropped immediately.
+
+--- a/src/v4l2-relayd.c
++++ b/src/v4l2-relayd.c
+@@ -16,7 +16,9 @@
+ #endif
+ 
+ #include <errno.h>
++#include <fcntl.h>
+ #include <unistd.h>
++#include <sys/file.h>
+ #include <sys/ioctl.h>
+ #include <linux/videodev2.h>
+ 
+@@ -46,9 +48,11 @@ static gchar *opt_splash =
+ 
+ static GMainLoop *loop = NULL;
+ static guint input_bus_watch_id = 0;
++static guint input_disable_timeout_id = 0;
+ static guint output_bus_watch_id = 0;
+ static guint splash_bus_watch_id = 0;
+ static guint v4l2_event_poll_id = 0;
++static int input_lock_fd = -1;
+ static GstElement *input_pipeline = NULL;
+ static GstElement *output_pipeline = NULL;
+ static GstElement *splash_pipeline = NULL;
+@@ -147,6 +151,23 @@ backend_pipeline_bus_call (GstBus     *bus,
+       g_error_free (error);
+ 
+       gst_element_set_state (pipeline, GST_STATE_NULL);
++      if (pipeline == input_pipeline) {
++        if (input_disable_timeout_id != 0) {
++          g_source_remove (input_disable_timeout_id);
++          input_disable_timeout_id = 0;
++        }
++        input_pipeline = NULL;
++        input_bus_watch_id = 0;
++        gst_object_unref (pipeline);
++        if (input_lock_fd >= 0) {
++          /* A failed PipeWire input can still have CAMSS callbacks in
++           * flight. Releasing the next camera immediately lets those
++           * callbacks overlap and eventually crashes PipeWire. */
++          g_usleep (2000000);
++          flock (input_lock_fd, LOCK_UN);
++        }
++        return FALSE;
++      }
+       break;
+     }
+     default:
+@@ -270,17 +291,52 @@ splash_pipeline_get ()
+ static void
+ input_pipeline_enable ()
+ {
++  if (input_disable_timeout_id != 0) {
++    g_source_remove (input_disable_timeout_id);
++    input_disable_timeout_id = 0;
++  }
++  if (input_lock_fd < 0)
++    input_lock_fd = open ("/run/user/1000/gts9u-camera.lock",
++                          O_CREAT | O_CLOEXEC | O_RDWR, 0660);
++  if (input_lock_fd < 0 || flock (input_lock_fd, LOCK_EX) < 0) {
++    GST_ERROR ("Could not lock the shared camera ISP: %s", g_strerror (errno));
++    return;
++  }
+   gst_element_set_state (splash_pipeline_get (), GST_STATE_NULL);
+   gst_element_set_state (input_pipeline_get (), GST_STATE_PLAYING);
+ }
+ 
++static gboolean
++input_pipeline_destroy (gpointer user_data G_GNUC_UNUSED)
++{
++  if (input_pipeline != NULL) {
++    gst_element_set_state (input_pipeline, GST_STATE_NULL);
++    if (input_bus_watch_id != 0) {
++      g_source_remove (input_bus_watch_id);
++      input_bus_watch_id = 0;
++    }
++    gst_object_unref (input_pipeline);
++    input_pipeline = NULL;
++  }
++  if (input_lock_fd >= 0) {
++    /* PipeWire returns from NULL before the CAMSS worker has always released
++     * its last buffers. Keep the inter-camera lock through that short tail. */
++    g_usleep (2000000);
++    flock (input_lock_fd, LOCK_UN);
++  }
++  input_disable_timeout_id = 0;
++  gst_element_set_state (splash_pipeline_get (), GST_STATE_PLAYING);
++
++  return G_SOURCE_REMOVE;
++}
++
+ static void
+ input_pipeline_disable ()
+ {
+-  if (input_pipeline != NULL)
+-    gst_element_set_state (input_pipeline, GST_STATE_NULL);
+-  if (input_pipeline != NULL)
+-    gst_element_set_state (splash_pipeline, GST_STATE_PLAYING);
++  /* v4l2-ctl and browsers may briefly close the node while negotiating.
++   * Coalesce those transitions, but release libcamera between real clients. */
++  if (input_disable_timeout_id == 0)
++    input_disable_timeout_id = g_timeout_add (500, input_pipeline_destroy, NULL);
+ }
+ 
+ static gboolean
+@@ -457,18 +513,30 @@ main (int   argc,
+   GST_INFO ("Running...");
+   g_main_loop_run (loop);
+ 
+-  g_source_remove (input_bus_watch_id);
+-  g_source_remove (output_bus_watch_id);
+-  g_source_remove (splash_bus_watch_id);
++  if (input_disable_timeout_id != 0)
++    g_source_remove (input_disable_timeout_id);
++  if (input_bus_watch_id != 0)
++    g_source_remove (input_bus_watch_id);
++  if (output_bus_watch_id != 0)
++    g_source_remove (output_bus_watch_id);
++  if (splash_bus_watch_id != 0)
++    g_source_remove (splash_bus_watch_id);
+ 
+   gst_element_set_state (output_pipeline, GST_STATE_NULL);
+   gst_object_unref (GST_OBJECT (output_pipeline));
+ 
+-  gst_element_set_state (input_pipeline, GST_STATE_NULL);
+-  gst_object_unref (GST_OBJECT (input_pipeline));
++  if (input_pipeline != NULL) {
++    gst_element_set_state (input_pipeline, GST_STATE_NULL);
++    gst_object_unref (GST_OBJECT (input_pipeline));
++  }
+ 
+-  gst_element_set_state (splash_pipeline, GST_STATE_NULL);
+-  gst_object_unref (GST_OBJECT (splash_pipeline));
++  if (splash_pipeline != NULL) {
++    gst_element_set_state (splash_pipeline, GST_STATE_NULL);
++    gst_object_unref (GST_OBJECT (splash_pipeline));
++  }
++
++  if (input_lock_fd >= 0)
++    close (input_lock_fd);
+ 
+   g_main_loop_unref (loop);
+ 

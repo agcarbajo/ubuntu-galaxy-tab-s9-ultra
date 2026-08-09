@@ -1,0 +1,53 @@
+From: Shih-Yuan Lee (FourDollars) <sylee@canonical.com>
+Subject: v4l2loopback: only dequeue buffers that were queued
+
+Do not pre-populate the output queue during REQBUFS. Returning a buffer that
+was never submitted with QBUF violates V4L2 and makes GStreamer's v4l2sink
+abort the stream with "buffer was not queued".
+
+--- a/v4l2loopback.c
++++ b/v4l2loopback.c
+@@ -1616,29 +1616,16 @@ static void prepare_buffer_queue(struct v4l2_loopback_device *dev,
+ 
+ 	spin_lock_bh(&dev->list_lock);
+ 
+-	/* ensure sufficient number of buffers in queue */
+-	for (pos = 0; pos < count; ++pos) {
+-		bufd = &dev->buffers[pos];
+-		if (list_empty(&bufd->list_head))
+-			list_add_tail(&bufd->list_head, &dev->outbufs_list);
+-	}
+-	if (list_empty(&dev->outbufs_list))
+-		goto exit_prepare_queue_unlock;
+-
+-	/* remove any excess buffers */
++	/* QBUF, not REQBUFS, is what puts a buffer on the output queue. */
+ 	list_for_each_entry_safe(bufd, n, &dev->outbufs_list, list_head) {
+-		if (bufd->buffer.index >= count)
+-			list_del_init(&bufd->list_head);
++		list_del_init(&bufd->list_head);
+ 	}
+ 
+-	/* buffers are no longer queued; and `write_position` will correspond
+-	 * to the first item of `outbufs_list`. */
+-	pos = v4l2l_mod64(dev->write_position, count);
+-	list_for_each_entry(bufd, &dev->outbufs_list, list_head) {
++	/* Reset every buffer and the index mapping for the new allocation. */
++	for (pos = 0; pos < count; ++pos) {
++		bufd = &dev->buffers[pos];
+ 		unset_flags(bufd->buffer.flags);
+ 		dev->bufpos2index[pos % count] = bufd->buffer.index;
+-		++pos;
+ 	}
+-exit_prepare_queue_unlock:
+ 	spin_unlock_bh(&dev->list_lock);
+ }
+@@ -1998,7 +1988,7 @@ static int vidioc_dqbuf(struct file *file, void *fh, struct v4l2_buffer *b)
+ 		bufd = list_first_entry_or_null(&dev->outbufs_list,
+ 						struct v4l2l_buffer, list_head);
+ 		if (bufd)
+-			list_move_tail(&bufd->list_head, &dev->outbufs_list);
++			list_del_init(&bufd->list_head);
+ 
+ 		spin_unlock_bh(&dev->list_lock);
+ 		if (!bufd)

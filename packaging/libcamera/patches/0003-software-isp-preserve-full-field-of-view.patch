@@ -1,0 +1,40 @@
+Subject: software ISP: letterbox instead of cropping mismatched aspect ratios
+
+Camera clients commonly request 16:9 while the four tablet sensors are close
+to 4:3. Preserve the whole sensor image and centre it in the requested output;
+the unused pixels are opaque black. This is especially important for the front
+ultra-wide camera, whose defining field of view was otherwise cropped away.
+
+--- a/src/libcamera/software_isp/debayer_egl.cpp
++++ b/src/libcamera/software_isp/debayer_egl.cpp
+@@ -386,17 +386,18 @@ void DebayerEGL::setShaderVariableValues(eGLImage &eglImageIn, const DebayerPara
+ 	GLfloat Stride = (GLfloat)width_ / (shaderStridePixels_ / bytesPerPixel_);
+ 	/*
+ 	 * Scale the output size from the native size the algorithm produces for
+-	 * the input size. Keep the aspect ratio and prefer cropping over black
+-	 * bars.
++	 * the input size. Keep the aspect ratio and preserve the complete sensor
++	 * image, centring it in the output when the aspect ratios differ.
+ 	 */
+-	GLfloat scale = std::max((GLfloat)outputSize_.width / nativeOutputSize_.width,
++	GLfloat scale = std::min((GLfloat)outputSize_.width / nativeOutputSize_.width,
+ 				 (GLfloat)outputSize_.height / nativeOutputSize_.height);
+-	GLfloat trans = -(1.0f - scale);
++	GLfloat transX = (GLfloat)outputSize_.width / nativeOutputSize_.width - 1.0f;
++	GLfloat transY = (GLfloat)outputSize_.height / nativeOutputSize_.height - 1.0f;
+ 	GLfloat projMatrix[] = {
+ 		scale, 0, 0, 0,
+ 		0, scale, 0, 0,
+ 		0, 0, 1, 0,
+-		trans, trans, 0, 1
++		transX, transY, 0, 1
+ 	};
+ 	/* Static const coordinates */
+ 	static const GLfloat vcoordinates[4][2] = {
+@@ -589,5 +593,6 @@ int DebayerEGL::debayerGPU(FrameBuffer *input, FrameBuffer *output, const Debaye
+ 	setShaderVariableValues(*eglImageIn, params);
+ 
+ 	glViewport(0, 0, width_, height_);
++	glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+ 	glClear(GL_COLOR_BUFFER_BIT);
+ 	glDrawArrays(GL_TRIANGLE_FAN, 0, DEBAYER_OPENGL_COORDS);

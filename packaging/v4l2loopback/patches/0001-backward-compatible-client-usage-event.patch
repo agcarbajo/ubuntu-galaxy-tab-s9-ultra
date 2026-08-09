@@ -1,0 +1,36 @@
+From: You-Sheng Yang <vicamo@gmail.com>
+Subject: v4l2loopback: keep compatibility with Noble v4l2-relayd
+
+Ubuntu 24.04's v4l2-relayd subscribes to V4L2_EVENT_PRIVATE_START, while
+recent v4l2loopback releases moved the event into their allocated private
+range. Emit and accept both IDs so the in-archive relay remains usable.
+
+--- a/v4l2loopback.c
++++ b/v4l2loopback.c
+@@ -818,6 +818,7 @@
+ #define V4L2LOOPBACK_EVENT_OFFSET 0x08E00000
+ #define V4L2_EVENT_PRI_CLIENT_USAGE \
+ 	(V4L2LOOPBACK_EVENT_BASE + V4L2LOOPBACK_EVENT_OFFSET + 1)
++#define V4L2_EVENT_PRI_CLIENT_USAGE_UBUNTU V4L2_EVENT_PRIVATE_START
+ 
+ struct v4l2_event_client_usage {
+ 	__u32 count;
+@@ -2156,6 +2157,10 @@ static void client_usage_queue_event(struct video_device *vdev)
+ 		!has_capture_token(dev->stream_tokens);
+ 
+ 	v4l2_event_queue(vdev, &ev);
++
++	/* Backward compatibility for Ubuntu 24.04's v4l2-relayd. */
++	ev.type = V4L2_EVENT_PRI_CLIENT_USAGE_UBUNTU;
++	v4l2_event_queue(vdev, &ev);
+ }
+ 
+ static int client_usage_ops_add(struct v4l2_subscribed_event *sev,
+@@ -2199,6 +2204,7 @@ static int vidioc_subscribe_event(struct file *file, void *fh,
+ 	case V4L2_EVENT_CTRL:
+ 		return v4l2_ctrl_subscribe_event(fh, sub);
+ 	case V4L2_EVENT_PRI_CLIENT_USAGE:
++	case V4L2_EVENT_PRI_CLIENT_USAGE_UBUNTU:
+ 		return v4l2_event_subscribe(fh, sub, 0, &client_usage_ops);
+ 	}
+

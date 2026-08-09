@@ -2,3 +2,11 @@
 # The desktop user already belongs to video; expose the allocator to that
 # group and let logind grant an ACL to the active graphical session as well.
 SUBSYSTEM=="misc", KERNEL=="udmabuf", GROUP="video", MODE="0660", TAG+="uaccess"
+
+# Stable human-readable aliases for the processed cameras. Applications still
+# discover the ordinary /dev/video20-23 nodes; these links are for diagnostics
+# and scripts and never expose the internal Qualcomm ISP endpoints.
+SUBSYSTEM=="video4linux", ATTR{name}=="GTS9U-Front-Ultra-Wide", SYMLINK+="gts9u-camera/front-ultrawide"
+SUBSYSTEM=="video4linux", ATTR{name}=="GTS9U-Front-Main", SYMLINK+="gts9u-camera/front-main"
+SUBSYSTEM=="video4linux", ATTR{name}=="GTS9U-Rear-Main", SYMLINK+="gts9u-camera/rear-main"
+SUBSYSTEM=="video4linux", ATTR{name}=="GTS9U-Rear-Ultra-Wide", SYMLINK+="gts9u-camera/rear-ultrawide"

@@ -248,12 +248,26 @@ if [ "$camera_missing" = 1 ] || [ "$camera_cached" != "$camera_fingerprint" ]; t
 	printf '%s\n' "$camera_fingerprint" > "$camera_stamp"
 fi
 
-# Desktop tools that landed in the archive after noble froze, so "apt install"
-# has no candidate for them on 24.04.
-if ! ls "$base"/out/packages/fastfetch_*.deb >/dev/null 2>&1 ||
-	! ls "$base"/out/packages/obs-gstreamer-gts9u_*.deb >/dev/null 2>&1; then
-	echo 'extra packages are missing; building them first'
+# Noble lacks fastfetch and this port also carries the camera relay and the
+# OBS V4L2 safety patch. Hash those inputs so a clean image cannot silently
+# reuse the old manual GStreamer integration from a previous build.
+extra_stamp=$base/out/packages/.gts9u-extra-inputs.sha256
+extra_fingerprint=$(
+	{
+		sha256sum "$repo/scripts/build-extra-packages.sh"
+		find "$repo/packaging/v4l2-relayd" "$repo/packaging/obs-v4l2" \
+			-type f -print0 | sort -z | xargs -0 sha256sum
+	} | sha256sum | awk '{print $1}'
+)
+extra_cached=$(cat "$extra_stamp" 2>/dev/null || true)
+extra_missing=0
+for pkg in fastfetch v4l2-relayd-gts9u obs-v4l2-gts9u; do
+	ls "$base"/out/packages/${pkg}_*.deb >/dev/null 2>&1 || extra_missing=1
+done
+if [ "$extra_missing" = 1 ] || [ "$extra_cached" != "$extra_fingerprint" ]; then
+	echo 'extra package inputs changed or packages are missing; rebuilding them'
 	bash "$repo/scripts/build-extra-packages.sh" >/dev/null
+	printf '%s\n' "$extra_fingerprint" > "$extra_stamp"
 fi
 
 # Newest build of each, so repeated builds do not accumulate stale versions.
@@ -262,7 +276,7 @@ rm -rf -- "$stage_debs"
 mkdir -p "$stage_debs"
 for pkg in libssc hexagonrpcd iio-sensor-proxy \
 	libcamera-gts9u libspa-0.2-libcamera-gts9u \
-	ubuntu-gts9u-device fastfetch obs-gstreamer-gts9u; do
+	ubuntu-gts9u-device fastfetch v4l2-relayd-gts9u obs-v4l2-gts9u; do
 	deb=$(ls -t "$base"/out/packages/${pkg}_*.deb 2>/dev/null | head -1 || true)
 	if [ -z "$deb" ]; then
 		echo "missing local package: $pkg" >&2

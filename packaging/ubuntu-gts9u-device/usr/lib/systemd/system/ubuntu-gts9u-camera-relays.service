@@ -1,0 +1,21 @@
+[Unit]
+Description=Galaxy Tab S9 Ultra standard V4L2 cameras
+After=systemd-modules-load.service systemd-user-sessions.service user@1000.service
+Wants=user@1000.service
+ConditionPathExists=/dev/video20
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+SupplementaryGroups=video
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
+ExecStart=/usr/libexec/ubuntu-gts9u-camera-relays
+ExecStartPost=+/usr/libexec/ubuntu-gts9u-camera-udev-refresh
+Restart=always
+RestartSec=2
+TimeoutStartSec=15
+
+[Install]
+WantedBy=graphical.target

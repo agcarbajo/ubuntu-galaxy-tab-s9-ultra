@@ -15,7 +15,7 @@ suite=${UBUNTU_SUITE:-noble}
 mirror=${UBUNTU_MIRROR:-http://ports.ubuntu.com/ubuntu-ports}
 
 libcamera_commit=62d4bfc450798cbd57722fa349a245b93b11d1cd
-libcamera_version=0.7.2+53.g62d4bfc-gts9u2
+libcamera_version=0.7.2+53.g62d4bfc-gts9u3
 pipewire_commit=a2287be601710eea0d073261223ec34b92384c8a
 pipewire_version=1.0.5-gts9u6
 skip_build=${SKIP_CAMERA_BUILD:-0}
@@ -146,7 +146,8 @@ cd libcamera-gts9u
 git checkout --quiet $libcamera_commit
 git apply \
 	/build/camera-inputs/libcamera/0001-libipa-add-hynix-hi1337-hi847-gain-helpers.patch \
-	/build/camera-inputs/libcamera/0002-simple-software-autofocus.patch
+	/build/camera-inputs/libcamera/0002-simple-software-autofocus.patch \
+	/build/camera-inputs/libcamera/0003-software-isp-preserve-full-field-of-view.patch
 meson setup build \
 	--prefix=/usr \
 	--libdir=lib/aarch64-linux-gnu \

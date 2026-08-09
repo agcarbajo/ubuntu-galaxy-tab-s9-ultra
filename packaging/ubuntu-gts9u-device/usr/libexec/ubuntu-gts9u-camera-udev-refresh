@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+
+# With exclusive_caps=1 the nodes initially advertise output-only. The relay
+# opens its producer side immediately, after which a change event makes udev,
+# Chrome and sandbox rules cache the final capture capability.
+sleep 2
+for node in 20 21 22 23; do
+	[ -e "/sys/class/video4linux/video$node" ] || exit 1
+	udevadm trigger --action=change "/sys/class/video4linux/video$node"
+done
+udevadm settle

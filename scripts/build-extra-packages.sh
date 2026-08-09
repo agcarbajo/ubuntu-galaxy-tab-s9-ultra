@@ -1,10 +1,9 @@
 #!/bin/bash
 # Build desktop tools that Ubuntu 24.04 LTS does not ship, as .deb.
 #
-# fastfetch entered the Debian and Ubuntu archives after noble froze, so
-# "apt install fastfetch" fails on 24.04 with no candidate.  Rather than tell
-# every new installation to fetch a binary from the internet, build it here and
-# install it into the rootfs like any other package.
+# This builds fastfetch and the small on-demand V4L2 camera relay. The latter
+# deliberately omits Ubuntu's v4l2loopback-dkms dependency: this port ships a
+# module built and signed against its exact custom kernel instead.
 #
 # The build happens in the same throwaway arm64 chroot the sensor packages use,
 # never in the rootfs that ships.
@@ -22,8 +21,10 @@ fastfetch_ver=${FASTFETCH_VERSION:-2.66.0}
 # upstream release: a plain "2.66.0" would compare equal to the archive's
 # and let an upgrade quietly drop the patch.
 fastfetch_pkgver=${fastfetch_ver}-gts9u1
-obs_gstreamer_commit=a936d45f7968a6211b9563e92eeb63de2ac45d82
-obs_gstreamer_version=0.4.0+git20260809.a936d45-gts9u1
+v4l2_relayd_commit=80e8f54563f624fe2f80a954af8cce27cc3a9636
+v4l2_relayd_version=0.1.2-gts9u3
+obs_v4l2_commit=a4578a6a307e857b7ceafa2723cc1eb345f05100
+obs_v4l2_version=30.0.2+dfsg-3build1-gts9u1
 
 mkdir -p "$out"
 
@@ -56,8 +57,9 @@ build_deps='build-essential cmake pkg-config git ca-certificates
 libpci-dev libvulkan-dev libwayland-dev libxrandr-dev libdconf-dev
 libdbus-1-dev libdrm-dev libpulse-dev libchafa-dev zlib1g-dev
 libegl-dev libglx-dev libosmesa6-dev libxcb-randr0-dev libsqlite3-dev
-meson ninja-build libobs-dev libgstreamer1.0-dev
-libgstreamer-plugins-base1.0-dev'
+autoconf automake autoconf-archive libtool libglib2.0-dev
+libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
+libobs-dev libv4l-dev libavcodec-dev libavformat-dev libavutil-dev libudev-dev'
 
 if [ ! -d "$buildroot/usr/bin" ]; then
 	mmdebstrap \
@@ -149,53 +151,138 @@ dpkg-deb --root-owner-group --build "$pkgdir" \
 echo "built fastfetch_${fastfetch_pkgver}_arm64.deb"
 
 # ---------------------------------------------------------------------------
-step "obs-gstreamer $obs_gstreamer_commit"
-
-# Noble's OBS PipeWire module captures displays, not camera nodes.  This small
-# upstream plugin adds a GStreamer source, which lets OBS consume each of the
-# four named libcamera PipeWire nodes without a V4L2 compatibility shim.
-# Ubuntu's libobs.pc accidentally contains CMake generator expressions in its
-# Cflags.  Strip those expressions in a private pkg-config directory; never
-# alter the build chroot's packaged file.
+step "v4l2-relayd $v4l2_relayd_commit"
+install -m 0644 \
+	"$repo/packaging/v4l2-relayd/patches/0001-recreate-input-after-stream-error.patch" \
+	"$buildroot/tmp/v4l2-relayd-recovery.patch"
 run "cd /build
-rm -rf obs-gstreamer stage-obs-gstreamer obs-gstreamer-pkgconfig
-git clone --quiet https://github.com/fzwoch/obs-gstreamer.git obs-gstreamer
-cd obs-gstreamer
-git checkout --quiet $obs_gstreamer_commit
-install -d /build/obs-gstreamer-pkgconfig
-sed 's/ \\$<[^ ]*>//g' /usr/lib/aarch64-linux-gnu/pkgconfig/libobs.pc \
-	>/build/obs-gstreamer-pkgconfig/libobs.pc
-export PKG_CONFIG_PATH=/build/obs-gstreamer-pkgconfig:/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig
-meson setup build --buildtype=release --prefix=/usr \
-	--libdir=lib/aarch64-linux-gnu/obs-plugins
-meson compile -C build
-DESTDIR=/build/stage-obs-gstreamer meson install --no-rebuild -C build
-test -s /build/stage-obs-gstreamer/usr/lib/aarch64-linux-gnu/obs-plugins/obs-gstreamer.so
-echo 'obs-gstreamer built'"
+rm -rf v4l2-relayd-gts9u stage-v4l2-relayd
+git clone --quiet https://git.launchpad.net/ubuntu/+source/v4l2-relayd \
+	v4l2-relayd-gts9u
+cd v4l2-relayd-gts9u
+git checkout --quiet $v4l2_relayd_commit
+git apply /tmp/v4l2-relayd-recovery.patch
+NOCONFIGURE=1 ./autogen.sh >/dev/null
+./configure --prefix=/usr --with-systemdsystemunitdir=no \
+	--with-modulesloaddir=no >/dev/null
+make -j\"\$(nproc)\" >/dev/null
+make DESTDIR=/build/stage-v4l2-relayd install >/dev/null
+test -x /build/stage-v4l2-relayd/usr/bin/v4l2-relayd
+echo 'v4l2-relayd built'"
 
-step 'package obs-gstreamer'
-pkgdir=$base/build/deb/obs-gstreamer-gts9u
+step 'package v4l2-relayd'
+pkgdir=$base/build/deb/v4l2-relayd-gts9u
 rm -rf -- "$pkgdir"
 mkdir -p "$pkgdir/DEBIAN"
-cp -a "$buildroot/build/stage-obs-gstreamer/." "$pkgdir/"
+cp -a "$buildroot/build/stage-v4l2-relayd/." "$pkgdir/"
 cat > "$pkgdir/DEBIAN/control" <<EOF
-Package: obs-gstreamer-gts9u
-Version: $obs_gstreamer_version
+Package: v4l2-relayd-gts9u
+Version: $v4l2_relayd_version
 Section: video
 Priority: optional
 Architecture: arm64
 Maintainer: Ubuntu gts9uwifi port contributors <noreply@example.invalid>
-Depends: obs-studio, gstreamer1.0-pipewire, gstreamer1.0-plugins-base,
- libgstreamer1.0-0, libgstreamer-plugins-base1.0-0
-Description: GStreamer camera sources for OBS on the Galaxy Tab S9 Ultra
- Adds the upstream obs-gstreamer source plugin so OBS can consume the four
- libcamera cameras exposed by PipeWire on the SM-X910.
+Depends: libc6, libglib2.0-0t64, libgstreamer1.0-0,
+ libgstreamer-plugins-base1.0-0, gstreamer1.0-pipewire,
+ gstreamer1.0-plugins-base, gstreamer1.0-plugins-good
+Provides: v4l2-relayd
+Conflicts: v4l2-relayd
+Replaces: v4l2-relayd
+Description: On-demand V4L2 camera relay for the Galaxy Tab S9 Ultra
+ Publishes the four processed libcamera PipeWire sources through ordinary
+ V4L2 devices for browsers, OBS and other Linux camera applications.
 EOF
 chown -R root:root "$pkgdir"
 find "$pkgdir" -type d -exec chmod 0755 {} +
 find "$pkgdir" -type f -exec chmod 0644 {} +
-chmod 0755 "$pkgdir/usr/lib/aarch64-linux-gnu/obs-plugins/obs-gstreamer.so"
+chmod 0755 "$pkgdir/usr/bin/v4l2-relayd"
 find "$pkgdir" -exec touch -h -d '@0' {} +
 dpkg-deb --root-owner-group --build "$pkgdir" \
-	"$out/obs-gstreamer-gts9u_${obs_gstreamer_version}_arm64.deb" >/dev/null
-echo "built obs-gstreamer-gts9u_${obs_gstreamer_version}_arm64.deb"
+	"$out/v4l2-relayd-gts9u_${v4l2_relayd_version}_arm64.deb" >/dev/null
+echo "built v4l2-relayd-gts9u_${v4l2_relayd_version}_arm64.deb"
+
+# ---------------------------------------------------------------------------
+step "OBS V4L2 plugin $obs_v4l2_commit"
+install -m 0644 \
+	"$repo/packaging/obs-v4l2/patches/0001-hide-internal-camss-nodes.patch" \
+	"$buildroot/tmp/obs-v4l2-gts9u.patch"
+run "cd /build
+rm -rf obs-v4l2-gts9u stage-obs-v4l2
+git clone --quiet https://git.launchpad.net/ubuntu/+source/obs-studio \
+	obs-v4l2-gts9u
+cd obs-v4l2-gts9u
+git checkout --quiet $obs_v4l2_commit
+git apply /tmp/obs-v4l2-gts9u.patch
+install -d /build/stage-obs-v4l2/usr/lib/obs-v4l2-gts9u
+obs_cflags=\$(pkg-config --cflags libobs libavcodec libavformat libavutil libudev | \
+	sed 's/ \\\$[^ ]*//g')
+obs_libs=\$(pkg-config --libs libobs libavcodec libavformat libavutil libudev)
+cc -std=gnu17 -O2 -fPIC -DHAVE_UDEV -shared -Wl,--no-undefined \
+	-o /build/stage-obs-v4l2/usr/lib/obs-v4l2-gts9u/linux-v4l2.so \
+	plugins/linux-v4l2/linux-v4l2.c \
+	plugins/linux-v4l2/v4l2-controls.c \
+	plugins/linux-v4l2/v4l2-input.c \
+	plugins/linux-v4l2/v4l2-helpers.c \
+	plugins/linux-v4l2/v4l2-output.c \
+	plugins/linux-v4l2/v4l2-decoder.c \
+	plugins/linux-v4l2/v4l2-udev.c \
+	\$obs_cflags \$obs_libs \
+	-lv4l2
+strip --strip-unneeded \
+	/build/stage-obs-v4l2/usr/lib/obs-v4l2-gts9u/linux-v4l2.so
+echo 'OBS V4L2 plugin built'"
+
+step 'package OBS V4L2 plugin'
+pkgdir=$base/build/deb/obs-v4l2-gts9u
+rm -rf -- "$pkgdir"
+mkdir -p "$pkgdir/DEBIAN"
+cp -a "$buildroot/build/stage-obs-v4l2/." "$pkgdir/"
+cat > "$pkgdir/DEBIAN/control" <<EOF
+Package: obs-v4l2-gts9u
+Version: $obs_v4l2_version
+Section: video
+Priority: optional
+Architecture: arm64
+Maintainer: Ubuntu gts9uwifi port contributors <noreply@example.invalid>
+Depends: obs-studio (= 30.0.2+dfsg-3build1), dpkg
+Description: Safe OBS V4L2 device list for the Galaxy Tab S9 Ultra
+ Replaces OBS's V4L2 source plugin with a device-specific build that hides
+ raw Qualcomm CAMSS endpoints and exposes the four processed GTS9U cameras.
+EOF
+cat > "$pkgdir/DEBIAN/postinst" <<'EOF'
+#!/bin/sh
+set -e
+target=/usr/lib/aarch64-linux-gnu/obs-plugins/linux-v4l2.so
+divert=$target.distrib
+owner=$(dpkg-divert --listpackage "$target" 2>/dev/null || true)
+if [ -z "$owner" ]; then
+	dpkg-divert --package obs-v4l2-gts9u --add --rename \
+		--divert "$divert" "$target"
+elif [ "$owner" != obs-v4l2-gts9u ]; then
+	echo "unexpected diversion owner for $target: $owner" >&2
+	exit 1
+fi
+install -m 0755 /usr/lib/obs-v4l2-gts9u/linux-v4l2.so "$target"
+EOF
+cat > "$pkgdir/DEBIAN/prerm" <<'EOF'
+#!/bin/sh
+set -e
+case "$1" in
+	remove|deconfigure)
+		target=/usr/lib/aarch64-linux-gnu/obs-plugins/linux-v4l2.so
+		divert=$target.distrib
+		rm -f "$target"
+		dpkg-divert --package obs-v4l2-gts9u --remove --rename \
+			--divert "$divert" "$target"
+		;;
+esac
+EOF
+chown -R root:root "$pkgdir"
+find "$pkgdir" -type d -exec chmod 0755 {} +
+find "$pkgdir" -type f -exec chmod 0644 {} +
+chmod 0755 "$pkgdir/DEBIAN/postinst" "$pkgdir/DEBIAN/prerm" \
+	"$pkgdir/usr/lib/obs-v4l2-gts9u/linux-v4l2.so"
+find "$pkgdir" -exec touch -h -d '@0' {} +
+dpkg-deb --root-owner-group --build "$pkgdir" \
+	"$out/obs-v4l2-gts9u_${obs_v4l2_version}_arm64.deb" >/dev/null
+echo "built obs-v4l2-gts9u_${obs_v4l2_version}_arm64.deb"
