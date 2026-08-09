@@ -1,7 +1,7 @@
 # Estado de hardware del SM-X910 bajo Ubuntu 24.04
 
 Última actualización: 2026-08-09, tras validar las cuatro cámaras en GNOME
-Cámara, Chrome y OBS y añadir autofoco a la trasera principal.
+Cámara, Chrome y OBS, añadir autofoco y repetir arranques en frío.
 
 Ubuntu **ya arranca** en la tablet. Esta matriz distingue explícitamente lo
 heredado de lo comprobado, y ningún componente pasa a ✅ sin observación real.
@@ -76,7 +76,7 @@ sondea» como prueba de funcionamiento.
 | Huella (EgisTec EL7xx, SPI) | ❌ | ❌ | supuesto | Sin driver mainline |
 | Vibración / hápticos | ❌ | ❌ | supuesto | Hardware sin identificar |
 | Flash / linterna | ❌ | ✅ | observado | PM8550 SID 1, canales 0+1 agrupados por `leds-qcom-flash`; iluminación real observada en modo estrobo y linterna. El mosaico **Linterna** de ajustes rápidos está instalado, activo y probado físicamente |
-| Cámaras | ❌ | 🟡 | observado | Los cuatro sensores pasan por `libcamera` simple + software ISP y aparecen como cuatro cámaras V4L2 normales y nombradas. GNOME Cámara, Chrome WebRTC y OBS abrieron las cuatro; la trasera principal enfoca con su DW9808. Quedan calibración de fábrica y flash fotográfico automático |
+| Cámaras | ❌ | 🟡 | observado | Los cuatro sensores pasan por `libcamera` simple + software ISP y aparecen como cuatro cámaras V4L2 normales y nombradas. GNOME Cámara, Chrome WebRTC y OBS abrieron las cuatro, también después de reinicios reales; la trasera principal enfoca con su DW9808. Quedan calibración de fábrica y flash fotográfico automático |
 | Módem | — | — | — | No aplica al modelo Wi-Fi |
 
 ### Cámaras y flash: alcance exacto de la validación
@@ -133,6 +133,22 @@ WebRTC. El selector V4L2 estándar de OBS mostró las mismas cuatro y capturó c
 `/dev/video20`–`23`. Su complemento empaquetado oculta únicamente los endpoints
 RAW internos `Qualcomm Camera Subsystem` y corrige el caso en que no existen
 los directorios `by-id`/`by-path`, que antes terminaba en `SIGSEGV`.
+
+Tres reinicios reales terminaron con cuatro nodos, cuatro relés y las cuatro
+fuentes PipeWire utilizables antes de iniciar sesión gráfica. El usuario
+`ubuntu` conserva su gestor systemd mediante *linger* y el servicio vigila el
+PID real de PipeWire: si éste cambia, destruye y recrea el conjunto completo de
+relés en vez de dejar nodos V4L2 activos que sólo entregan negro. La recuperación
+se forzó dos veces y reconstruyó los cuatro relés sin intervención. Tras el
+último reinicio, Chrome volvió a abrir las cuatro cámaras y la fuente V4L2
+estándar de OBS abrió `/dev/video20` sin escenas preconfiguradas.
+
+Las capturas posteriores al reinicio mostraron canales equilibrados en las dos
+frontales y una dominante verde moderada en superficies neutras iluminadas por
+el flash trasero. La escena trasera estaba dominada por objetos rojos y marrones,
+por lo que el AWB de mundo gris puede sesgarse; no se aplicó una matriz global
+que habría degradado otras luces. La calibración de fábrica sigue abierta hasta
+medir una carta neutra y de color bajo varias iluminaciones controladas.
 
 El flash se verificó en sus dos rutas de hardware. El estrobo se armó mediante
 la clase V4L2 flash y disparó durante una captura; la linterna mantuvo los dos

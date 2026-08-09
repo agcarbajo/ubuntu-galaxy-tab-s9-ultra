@@ -113,6 +113,14 @@ pero oculta sus endpoints CAMSS RAW internos. Una build limpia ofrece así las
 cuatro cámaras nombradas a navegadores, OBS y aplicaciones V4L2 sin escenas ni
 ajustes por usuario.
 
+Desde `ubuntu-gts9u-device 2.6`, el usuario gráfico queda con *linger* desde la
+creación del rootfs. Así su PipeWire existe también antes del primer login y no
+depende de que una sesión SSH siga abierta. El servicio de relés espera el PID
+real de PipeWire y vigila su ciclo de vida; si PipeWire o un relé termina,
+systemd reconstruye las cuatro cámaras como un único conjunto. Esto evita que
+los nodos permanezcan enumerados pero negros tras un arranque o reinicio del
+servidor multimedia.
+
 `ubuntu-desktop-minimal` en lugar de `ubuntu-desktop` deja fuera ofimática y
 snaps de escritorio que no aportan nada al bring-up. Snap se evalúa como tema
 separado en el Hito 5, no se asume desde el principio.

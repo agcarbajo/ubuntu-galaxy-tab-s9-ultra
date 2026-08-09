@@ -2972,3 +2972,37 @@ La integración limpia queda en `v4l2-relayd-gts9u 0.1.2-gts9u3`,
 su huella de entradas, y ya no incluye `obs-gstreamer-gts9u`. Al cerrar la
 validación, Chrome y OBS estaban cerrados, el flash estaba en `off`, PipeWire y
 los cuatro relés seguían activos.
+
+## Sesión 33 — persistencia tras reinicio y revisión de color
+
+Fecha: 2026-08-09.
+
+La primera prueba de arranque en frío descubrió un fallo real oculto por la
+sesión gráfica. `ubuntu` tenía `Linger=no`: SSH levantaba un PipeWire temporal,
+pero al salir terminaba `user@1000` y los relés de sistema quedaban conectados
+al servidor muerto. Los cuatro nombres seguían presentes aunque las capturas
+eran negras. `ubuntu-gts9u-device 2.6` habilita *linger* tanto en instalaciones
+existentes como al construir un rootfs limpio. El lanzador espera además el
+`MainPID` vivo de PipeWire y reinicia los cuatro relés si cambia o si termina
+uno de ellos. La recuperación se provocó dos veces; en ambas cambió PipeWire,
+se recreó el servicio y quedaron exactamente cuatro relés funcionales.
+
+Se hicieron tres reinicios reales, con `boot_id` distintos. El último arrancó
+el paquete 2.6 exacto, mantuvo estable PipeWire entre conexiones SSH separadas,
+publicó `/dev/video20`–`23` y sus cuatro alias, conservó Wi-Fi, Bluetooth,
+teclado pogo y Wacom, y dejó el flash apagado. Una captura acompasada posterior
+al arranque produjo PNG reales de 1,08–1,43 MB en los cuatro nodos. Desde una
+sesión GNOME normal, Chrome enumeró exactamente las cuatro cámaras y abrió cada
+una a 1280×720/30; el selector estándar de OBS mostró sólo esas cuatro, inició
+captura desde `/dev/video20` y permaneció vivo. La entrada automática usada
+sólo para esa prueba se retiró y se restauró la configuración GDM original.
+
+La habitación sin luz no permitía una calibración fotométrica completa. En las
+frontales, iluminadas sólo por el monitor, las medias RGB fueron próximas a
+neutro; las traseras, probadas con la linterna, mostraron un sesgo verde
+moderado sobre zonas grises. Como el encuadre estaba dominado por una tarjeta y
+tejidos rojos/marrones, el AWB de mundo gris puede explicar el sesgo y una CCM
+global no sería segura. Se conserva el tuning actual hasta disponer de una
+carta gris/color bajo varias temperaturas de iluminación. Al cerrar, Chrome y
+OBS estaban cerrados, el flash en `off`, la configuración gráfica original
+restaurada y los cuatro relés activos.

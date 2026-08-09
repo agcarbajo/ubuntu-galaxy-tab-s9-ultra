@@ -1027,6 +1027,34 @@ filtra por el nombre de tarjeta exacto de CAMSS. El diálogo probado contiene
 sólo las cuatro GTS9U y sigue permitiendo resoluciones, formatos y controles
 V4L2 normales.
 
+### Los relés de sistema necesitan un PipeWire persistente
+
+Los nodos `/dev/video20`–`23` pertenecen a servicios de sistema, pero sus
+fuentes viven en el grafo PipeWire del usuario `ubuntu`. En un arranque sin
+sesión gráfica, una conexión SSH podía iniciar temporalmente `user@1000` y
+PipeWire; al cerrar SSH desaparecía ese servidor mientras los cuatro relés
+seguían vivos, unidos al socket antiguo y entregando frames negros.
+
+La imagen crea `/var/lib/systemd/linger/ubuntu` inmediatamente después de
+crear el usuario, y el `postinst` de `ubuntu-gts9u-device` hace lo mismo al
+actualizar instalaciones existentes. El lanzador no considera listo un socket
+por sí solo: espera un `MainPID` vivo de `pipewire.service`, conserva ese PID y
+vigila tanto PipeWire como cada relé. Cualquier cambio reinicia el conjunto
+completo mediante systemd. Se verificó forzando dos reinicios de PipeWire y con
+tres arranques completos de la tablet.
+
+Al diagnosticar un `v4l2loopback` con buffers duplicados hay que consumir a
+ritmo de vídeo. Un `v4l2-ctl` sin pausa puede agotar los buffers iniciales mucho
+antes de que llegue un frame nuevo y producir una imagen negra falsa. La prueba
+posterior al reinicio usa un único consumidor, descarta 120 frames a 33 ms y
+exige además un PNG no trivial; así obtuvo imagen real de los cuatro nodos.
+
+La revisión de color no justificó cambiar el CCM global. Las frontales quedaron
+próximas a neutro y las traseras mostraron un sesgo verde moderado bajo flash en
+una escena fuertemente roja/marrón, precisamente un caso adverso para el AWB de
+mundo gris. Una corrección reproducible necesita una carta gris/color y varias
+temperaturas de luz; hasta entonces se conserva el tuning actual.
+
 ### El DW9808 necesita un canal separado de los controles del sensor
 
 El firmware stock identifica el actuador de la trasera principal como DW9808,
