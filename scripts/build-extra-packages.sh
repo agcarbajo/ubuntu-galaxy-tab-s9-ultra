@@ -22,6 +22,8 @@ fastfetch_ver=${FASTFETCH_VERSION:-2.66.0}
 # upstream release: a plain "2.66.0" would compare equal to the archive's
 # and let an upgrade quietly drop the patch.
 fastfetch_pkgver=${fastfetch_ver}-gts9u1
+obs_gstreamer_commit=a936d45f7968a6211b9563e92eeb63de2ac45d82
+obs_gstreamer_version=0.4.0+git20260809.a936d45-gts9u1
 
 mkdir -p "$out"
 
@@ -53,7 +55,9 @@ step 'build chroot'
 build_deps='build-essential cmake pkg-config git ca-certificates
 libpci-dev libvulkan-dev libwayland-dev libxrandr-dev libdconf-dev
 libdbus-1-dev libdrm-dev libpulse-dev libchafa-dev zlib1g-dev
-libegl-dev libglx-dev libosmesa6-dev libxcb-randr0-dev libsqlite3-dev'
+libegl-dev libglx-dev libosmesa6-dev libxcb-randr0-dev libsqlite3-dev
+meson ninja-build libobs-dev libgstreamer1.0-dev
+libgstreamer-plugins-base1.0-dev'
 
 if [ ! -d "$buildroot/usr/bin" ]; then
 	mmdebstrap \
@@ -143,3 +147,55 @@ find "$pkgdir" -exec touch -h -d '@0' {} +
 dpkg-deb --root-owner-group --build "$pkgdir" \
 	"$out/fastfetch_${fastfetch_pkgver}_arm64.deb" >/dev/null
 echo "built fastfetch_${fastfetch_pkgver}_arm64.deb"
+
+# ---------------------------------------------------------------------------
+step "obs-gstreamer $obs_gstreamer_commit"
+
+# Noble's OBS PipeWire module captures displays, not camera nodes.  This small
+# upstream plugin adds a GStreamer source, which lets OBS consume each of the
+# four named libcamera PipeWire nodes without a V4L2 compatibility shim.
+# Ubuntu's libobs.pc accidentally contains CMake generator expressions in its
+# Cflags.  Strip those expressions in a private pkg-config directory; never
+# alter the build chroot's packaged file.
+run "cd /build
+rm -rf obs-gstreamer stage-obs-gstreamer obs-gstreamer-pkgconfig
+git clone --quiet https://github.com/fzwoch/obs-gstreamer.git obs-gstreamer
+cd obs-gstreamer
+git checkout --quiet $obs_gstreamer_commit
+install -d /build/obs-gstreamer-pkgconfig
+sed 's/ \\$<[^ ]*>//g' /usr/lib/aarch64-linux-gnu/pkgconfig/libobs.pc \
+	>/build/obs-gstreamer-pkgconfig/libobs.pc
+export PKG_CONFIG_PATH=/build/obs-gstreamer-pkgconfig:/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig
+meson setup build --buildtype=release --prefix=/usr \
+	--libdir=lib/aarch64-linux-gnu/obs-plugins
+meson compile -C build
+DESTDIR=/build/stage-obs-gstreamer meson install --no-rebuild -C build
+test -s /build/stage-obs-gstreamer/usr/lib/aarch64-linux-gnu/obs-plugins/obs-gstreamer.so
+echo 'obs-gstreamer built'"
+
+step 'package obs-gstreamer'
+pkgdir=$base/build/deb/obs-gstreamer-gts9u
+rm -rf -- "$pkgdir"
+mkdir -p "$pkgdir/DEBIAN"
+cp -a "$buildroot/build/stage-obs-gstreamer/." "$pkgdir/"
+cat > "$pkgdir/DEBIAN/control" <<EOF
+Package: obs-gstreamer-gts9u
+Version: $obs_gstreamer_version
+Section: video
+Priority: optional
+Architecture: arm64
+Maintainer: Ubuntu gts9uwifi port contributors <noreply@example.invalid>
+Depends: obs-studio, gstreamer1.0-pipewire, gstreamer1.0-plugins-base,
+ libgstreamer1.0-0, libgstreamer-plugins-base1.0-0
+Description: GStreamer camera sources for OBS on the Galaxy Tab S9 Ultra
+ Adds the upstream obs-gstreamer source plugin so OBS can consume the four
+ libcamera cameras exposed by PipeWire on the SM-X910.
+EOF
+chown -R root:root "$pkgdir"
+find "$pkgdir" -type d -exec chmod 0755 {} +
+find "$pkgdir" -type f -exec chmod 0644 {} +
+chmod 0755 "$pkgdir/usr/lib/aarch64-linux-gnu/obs-plugins/obs-gstreamer.so"
+find "$pkgdir" -exec touch -h -d '@0' {} +
+dpkg-deb --root-owner-group --build "$pkgdir" \
+	"$out/obs-gstreamer-gts9u_${obs_gstreamer_version}_arm64.deb" >/dev/null
+echo "built obs-gstreamer-gts9u_${obs_gstreamer_version}_arm64.deb"

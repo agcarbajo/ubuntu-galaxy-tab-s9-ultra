@@ -250,7 +250,8 @@ fi
 
 # Desktop tools that landed in the archive after noble froze, so "apt install"
 # has no candidate for them on 24.04.
-if ! ls "$base"/out/packages/fastfetch_*.deb >/dev/null 2>&1; then
+if ! ls "$base"/out/packages/fastfetch_*.deb >/dev/null 2>&1 ||
+	! ls "$base"/out/packages/obs-gstreamer-gts9u_*.deb >/dev/null 2>&1; then
 	echo 'extra packages are missing; building them first'
 	bash "$repo/scripts/build-extra-packages.sh" >/dev/null
 fi
@@ -261,7 +262,7 @@ rm -rf -- "$stage_debs"
 mkdir -p "$stage_debs"
 for pkg in libssc hexagonrpcd iio-sensor-proxy \
 	libcamera-gts9u libspa-0.2-libcamera-gts9u \
-	ubuntu-gts9u-device fastfetch; do
+	ubuntu-gts9u-device fastfetch obs-gstreamer-gts9u; do
 	deb=$(ls -t "$base"/out/packages/${pkg}_*.deb 2>/dev/null | head -1 || true)
 	if [ -z "$deb" ]; then
 		echo "missing local package: $pkg" >&2
@@ -296,6 +297,7 @@ chroot "\$target" update-locale LANG=$locale
 chroot "\$target" useradd -m -s /bin/bash -G sudo,adm,dialout,cdrom,audio,video,plugdev,netdev,input,render '$username'
 echo '$username:$password' | chroot "\$target" chpasswd
 chroot "\$target" passwd -l root
+chroot "\$target" /usr/libexec/ubuntu-gts9u-enable-flashlight '$username' || true
 
 chroot "\$target" systemctl enable ssh.service
 chroot "\$target" systemctl enable NetworkManager.service

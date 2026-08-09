@@ -1,0 +1,5 @@
+#!/bin/sh
+# Never leave the high-current LED on while the tablet is suspended in a bag.
+if [ "${1-}" = pre ] && [ -w /sys/class/leds/white:flash/brightness ]; then
+	printf '0\n' > /sys/class/leds/white:flash/brightness
+fi

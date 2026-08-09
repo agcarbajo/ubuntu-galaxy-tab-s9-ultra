@@ -33,13 +33,22 @@ case "$1" in
 		if command -v glib-compile-schemas >/dev/null 2>&1; then
 			glib-compile-schemas /usr/share/glib-2.0/schemas >/dev/null 2>&1 || true
 		fi
+		if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+			gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor >/dev/null 2>&1 || true
+		fi
 
 		# The software ISP allocates its output through udmabuf.  Apply the
 		# packaged video-group rule immediately on upgrades as well as at boot.
 		if command -v udevadm >/dev/null 2>&1; then
 			udevadm control --reload >/dev/null 2>&1 || true
 			udevadm trigger --action=add /sys/class/misc/udmabuf >/dev/null 2>&1 || true
+			udevadm trigger --action=add /sys/class/leds/white:flash >/dev/null 2>&1 || true
 		fi
+
+		# Installations built from scratch create the desktop user after this
+		# package is unpacked; upgrades already have it.  The rootfs hook calls
+		# the same helper after useradd for the first case.
+		/usr/libexec/ubuntu-gts9u-enable-flashlight ubuntu || true
 
 		# Verify rather than assume: a unit that silently failed to enable
 		# shows up on the tablet only as a feature that quietly does nothing.

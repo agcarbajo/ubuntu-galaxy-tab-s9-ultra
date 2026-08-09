@@ -1,0 +1,97 @@
+From: Galaxy Tab S9 Ultra Ubuntu port <noreply@example.com>
+Subject: [PATCH] spa: libcamera: keep buffers attached while reusing requests
+
+PipeWire 1.0.5 creates an empty request for every buffer, calls addBuffer()
+every time the buffer is recycled, and calls Request::reuse() on completion.
+With libcamera 0.7 the request retains its buffer unless reuse is explicitly
+asked to discard it, so the next addBuffer() fails with -EEXIST.  Repeated
+camera switching eventually exhausts the usable request set and leaves a
+black stream.
+
+Use the current PipeWire request lifecycle: attach each buffer once while the
+pool is allocated, reuse requests with ReuseBuffers, and only requeue them
+when PipeWire returns a buffer.
+---
+ spa/plugins/libcamera/libcamera-utils.cpp | 27 +++++++++++++++------------
+ 1 file changed, 15 insertions(+), 12 deletions(-)
+
+diff --git a/spa/plugins/libcamera/libcamera-utils.cpp b/spa/plugins/libcamera/libcamera-utils.cpp
+index 9b7d7f547df1..ef4f10a298c0 100644
+--- a/spa/plugins/libcamera/libcamera-utils.cpp
++++ b/spa/plugins/libcamera/libcamera-utils.cpp
+@@ -72,13 +72,6 @@ static int spa_libcamera_buffer_recycle(struct impl *impl, struct port *port, ui
+ 		return -EINVAL;
+ 	}
+ 	Request *request = impl->requestPool[buffer_id].get();
+-	Stream *stream = port->streamConfig.stream();
+-	FrameBuffer *buffer = impl->allocator->buffers(stream)[buffer_id].get();
+-	if ((res = request->addBuffer(stream, buffer)) < 0) {
+-		spa_log_warn(impl->log, "can't add buffer %u for request: %s",
+-				buffer_id, spa_strerror(res));
+-		return -ENOMEM;
+-	}
+ 	if (!impl->active) {
+ 		impl->pendingRequests.push_back(request);
+ 		return 0;
+@@ -96,10 +89,13 @@ static int spa_libcamera_buffer_recycle(struct impl *impl, struct port *port, ui
+ 
+ static int allocBuffers(struct impl *impl, struct port *port, unsigned int count)
+ {
++	Stream *stream = port->streamConfig.stream();
+ 	int res;
+ 
+-	if ((res = impl->allocator->allocate(port->streamConfig.stream())) < 0)
++	if ((res = impl->allocator->allocate(stream)) < 0)
+ 		return res;
++	const std::vector<std::unique_ptr<FrameBuffer>> &buffers =
++		impl->allocator->buffers(stream);
+ 
+ 	for (unsigned int i = 0; i < count; i++) {
+ 		std::unique_ptr<Request> request = impl->camera->createRequest(i);
+@@ -107,9 +103,16 @@ static int allocBuffers(struct impl *impl, struct port *port, unsigned int count
+ 			impl->requestPool.clear();
+ 			return -ENOMEM;
+ 		}
++		res = request->addBuffer(stream, buffers[i].get());
++		if (res < 0) {
++			impl->requestPool.clear();
++			impl->allocator->free(stream);
++			return res;
++		}
+ 		impl->requestPool.push_back(std::move(request));
+ 	}
+-	return res;
++
++	return 0;
+ }
+ 
+ static void freeBuffers(struct impl *impl, struct port *port)
+@@ -870,7 +873,7 @@ void impl::requestComplete(libcamera::Request *request)
+ 
+ 	if ((request->status() == Request::RequestCancelled)) {
+ 		spa_log_debug(impl->log, "Request was cancelled");
+-		request->reuse();
++		request->reuse(Request::ReuseFlag::ReuseBuffers);
+ 		SPA_FLAG_SET(b->flags, BUFFER_FLAG_OUTSTANDING);
+ 		spa_libcamera_buffer_recycle(impl, port, b->id);
+ 		return;
+@@ -903,7 +906,7 @@ void impl::requestComplete(libcamera::Request *request)
+ 		b->h->pts = fmd.timestamp;
+ 		b->h->dts_offset = 0;
+ 	}
+-	request->reuse();
++	request->reuse(Request::ReuseFlag::ReuseBuffers);
+ 
+ 	spa_ringbuffer_get_write_index(&port->ring, &index);
+ 	port->ring_ids[index & MASK_BUFFERS] = buffer_id;
+@@ -982,7 +985,7 @@ static int spa_libcamera_stream_off(struct impl *impl)
+ 
+ 	if (!impl->active) {
+ 		for (std::unique_ptr<Request> &req : impl->requestPool)
+-			req->reuse();
++			req->reuse(Request::ReuseFlag::ReuseBuffers);
+ 		return 0;
+ 	}
+ 
+-- 
+2.43.0

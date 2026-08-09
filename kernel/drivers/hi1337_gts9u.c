@@ -183,7 +183,8 @@ static int hi1337_power_on(struct hi1337 *sensor)
 	 * Hold camera GPIOs only while the sensor is actually powered so an
 	 * idle, registered camera cannot regress audio capture.
 	 */
-	sensor->enable_gpio = gpiod_get(sensor->dev, "enable", GPIOD_OUT_LOW);
+	sensor->enable_gpio = gpiod_get_optional(sensor->dev, "enable",
+					 GPIOD_OUT_LOW);
 	if (IS_ERR(sensor->enable_gpio)) {
 		ret = PTR_ERR(sensor->enable_gpio);
 		sensor->enable_gpio = NULL;
@@ -196,7 +197,8 @@ static int hi1337_power_on(struct hi1337 *sensor)
 		goto release_enable;
 	}
 
-	gpiod_set_value_cansleep(sensor->enable_gpio, 1);
+	if (sensor->enable_gpio)
+		gpiod_set_value_cansleep(sensor->enable_gpio, 1);
 	usleep_range(1000, 1500);
 
 	ret = clk_prepare_enable(sensor->clk);
@@ -210,11 +212,13 @@ static int hi1337_power_on(struct hi1337 *sensor)
 	return 0;
 
 disable_module:
-	gpiod_set_value_cansleep(sensor->enable_gpio, 0);
+	if (sensor->enable_gpio)
+		gpiod_set_value_cansleep(sensor->enable_gpio, 0);
 	gpiod_put(sensor->reset_gpio);
 	sensor->reset_gpio = NULL;
 release_enable:
-	gpiod_put(sensor->enable_gpio);
+	if (sensor->enable_gpio)
+		gpiod_put(sensor->enable_gpio);
 	sensor->enable_gpio = NULL;
 disable_regulators:
 	regulator_bulk_disable(ARRAY_SIZE(sensor->supplies), sensor->supplies);
@@ -223,15 +227,17 @@ disable_regulators:
 
 static void hi1337_power_off(struct hi1337 *sensor)
 {
-	if (!sensor->enable_gpio)
+	if (!sensor->reset_gpio)
 		return;
 
 	gpiod_set_value_cansleep(sensor->reset_gpio, 1);
 	clk_disable_unprepare(sensor->clk);
-	gpiod_set_value_cansleep(sensor->enable_gpio, 0);
+	if (sensor->enable_gpio)
+		gpiod_set_value_cansleep(sensor->enable_gpio, 0);
 	gpiod_put(sensor->reset_gpio);
 	sensor->reset_gpio = NULL;
-	gpiod_put(sensor->enable_gpio);
+	if (sensor->enable_gpio)
+		gpiod_put(sensor->enable_gpio);
 	sensor->enable_gpio = NULL;
 	regulator_bulk_disable(ARRAY_SIZE(sensor->supplies), sensor->supplies);
 }

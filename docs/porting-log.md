@@ -2843,3 +2843,84 @@ entregando datos, y el micrófono produjo 438.846 muestras no nulas. El único
 servicio fallido siguió siendo `lxc-net`, anterior y ajeno a cámaras. Queda
 abierto el actuador de enfoque de la trasera principal; color, exposición y
 ruta de aplicaciones ya no son el bloqueo.
+
+## Sesión 30 — linterna de escritorio, reinicio multimedia y orientación
+
+Fecha: 2026-08-09.
+
+El flash ya encendía físicamente, pero todavía no era una función diaria. El
+paquete `ubuntu-gts9u-device 2.1` añade un mosaico **Linterna** a los ajustes
+rápidos de GNOME 46, un icono propio y el comando `gts9u-flashlight`. Udev
+entrega a `video` solamente `brightness` con modo 0660; la ruta de estrobo
+sigue reservada a root. Nivel 32, nivel 128, toggle, rechazo de 999 y apagado
+previo a suspensión se probaron como el usuario `ubuntu`. En todos los cierres
+el LED acabó en cero. El usuario confirmó que el mosaico funciona en la UI.
+
+La tablet se reinició además porque ninguna aplicación reproducía vídeo y la
+cámara había dejado de avanzar. Antes del reinicio había servicios activos,
+pero también varias instancias históricas y errores
+`spa.libcamera: can't add buffer ...: El archivo ya existe`. Tras arrancar con
+boot ID `58ff3ce2-64c6-48f8-827a-ee52ccaa5e7c`, la ruta de vídeo procesó 120
+frames RAW y codificó/decodificó 60 frames VP9. Después de limpiar una vez la
+sesión PipeWire, las cuatro fuentes de cámara dieron 30 frames y la frontal se
+reabrió otros 30; los tres servicios multimedia quedaron activos.
+
+La orientación se comprobó con escena conocida. Cada fuente produjo 150 JPEG
+por PipeWire y se revisó el último: las dos frontales muestran a la persona
+derecha y la línea de la pared horizontal; la trasera angular muestra el
+billete de 50 derecho. La principal trasera volvió a quedar demasiado
+desenfocada a esa distancia para extraer orientación. Los controles V4L2 son
+coherentes con el montaje —frontales 270°, traseras 90°— y PipeWire conserva
+dos ubicaciones `front` y dos `back`, sin publicar una transformación adicional.
+No se cambió una rotación correcta basándose en la única imagen no evaluable.
+
+## Sesión 31 — estabilidad entre aplicaciones y autofoco DW9808
+
+Fecha: 2026-08-09.
+
+El criterio de cierre pasó a ser el uso real de las cuatro cámaras en GNOME
+Cámara, navegador y OBS, con cambios repetidos sin pantallas negras. PipeWire
+recibió cuatro correcciones adicionales: reutilización explícita de buffers en
+los requests, no cerrar descriptores prestados por PipeWire, procesar los
+completados en el bucle de datos y suprimir una transformación redundante. La
+regresión alternó las cuatro fuentes en ambos sentidos: 16 capturas de 45
+frames, 720 frames totales, cero fallos, cero `EEXIST`, cero descriptores
+inválidos y el mismo PID de PipeWire al terminar.
+
+GNOME Cámara completó dos ciclos y guardó ocho fotos; las imágenes físicas
+confirmaron que las cuatro salen derechas. Chrome enumeró cuatro identificadores
+WebRTC distintos —dos frontales y dos traseros— y abrió cada uno a
+1280×720/30 fps sin errores. OBS usó cuatro escenas GStreamer/PipeWire, produjo
+cuatro capturas correctas y mantuvo PipeWire estable. El plugin queda fijado en
+el commit `a936d45` y empaquetado como `obs-gstreamer-gts9u`.
+
+Después se abordó el enfoque. El módulo CamX stock identificó `dw9808` y dio su
+secuencia exacta; una barrida I²C de 0 a 1023 demostró movimiento y cambio de
+plano antes de escribir driver. El kernel incorpora ahora un subdispositivo
+V4L2 de lente, comparte GPIO15 de forma segura con VIO del HI1337 y enlaza la
+lente mediante `lens-focus`. El control `focus_absolute` respondió en vivo en
+todo su rango.
+
+La IPA software de libcamera recibió estadística de contraste, barrido grueso,
+afinación local y seguimiento continuo. El primer intento mezcló los mapas
+V4L2 del sensor y de la lente; WirePlumber abortó correctamente porque sus
+identificadores pertenecen a subdispositivos distintos. Se sustituyó por un
+canal IPC dedicado `setLensPosition`, se reinstaló el paquete y WirePlumber
+volvió a publicar exactamente cuatro cámaras. Una captura de 41 fotogramas con
+el flash registró el recorrido real de la lente y terminó con «Plano
+Esquemático de la Red» legible. Las fotos posteriores de GNOME Cámara y las
+capturas de OBS confirmaron el enfoque por la ruta completa de aplicaciones.
+
+Los paquetes finales instalados son `libcamera-gts9u
+0.7.2+53.g62d4bfc-gts9u2` y `libspa-0.2-libcamera-gts9u
+1.0.5-gts9u6`. Los SHA-256 de los artefactos finales instalados son
+`8078a33e33081568dee2406a26fe2b54b26047f9bc12a2bc4171748fab9c2f7e` y
+`f8f938d4e38e4d5dfecdf7191854ab98990883d4b702602dadd8309f9088ea9a`.
+También quedaron instalados `obs-gstreamer-gts9u
+0.4.0+git20260809.a936d45-gts9u1` y `ubuntu-gts9u-device 2.2`, con SHA-256 de
+paquete `8b3ae0e64d5ce98aeaa83d92a51ec99c8537bf1a50516ffa1b69bbdba07267cc`
+y `2131a585a22d93f9d26cc97571885dd07f2e4bebe2ce0c858661198e60095935`.
+Al cerrar las pruebas, Snapshot, Chrome y OBS estaban cerrados, el flash en
+`off`, PipeWire/PipeWire Pulse/WirePlumber activos y las cuatro fuentes
+libcamera publicadas. `lxc-net` seguía siendo el único servicio fallido,
+preexistente y ajeno a este trabajo.

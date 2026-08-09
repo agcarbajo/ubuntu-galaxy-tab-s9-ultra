@@ -1,7 +1,7 @@
 # Estado de hardware del SM-X910 bajo Ubuntu 24.04
 
-Última actualización: 2026-08-09, tras procesar imágenes físicas de los cuatro
-sensores, exponerlos a PipeWire/GNOME Cámara y repetir la regresión completa.
+Última actualización: 2026-08-09, tras validar las cuatro cámaras en GNOME
+Cámara, Chrome y OBS y añadir autofoco a la trasera principal.
 
 Ubuntu **ya arranca** en la tablet. Esta matriz distingue explícitamente lo
 heredado de lo comprobado, y ningún componente pasa a ✅ sin observación real.
@@ -75,8 +75,8 @@ sondea» como prueba de funcionamiento.
 | Teclado pogo EF-DX920 (STM32 I²C 0x2a) | ❌ | ✅ | confirmado | Requiere V37 en el MCU: con V34 la aplicación pulsa CONN y no anuncia el protocolo. Reprogramado a V37, teclea desde arranque en frío y sobrevive a desconectar y reconectar la funda. Desde v0.16 la restauración es automática en el primer arranque |
 | Huella (EgisTec EL7xx, SPI) | ❌ | ❌ | supuesto | Sin driver mainline |
 | Vibración / hápticos | ❌ | ❌ | supuesto | Hardware sin identificar |
-| Flash / linterna | ❌ | ✅ | observado | PM8550 SID 1, canales 0+1 agrupados por `leds-qcom-flash`; iluminación real observada en modo estrobo y linterna, con una foto capturada en cada caso |
-| Cámaras | ❌ | 🟡 | observado | Los cuatro sensores pasan por `libcamera` simple + software ISP, con AE/AWB, pedestal y ganancia propios, y aparecen como cuatro fuentes PipeWire. GNOME Cámara abrió un stream real. Falta solo el actuador de enfoque de la trasera principal y una calibración de fábrica |
+| Flash / linterna | ❌ | ✅ | observado | PM8550 SID 1, canales 0+1 agrupados por `leds-qcom-flash`; iluminación real observada en modo estrobo y linterna. El mosaico **Linterna** de ajustes rápidos está instalado, activo y probado físicamente |
+| Cámaras | ❌ | 🟡 | observado | Los cuatro sensores pasan por `libcamera` simple + software ISP y aparecen como cuatro fuentes PipeWire. GNOME Cámara, Chrome WebRTC y OBS abrieron las cuatro; la trasera principal enfoca con su DW9808. Quedan calibración de fábrica y flash fotográfico automático |
 | Módem | — | — | — | No aplica al modelo Wi-Fi |
 
 ### Cámaras y flash: alcance exacto de la validación
@@ -88,7 +88,7 @@ fotograma completo. La relación observada es:
 | objetivo | sensor / subdispositivo | CSIPHY | formato capturado |
 |---|---|---|---|
 | trasera principal | HI1337 `1-0021`, `/dev/v4l-subdev32` | `msm_csiphy1` | 4128×3096 RAW10, 16.000.128 bytes |
-| trasera angular | HI847 `0-0021`, `/dev/v4l-subdev33` | `msm_csiphy2` | 3264×2448 RAW10, 9.987.840 bytes |
+| trasera angular | HI847 `0-0021`, `/dev/v4l-subdev34` | `msm_csiphy2` | 3264×2448 RAW10, 9.987.840 bytes |
 | frontal principal | HI1337 `3-0020`, `/dev/v4l-subdev31` | `msm_csiphy4` | 3408×2556 RAW10, 10.919.232 bytes |
 | frontal angular | HI1337 `9-0021`, `/dev/v4l-subdev30` | `msm_csiphy5` | 4000×3000 RAW10, 15.024.000 bytes |
 
@@ -105,23 +105,39 @@ dominante magenta de la conversión inicial:
 - [trasera principal](../work/resultado-trasera-principal.jpg);
 - [trasera angular](../work/resultado-trasera-angular.jpg).
 
-La trasera principal sigue desenfocada porque el actuador todavía no tiene
-driver. Las dos traseras también quedaron parcialmente tapadas por la posición
-física de la tablet durante esta prueba; eso no impidió verificar color,
-exposición ni continuidad.
+La trasera principal enlaza el actuador DW9808 `2-000c` como lente del HI1337.
+El driver expone `focus_absolute` 0–1023 y la IPA software hace un barrido de
+contraste grueso y otro fino antes de mantener la mejor posición. Con la luz
+continua, el texto del billete quedó legible tanto en GNOME Cámara como en OBS.
 
 `/dev/udmabuf` se entrega a `video` mediante udev y las cuatro cámaras se
-publican como fuentes PipeWire. Cada una dio 30 frames negociados por la ruta de
-aplicaciones, la frontal se reabrió una segunda vez y los servicios quedaron
-activos. Una captura completa de 99 frames por esa ruta produjo esta
-[evidencia PipeWire](../work/resultado-pipewire-app.jpg). GNOME Cámara
-(`Snapshot` 46.2) se mantuvo abierta con su stream marcado `active` durante la
-prueba de escritorio.
+publican como fuentes PipeWire. La regresión final alternó 16 aperturas de 45
+frames —720 en total— sin fallos, errores de descriptores ni reinicios de
+PipeWire. GNOME Cámara hizo dos ciclos completos, ocho selecciones y ocho
+fotos; Chrome abrió cuatro dispositivos WebRTC distintos a 1280×720/30 fps; y
+OBS produjo cuatro capturas mediante fuentes GStreamer/PipeWire. En los tres
+casos las imágenes quedaron derechas y los servicios siguieron activos.
 
 El flash se verificó en sus dos rutas de hardware. El estrobo se armó mediante
 la clase V4L2 flash y disparó durante una captura; la linterna mantuvo los dos
 canales encendidos durante otra. Las dos imágenes muestran reflejos e
 iluminación que no aparecen en la captura sin luz.
+
+Para uso diario, GNOME carga la extensión de sistema
+`flashlight@ubuntu-gts9u` y muestra **Linterna** en los ajustes rápidos
+(`Super+S`). El mosaico usa luz continua al nivel conservador 128/255, refleja
+el estado real del LED y lo apaga al deshabilitarse. También queda disponible
+`gts9u-flashlight on|off|toggle|status`; no necesita `sudo`. Udev concede al
+grupo `video` escritura únicamente sobre `brightness`: estrobo, timeout y
+fallos siguen siendo controles de `root`. Un hook de suspensión fuerza nivel
+cero para que el LED no quede encendido dentro de una funda.
+
+Tras reiniciar por un atasco de la sesión multimedia, se repitieron 120 frames
+de vídeo RAW, 60 frames VP9 codificados/decodificados y 30 frames de cada una
+de las cuatro fuentes PipeWire. Las validaciones posteriores con GNOME Cámara
+y OBS confirmaron orientación en las cuatro: monitor derecho en las frontales
+y billete derecho en ambas traseras. La principal mostró además detalle a
+corta distancia después de converger el autofoco.
 
 ## Riesgos de Ubuntu: cómo quedaron
 

@@ -1,0 +1,385 @@
+From 5bae15f236b99b93f4bf7aa682f4fd91e4d0ce3d Mon Sep 17 00:00:00 2001
+From: Ubuntu gts9uwifi port contributors <noreply@example.invalid>
+Date: Sun, 9 Aug 2026 04:12:00 +0200
+Subject: [PATCH] libcamera: process completions on the data loop
+
+The request completion callback runs on libcamera's internal thread. Keep it limited to enqueueing the completed request and waking PipeWire, then handle metadata, recycling and delivery on the PipeWire data loop. This removes the teardown race exposed by rapid camera switching.
+---
+ spa/plugins/libcamera/libcamera-source.cpp |   6 +-
+ spa/plugins/libcamera/libcamera-utils.cpp  | 210 ++++++++++-----------
+ 2 files changed, 101 insertions(+), 115 deletions(-)
+
+diff --git a/spa/plugins/libcamera/libcamera-source.cpp b/spa/plugins/libcamera/libcamera-source.cpp
+index 3d9273419..690bf9771 100644
+--- a/spa/plugins/libcamera/libcamera-source.cpp
++++ b/spa/plugins/libcamera/libcamera-source.cpp
+@@ -7,7 +7,6 @@
+ #include <sys/types.h>
+ #include <sys/stat.h>
+ #include <fcntl.h>
+-#include <deque>
+ #include <optional>
+ 
+ #include <spa/support/plugin.h>
+@@ -84,8 +83,6 @@ struct port {
+ 	struct buffer buffers[MAX_BUFFERS];
+ 	uint32_t n_buffers = 0;
+ 	struct spa_list queue;
+-	struct spa_ringbuffer ring = SPA_RINGBUFFER_INIT();
+-	uint32_t ring_ids[MAX_BUFFERS];
+ 
+ 	static constexpr uint64_t info_all = SPA_PORT_CHANGE_MASK_FLAGS | SPA_PORT_CHANGE_MASK_PARAMS;
+ 	struct spa_port_info info = SPA_PORT_INFO_INIT();
+@@ -162,7 +159,8 @@ struct impl {
+ 
+ 	FrameBufferAllocator *allocator = nullptr;
+ 	std::vector<std::unique_ptr<libcamera::Request>> requestPool;
+-	std::deque<libcamera::Request *> pendingRequests;
++	struct spa_ringbuffer completed_requests_rb = SPA_RINGBUFFER_INIT();
++	std::array<libcamera::Request *, MAX_BUFFERS> completed_requests = {};
+ 
+ 	void requestComplete(libcamera::Request *request);
+ 
+diff --git a/spa/plugins/libcamera/libcamera-utils.cpp b/spa/plugins/libcamera/libcamera-utils.cpp
+index bb86af75a..2e8fbf8f5 100644
+--- a/spa/plugins/libcamera/libcamera-utils.cpp
++++ b/spa/plugins/libcamera/libcamera-utils.cpp
+@@ -72,10 +72,7 @@ static int spa_libcamera_buffer_recycle(struct impl *impl, struct port *port, ui
+ 		return -EINVAL;
+ 	}
+ 	Request *request = impl->requestPool[buffer_id].get();
+-	if (!impl->active) {
+-		impl->pendingRequests.push_back(request);
+-		return 0;
+-	} else {
++	if (impl->active) {
+ 		request->controls().merge(impl->ctrls);
+ 		impl->ctrls.clear();
+ 		if ((res = impl->camera->queueRequest(request)) < 0) {
+@@ -117,7 +114,6 @@ static int allocBuffers(struct impl *impl, struct port *port, unsigned int count
+ 
+ static void freeBuffers(struct impl *impl, struct port *port)
+ {
+-	impl->pendingRequests.clear();
+ 	impl->requestPool.clear();
+ 	impl->allocator->free(port->streamConfig.stream());
+ }
+@@ -133,10 +129,6 @@ static int spa_libcamera_clear_buffers(struct impl *impl, struct port *port)
+ 		struct buffer *b = &port->buffers[i];
+ 		struct spa_buffer *sb = b->outbuf;
+ 
+-		if (SPA_FLAG_IS_SET(b->flags, BUFFER_FLAG_OUTSTANDING)) {
+-			spa_log_debug(impl->log, "queueing outstanding buffer %p", b);
+-			spa_libcamera_buffer_recycle(impl, port, i);
+-		}
+ 		if (SPA_FLAG_IS_SET(b->flags, BUFFER_FLAG_MAPPED)) {
+ 			struct spa_data *d = &sb->datas[0];
+ 			munmap(SPA_PTROFF(b->ptr, -d[0].mapoffset, void),
+@@ -663,43 +655,51 @@ done:
+ }
+ 
+ 
+-static void libcamera_on_fd_events(struct spa_source *source)
++static void handle_completed_request(struct impl *impl, Request *request)
+ {
+-	struct impl *impl = (struct impl*) source->data;
+-	struct spa_io_buffers *io;
+ 	struct port *port = &impl->out_ports[0];
+-	uint32_t index, buffer_id;
+-	struct buffer *b;
+-	uint64_t cnt;
++	const uint32_t buffer_id = request->cookie();
++	struct buffer *b = &port->buffers[buffer_id];
+ 
+-	if (source->rmask & SPA_IO_ERR) {
+-		spa_log_error(impl->log, "libcamera %p: error %08x", impl, source->rmask);
+-		if (impl->source.loop)
+-			spa_loop_remove_source(impl->data_loop, &impl->source);
++	if (request->status() == Request::RequestCancelled) {
++		request->reuse(Request::ReuseFlag::ReuseBuffers);
++		SPA_FLAG_SET(b->flags, BUFFER_FLAG_OUTSTANDING);
++		spa_libcamera_buffer_recycle(impl, port, b->id);
+ 		return;
+ 	}
+ 
+-	if (!(source->rmask & SPA_IO_IN)) {
+-		spa_log_warn(impl->log, "libcamera %p: spurious wakeup %d", impl, source->rmask);
++	FrameBuffer *buffer = request->findBuffer(port->streamConfig.stream());
++	if (buffer == nullptr) {
++		spa_log_warn(impl->log, "unknown buffer");
+ 		return;
+ 	}
++	const FrameMetadata &fmd = buffer->metadata();
+ 
+-	if (spa_system_eventfd_read(impl->system, impl->source.fd, &cnt) < 0) {
+-		spa_log_error(impl->log, "Failed to read on event fd");
+-		return;
++	if (impl->clock) {
++		impl->clock->target_rate = port->rate;
++		impl->clock->target_duration = 1;
++		impl->clock->nsec = fmd.timestamp;
++		impl->clock->rate = port->rate;
++		impl->clock->position = fmd.sequence;
++		impl->clock->duration = 1;
++		impl->clock->delay = 0;
++		impl->clock->rate_diff = 1.0;
++		impl->clock->next_nsec = fmd.timestamp;
+ 	}
+-
+-	if (spa_ringbuffer_get_read_index(&port->ring, &index) < 1) {
+-		spa_log_error(impl->log, "nothing is queued");
+-		return;
++	if (b->h) {
++		b->h->flags = 0;
++		if (fmd.status != FrameMetadata::Status::FrameSuccess)
++			b->h->flags |= SPA_META_HEADER_FLAG_CORRUPTED;
++		b->h->offset = 0;
++		b->h->seq = fmd.sequence;
++		b->h->pts = fmd.timestamp;
++		b->h->dts_offset = 0;
+ 	}
+-	buffer_id = port->ring_ids[index & MASK_BUFFERS];
+-	spa_ringbuffer_read_update(&port->ring, index + 1);
++	request->reuse(Request::ReuseFlag::ReuseBuffers);
+ 
+-	b = &port->buffers[buffer_id];
+ 	spa_list_append(&port->queue, &b->link);
+ 
+-	io = port->io;
++	struct spa_io_buffers *io = port->io;
+ 	if (io == NULL) {
+ 		b = spa_list_first(&port->queue, struct buffer, link);
+ 		spa_list_remove(&b->link);
+@@ -712,7 +712,6 @@ static void libcamera_on_fd_events(struct spa_source *source)
+ 		b = spa_list_first(&port->queue, struct buffer, link);
+ 		spa_list_remove(&b->link);
+ 		SPA_FLAG_SET(b->flags, BUFFER_FLAG_OUTSTANDING);
+-
+ 		io->buffer_id = b->id;
+ 		io->status = SPA_STATUS_HAVE_DATA;
+ 		spa_log_trace(impl->log, "libcamera %p: now queued %d", impl, b->id);
+@@ -720,6 +719,37 @@ static void libcamera_on_fd_events(struct spa_source *source)
+ 	spa_node_call_ready(&impl->callbacks, SPA_STATUS_HAVE_DATA);
+ }
+ 
++static void libcamera_on_fd_events(struct spa_source *source)
++{
++	struct impl *impl = (struct impl*) source->data;
++	uint32_t index;
++	uint64_t cnt;
++
++	if (source->rmask & SPA_IO_ERR) {
++		spa_log_error(impl->log, "libcamera %p: error %08x", impl, source->rmask);
++		if (impl->source.loop)
++			spa_loop_remove_source(impl->data_loop, &impl->source);
++		return;
++	}
++
++	if (!(source->rmask & SPA_IO_IN)) {
++		spa_log_warn(impl->log, "libcamera %p: spurious wakeup %d", impl, source->rmask);
++		return;
++	}
++
++	if (spa_system_eventfd_read(impl->system, impl->source.fd, &cnt) < 0) {
++		spa_log_error(impl->log, "Failed to read on event fd");
++		return;
++	}
++
++	int avail = spa_ringbuffer_get_read_index(&impl->completed_requests_rb, &index);
++	for (; avail > 0; avail--, index++) {
++		Request *request = impl->completed_requests[index & MASK_BUFFERS];
++		spa_ringbuffer_read_update(&impl->completed_requests_rb, index + 1);
++		handle_completed_request(impl, request);
++	}
++}
++
+ static int spa_libcamera_use_buffers(struct impl *impl, struct port *port,
+ 		struct spa_buffer **buffers, uint32_t n_buffers)
+ {
+@@ -790,7 +820,7 @@ mmap_init(struct impl *impl, struct port *port,
+ 		b = &port->buffers[i];
+ 		b->id = i;
+ 		b->outbuf = buffers[i];
+-		b->flags = BUFFER_FLAG_OUTSTANDING;
++		b->flags = 0;
+ 		b->h = (struct spa_meta_header*)spa_buffer_find_meta_data(buffers[i], SPA_META_Header, sizeof(*b->h));
+ 
+ 		b->videotransform = (struct spa_meta_videotransform*)spa_buffer_find_meta_data(
+@@ -841,7 +871,6 @@ mmap_init(struct impl *impl, struct port *port,
+ 				return -EIO;
+ 			}
+ 		}
+-		spa_libcamera_buffer_recycle(impl, port, i);
+ 	}
+ 	port->n_buffers = n_buffers;
+ 	spa_log_debug(impl->log, "we have %d buffers", n_buffers);
+@@ -869,62 +898,21 @@ spa_libcamera_alloc_buffers(struct impl *impl, struct port *port,
+ void impl::requestComplete(libcamera::Request *request)
+ {
+ 	struct impl *impl = this;
+-	struct port *port = &impl->out_ports[0];
+-	Stream *stream = port->streamConfig.stream();
+-	uint32_t index, buffer_id;
+-	struct buffer *b;
+-
+-	spa_log_debug(impl->log, "request complete");
+-
+-	buffer_id = request->cookie();
+-	b = &port->buffers[buffer_id];
+-
+-	if ((request->status() == Request::RequestCancelled)) {
+-		spa_log_debug(impl->log, "Request was cancelled");
+-		request->reuse(Request::ReuseFlag::ReuseBuffers);
+-		SPA_FLAG_SET(b->flags, BUFFER_FLAG_OUTSTANDING);
+-		spa_libcamera_buffer_recycle(impl, port, b->id);
+-		return;
+-	}
+-	FrameBuffer *buffer = request->findBuffer(stream);
+-	if (buffer == nullptr) {
+-		spa_log_warn(impl->log, "unknown buffer");
+-		return;
+-	}
+-	const FrameMetadata &fmd = buffer->metadata();
++	uint32_t index;
+ 
+-	if (impl->clock) {
+-		/* FIXME, we should follow the driver clock and target_ values.
+-		 * for now we ignore and use our own. */
+-		impl->clock->target_rate = port->rate;
+-		impl->clock->target_duration = 1;
+-
+-		impl->clock->nsec = fmd.timestamp;
+-		impl->clock->rate = port->rate;
+-		impl->clock->position = fmd.sequence;
+-		impl->clock->duration = 1;
+-		impl->clock->delay = 0;
+-		impl->clock->rate_diff = 1.0;
+-		impl->clock->next_nsec = fmd.timestamp;
+-	}
+-	if (b->h) {
+-		b->h->flags = 0;
+-		b->h->offset = 0;
+-		b->h->seq = fmd.sequence;
+-		b->h->pts = fmd.timestamp;
+-		b->h->dts_offset = 0;
+-	}
+-	request->reuse(Request::ReuseFlag::ReuseBuffers);
+-
+-	spa_ringbuffer_get_write_index(&port->ring, &index);
+-	port->ring_ids[index & MASK_BUFFERS] = buffer_id;
+-	spa_ringbuffer_write_update(&port->ring, index + 1);
++	spa_ringbuffer_get_write_index(&impl->completed_requests_rb, &index);
++	impl->completed_requests[index & MASK_BUFFERS] = request;
++	spa_ringbuffer_write_update(&impl->completed_requests_rb, index + 1);
+ 
+ 	if (spa_system_eventfd_write(impl->system, impl->source.fd, 1) < 0)
+ 		spa_log_error(impl->log, "Failed to write on event fd");
+ 
+ }
+ 
++static int do_remove_source(struct spa_loop *loop,
++		bool async, uint32_t seq, const void *data, size_t size,
++		void *user_data);
++
+ static int spa_libcamera_stream_on(struct impl *impl)
+ {
+ 	struct port *port = &impl->out_ports[0];
+@@ -938,38 +926,41 @@ static int spa_libcamera_stream_on(struct impl *impl)
+ 	if (impl->active)
+ 		return 0;
+ 
+-	impl->camera->requestCompleted.connect(impl, &impl::requestComplete);
++	impl->source.fd = spa_system_eventfd_create(impl->system,
++			SPA_FD_CLOEXEC | SPA_FD_NONBLOCK);
++	if (impl->source.fd < 0)
++		return impl->source.fd;
++	impl->source.func = libcamera_on_fd_events;
++	impl->source.data = impl;
++	impl->source.mask = SPA_IO_IN | SPA_IO_ERR;
++	impl->source.rmask = 0;
++	if ((res = spa_loop_add_source(impl->data_loop, &impl->source)) < 0)
++		goto error_close;
+ 
+ 	spa_log_info(impl->log, "starting camera %s", impl->device_id.c_str());
+ 	if ((res = impl->camera->start()) < 0)
+-		goto error;
++		goto error_remove;
+ 
+-	for (Request *req : impl->pendingRequests) {
+-		if ((res = impl->camera->queueRequest(req)) < 0)
++	impl->camera->requestCompleted.connect(impl, &impl::requestComplete);
++	for (std::unique_ptr<Request> &req : impl->requestPool) {
++		req->reuse(Request::ReuseFlag::ReuseBuffers);
++		if ((res = impl->camera->queueRequest(req.get())) < 0)
+ 			goto error_stop;
+ 	}
+-	impl->pendingRequests.clear();
+-
+-	impl->source.func = libcamera_on_fd_events;
+-	impl->source.data = impl;
+-	impl->source.fd = spa_system_eventfd_create(impl->system, SPA_FD_CLOEXEC | SPA_FD_NONBLOCK);
+-	impl->source.mask = SPA_IO_IN | SPA_IO_ERR;
+-	impl->source.rmask = 0;
+-	if (impl->source.fd < 0) {
+-		spa_log_error(impl->log, "Failed to create eventfd: %s", spa_strerror(impl->source.fd));
+-		res = impl->source.fd;
+-		goto error_stop;
+-	}
+-	spa_loop_add_source(impl->data_loop, &impl->source);
+ 
+ 	impl->active = true;
+ 
+ 	return 0;
+ 
+ error_stop:
+-	impl->camera->stop();
+-error:
+ 	impl->camera->requestCompleted.disconnect(impl, &impl::requestComplete);
++	impl->camera->stop();
++error_remove:
++	spa_loop_invoke(impl->data_loop, do_remove_source,
++			0, NULL, 0, true, impl);
++error_close:
++	spa_system_close(impl->system, impl->source.fd);
++	impl->source.fd = -1;
+ 	return res == -EACCES ? -EBUSY : res;
+ }
+ 
+@@ -991,29 +982,26 @@ static int spa_libcamera_stream_off(struct impl *impl)
+ 	struct port *port = &impl->out_ports[0];
+ 	int res;
+ 
+-	if (!impl->active) {
+-		for (std::unique_ptr<Request> &req : impl->requestPool)
+-			req->reuse(Request::ReuseFlag::ReuseBuffers);
++	if (!impl->active)
+ 		return 0;
+-	}
+ 
+ 	impl->active = false;
+ 	spa_log_info(impl->log, "stopping camera %s", impl->device_id.c_str());
+-	impl->pendingRequests.clear();
++	spa_loop_invoke(impl->data_loop, do_remove_source,
++			0, NULL, 0, true, impl);
++	impl->camera->requestCompleted.disconnect(impl, &impl::requestComplete);
+ 
+ 	if ((res = impl->camera->stop()) < 0) {
+ 		spa_log_warn(impl->log, "error stopping camera %s: %s",
+ 				impl->device_id.c_str(), spa_strerror(res));
+ 	}
+ 
+-	impl->camera->requestCompleted.disconnect(impl, &impl::requestComplete);
+-
+-	spa_loop_invoke(impl->data_loop, do_remove_source, 0, NULL, 0, true, impl);
+ 	if (impl->source.fd >= 0)  {
+ 		spa_system_close(impl->system, impl->source.fd);
+ 		impl->source.fd = -1;
+ 	}
+ 
++	impl->completed_requests_rb = SPA_RINGBUFFER_INIT();
+ 	spa_list_init(&port->queue);
+ 
+ 	return 0;
+-- 
+2.34.1
+

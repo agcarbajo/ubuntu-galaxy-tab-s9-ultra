@@ -935,7 +935,7 @@ físico:
 | módulo | bus | subdispositivo observado | CSIPHY |
 |---|---|---|---|
 | HI1337 trasero principal | CCI0 master 1, `0x21` | `/dev/v4l-subdev32` | 1 |
-| HI847 trasero angular | CCI0 master 0, `0x21` | `/dev/v4l-subdev33` | 2 |
+| HI847 trasero angular | CCI0 master 0, `0x21` | `/dev/v4l-subdev34` | 2 |
 | HI1337 frontal principal | CCI1 master 1, `0x20` | `/dev/v4l-subdev31` | 4 |
 | HI1337 frontal angular | QUP I²C9, `0x21` | `/dev/v4l-subdev30` | 5 |
 
@@ -994,10 +994,34 @@ capas reproducibles:
 
 `/dev/udmabuf` debe ser `root:video 0660` y llevar `uaccess`; de otro modo el
 ISP funciona como root y falla justamente en las aplicaciones. La validación
-final exigió 150 frames procesados por sensor, 99 por PipeWire, apertura de las
-cuatro fuentes, reapertura de una de ellas y un stream `active` de GNOME
-Cámara. La trasera principal queda desenfocada porque su actuador aún no tiene
-driver; eso sigue siendo la limitación real, no el color ni la integración.
+final exigió 720 frames alternando las cuatro fuentes, dos ciclos completos en
+GNOME Cámara, cuatro aperturas WebRTC en Chrome y cuatro escenas de OBS. No
+hubo reinicios de PipeWire, errores de descriptores ni buffers duplicados.
+
+### El DW9808 necesita un canal separado de los controles del sensor
+
+El firmware stock identifica el actuador de la trasera principal como DW9808,
+en CCI1 master 0 con dirección Linux `0x0c`. Su secuencia de arranque exacta es
+`02=01, 02=00, 06=60, 07=05`, las posiciones de preparación de Samsung y
+`02=02`; una prueba I²C recorrió 0–1023 y confirmó que óptica y motor responden.
+El DTS comparte GPIO15 mediante un regulador fijo entre VIO del HI1337 y VCC de
+la lente, y enlaza ambos con `lens-focus`.
+
+No se pueden fusionar sin más los `ControlInfoMap` V4L2 del sensor y la lente:
+cada subdispositivo crea su propio mapa de identificadores y libcamera aborta
+si un control pertenece al mapa ajeno. La solución reproducible añade a la IPA
+software un booleano `hasFocus` y un evento IPC `setLensPosition`; exposición y
+ganancia siguen viajando al sensor, mientras la posición llega solo a
+`CameraLens`.
+
+Las estadísticas del ISP acumulan una derivada segunda horizontal de
+luminancia. La IPA normaliza esa medida por luz, barre 128–896, afina alrededor
+del mejor punto en pasos de 48 y publica `AfMode`, `AfTrigger`, `AfState` y
+`FocusFoM`. El modo continuo vuelve a explorar si el mérito cae de forma
+sostenida, con una comprobación de seguridad espaciada para evitar respiración
+en vídeo. En hardware, una captura de 41 fotogramas registró el recorrido real
+de la lente y terminó con el texto del billete legible; GNOME Cámara y OBS
+confirmaron después el mismo resultado por la ruta de aplicaciones.
 
 ### El APM de audio puede fallar en un arranque sin que lo cause la cámara
 
@@ -1019,3 +1043,29 @@ había controlador. La ruta estable es el enlace del dispositivo bajo
 `/sys/bus/i2c/drivers/samsung-gts9u-stm32-pogo/`, no el número de adaptador.
 Servicios, diagnósticos y documentación deben buscar allí `*-002a`; añadir un
 bus no puede convertir un accesorio existente en ausente.
+
+### La linterna de escritorio no necesita conceder el flash a todo el sistema
+
+El LED combinado aparece como `/sys/class/leds/white:flash`. El mosaico de
+GNOME solo necesita la luz continua, por lo que udev cambia exclusivamente
+`brightness` a `root:video 0660`; `flash_strobe`, intensidad de estrobo,
+timeout y fallos permanecen `root:root`. El comando `gts9u-flashlight` valida
+0–255 y usa 128 por defecto. No se instaló ningún helper setuid ni una regla de
+sudo genérica.
+
+La extensión de sistema `flashlight@ubuntu-gts9u` usa la API Quick Settings de
+GNOME 46. Lee el estado físico, ejecuta el helper sin bloquear Shell, muestra
+un indicador mientras está encendida y fuerza apagado al descargarse. El
+paquete preserva la lista existente de extensiones al añadir su UUID, y el
+constructor de rootfs hace lo mismo después de crear el usuario. Un hook
+`system-sleep` escribe cero antes de suspender.
+
+Esto resuelve linterna y luz continua durante una foto. Un flash fotográfico
+automático es otro trabajo: necesita que libcamera exponga controles de flash
+y coordine el estrobo con el request y la exposición. No se debe simular esa
+sincronización dando a Snapshot acceso directo a todos los atributos sysfs.
+
+Las comprobaciones de orientación deben usar contenido físico, no solo
+`camera_sensor_rotation`. Las dos frontales con el monitor y las dos traseras
+con un billete legible salieron derechas a través de GNOME Cámara y OBS. El
+autofoco de la principal permite ya usar también esa lente como patrón físico.

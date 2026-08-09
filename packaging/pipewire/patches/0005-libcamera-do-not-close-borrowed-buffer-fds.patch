@@ -1,0 +1,60 @@
+From: Galaxy Tab S9 Ultra Ubuntu port <noreply@example.com>
+Subject: [PATCH] spa: libcamera: do not close borrowed buffer fds
+
+The dma-buf file descriptors exported through spa_data are borrowed from
+libcamera's FrameBuffer objects.  Closing them in clear_buffers() leaves the
+libcamera SharedFD instances holding invalid descriptors.  With requests
+retaining their buffers this produces EBADF errors and can close unrelated
+descriptors after fd-number reuse, eventually crashing PipeWire while cameras
+are switched.
+
+Match the current PipeWire ownership model: invalidate every spa_data entry
+before freeing the libcamera allocator and let libcamera close its own fds.
+---
+ spa/plugins/libcamera/libcamera-utils.cpp | 21 +++++++++++++--------
+ 1 file changed, 13 insertions(+), 8 deletions(-)
+
+diff --git a/spa/plugins/libcamera/libcamera-utils.cpp b/spa/plugins/libcamera/libcamera-utils.cpp
+index ef4f10a298c0..b8ba7bbad7f5 100644
+--- a/spa/plugins/libcamera/libcamera-utils.cpp
++++ b/spa/plugins/libcamera/libcamera-utils.cpp
+@@ -124,24 +124,29 @@ static int spa_libcamera_clear_buffers(struct impl *impl, struct port *port)
+ 		return 0;
+ 
+ 	for (i = 0; i < port->n_buffers; i++) {
+-		struct buffer *b;
+-		struct spa_data *d;
+-
+-		b = &port->buffers[i];
+-		d = b->outbuf->datas;
++		struct buffer *b = &port->buffers[i];
++		struct spa_buffer *sb = b->outbuf;
+ 
+ 		if (SPA_FLAG_IS_SET(b->flags, BUFFER_FLAG_OUTSTANDING)) {
+ 			spa_log_debug(impl->log, "queueing outstanding buffer %p", b);
+ 			spa_libcamera_buffer_recycle(impl, port, i);
+ 		}
+ 		if (SPA_FLAG_IS_SET(b->flags, BUFFER_FLAG_MAPPED)) {
++			struct spa_data *d = &sb->datas[0];
+ 			munmap(SPA_PTROFF(b->ptr, -d[0].mapoffset, void),
+ 					d[0].maxsize - d[0].mapoffset);
+ 		}
+-		if (SPA_FLAG_IS_SET(b->flags, BUFFER_FLAG_ALLOCATED)) {
+-			close(d[0].fd);
++
++		for (uint32_t j = 0; j < sb->n_datas; j++) {
++			struct spa_data *d = &sb->datas[j];
++
++			d->type = SPA_ID_INVALID;
++			d->data = NULL;
++			d->fd = -1;
+ 		}
+-		d[0].type = SPA_ID_INVALID;
++
++		b->flags = 0;
++		b->outbuf = NULL;
+ 	}
+ 
+ 	freeBuffers(impl, port);
+-- 
+2.43.0

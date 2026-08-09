@@ -190,6 +190,7 @@ camera_dir=$kernel_tree/drivers/media/i2c
 install -m 0644 "$drv/hi1337_gts9u.c" "$camera_dir/hi1337_gts9u.c"
 install -m 0644 "$drv/hi1337_gts9u_tables.h" \
 	"$camera_dir/hi1337_gts9u_tables.h"
+install -m 0644 "$drv/dw9808_vcm.c" "$camera_dir/dw9808_vcm.c"
 if ! grep -q 'VIDEO_HI1337_GTS9U' "$camera_dir/Kconfig"; then
 	sed -i '/^config VIDEO_HI847/i \
 config VIDEO_HI1337_GTS9U\
@@ -202,6 +203,20 @@ config VIDEO_HI1337_GTS9U\
 fi
 grep -q 'hi1337_gts9u.o' "$camera_dir/Makefile" || \
 	printf 'obj-$(CONFIG_VIDEO_HI1337_GTS9U) += hi1337_gts9u.o\n' \
+		>> "$camera_dir/Makefile"
+if ! grep -q 'VIDEO_DW9808_VCM' "$camera_dir/Kconfig"; then
+	sed -i '/^config VIDEO_DW9807_VCM/i \
+config VIDEO_DW9808_VCM\
+\ttristate "Dongwoon DW9808 voice coil lens"\
+\tdepends on I2C && VIDEO_DEV\
+\tselect MEDIA_CONTROLLER\
+\tselect VIDEO_V4L2_SUBDEV_API\
+\thelp\
+\t  Focus actuator used by the rear HI1337 camera on the SM-X910.\
+' "$camera_dir/Kconfig"
+fi
+grep -q 'dw9808_vcm.o' "$camera_dir/Makefile" || \
+	printf 'obj-$(CONFIG_VIDEO_DW9808_VCM) += dw9808_vcm.o\n' \
 		>> "$camera_dir/Makefile"
 
 panel_dir=$kernel_tree/drivers/gpu/drm/panel

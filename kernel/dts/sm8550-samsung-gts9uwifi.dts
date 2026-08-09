@@ -175,6 +175,21 @@
 		pinctrl-0 = <&pogo_vddo_en>;
 	};
 
+	/*
+	 * GPIO15 enables the rear-main module rail shared by the HI1337 and its
+	 * DW9808 focus actuator.  Model it as a regulator so either media entity
+	 * can hold the rail without two drivers fighting over the same GPIO.
+	 */
+	rear_cam_vio: rear-camera-vio-regulator {
+		compatible = "regulator-fixed";
+		regulator-name = "rear_cam_vio";
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <1800000>;
+		vin-supply = <&vreg_l4b_1p8>;
+		gpio = <&tlmm 15 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+	};
+
 	wcn7850_pmu: wcn7850-pmu {
 		compatible = "qcom,wcn7850-pmu";
 		pinctrl-names = "default";
@@ -809,15 +824,15 @@
 		clocks = <&camcc CAM_CC_MCLK2_CLK>;
 		assigned-clocks = <&camcc CAM_CC_MCLK2_CLK>;
 		assigned-clock-rates = <19200000>;
-		vddio-supply = <&vreg_l4b_1p8>;
+		vddio-supply = <&rear_cam_vio>;
 		vdig-supply = <&vreg_l1c_1p1>;
-		enable-gpios = <&tlmm 15 GPIO_ACTIVE_HIGH>;
 		reset-gpios = <&tlmm 70 GPIO_ACTIVE_LOW>;
 		pinctrl-0 = <&cam2_default>;
 		pinctrl-1 = <&cam2_sleep>;
 		pinctrl-names = "default", "sleep";
 		orientation = <1>;
 		rotation = <90>;
+		lens-focus = <&rear_focus>;
 
 		port {
 			hi1337_rear_ep: endpoint {
@@ -840,6 +855,14 @@
 		clock-frequency = <1000000>;
 		#address-cells = <1>;
 		#size-cells = <0>;
+	};
+};
+
+&cci1_i2c0 {
+	rear_focus: lens@c {
+		compatible = "dongwoon,dw9808-vcm";
+		reg = <0x0c>;
+		vcc-supply = <&rear_cam_vio>;
 	};
 };
 

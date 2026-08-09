@@ -3,8 +3,8 @@
 #
 # The SM8550 CAMSS graph needs libcamera's current simple pipeline and CPU
 # software ISP.  Noble's libcamera 0.2 predates that support.  PipeWire 1.0.5
-# also needs three small backports so its SPA plugin can consume libcamera 0.7
-# controls and packed RGB buffers without aborting or swapping colour channels.
+# also needs seven small backports so its SPA plugin can consume libcamera 0.7
+# controls, packed RGB buffers and the safe request-reuse lifecycle.
 set -euo pipefail
 
 repo=$(cd "$(dirname "$0")/.." && pwd)
@@ -15,10 +15,12 @@ suite=${UBUNTU_SUITE:-noble}
 mirror=${UBUNTU_MIRROR:-http://ports.ubuntu.com/ubuntu-ports}
 
 libcamera_commit=62d4bfc450798cbd57722fa349a245b93b11d1cd
-libcamera_version=0.7.2+53.g62d4bfc-gts9u1
+libcamera_version=0.7.2+53.g62d4bfc-gts9u2
 pipewire_commit=a2287be601710eea0d073261223ec34b92384c8a
-pipewire_version=1.0.5-gts9u1
+pipewire_version=1.0.5-gts9u6
 skip_build=${SKIP_CAMERA_BUILD:-0}
+skip_libcamera_build=${SKIP_LIBCAMERA_BUILD:-$skip_build}
+skip_pipewire_build=${SKIP_PIPEWIRE_BUILD:-$skip_build}
 
 mkdir -p "$out"
 
@@ -136,13 +138,15 @@ cp "$repo/packaging/pipewire/patches/"*.patch \
 	"$buildroot/build/camera-inputs/pipewire/"
 
 step "libcamera $libcamera_version"
-if [ "$skip_build" != 1 ]; then
+if [ "$skip_libcamera_build" != 1 ]; then
 	run "cd /build
 rm -rf libcamera-gts9u stage-libcamera
 git clone --quiet https://git.libcamera.org/libcamera/libcamera.git libcamera-gts9u
 cd libcamera-gts9u
 git checkout --quiet $libcamera_commit
-git apply /build/camera-inputs/libcamera/0001-libipa-add-hynix-hi1337-hi847-gain-helpers.patch
+git apply \
+	/build/camera-inputs/libcamera/0001-libipa-add-hynix-hi1337-hi847-gain-helpers.patch \
+	/build/camera-inputs/libcamera/0002-simple-software-autofocus.patch
 meson setup build \
 	--prefix=/usr \
 	--libdir=lib/aarch64-linux-gnu \
@@ -196,7 +200,7 @@ package_tree /build/stage-libcamera libcamera-gts9u "$libcamera_version" \
 run 'cp -a /build/stage-libcamera/. / && ldconfig'
 
 step "PipeWire libcamera SPA $pipewire_version"
-if [ "$skip_build" != 1 ]; then
+if [ "$skip_pipewire_build" != 1 ]; then
 	run "cd /build
 rm -rf pipewire-camera stage-pipewire-camera
 git clone --quiet https://gitlab.freedesktop.org/pipewire/pipewire.git pipewire-camera
@@ -205,7 +209,11 @@ git checkout --quiet $pipewire_commit
 git apply \
 	/build/camera-inputs/pipewire/0001-libcamera-0.7-string-view-model.patch \
 	/build/camera-inputs/pipewire/0002-libcamera-0.7-skip-array-controls.patch \
-	/build/camera-inputs/pipewire/0003-libcamera-correct-packed-rgb-mapping.patch
+	/build/camera-inputs/pipewire/0003-libcamera-correct-packed-rgb-mapping.patch \
+	/build/camera-inputs/pipewire/0004-libcamera-reuse-request-buffers.patch \
+	/build/camera-inputs/pipewire/0005-libcamera-do-not-close-borrowed-buffer-fds.patch \
+	/build/camera-inputs/pipewire/0006-libcamera-process-completions-on-data-loop.patch \
+	/build/camera-inputs/pipewire/0007-libcamera-suppress-redundant-video-transform.patch
 meson setup build \
 	--prefix=/usr \
 	--libdir=lib/aarch64-linux-gnu \

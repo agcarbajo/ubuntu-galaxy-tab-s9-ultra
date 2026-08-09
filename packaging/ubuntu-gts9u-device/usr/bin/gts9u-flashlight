@@ -1,0 +1,54 @@
+#!/bin/sh
+set -eu
+
+brightness=/sys/class/leds/white:flash/brightness
+maximum=/sys/class/leds/white:flash/max_brightness
+default_level=128
+
+fail()
+{
+	echo "gts9u-flashlight: $*" >&2
+	exit 1
+}
+
+[ -r "$brightness" ] || fail 'flashlight LED is not available'
+
+set_level()
+{
+	level=$1
+	case "$level" in
+		''|*[!0-9]*) fail 'level must be a number' ;;
+	esac
+	max=$(cat "$maximum")
+	[ "$level" -le "$max" ] || fail "level must be between 0 and $max"
+	printf '%s\n' "$level" > "$brightness" ||
+		fail 'permission denied; reconnect the LED or reload its udev rule'
+}
+
+case "${1-status}" in
+	on)
+		level=${2-$default_level}
+		[ "$level" -gt 0 ] 2>/dev/null || fail 'on level must be greater than 0'
+		set_level "$level"
+		;;
+	off)
+		set_level 0
+		;;
+	toggle)
+		if [ "$(cat "$brightness")" -gt 0 ]; then
+			set_level 0
+		else
+			set_level "$default_level"
+		fi
+		;;
+	status)
+		if [ "$(cat "$brightness")" -gt 0 ]; then
+			echo on
+		else
+			echo off
+		fi
+		;;
+	*)
+		fail 'usage: gts9u-flashlight {on [0-255]|off|toggle|status}'
+		;;
+esac

@@ -59,7 +59,7 @@ postmarketOS v1.71 baseline is kept outside Git.
 | **Speaker protection** | ❌ | Cirrus protection firmware not loaded; hardware volume kept conservative |
 | **Fingerprint** | ❌ | No mainline driver for the EgisTec sensor |
 | **Vibration / haptics** | ❌ | Hardware not identified |
-| **Flash / cameras** | 🟡 | All four sensors are processed by a tuned libcamera software ISP and exposed to desktop apps through PipeWire; GNOME Camera, repeated capture, strobe and torch are validated. Rear-main autofocus is still missing |
+| **Flash / cameras** | 🟡 | All four sensors are processed by a tuned libcamera software ISP and exposed through PipeWire; GNOME Camera, Chrome WebRTC and OBS use all four. The rear-main DW9808 has validated continuous autofocus. A native **Flashlight** tile controls continuous light without root; automatic exposure-synchronised photo flash and factory calibration remain open |
 | **Modem** | — | Not applicable to the Wi-Fi-only model |
 
 ✅ tested on the physical tablet · 🟡 partially working · ❌ known not to work

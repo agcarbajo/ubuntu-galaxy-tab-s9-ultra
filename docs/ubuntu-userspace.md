@@ -94,17 +94,19 @@ libdrm-tests, drm-info, edid-decode
 `v4l-utils` sigue siendo la herramienta de diagnóstico de CAMSS, pero la ruta
 normal ya no termina en RAW10. `scripts/build-camera-packages.sh` fija y
 empaqueta `libcamera` 0.7.2 (`62d4bfc`) con pipeline `simple`, software ISP,
-GStreamer y tuning HI1337/HI847. También recompila únicamente el SPA libcamera
-de PipeWire 1.0.5 (`a2287be`) con tres backports: API de strings de libcamera
-0.7, exclusión de controles-array que el mapper antiguo no entiende y el mapa
-correcto entre nombres DRM y orden de bytes RGB. Los `.deb` resultantes son
+GStreamer, tuning HI1337/HI847 y autofoco por contraste para el DW9808. También
+recompila únicamente el SPA libcamera de PipeWire 1.0.5 (`a2287be`) con siete
+backports: compatibilidad con libcamera 0.7, mapa RGB correcto, reutilización
+segura de requests y buffers, descriptores prestados y entrega de completados
+en el bucle de datos. Los `.deb` resultantes son
 `libcamera-gts9u` y `libspa-0.2-libcamera-gts9u`; reemplazan solo los paquetes
 de cámara del archivo y conservan el PipeWire/WirePlumber de Noble.
 
 El paquete de dispositivo instala además la regla udev de `/dev/udmabuf`,
 necesaria para que el software ISP pueda asignar buffers sin privilegios. La
-imagen de escritorio incluye GNOME Cámara y `gstreamer1.0-gl`; así una build
-limpia arranca con las cuatro fuentes ya disponibles para aplicaciones.
+imagen de escritorio incluye GNOME Cámara, `gstreamer1.0-gl`, OBS Studio y el
+plugin `obs-gstreamer-gts9u`; así una build limpia arranca con las cuatro
+fuentes ya disponibles para aplicaciones.
 
 `ubuntu-desktop-minimal` en lugar de `ubuntu-desktop` deja fuera ofimática y
 snaps de escritorio que no aportan nada al bring-up. Snap se evalúa como tema

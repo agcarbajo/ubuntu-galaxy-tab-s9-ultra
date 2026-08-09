@@ -1,0 +1,16 @@
+#!/bin/sh
+set -eu
+
+devpath=${1-}
+case "$devpath" in
+	/devices/*) ;;
+	*) exit 1 ;;
+esac
+
+led_dir=/sys$devpath
+[ -d "$led_dir" ]
+[ "${led_dir##*/}" = 'white:flash' ]
+[ -e "$led_dir/brightness" ]
+
+chgrp video "$led_dir/brightness"
+chmod 0660 "$led_dir/brightness"
