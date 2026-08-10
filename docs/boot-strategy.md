@@ -73,10 +73,20 @@ La alternativa era `super` (11,2 GiB), que no da para un escritorio y además
 obligaría a reconstruir sus particiones lógicas. Reparticionar la UFS queda
 descartado mientras exista esta opción.
 
-El ZIP se flashea **desde medios externos**, microSD o USB-OTG. El
-almacenamiento interno de TWRP *es* la partición que se sobrescribe: leer el
-ZIP de ahí lo destruiría a mitad de la escritura, así que el instalador aborta
-si detecta que la ruta del ZIP está en `/data`, `/sdcard` o equivalentes.
+El ZIP se flashea **desde fuera del almacenamiento interno**, que *es* la
+partición que se sobrescribe: leer el ZIP de ahí lo destruiría a mitad de la
+escritura, así que el instalador aborta si la ruta del ZIP está en `/data`,
+`/sdcard` o equivalentes.
+
+Por orden de comodidad:
+
+1. **`adb sideload`.** El ZIP se sirve desde el PC y no ocupa nada en la
+   tablet. Es la vía probada.
+2. **USB-OTG**, si hay un pendrive a mano.
+3. **microSD**, con una advertencia: TWRP monta en `/external_sd` la **primera**
+   partición de la tarjeta, y si esa tarjeta lleva una instalación de las
+   versiones microSD, su primera partición es `UBTS9U_BOOT`, de 256 MiB. Ahí no
+   cabe un ZIP de ~1 GiB. Hace falta una tarjeta de datos normal.
 
 ### Etiquetas
 
@@ -164,22 +174,23 @@ ella.
 3. Asumir que **lo que Android guarde en `userdata` se pierde**. Es la
    partición donde se instala Ubuntu. `super`, el bootloader, EFS y las
    calibraciones no se tocan.
-4. Copiar el ZIP a una **microSD o un USB-OTG**, nunca al almacenamiento
-   interno: es la partición que se sobrescribe. El instalador aborta si detecta
-   que se le ha llamado desde ahí, pero conviene no llegar a esa comprobación.
+4. Tener el ZIP fuera del almacenamiento interno, que es la partición que se
+   sobrescribe. Lo más simple es `adb sideload`; ver la lista de medios de la
+   sección anterior.
 
 ### Paso único — flashear el ZIP desde TWRP
 
-1. Arrancar en TWRP con el medio externo conectado.
-2. `Install` → seleccionar el ZIP.
+1. Arrancar en TWRP. Para sideload: `Advanced` → `ADB Sideload`, y desde el PC
+   `adb sideload <zip>`. Con un medio externo: `Install` → seleccionar el ZIP.
+2. Esperar. La escritura del rootfs tarda varios minutos, no muestra progreso,
+   y va antes que las imágenes de arranque a propósito.
 3. Leer la salida. El instalador aborta si el dispositivo no es un SM-X910, si
    el tamaño de alguna partición no cuadra, si `vbmeta` no tiene AVB flags 2,
-   si `userdata` es más pequeña que la imagen, si el ZIP está en el destino, o
-   si lo releído de `userdata` no coincide con el SHA-256 de la imagen.
-4. La escritura del rootfs tarda varios minutos y va antes que las imágenes de
-   arranque, a propósito.
-5. El ZIP **no reinicia**. Reiniciar a mano cuando termine.
-6. En el primer arranque el sistema de ficheros crece hasta ocupar las 939 GiB.
+   si `userdata` es más pequeña que la imagen, si el ZIP está en el destino, si
+   `userdata` sigue montada, o si lo releído no coincide con el SHA-256 de la
+   imagen.
+4. El ZIP **no reinicia**. Reiniciar a mano cuando termine.
+5. En el primer arranque el sistema de ficheros crece hasta ocupar las 939 GiB.
    Solo se redimensiona el sistema de ficheros: la partición ya era así.
 
 ### Si algo va mal

@@ -95,8 +95,20 @@ blkdev_size() { blockdev --getsize64 "$1" 2>/dev/null || echo 0; }
 [ "$(blkdev_size "$(resolve_part dtbo)")" -eq 16777216 ] || abort "dtbo size mismatch"
 [ "$(blkdev_size "$(resolve_part vbmeta)")" -eq 131072 ] || abort "vbmeta size mismatch"
 
+# TWRP's unzip is AOSP ziptool, and `unzip -l ZIP MEMBER` exits 0 whether or
+# not MEMBER is in the archive: asked for something absent it prints "0 files"
+# and reports success.  Every membership test written that way is not a test at
+# all, and one of them decided this installer was carrying an overlay it did
+# not have.  Ask the listing itself instead, exactly once.
+ZIP_LISTING=/tmp/gts9u-zip-listing
+unzip -l "$ZIPFILE" > "$ZIP_LISTING" 2>/dev/null || abort "cannot read the ZIP"
+
+zip_has() {
+    awk -v name="$1" '$NF == name { found = 1 } END { exit !found }' "$ZIP_LISTING"
+}
+
 for file in boot.img init_boot.img vendor_boot.img dtbo.img vbmeta.img; do
-    unzip -l "$ZIPFILE" "$file" >/dev/null 2>&1 || abort "ZIP is missing $file"
+    zip_has "$file" || abort "ZIP is missing $file"
 done
 
 fs_label() {
@@ -121,9 +133,9 @@ fs_label() {
 # is a factory reset from Download Mode, not a repartition.
 
 HAS_ROOTFS_IMAGE=0
-if unzip -l "$ZIPFILE" rootfs.img >/dev/null 2>&1; then
+if zip_has rootfs.img; then
     HAS_ROOTFS_IMAGE=1
-    unzip -l "$ZIPFILE" ROOTFS-IMAGE >/dev/null 2>&1 || \
+    zip_has ROOTFS-IMAGE || \
         abort "the ZIP carries rootfs.img without its ROOTFS-IMAGE manifest"
 fi
 
@@ -214,7 +226,7 @@ fi
 # ---------------------------------------------------------------------------
 
 HAS_ROOTFS_OVERLAY=0
-if unzip -l "$ZIPFILE" ROOTFS-OVERLAY-SHA256SUMS >/dev/null 2>&1; then
+if zip_has ROOTFS-OVERLAY-SHA256SUMS; then
     [ "$HAS_ROOTFS_IMAGE" -eq 0 ] || \
         abort "the ZIP carries both a rootfs image and an overlay"
     HAS_ROOTFS_OVERLAY=1
@@ -344,7 +356,7 @@ if [ "$HAS_ROOTFS_OVERLAY" -eq 1 ]; then
 
     # systemd ignores a regular file inside a .wants directory: activation has
     # to be a real symlink, so it is created here from a packaged manifest.
-    if unzip -l "$ZIPFILE" ROOTFS-OVERLAY-ENABLE >/dev/null 2>&1; then
+    if zip_has ROOTFS-OVERLAY-ENABLE; then
         unzip -p "$ZIPFILE" ROOTFS-OVERLAY-ENABLE | \
         while read target_unit unit; do
             [ -n "$unit" ] || continue

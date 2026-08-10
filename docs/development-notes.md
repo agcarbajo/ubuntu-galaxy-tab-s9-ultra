@@ -1199,3 +1199,40 @@ Reglas que se derivan:
 No es un problema de TWRP ni de este dispositivo: es lo que hay en cualquier
 recovery con el shell de Android, y volverá a morder a la primera imagen que
 crezca por encima de 2 GiB.
+
+## En TWRP, `unzip -l ZIP MIEMBRO` no falla nunca
+
+El `unzip` de TWRP es un enlace a **ziptool**, el de AOSP. Preguntado por un
+miembro que no existe imprime «0 files» y **sale 0**:
+
+```
+$ unzip -l paquete.zip NO-EXISTE ; echo $?
+0
+```
+
+`unzip -p` con un miembro ausente hace lo mismo: no imprime nada y sale 0.
+
+El instalador usaba ese idioma para decidir qué llevaba el ZIP. Todas esas
+comprobaciones eran verdaderas siempre, así que un ZIP sin overlay se
+consideraba portador de uno y abortaba con «the ZIP carries both a rootfs image
+and an overlay». Las comprobaciones de que las cinco imágenes de arranque
+estaban presentes tampoco comprobaban nada.
+
+La forma correcta es leer el listado una vez y preguntarle:
+
+```sh
+unzip -l "$ZIPFILE" > "$ZIP_LISTING"
+zip_has() {
+    awk -v name="$1" '$NF == name { found = 1 } END { exit !found }' "$ZIP_LISTING"
+}
+```
+
+Verificado en el dispositivo contra un ZIP real: distingue `boot.img`,
+`META-INF/com/google/android/update-binary` y un nombre inventado.
+
+La lección general, que ya ha costado dos flasheos: **una comprobación que no
+puede fallar es peor que no comprobar nada**, porque además da confianza. Y el
+banco de pruebas en WSL usa el `unzip` de Debian, que sí devuelve 11: para que
+el banco valga hay que imitar el comportamiento de ziptool, y ahora lo hace con
+un envoltorio en el `PATH` de prueba. `validate-bundle.sh` exige además que el
+instalador ejecute `unzip -l` exactamente una vez.

@@ -3133,3 +3133,55 @@ mksh». El mismo ramdisk confirmó que sí están disponibles `wc`, `dd`, `unzip
 
 v0.18 repaquetada. La imagen de raíz no cambia; sólo el instalador y el
 manifiesto. Sigue sin arrancar en la tablet.
+
+---
+
+## Sesión 36 — tercer intento, y la primera sesión con la tablet accesible por adb
+
+Fecha: 2026-08-10. La tablet quedó en TWRP con `adb` disponible, así que por
+primera vez las suposiciones sobre el entorno del instalador se pudieron
+comprobar en el aparato en lugar de deducirlas.
+
+### El fallo
+
+`ERROR: the ZIP carries both a rootfs image and an overlay`, sobre un ZIP que
+no lleva overlay.
+
+Confirmado en el dispositivo: el `unzip` de TWRP es `ziptool`, y `unzip -l ZIP
+MIEMBRO` sale 0 aunque el miembro no exista. Todas las comprobaciones de
+pertenencia del instalador eran verdaderas siempre. La de la sesión anterior
+había enmascarado ésta: se abortaba antes de llegar aquí.
+
+Sustituidas por un listado leído una vez y consultado con `awk` sobre el último
+campo. Verificado contra un ZIP real en el propio dispositivo.
+
+### Lo que sí funcionó
+
+El arreglo del desmontaje de la sesión 35 se vio funcionando en el log real:
+
+```
+Unmounting /data before writing Ubuntu.
+Unmounting /sdcard before writing Ubuntu.
+```
+
+`/data` y `/sdcard` son dos puntos de montaje del mismo `sda34`, y ambos se
+desmontaron. Con el código anterior no se habría desmontado ninguno.
+
+### Medido en el dispositivo
+
+| Comprobación | Resultado |
+|---|---|
+| `echo $KSH_VERSION` | `@(#)MIRBSD KSH R59 2020/05/16 Android` |
+| `echo $((3271557120))` | `-1023410176`, confirmando la aritmética de 32 bits |
+| `readlink -f /dev/block/by-name/userdata` | `/dev/block/sda34` |
+| `blockdev --getsize64` de `userdata` | `1007985586176` |
+| sonda `dd bs=1M skip=3119 count=1` en `userdata` | `1048576` bytes |
+| la misma sonda en una partición pequeña | 38 bytes, o sea rechaza correctamente |
+| `unzip -l ZIP NO-EXISTE` | sale 0 |
+
+### Una corrección a la documentación
+
+`/external_sd` en esta tablet son **224 MiB**: es la partición `UBTS9U_BOOT` de
+la microSD de la v0.17, porque TWRP monta la primera partición de la tarjeta.
+No cabe ahí un ZIP de 992 MB. Decir «cópialo a una microSD» sin más era un mal
+consejo: la vía practicable es **sideload** o un USB-OTG.

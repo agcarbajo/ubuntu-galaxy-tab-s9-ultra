@@ -254,6 +254,20 @@ if [ -n "$zip" ] && [ -f "$zip" ]; then
 			fail 'the installer does not check where the ZIP itself is stored'
 		fi
 
+		# TWRP's unzip is AOSP ziptool, and `unzip -l ZIP MEMBER` exits 0 for a
+		# member that is not there.  Every membership test written that way
+		# silently succeeds, which is how a ZIP with no overlay was rejected
+		# for carrying one.  The installer reads the listing once and asks awk;
+		# more than one `unzip -l` means someone went back to the idiom that
+		# cannot fail.
+		listings=$(printf '%s\n' "$installer" | sed 's/#.*//' | \
+			grep -c 'unzip -l' || true)
+		if [ "$listings" -eq 1 ]; then
+			pass 'the installer tests ZIP membership against a real listing'
+		else
+			fail "the installer runs 'unzip -l' $listings times; it cannot be used as a test"
+		fi
+
 		# TWRP runs the installer with mksh, whose arithmetic and test(1) are
 		# 32-bit signed.  Any quantity above 2 GiB wraps to a negative number
 		# there, and the symptom is an abort on a ZIP that is perfectly fine —
