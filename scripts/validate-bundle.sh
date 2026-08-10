@@ -130,8 +130,11 @@ else:
 
 # root= is the one that would strand the boot in an emergency shell: unlike
 # the postmarketOS initramfs, initramfs-tools does not look for its own
-# partition. rootwait matters because the microSD takes time to enumerate.
-for token in ("root=LABEL=UBTS9U_ROOT", "rootwait", "msm.separate_gpu_kms=1"):
+# partition. The label is UBTS9U_UFS and not UBTS9U_ROOT so that a microSD
+# left over from an older release cannot win the lookup against the copy
+# installed on the internal storage. rootwait matters because neither the UFS
+# nor a card is necessarily enumerated when the kernel goes looking.
+for token in ("root=LABEL=UBTS9U_UFS", "rootwait", "msm.separate_gpu_kms=1"):
     if token in cmdline:
         print(f"PASS  cmdline keeps {token}")
     else:
@@ -197,41 +200,82 @@ if [ -n "$zip" ] && [ -f "$zip" ]; then
 			fail "ZIP is missing $member"
 		fi
 	done
+
+	# A full-installation ZIP carries the root filesystem and the manifest the
+	# installer verifies it against.  An update ZIP carries neither, and says
+	# so here rather than looking like a truncated release.
+	if unzip -l "$zip" rootfs.img >/dev/null 2>&1; then
+		if unzip -l "$zip" ROOTFS-IMAGE >/dev/null 2>&1; then
+			pass 'ZIP contains rootfs.img and its ROOTFS-IMAGE manifest'
+		else
+			fail 'ZIP carries rootfs.img with no ROOTFS-IMAGE manifest'
+		fi
+		rootfs_line=$(unzip -p "$zip" ROOTFS-IMAGE 2>/dev/null)
+		rootfs_bytes=$(printf '%s\n' "$rootfs_line" | cut -d' ' -f2)
+		if [ "${rootfs_bytes:-0}" -gt 0 ] 2>/dev/null && \
+			[ $((rootfs_bytes % 1048576)) -eq 0 ]; then
+			pass "the root filesystem image is $((rootfs_bytes / 1048576)) whole MiB"
+		else
+			fail "the root filesystem image size '$rootfs_bytes' is not whole MiB"
+		fi
+	else
+		info 'no rootfs.img: this is an update ZIP, not a full installation'
+	fi
 	installer=$(unzip -p "$zip" META-INF/com/google/android/update-binary 2>/dev/null)
 	if [ -z "$installer" ]; then
 		fail 'the packaged installer could not be read'
 	else
 		if printf '%s\n' "$installer" | \
-			grep -q '^# GTS9U-INSTALLER-CONTRACT: writes boot init_boot vendor_boot dtbo vbmeta only$'; then
+			grep -q '^# GTS9U-INSTALLER-CONTRACT: writes boot init_boot vendor_boot dtbo vbmeta userdata only$'; then
 			pass 'the packaged installer declares the expected contract'
 		else
 			fail 'the packaged installer does not declare the expected contract'
 		fi
-		if printf '%s\n' "$installer" | grep -q 'e2fsck -p "\$1"'; then
+		if printf '%s\n' "$installer" | grep -q 'e2fsck -p "\$DATA_TARGET"'; then
 			pass 'the installer preens the Ubuntu rootfs before mounting it read-write'
 		else
 			fail 'the installer does not validate the Ubuntu rootfs with e2fsck'
+		fi
+		if printf '%s\n' "$installer" | grep -q 'WRITTEN_SHA" = "\$ROOTFS_SHA'; then
+			pass 'the installer hashes back the root filesystem it wrote'
+		else
+			fail 'the installer does not verify the root filesystem it writes'
+		fi
+		if printf '%s\n' "$installer" | grep -q 'the ZIP is stored on the installation target'; then
+			pass 'the installer refuses to run from the partition it overwrites'
+		else
+			fail 'the installer does not check where the ZIP itself is stored'
 		fi
 
 		# Check executable code, not prose: the installer's own comments name
 		# the partitions it promises never to touch, and grepping the whole
 		# file would flag exactly the documentation that makes it safe.
+		#
+		# userdata left this list when the root filesystem moved into it, and
+		# it is the only name that did.  What replaces the guarantee for that
+		# one partition is the check below: no tool that could alter the
+		# partition table may appear anywhere in the installer.
 		code=$(printf '%s\n' "$installer" | sed 's/#.*//')
 		if printf '%s\n' "$code" | \
-			grep -qE '\b(super|userdata|pit|efs|persist|modem|modemst|md5|sbl|xbl|abl)\b'; then
+			grep -qE '\b(super|pit|efs|persist|modem|modemst|md5|sbl|xbl|abl)\b'; then
 			fail 'installer code references a partition it must never write'
 			printf '%s\n' "$code" | \
-				grep -nE '\b(super|userdata|pit|efs|persist|modem|modemst)\b' | \
+				grep -nE '\b(super|pit|efs|persist|modem|modemst)\b' | \
 				head -5 | sed 's/^/      /'
 		else
-			pass 'installer code never names super, userdata, PIT, EFS, persist or modem'
+			pass 'installer code never names super, PIT, EFS, persist or modem'
 		fi
 
-		# The only writes must be dd into a resolved partition handle.
+		# The only writes must be dd into a resolved partition handle.  This is
+		# what keeps writing into userdata from becoming a change to the
+		# partition table: with no partitioner and no mkfs in the installer,
+		# the GPT Samsung shipped cannot be touched, and Odin stays a one-step
+		# way back.
 		writes=$(printf '%s\n' "$code" | grep -cE '\bdd +(if|of)=' || true)
 		if [ "$writes" -gt 0 ] && \
-			! printf '%s\n' "$code" | grep -qE '\b(mkfs|wipefs|sgdisk|parted|format|fastboot)\b'; then
-			pass 'the installer only writes with dd and never formats'
+			! printf '%s\n' "$code" | \
+			grep -qE '\b(mkfs|mke2fs|wipefs|sgdisk|gdisk|fdisk|sfdisk|parted|partx|format|fastboot)\b'; then
+			pass 'the installer only writes with dd, and never formats or repartitions'
 		else
 			fail 'the installer contains a formatting or partitioning command'
 		fi

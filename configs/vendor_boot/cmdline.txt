@@ -1,1 +1,1 @@
-root=LABEL=UBTS9U_ROOT rootfstype=ext4 rootwait console=tty0 console=ttyMSM0,115200n8 earlycon loglevel=7 log_buf_len=4M panic=10 clk_ignore_unused pd_ignore_unused regulator_ignore_unused msm.separate_gpu_kms=1
+root=LABEL=UBTS9U_UFS rootfstype=ext4 rootwait console=tty0 console=ttyMSM0,115200n8 earlycon loglevel=7 log_buf_len=4M panic=10 clk_ignore_unused pd_ignore_unused regulator_ignore_unused msm.separate_gpu_kms=1

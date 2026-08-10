@@ -16,8 +16,13 @@ software, and later Vulkan/Turnip-based gaming stacks, become usable.
 
 Ubuntu boots and is usable as a desktop tablet: GNOME on the native panel, with
 display, GPU, touch, audio, Wi-Fi, Bluetooth, sensors, USB host, DisplayPort and
-the pogo keyboard all confirmed on the physical hardware. The current
-reproducible release is **v0.17**, built from a clean tree.
+the pogo keyboard all confirmed on the physical hardware. The last release
+confirmed end to end on the tablet is **v0.17**, from a microSD.
+
+**v0.18** moves the root filesystem to the tablet's own internal storage and
+ships as a single flashable ZIP. Its install and first boot have not been
+confirmed on hardware yet; until they are, the rows below that depend on it say
+so.
 
 Evidence level per component, what is still inherited from the postmarketOS
 baseline rather than proven under Ubuntu, and the open problems are in
@@ -46,7 +51,7 @@ postmarketOS v1.71 baseline is kept outside Git.
 | **Audio/sensor DSPs** | ✅ | ADSP and SSC both reach `running`; prerequisite for audio and sensors |
 | **Package management** | ✅ | A stock Ubuntu userspace: `apt`, PPAs and snaps all work |
 | **SSH over Wi-Fi** | ✅ | Used for development throughout |
-| **Storage** | 🟡 | Root filesystem on microSD; the internal UFS carries only the boot partitions |
+| **Storage** | 🟡 | Root filesystem on the internal UFS, in the partition Android used for user data: no microSD needed and no partition table change. v0.18 is the first release that installs there, and its first boot from the UFS has not been confirmed on the tablet yet |
 | **Backlight** | ❔ | Inherited from postmarketOS, not re-validated here. Automatic brightness works on no distribution |
 | **USB gadget / RNDIS** | ❔ | Inherited, not re-validated |
 | **Ethernet (RTL8153)** | ❔ | Enumerates and loads firmware; real link and traffic untested |
@@ -59,7 +64,7 @@ postmarketOS v1.71 baseline is kept outside Git.
 | **Speaker protection** | ❌ | Cirrus protection firmware not loaded; hardware volume kept conservative |
 | **Fingerprint** | ❌ | No mainline driver for the EgisTec sensor |
 | **Vibration / haptics** | ❌ | Hardware not identified |
-| **Flash / cameras** | 🟡 | All four sensors are processed by a tuned libcamera software ISP and exposed as named, ordinary V4L2 cameras for the whole desktop. GNOME Camera, Chrome WebRTC and OBS use all four; 24 consecutive cross-camera opens and repeated cold boots completed successfully. The software ISP preserves each sensor's full field of view, and the rear-main DW9808 has validated continuous autofocus. A native **Flashlight** tile controls continuous light without root; automatic exposure-synchronised photo flash and factory calibration remain open |
+| **Flash / cameras** | 🟡 | All four sensors take pictures, and the flash works. They are processed by a tuned libcamera software ISP and exposed as named, ordinary V4L2 cameras, so GNOME Camera, Chrome WebRTC and OBS all use them. The software ISP preserves each sensor's full field of view, and the rear-main DW9808 has validated continuous autofocus. A native **Flashlight** tile controls continuous light without root. **Switching between cameras is not finished**: the hand-off from one sensor to another still misbehaves, so expect a stall or a camera that has to be reopened. Automatic exposure-synchronised photo flash and factory calibration remain open |
 | **Modem** | — | Not applicable to the Wi-Fi-only model |
 
 ✅ tested on the physical tablet · 🟡 partially working · ❌ known not to work
@@ -71,31 +76,47 @@ works under another operating system on the same hardware.
 
 ## Installing
 
-Installation has two manual steps, exactly as in the postmarketOS baseline:
+Installation is **one flashable ZIP**. Copy it to a microSD or a USB-OTG
+drive, boot TWRP, and flash it. There is no image to write to a card by hand
+any more, and no second step.
 
-1. **Write the image to a microSD.** The owner writes it and verifies the data
-   read back before rebooting.
-2. **Flash the TWRP ZIP.** It writes `boot`, `init_boot`, `vendor_boot` and
-   `dtbo`, checks the ext4 rootfs before mounting it, and applies the
-   firmware/configuration overlay onto the card.
+The ZIP writes `boot`, `init_boot`, `vendor_boot` and `dtbo`, and copies the
+Ubuntu root filesystem into the tablet's internal UFS. It reads the root
+filesystem back and compares its SHA-256 before writing anything else, it does
+not reboot, and on any failure it stops with TWRP still running. The exact
+boot chain, the installation procedure step by step and the recovery paths are
+in [docs/boot-strategy.md](docs/boot-strategy.md).
 
-The build tooling never writes to a partition or to a card. The exact boot
-chain, safe iteration procedure and recovery paths are in
-[docs/boot-strategy.md](docs/boot-strategy.md).
+Flash it **from external media**. The installer refuses to run from the
+tablet's internal storage, because that is the partition it is about to
+overwrite.
 
-### The microSD is the starting point, not the destination
+### Installing to the UFS without repartitioning
 
-Installing to a card was chosen because it leaves the tablet's own storage
-alone: nothing on the internal UFS is written except the boot partitions, so
-going back to One UI is an Odin flash and nothing else. That safety is worth a
-lot while a port is still moving, but it costs speed and it makes a removable
-card a single point of failure.
+Ubuntu's root filesystem goes into the partition Android calls `userdata`,
+which on the SM-X910 is 939 GiB. It is written there as a plain ext4 image and
+grown to the whole partition on first boot.
 
-The intent is to move the root filesystem onto the **internal UFS**, and
-ideally to install it **alongside Android rather than instead of it**, so the
-tablet can dual boot. Neither is implemented, and neither is promised here;
-they are the direction, and the boot chain has been kept deliberately close to
-Samsung's so that the move stays possible.
+The partition table is never touched. Nothing in the build tooling or in the
+installer creates, deletes, moves or resizes a partition, and neither one runs
+`mkfs`, `parted` or `sgdisk` against the tablet — `dd` into partitions that
+already exist is the only write there is. `super`, the bootloader chain, EFS,
+persist, modem and the calibration partitions are all left alone, so restoring
+One UI is still an Odin flash of the official firmware and nothing else.
+
+What this **does** replace is everything Android kept in `userdata`. Android's
+system image survives in `super`, but its user data does not; there is no
+partition left over for it, and this is not a dual boot.
+
+Installing to a microSD is what the port did up to v0.17, and those releases
+still work: their root filesystem carries the label `UBTS9U_ROOT`, while a UFS
+install carries `UBTS9U_UFS`, so a card left in the slot cannot be mistaken for
+the internal install by either one.
+
+The remaining direction is to install **alongside Android rather than instead
+of it**, so the tablet can dual boot. That is not implemented and is not
+promised here; the boot chain is kept deliberately close to Samsung's so that
+it stays possible.
 
 ## Documentation
 

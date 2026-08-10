@@ -1,45 +1,66 @@
 #!/bin/sh
-# Expand the Ubuntu root partition and its filesystem to fill the microSD on
-# first boot.  The shipped image is deliberately small so it fits any card.
+# Expand the Ubuntu root filesystem to fill its partition on first boot.  The
+# shipped image is deliberately small so the flashable ZIP stays small.
 #
-# It only ever touches the partition the running root filesystem is on, and
-# only when that is a microSD; it never repartitions UFS.
+# It only ever touches the partition the running root filesystem is on, and it
+# handles the two places that partition can be:
+#
+#   * the internal UFS, where the installer wrote the image into the existing
+#     userdata partition.  Here only the filesystem is grown: the partition is
+#     already the full 939 GiB and the GPT is Samsung's, so nothing may run a
+#     partitioning tool on it.  That is the whole point of installing this way.
+#   * a microSD from the older two-partition images, where the last partition
+#     does have to be extended before the filesystem can follow.
 set -eu
 
 marker=/var/lib/ubuntu-gts9u/rootfs-grown
-label=UBTS9U_ROOT
+ufs_label=UBTS9U_UFS
+sd_label=UBTS9U_ROOT
 
 root_dev=$(findmnt -no SOURCE /)
+found=$(blkid -o value -s LABEL "$root_dev" 2>/dev/null || echo '')
+
+grow_filesystem() {
+	# resize2fs is a no-op when there is nothing to claim, so this is also the
+	# right thing to run on every later boot.
+	resize2fs "$root_dev" || true
+	mkdir -p "$(dirname "$marker")"
+	date -u +%Y-%m-%dT%H:%M:%SZ > "$marker"
+	echo 'root filesystem expanded'
+}
+
 case "$root_dev" in
-	/dev/mmcblk*p*) ;;
+	/dev/mmcblk*p*)
+		# Refuse to act if the label does not match: a mislabelled card means
+		# we are not looking at what we think we are.
+		if [ "$found" != "$sd_label" ]; then
+			echo "root $root_dev is labelled '$found', expected '$sd_label'; not growing" >&2
+			exit 0
+		fi
+		disk=${root_dev%p*}
+		partnum=${root_dev##*p}
+		echo "growing $root_dev (microSD $disk, partition $partnum)"
+		# growpart is a no-op when there is nothing to reclaim, and returns 1
+		# for it.
+		if command -v growpart >/dev/null 2>&1; then
+			growpart "$disk" "$partnum" || true
+		else
+			sgdisk --move-second-header "$disk" || true
+			parted -s "$disk" resizepart "$partnum" 100% || true
+		fi
+		partprobe "$disk" || true
+		grow_filesystem
+		;;
+	/dev/sd*|/dev/nvme*|/dev/disk/by-*)
+		if [ "$found" != "$ufs_label" ]; then
+			echo "root $root_dev is labelled '$found', expected '$ufs_label'; not growing" >&2
+			exit 0
+		fi
+		echo "growing the filesystem on $root_dev (internal UFS; partition untouched)"
+		grow_filesystem
+		;;
 	*)
-		echo "root is $root_dev, not a microSD partition; not growing" >&2
+		echo "root is $root_dev, which is neither UFS nor a microSD; not growing" >&2
 		exit 0
 		;;
 esac
-
-# Refuse to act if the label does not match: a mislabelled card means we are
-# not looking at what we think we are.
-found=$(blkid -o value -s LABEL "$root_dev" 2>/dev/null || echo '')
-if [ "$found" != "$label" ]; then
-	echo "root $root_dev is labelled '$found', expected '$label'; not growing" >&2
-	exit 0
-fi
-
-disk=${root_dev%p*}
-partnum=${root_dev##*p}
-
-echo "growing $root_dev (disk $disk, partition $partnum)"
-# growpart is a no-op when there is nothing to reclaim, and returns 1 for it.
-if command -v growpart >/dev/null 2>&1; then
-	growpart "$disk" "$partnum" || true
-else
-	sgdisk --move-second-header "$disk" || true
-	parted -s "$disk" resizepart "$partnum" 100% || true
-fi
-partprobe "$disk" || true
-resize2fs "$root_dev" || true
-
-mkdir -p "$(dirname "$marker")"
-date -u +%Y-%m-%dT%H:%M:%SZ > "$marker"
-echo 'root filesystem expanded'

@@ -1,27 +1,34 @@
 #!/sbin/sh
-# Boot bundle installer for the SM-X910 only, Ubuntu variant.
+# Boot bundle and root filesystem installer for the SM-X910 only, Ubuntu
+# variant.
 #
-# Derived from the postmarketOS gts9uwifi installer (MIT).  Differences: the
-# microSD rootfs is located by filesystem label instead of a hardcoded device
-# number, it must identify as Ubuntu, and systemd units are enabled from a
+# Derived from the postmarketOS gts9uwifi installer (MIT).  Differences: it
+# also installs the Ubuntu root filesystem into the tablet's internal storage,
+# it must identify the rootfs as Ubuntu, and systemd units are enabled from a
 # packaged manifest rather than one hardcoded service.
 #
 # It writes boot, init_boot, vendor_boot and dtbo.  It writes vbmeta only when
 # the recovery kernel exposes it read-write; otherwise it requires AVB flags 2
-# and preserves the existing vbmeta.  It never writes super, userdata,
-# recovery, bootloader, PIT, EFS or Samsung firmware partitions, and it never
-# formats, wipes or reboots.
+# and preserves the existing vbmeta.  When the ZIP carries a root filesystem
+# image it also writes that image into the existing userdata partition, whose
+# Android contents are replaced by Ubuntu.
+#
+# What it never does, on any path: create, delete, move or resize a partition;
+# run mkfs, wipefs, sgdisk, parted or format anything; touch super, recovery,
+# the bootloader chain, PIT/GPT, EFS, persist, modem or any calibration
+# partition; or reboot.  The GPT Samsung shipped is left byte for byte as it
+# is, which is what keeps an Odin restore a one-step operation.
 
 # Machine-readable contract, asserted by scripts/validate-bundle.sh.  Prose in
 # the comments above can be reworded freely; this line is what identifies the
 # installer, so a build cannot silently package a different one.
-# GTS9U-INSTALLER-CONTRACT: writes boot init_boot vendor_boot dtbo vbmeta only
+# GTS9U-INSTALLER-CONTRACT: writes boot init_boot vendor_boot dtbo vbmeta userdata only
 
 OUTFD=$2
 ZIPFILE=$3
 ROOTFS_MOUNTED=0
 ROOTFS_MOUNT=/tmp/ubuntu-root
-ROOTFS_LABEL=UBTS9U_ROOT
+ROOTFS_LABEL=UBTS9U_UFS
 
 ui_print() {
     echo "ui_print $1" >> /proc/self/fd/$OUTFD
@@ -103,115 +110,66 @@ fs_label() {
         sed -n 's/^Filesystem volume name:[[:space:]]*//p'
 }
 
-find_rootfs() {
-    # Never hardcode mmcblk1p2: microSD and UFS enumeration order is not
-    # guaranteed, and a wrong guess would write an overlay onto the wrong card.
-    for candidate in /dev/block/mmcblk*p*; do
-        [ -b "$candidate" ] || continue
-        if [ "$(fs_label "$candidate")" = "$ROOTFS_LABEL" ]; then
-            echo "$candidate"
-            return 0
-        fi
-    done
-    return 1
-}
+# ---------------------------------------------------------------------------
+# The Ubuntu root filesystem target
+# ---------------------------------------------------------------------------
+#
+# Ubuntu's root filesystem goes into the partition Android calls userdata,
+# because it is the only partition on this tablet big enough for a desktop and
+# because using it needs no change to the partition table.  Android's user data
+# is replaced; Android's system image in super is not touched, so the way back
+# is a factory reset from Download Mode, not a repartition.
 
-reread_partitions() {
-    # After the card is rewritten, the kernel can still be holding the previous
-    # partition table: the block nodes then point at the old offsets and every
-    # filesystem on them looks corrupt.  Measured on this device, where the
-    # postmarketOS layout survived a full rewrite until this was forced.
-    for disk in /dev/block/mmcblk0 /dev/block/mmcblk1 /dev/block/mmcblk2; do
-        [ -b "$disk" ] || continue
-        blockdev --rereadpt "$disk" >/dev/null 2>&1 || true
-    done
-}
+HAS_ROOTFS_IMAGE=0
+if unzip -l "$ZIPFILE" rootfs.img >/dev/null 2>&1; then
+    HAS_ROOTFS_IMAGE=1
+    unzip -l "$ZIPFILE" ROOTFS-IMAGE >/dev/null 2>&1 || \
+        abort "the ZIP carries rootfs.img without its ROOTFS-IMAGE manifest"
+fi
 
-locate_rootfs() {
-    # Look before disturbing anything: if the kernel already has the right
-    # table, re-reading it would only create a window where the partition
-    # nodes do not exist.  That window is real: an earlier version re-read
-    # first and the immediately following lookup found nothing, while the
-    # failure message printed moments later listed the very partition it had
-    # just failed to find.
-    dev="$(find_rootfs)"
-    if [ -n "$dev" ]; then
-        echo "$dev"
-        return 0
-    fi
+DATA_TARGET="$(resolve_part userdata)" || DATA_TARGET=""
 
-    ui_print "Label not visible yet; re-reading the partition tables."
-    reread_partitions
+if [ "$HAS_ROOTFS_IMAGE" -eq 1 ]; then
+    [ -n "$DATA_TARGET" ] || abort "no userdata partition to install Ubuntu into"
 
-    attempt=0
-    while [ "$attempt" -lt 10 ]; do
-        sleep 1
-        dev="$(find_rootfs)"
-        if [ -n "$dev" ]; then
-            echo "$dev"
-            return 0
-        fi
-        attempt=$((attempt + 1))
-    done
-    return 1
-}
-
-check_rootfs() {
-    # Never mount a known-dirty rootfs read-write and then install a new boot
-    # bundle over it.  A v0.8 test boot reached systemd but fell into the
-    # emergency target because ext4 contained unattached inodes; the black
-    # panel made that look like a kernel regression.  e2fsck -p performs only
-    # repairs that ext4 considers safe without operator input.  Anything more
-    # serious is left untouched and requires an explicit recovery pass.
-    command -v e2fsck >/dev/null 2>&1 || \
-        abort "TWRP has no e2fsck; cannot validate the Ubuntu rootfs safely"
-
-    ui_print "Checking the Ubuntu microSD rootfs before mounting it."
-    e2fsck -p "$1" >/tmp/ubuntu-rootfs-fsck.log 2>&1
-    rc=$?
-    case "$rc" in
-        0) ui_print "microSD rootfs is clean." ;;
-        1) ui_print "microSD rootfs had safe errors; e2fsck repaired them." ;;
-        *)
-            ui_print "e2fsck could not repair the rootfs automatically (code $rc)."
-            ui_print "Run e2fsck manually from TWRP before flashing again."
-            abort "Ubuntu microSD rootfs needs manual filesystem repair"
+    # The ZIP is read while its own filesystem is being overwritten if it sits
+    # on the target.  TWRP's "internal storage" is exactly that partition, so
+    # this is the likely mistake and not an exotic one; it would destroy the
+    # installer halfway through the write.
+    case "$ZIPFILE" in
+        /data/*|/sdcard/*|/mnt/sdcard/*|/storage/emulated/*)
+            ui_print "This ZIP is at $ZIPFILE, on the partition being replaced."
+            ui_print "Copy it to a microSD or a USB-OTG drive and flash it"
+            ui_print "from there."
+            abort "the ZIP is stored on the installation target"
             ;;
     esac
-}
 
-HAS_ROOTFS_OVERLAY=0
-if unzip -l "$ZIPFILE" ROOTFS-OVERLAY-SHA256SUMS >/dev/null 2>&1; then
-    HAS_ROOTFS_OVERLAY=1
-    ROOTFS_DEV="$(locate_rootfs)"
-    if [ -z "$ROOTFS_DEV" ]; then
-        ui_print "Could not find a partition labelled $ROOTFS_LABEL."
-        ui_print "Partitions the kernel currently sees:"
-        for candidate in /dev/block/mmcblk*p*; do
-            [ -b "$candidate" ] || continue
-            ui_print "  $candidate label='$(fs_label "$candidate")'"
-        done
-        abort "no microSD partition labelled $ROOTFS_LABEL was found"
-    fi
-    ui_print "Found the Ubuntu microSD rootfs on $ROOTFS_DEV."
-    check_rootfs "$ROOTFS_DEV"
-    mkdir -p "$ROOTFS_MOUNT" || abort "cannot create microSD mount point"
-    EXISTING_MOUNT="$(grep "^$ROOTFS_DEV " /proc/mounts 2>/dev/null | head -n 1 | cut -d' ' -f2)"
-    if [ -n "$EXISTING_MOUNT" ]; then
-        ui_print "Unmounting stale microSD mount at $EXISTING_MOUNT."
-        umount "$EXISTING_MOUNT" || abort "cannot unmount stale microSD mount"
-    fi
-    if grep -q " $ROOTFS_MOUNT " /proc/mounts 2>/dev/null; then
-        umount "$ROOTFS_MOUNT" || abort "cannot clear stale rootfs mount point"
-    fi
-    mount -t ext4 -o rw "$ROOTFS_DEV" "$ROOTFS_MOUNT" || \
-        abort "cannot mount the Ubuntu microSD rootfs read-write"
-    ROOTFS_MOUNTED=1
-    [ -f "$ROOTFS_MOUNT/etc/os-release" ] || abort "microSD rootfs has no /etc/os-release"
-    grep -q '^ID=ubuntu$' "$ROOTFS_MOUNT/etc/os-release" || \
-        grep -q '^ID="ubuntu"$' "$ROOTFS_MOUNT/etc/os-release" || \
-        abort "microSD rootfs is not Ubuntu"
-    ui_print "Validated the Ubuntu microSD rootfs overlay target."
+    ROOTFS_LINE="$(unzip -p "$ZIPFILE" ROOTFS-IMAGE 2>/dev/null)"
+    ROOTFS_SHA="$(echo "$ROOTFS_LINE" | cut -d' ' -f1)"
+    ROOTFS_SIZE="$(echo "$ROOTFS_LINE" | cut -d' ' -f2)"
+    [ "${#ROOTFS_SHA}" -eq 64 ] || abort "malformed rootfs image manifest"
+    [ "$ROOTFS_SIZE" -gt 0 ] 2>/dev/null || abort "malformed rootfs image size"
+    ROOTFS_MIB=$((ROOTFS_SIZE / 1048576))
+    [ $((ROOTFS_MIB * 1048576)) -eq "$ROOTFS_SIZE" ] || \
+        abort "the rootfs image is not a whole number of MiB"
+
+    DATA_SIZE="$(blkdev_size "$DATA_TARGET")"
+    [ "$DATA_SIZE" -ge "$ROOTFS_SIZE" ] || \
+        abort "userdata is $DATA_SIZE bytes, smaller than the $ROOTFS_SIZE byte image"
+
+    # A partition that is still mounted would be written underneath a live
+    # filesystem, and TWRP would then flush its own stale cache over what we
+    # just wrote.  Plain umount, not lazy: if something is genuinely using it,
+    # stopping is the correct outcome.
+    while read device mountpoint rest; do
+        [ "$device" = "$DATA_TARGET" ] || continue
+        ui_print "Unmounting $mountpoint before writing Ubuntu."
+        umount "$mountpoint" || abort "cannot unmount $mountpoint"
+    done <<UNMOUNT
+$(grep "^$DATA_TARGET " /proc/mounts 2>/dev/null)
+UNMOUNT
+    umount /data >/dev/null 2>&1 || true
 fi
 
 VBMETA_TARGET="$(resolve_part vbmeta)"
@@ -225,13 +183,97 @@ if [ "$VBMETA_READ_ONLY" = "1" ]; then
     ui_print "vbmeta is read-only but already has AVB flags 2; preserving it."
 fi
 
+# ---------------------------------------------------------------------------
+# An update ZIP with no image refreshes the installed system in place
+# ---------------------------------------------------------------------------
+
+HAS_ROOTFS_OVERLAY=0
+if unzip -l "$ZIPFILE" ROOTFS-OVERLAY-SHA256SUMS >/dev/null 2>&1; then
+    [ "$HAS_ROOTFS_IMAGE" -eq 0 ] || \
+        abort "the ZIP carries both a rootfs image and an overlay"
+    HAS_ROOTFS_OVERLAY=1
+    [ -n "$DATA_TARGET" ] || abort "no userdata partition to update"
+    [ "$(fs_label "$DATA_TARGET")" = "$ROOTFS_LABEL" ] || \
+        abort "userdata does not hold an Ubuntu root labelled $ROOTFS_LABEL"
+
+    # Never mount a known-dirty rootfs read-write and then install a new boot
+    # bundle over it.  A v0.8 test boot reached systemd but fell into the
+    # emergency target because ext4 contained unattached inodes; the black
+    # panel made that look like a kernel regression.  e2fsck -p performs only
+    # repairs that ext4 considers safe without operator input.  Anything more
+    # serious is left untouched and requires an explicit recovery pass.
+    command -v e2fsck >/dev/null 2>&1 || \
+        abort "TWRP has no e2fsck; cannot validate the Ubuntu rootfs safely"
+    ui_print "Checking the installed Ubuntu root filesystem."
+    e2fsck -p "$DATA_TARGET" >/tmp/ubuntu-rootfs-fsck.log 2>&1
+    rc=$?
+    case "$rc" in
+        0) ui_print "The Ubuntu root filesystem is clean." ;;
+        1) ui_print "It had safe errors; e2fsck repaired them." ;;
+        *)
+            ui_print "e2fsck could not repair the rootfs automatically (code $rc)."
+            ui_print "Run e2fsck manually from TWRP before flashing again."
+            abort "the Ubuntu root filesystem needs manual repair"
+            ;;
+    esac
+
+    mkdir -p "$ROOTFS_MOUNT" || abort "cannot create the mount point"
+    EXISTING_MOUNT="$(grep "^$DATA_TARGET " /proc/mounts 2>/dev/null | head -n 1 | cut -d' ' -f2)"
+    if [ -n "$EXISTING_MOUNT" ]; then
+        ui_print "Unmounting stale mount at $EXISTING_MOUNT."
+        umount "$EXISTING_MOUNT" || abort "cannot unmount $EXISTING_MOUNT"
+    fi
+    if grep -q " $ROOTFS_MOUNT " /proc/mounts 2>/dev/null; then
+        umount "$ROOTFS_MOUNT" || abort "cannot clear stale rootfs mount point"
+    fi
+    mount -t ext4 -o rw "$DATA_TARGET" "$ROOTFS_MOUNT" || \
+        abort "cannot mount the Ubuntu root filesystem read-write"
+    ROOTFS_MOUNTED=1
+    [ -f "$ROOTFS_MOUNT/etc/os-release" ] || abort "the root filesystem has no /etc/os-release"
+    grep -q '^ID=ubuntu$' "$ROOTFS_MOUNT/etc/os-release" || \
+        grep -q '^ID="ubuntu"$' "$ROOTFS_MOUNT/etc/os-release" || \
+        abort "the installed root filesystem is not Ubuntu"
+    ui_print "Validated the installed Ubuntu root filesystem."
+fi
+
+# ---------------------------------------------------------------------------
+# Writes
+# ---------------------------------------------------------------------------
+
 ui_print "Planned writes: boot, init_boot, vendor_boot and dtbo."
 [ "$SKIP_VBMETA" -eq 1 ] || ui_print "vbmeta is writable and will also be updated."
-if [ "$HAS_ROOTFS_OVERLAY" -eq 1 ]; then
+if [ "$HAS_ROOTFS_IMAGE" -eq 1 ]; then
+    ui_print "Ubuntu will be written into userdata ($ROOTFS_MIB MiB),"
+    ui_print "replacing everything Android kept there. The Android system"
+    ui_print "image, the bootloader chain, the calibration partitions and"
+    ui_print "the partition table are all left alone."
+elif [ "$HAS_ROOTFS_OVERLAY" -eq 1 ]; then
     ui_print "Kernel modules, configuration and firmware will be updated"
-    ui_print "on the Ubuntu microSD rootfs."
+    ui_print "on the installed Ubuntu root filesystem."
 else
     ui_print "No filesystem or user-data partition will be touched."
+fi
+
+# The root filesystem goes first.  If it fails, the tablet still has the boot
+# images it had before, so it is one retry away from where it started rather
+# than holding a new kernel with no system to boot.
+if [ "$HAS_ROOTFS_IMAGE" -eq 1 ]; then
+    ui_print "Writing the Ubuntu root filesystem. This takes several minutes."
+    unzip -p "$ZIPFILE" rootfs.img | \
+        dd of="$DATA_TARGET" bs=4M || abort "failed to write the root filesystem"
+    sync
+
+    # Read back what the tablet now holds instead of trusting that dd is
+    # enough: a truncated ZIP stream, a full partition or a silent I/O error
+    # all end with dd reporting success and a system that will not boot.
+    ui_print "Verifying the written root filesystem..."
+    WRITTEN_SHA="$(dd if="$DATA_TARGET" bs=1M count="$ROOTFS_MIB" 2>/dev/null | \
+        sha256sum | cut -d' ' -f1)"
+    [ "$WRITTEN_SHA" = "$ROOTFS_SHA" ] || \
+        abort "the root filesystem read back differently from the image"
+    [ "$(fs_label "$DATA_TARGET")" = "$ROOTFS_LABEL" ] || \
+        abort "userdata does not read back as $ROOTFS_LABEL"
+    ui_print "The root filesystem matches the image byte for byte."
 fi
 
 for part in boot init_boot vendor_boot dtbo; do
@@ -250,7 +292,7 @@ else
 fi
 
 if [ "$HAS_ROOTFS_OVERLAY" -eq 1 ]; then
-    ui_print "Installing the versioned microSD rootfs overlay..."
+    ui_print "Installing the versioned rootfs overlay..."
     # The ZIP's own POSIX bits are not applied by `unzip -p`, so the manifest
     # carries the mode explicitly and it is set after extraction.
     unzip -p "$ZIPFILE" ROOTFS-OVERLAY-SHA256SUMS | \
@@ -294,15 +336,19 @@ if [ "$HAS_ROOTFS_OVERLAY" -eq 1 ]; then
     fi
 
     sync
-    umount "$ROOTFS_MOUNT" || abort "cannot unmount the Ubuntu microSD rootfs"
+    umount "$ROOTFS_MOUNT" || abort "cannot unmount the Ubuntu root filesystem"
     ROOTFS_MOUNTED=0
-    ui_print "microSD rootfs overlay installed and verified."
+    ui_print "Rootfs overlay installed and verified."
 fi
 
 sync
 ui_print "---------------------------------------"
 ui_print " Images written. This ZIP does not reboot."
+if [ "$HAS_ROOTFS_IMAGE" -eq 1 ]; then
+    ui_print " Ubuntu is installed on the internal storage."
+    ui_print " The root filesystem grows to the whole"
+    ui_print " partition on the first boot."
+fi
 ui_print " Keep the postmarketOS rollback ZIP available."
-ui_print " Reboot manually only when the SD is ready."
 ui_print "---------------------------------------"
 exit 0

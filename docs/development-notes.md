@@ -12,10 +12,11 @@ depuración: repetir esos experimentos es tiempo perdido.
 ## Objetivo y alcance
 
 Un Ubuntu 24.04 LTS arm64 de escritorio sobre el mismo kernel mainline y el
-mismo hardware validado por postmarketOS v1.71, con rootfs en microSD. A largo
-plazo, compatibilidad con software de escritorio ARM64 y, después,
-Vulkan/Turnip, FEX, Box64 y Proton/Steam **evaluados por separado y con
-evidencia**. Steam no es requisito para aceptar el primer Ubuntu funcional.
+mismo hardware validado por postmarketOS v1.71. La raíz vivió en microSD hasta
+v0.17 y desde v0.18 vive en la UFS interna. A largo plazo, compatibilidad con
+software de escritorio ARM64 y, después, Vulkan/Turnip, FEX, Box64 y
+Proton/Steam **evaluados por separado y con evidencia**. Steam no es requisito
+para aceptar el primer Ubuntu funcional.
 
 El repositorio postmarketOS es una referencia estable y de solo lectura. El
 port Ubuntu no se introduce en él.
@@ -1126,3 +1127,41 @@ Las comprobaciones de orientación deben usar contenido físico, no solo
 `camera_sensor_rotation`. Las dos frontales con el monitor y las dos traseras
 con un billete legible salieron derechas a través de GNOME Cámara y OBS. El
 autofoco de la principal permite ya usar también esa lente como patrón físico.
+
+## Instalar en la UFS no exigía tocar la tabla de particiones
+
+Durante todo el port se dio por hecho que llevar la raíz a la UFS obligaba a
+reparticionar o a rehacer `super`, y por eso se pospuso. No era cierto. La
+partición `userdata` de este dispositivo mide 939 GiB, ya existe, y no hace
+falta nada más: se escribe dentro un sistema de ficheros ext4 con `dd` y se
+redimensiona con `resize2fs` en el primer arranque. La GPT que trae Samsung se
+queda intacta, que es justo lo que mantiene la vuelta atrás en un solo flasheo
+de Odin.
+
+Lo que sí se pierde son los datos de usuario de Android, porque son
+literalmente lo que ocupa esa partición. `super` sigue intacto, así que la
+imagen de sistema de Android continúa ahí; esto no es un dual boot y no lo
+aparenta.
+
+`super` se descartó como destino: 11,2 GiB no dan para un escritorio, y usarlo
+obligaría además a reconstruir sus particiones lógicas, que es exactamente la
+clase de operación que este diseño evita.
+
+Tres detalles que no son evidentes hasta que se implementa:
+
+- **El ZIP no puede leerse desde el destino.** El «almacenamiento interno» de
+  TWRP *es* `userdata`. Un ZIP guardado ahí se destruiría a sí mismo a mitad de
+  la escritura. El instalador aborta si su propia ruta está en `/data` o
+  `/sdcard`, y la instalación se hace desde microSD o USB-OTG.
+- **La etiqueta tiene que cambiar.** `root=LABEL=` resuelve a lo primero que
+  encuentre. Con `UBTS9U_ROOT` en ambos sitios, una microSD vieja en la ranura
+  arrancaría en lugar de la instalación interna, y el síntoma sería «el
+  flasheo no ha hecho nada». La raíz interna es `UBTS9U_UFS`.
+- **El orden de escritura importa.** Primero la raíz, después las imágenes de
+  arranque. Al revés, un fallo a mitad deja un kernel nuevo sin sistema que
+  arrancar; así deja el dispositivo donde estaba, a un reintento.
+
+La comprobación de `validate-bundle.sh` que prohibía nombrar `userdata` en el
+instalador se ha convertido en dos: `userdata` ya se puede nombrar, pero ningún
+`mkfs`, `parted`, `sgdisk`, `sfdisk` ni `wipefs` puede aparecer. La garantía
+que importa no era «no tocar esa partición», era «no tocar la tabla».

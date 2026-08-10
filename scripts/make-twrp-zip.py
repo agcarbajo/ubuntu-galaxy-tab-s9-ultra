@@ -65,16 +65,23 @@ def main() -> None:
         "--project", type=Path, default=Path(__file__).resolve().parents[1]
     )
     parser.add_argument(
+        "--rootfs",
+        type=Path,
+        help="ext4 root filesystem image written into the internal userdata "
+        "partition; makes the ZIP a full installation rather than an update",
+    )
+    parser.add_argument(
         "--rootfs-overlay",
         type=Path,
-        help="directory whose regular files are installed into the microSD rootfs",
+        help="directory whose regular files are installed into an already "
+        "installed rootfs; for update ZIPs, which carry no --rootfs",
     )
     parser.add_argument(
         "--enable-unit",
         action="append",
         default=[],
         metavar="TARGET:UNIT",
-        help="enable UNIT in TARGET.wants on the microSD rootfs, e.g. "
+        help="enable UNIT in TARGET.wants on the installed rootfs, e.g. "
         "multi-user.target:ubuntu-gts9u-panel-recover.service",
     )
     parser.add_argument(
@@ -109,6 +116,27 @@ def main() -> None:
         f"{digest(args.bundle / name)}  {name}\n" for name in IMAGES
     )
 
+    rootfs_manifest = ""
+    if args.rootfs is not None:
+        if args.rootfs_overlay is not None:
+            raise SystemExit(
+                "--rootfs and --rootfs-overlay are alternatives: a full "
+                "installation carries the overlay inside its image already"
+            )
+        if not args.rootfs.is_file():
+            raise SystemExit(f"missing root filesystem image: {args.rootfs}")
+        rootfs_size = args.rootfs.stat().st_size
+        # The installer verifies the write by reading the partition back with
+        # dd bs=1M, because TWRP's shell has no way to hash a byte range.  A
+        # size that is not a whole number of MiB would silently hash the wrong
+        # number of bytes and fail a good install.
+        if rootfs_size % (1024 * 1024) != 0:
+            raise SystemExit(
+                f"the root filesystem image is {rootfs_size} bytes, "
+                "which is not a whole number of MiB"
+            )
+        rootfs_manifest = f"{digest(args.rootfs)} {rootfs_size} rootfs.img\n"
+
     overlay_files: list[Path] = []
     overlay_manifest = ""
     if args.rootfs_overlay is not None:
@@ -141,6 +169,9 @@ def main() -> None:
         add_file(zf, updater_script, "META-INF/com/google/android/updater-script")
         zf.writestr(zip_info("BUNDLE-LABEL"), args.label + "\n")
         zf.writestr(zip_info("SHA256SUMS"), manifest)
+        if rootfs_manifest:
+            add_file(zf, args.rootfs, "rootfs.img")
+            zf.writestr(zip_info("ROOTFS-IMAGE"), rootfs_manifest)
         if overlay_files:
             for path in overlay_files:
                 relative = path.relative_to(args.rootfs_overlay).as_posix()

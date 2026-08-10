@@ -1,7 +1,12 @@
 # Cadena de arranque, instalación y recuperación
 
-Última revisión: 2026-07-31. Hereda la cadena demostrada físicamente por
+Última revisión: 2026-08-10. Hereda la cadena demostrada físicamente por
 postmarketOS v1.71; lo que cambia es únicamente el rootfs y su initramfs.
+
+Desde v0.18 el rootfs se instala en la **UFS interna** y la release es un solo
+ZIP flasheable. La sección [Instalación en la UFS sin
+reparticionar](#instalación-en-la-ufs-sin-reparticionar) explica por qué eso no
+toca la tabla de particiones.
 
 ## Cadena demostrada
 
@@ -10,8 +15,9 @@ postmarketOS v1.71; lo que cambia es únicamente el rootfs y su initramfs.
 - La cadena Android usa **boot header v4**.
 - Samsung ABL carga el kernel de `boot`, el initramfs genérico de `init_boot` y
   el DTB, cmdline y bootconfig de `vendor_boot`, todos desde la UFS interna.
-- El rootfs Linux vive en una **microSD ext4**. ABL no busca kernel en la
-  tarjeta.
+- El rootfs Linux es un **ext4 dentro de `userdata`**, en esa misma UFS. ABL no
+  lee sistemas de ficheros: el kernel sale de `boot` y solo el initramfs busca
+  la raíz, por etiqueta.
 - La DTBO stock contiene interfaces downstream y no se aplica sobre un DTB
   mainline. El bundle escribe un `dtbo` que deliberadamente **no** es una tabla
   DT de Android, lo que hace que ABL use su fallback de DTB anexado al kernel.
@@ -36,27 +42,76 @@ Dos invariantes que no se pueden tocar:
 | `vendor_boot` | 100663296 | DTB X910, cmdline, bootconfig y fragmento vendor con el firmware temprano de Bluetooth |
 | `dtbo` | 16777216 | imagen no-tabla que fuerza el fallback appended-DTB |
 | `vbmeta` | 131072 | AVB con verification/verity desactivados (`flags=2`) |
+| `userdata` | 1007985586176 | rootfs ext4 de Ubuntu etiquetado `UBTS9U_UFS` |
 
-La instalación **no** toca `super`, `userdata`, recovery, bootloader, PIT, EFS,
-persist, modem/modemst ni calibraciones. En el TWRP usado durante el port
-`vbmeta` es de solo lectura: el instalador verifica que ya contiene `flags=2` y
-lo conserva en lugar de reescribirlo.
+La instalación **no** toca `super`, recovery, bootloader, PIT, EFS, persist,
+modem/modemst ni calibraciones. En el TWRP usado durante el port `vbmeta` es de
+solo lectura: el instalador verifica que ya contiene `flags=2` y lo conserva en
+lugar de reescribirlo.
 
-## Instalación en dos pasos
+## Instalación en la UFS sin reparticionar
 
-1. **Escribir la imagen en la microSD.** Primero `sgdisk --zap-all` para borrar
-   metadatos GPT antiguos, después escribir la imagen y **verificar por hash lo
-   leído de vuelta** antes de reiniciar. La partición raíz se expande en el
-   primer arranque.
-2. **Flashear el ZIP TWRP.** Escribe `boot`, `init_boot`, `vendor_boot` y
-   `dtbo`, y aplica sobre la tarjeta el overlay con firmware y configuración.
+Ubuntu ocupa `userdata` porque es la única partición de este dispositivo con
+sitio para un escritorio —939 GiB— y porque usarla no exige cambiar nada de la
+tabla de particiones. La imagen ext4 se escribe con `dd` en una partición que
+ya existe, y el sistema de ficheros crece hasta ocuparla entera en el primer
+arranque.
 
-Hasta completar el segundo paso la tarjeta está incompleta: el firmware de GPU,
-ADSP y audio llega en ese overlay, no en la imagen del rootfs. No debe
-esperarse aceleración ni paridad de hardware antes de terminar el paso 2.
+Lo que esto garantiza, y por qué importa:
 
-Las herramientas de build **nunca** escriben en una partición ni en una
-tarjeta. La usuaria escribe la microSD y flashea el ZIP a mano.
+- **La GPT sigue siendo la de Samsung, byte a byte.** Ni el build ni el
+  instalador ejecutan `sgdisk`, `parted`, `sfdisk`, `mkfs` ni `wipefs` contra
+  el dispositivo; `scripts/validate-bundle.sh` falla si alguna de esas
+  herramientas aparece en el instalador empaquetado. Por eso restaurar One UI
+  sigue siendo un flasheo de Odin y nada más.
+- **`super` no se toca**, así que la imagen de sistema de Android sigue ahí.
+- **Los datos de usuario de Android sí se pierden**: son exactamente lo que
+  ocupa la partición que se reutiliza. Esto no es un dual boot, y no hay
+  partición sobrante donde dejarlos.
+
+La alternativa era `super` (11,2 GiB), que no da para un escritorio y además
+obligaría a reconstruir sus particiones lógicas. Reparticionar la UFS queda
+descartado mientras exista esta opción.
+
+El ZIP se flashea **desde medios externos**, microSD o USB-OTG. El
+almacenamiento interno de TWRP *es* la partición que se sobrescribe: leer el
+ZIP de ahí lo destruiría a mitad de la escritura, así que el instalador aborta
+si detecta que la ruta del ZIP está en `/data`, `/sdcard` o equivalentes.
+
+### Etiquetas
+
+| Etiqueta | Dónde | Qué es |
+|---|---|---|
+| `UBTS9U_UFS` | `userdata` | la raíz instalada, desde v0.18 |
+| `UBTS9U_ROOT` | microSD | la raíz de las releases hasta v0.17 |
+
+Son distintas a propósito. `root=LABEL=` resuelve a lo primero que encuentra, y
+con la misma etiqueta en los dos sitios una tarjeta vieja olvidada en la ranura
+arrancaría en lugar de la instalación nueva. Las tarjetas antiguas siguen
+sirviendo de vuelta atrás si se reflashea su ZIP.
+
+## Instalación en un solo paso
+
+Flashear el ZIP desde TWRP. Escribe el rootfs en `userdata`, lo verifica por
+hash releyéndolo, y después escribe `boot`, `init_boot`, `vendor_boot` y
+`dtbo`. Ese orden es deliberado: si falla la parte larga, el dispositivo
+conserva las imágenes de arranque que ya tenía y sigue estando a un reintento
+de donde estaba.
+
+El firmware de GPU, ADSP, Wi-Fi y audio va **dentro** de la imagen del rootfs,
+no en un overlay aplicado después. El estado intermedio de «tarjeta incompleta»
+de las versiones microSD ya no existe.
+
+Las herramientas de build **nunca** escriben en una partición. La usuaria
+flashea el ZIP a mano.
+
+### ZIPs de actualización
+
+Un ZIP sin `rootfs.img` pero con overlay actualiza en sitio una instalación ya
+existente: monta la raíz de `userdata` tras comprobarla con `e2fsck -p`,
+sustituye firmware, módulos y configuración, y no toca los datos. Es la vía
+para probar un kernel nuevo sin reinstalar. Los dos contenidos son excluyentes
+y `make-twrp-zip.py` rechaza generar un ZIP con ambos.
 
 ## Iteración sobre un sistema ya arrancado
 
@@ -72,10 +127,11 @@ Antes de cada escritura: backup temporal, comprobación de tamaño, `dd
 conv=fsync` y comparación SHA-256 entre origen y destino. Nunca se codifican
 números `sdaN`; se usan los enlaces estables de `/dev/disk/by-partlabel/`.
 
-El kernel lockdown exige que `boot` y los módulos ath12k instalados en la
-microSD procedan de la **misma** compilación. Recrear el árbol `O=` genera una
-clave de firma nueva y los módulos antiguos pasan a rechazarse con «Operation
-not permitted»: hay que sincronizar siempre los dos módulos junto al kernel.
+El kernel lockdown exige que `boot` y los módulos instalados en la raíz
+—ath12k y v4l2loopback— procedan de la **misma** compilación. Recrear el árbol
+`O=` genera una clave de firma nueva y los módulos antiguos pasan a rechazarse
+con «Operation not permitted»: hay que sincronizar siempre los módulos junto al
+kernel.
 
 ## Particularidades de arranque que Ubuntu debe conservar
 
@@ -105,43 +161,39 @@ ella.
    ficheros descargados.
 2. Tener a mano la vía de vuelta: el ZIP y la imagen de postmarketOS v1.71 con
    su `MANIFEST-v1.71-rollback.txt`.
-3. Confirmar **qué microSD** se va a sobrescribir. Se borra por completo.
+3. Asumir que **lo que Android guarde en `userdata` se pierde**. Es la
+   partición donde se instala Ubuntu. `super`, el bootloader, EFS y las
+   calibraciones no se tocan.
+4. Copiar el ZIP a una **microSD o un USB-OTG**, nunca al almacenamiento
+   interno: es la partición que se sobrescribe. El instalador aborta si detecta
+   que se le ha llamado desde ahí, pero conviene no llegar a esa comprobación.
 
-### Paso 1 — escribir la microSD
+### Paso único — flashear el ZIP desde TWRP
 
-Con la tarjeta en el lector del PC, identificada sin ambigüedad:
-
-```bash
-xz -dc ubuntu-24.04-gts9uwifi-v<versión>-sd.img.xz > ubuntu-sd.img
-sudo sgdisk --zap-all /dev/<tarjeta>
-sudo dd if=ubuntu-sd.img of=/dev/<tarjeta> bs=4M status=progress conv=fsync
-```
-
-Verificar lo leído de vuelta antes de sacar la tarjeta, comparando con
-`uncompressed_sd_image_sha256` del manifiesto:
-
-```bash
-sudo dd if=/dev/<tarjeta> bs=4M count=<bloques-de-la-imagen> | sha256sum
-```
-
-### Paso 2 — flashear el ZIP desde TWRP
-
-1. Copiar el ZIP a `/sdcard` o a un USB.
-2. Arrancar en TWRP.
-3. `Install` → seleccionar el ZIP.
-4. Leer la salida: el instalador aborta si el dispositivo no es un SM-X910, si
-   el tamaño de alguna partición no cuadra, si `vbmeta` no tiene AVB flags 2 o
-   si la microSD no lleva una raíz Ubuntu etiquetada `UBTS9U_ROOT`.
+1. Arrancar en TWRP con el medio externo conectado.
+2. `Install` → seleccionar el ZIP.
+3. Leer la salida. El instalador aborta si el dispositivo no es un SM-X910, si
+   el tamaño de alguna partición no cuadra, si `vbmeta` no tiene AVB flags 2,
+   si `userdata` es más pequeña que la imagen, si el ZIP está en el destino, o
+   si lo releído de `userdata` no coincide con el SHA-256 de la imagen.
+4. La escritura del rootfs tarda varios minutos y va antes que las imágenes de
+   arranque, a propósito.
 5. El ZIP **no reinicia**. Reiniciar a mano cuando termine.
+6. En el primer arranque el sistema de ficheros crece hasta ocupar las 939 GiB.
+   Solo se redimensiona el sistema de ficheros: la partición ya era así.
 
 ### Si algo va mal
 
-El ZIP no formatea, no borra y no reinicia, así que un fallo a mitad deja el
-dispositivo en TWRP, que sigue siendo accesible. Desde ahí:
+El ZIP no formatea, no reparticiona y no reinicia, así que un fallo a mitad
+deja el dispositivo en TWRP, que sigue siendo accesible. Desde ahí:
 
 - reintentar el flasheo, o
-- volver a postmarketOS con los dos pasos equivalentes, o
+- volver a postmarketOS con sus dos pasos, o
 - entrar en Download Mode y restaurar el firmware oficial con Odin.
+
+Un fallo durante la escritura del rootfs deja `userdata` a medias, pero las
+imágenes de arranque intactas: no hay un estado en que el dispositivo tenga un
+kernel nuevo y ningún sistema que arrancar.
 
 ## Recuperación
 
@@ -149,19 +201,21 @@ Por orden:
 
 1. **Volver a postmarketOS v1.71**: reescribir la microSD con la imagen de
    rollback y flashear el ZIP v1.71. Ambos artefactos se conservan fuera de Git
-   en `../PostmarketOS/artifacts/`, con su manifiesto de hashes.
-2. **TWRP y `adb`**, para montar la microSD, extraer el journal y restaurar
-   imágenes.
-3. **Download Mode y Odin** con el firmware oficial X910XXS5CYG1.
+   en `../PostmarketOS/artifacts/`, con su manifiesto de hashes. Esa instalación
+   vive en la tarjeta y no depende de lo que haya en `userdata`.
+2. **TWRP y `adb`**, para montar la raíz de `userdata`, extraer el journal y
+   restaurar imágenes.
+3. **Download Mode y Odin** con el firmware oficial X910XXS5CYG1. Sigue siendo
+   un paso, porque la GPT nunca se ha modificado.
 
 Las copias se restauran mediante `/dev/block/by-name/<partición>`, nunca con
 números de LUN codificados. EFS solo puede montarse `ro,noload` cuando haga
 falta leer la dirección Bluetooth; jamás se escribe.
 
-## Futuro: rootfs en UFS y dual boot
+## Futuro: dual boot
 
-La UFS enumera correctamente, pero este port mantiene el rootfs en microSD. Un
-Ubuntu instalado en UFS o un dual boot exige antes un diseño separado de
-layout, selector y recuperación. **No se reparticionará UFS ni se reutilizará
-`super`** hasta que Ubuntu alcance paridad razonable desde microSD y exista un
-procedimiento reversible probado.
+El rootfs ya vive en la UFS. Lo que queda es instalarlo **junto a Android en
+lugar de en su sitio**, que exige un diseño separado de layout, selector y
+recuperación. La regla no cambia: **no se reparticionará la UFS ni se
+reutilizará `super`**. Un dual boot que dependa de mover particiones no es una
+opción; si llega, será compartiendo las que ya existen.

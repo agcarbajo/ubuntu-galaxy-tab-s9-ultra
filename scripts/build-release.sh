@@ -1,10 +1,14 @@
 #!/bin/bash
-# Produce a complete, installable release: kernel, rootfs, overlay, microSD
-# image, Android v4 bundle, TWRP ZIP and a SHA-256 manifest.
+# Produce a complete, installable release: kernel, rootfs, overlay, root
+# filesystem image, Android v4 bundle, TWRP ZIP and a SHA-256 manifest.
+#
+# The release is a single flashable ZIP.  Everything the tablet needs is in it,
+# including the root filesystem, which the installer writes into the internal
+# UFS; there is no second file to write to a card by hand any more.
 #
 # Every stage is a separate script that can be run on its own; this only fixes
-# the order and the data flow between them.  Nothing is flashed and no physical
-# card is written: the owner does both steps manually.
+# the order and the data flow between them.  Nothing is flashed here: the owner
+# flashes the ZIP from TWRP.
 set -euo pipefail
 
 repo=$(cd "$(dirname "$0")/.." && pwd)
@@ -18,7 +22,7 @@ rootfs=$base/rootfs
 overlay=$base/out/rootfs-overlay
 initramfs_overlay=$base/out/initramfs-overlay
 bundle=$base/out/bundle
-image=$base/out/ubuntu-gts9uwifi-v$version.img
+image=$base/out/ubuntu-gts9uwifi-v$version-ufs.img
 zip=$artifacts/ubuntu-24.04-gts9uwifi-v$version-sm-x910-twrp.zip
 
 : "${GTS9U_PW:?set GTS9U_PW to the password for the graphical user}"
@@ -44,12 +48,12 @@ else
 		bash "$repo/scripts/build-ubuntu-rootfs.sh"
 fi
 
-step "3/7 microSD rootfs overlay and early Bluetooth firmware"
+step "3/7 firmware and module overlay, and early Bluetooth firmware"
 bash "$repo/scripts/build-rootfs-overlay.sh"
 
-step "4/7 microSD image and Ubuntu initramfs"
+step "4/7 UFS root filesystem image and Ubuntu initramfs"
 IMAGE_OUT="$image" KERNEL_RELEASE="$kernel_release" \
-	bash "$repo/scripts/build-sd-image.sh"
+	bash "$repo/scripts/build-ufs-image.sh"
 
 initramfs=$rootfs/boot/initrd.img-$kernel_release
 test -f "$initramfs" || { echo "missing initramfs: $initramfs" >&2; exit 1; }
@@ -63,15 +67,11 @@ step "6/7 TWRP ZIP"
 mkdir -p "$artifacts"
 python3 "$repo/scripts/make-twrp-zip.py" "$bundle" "$zip" \
 	--project "$repo" \
-	--rootfs-overlay "$overlay" \
+	--rootfs "$image" \
 	--label "Ubuntu 24.04 LTS v$version for SM-X910 (mainline $kernel_release)"
 
-step "7/7 static validation, compression and manifest"
+step "7/7 static validation and manifest"
 bash "$repo/scripts/validate-bundle.sh" "$zip"
-
-compressed=$artifacts/ubuntu-24.04-gts9uwifi-v$version-sd.img.xz
-rm -f "$compressed"
-xz -T0 -6 -c "$image" > "$compressed"
 
 {
 	printf 'Ubuntu 24.04 LTS for Samsung Galaxy Tab S9 Ultra Wi-Fi (SM-X910)\n'
@@ -82,15 +82,16 @@ xz -T0 -6 -c "$image" > "$compressed"
 		"$(git -C "$base/linux-mainline" rev-parse HEAD)"
 	printf 'port_revision: %s\n' "$(git -C "$repo" rev-parse HEAD)"
 	printf '\n'
-	printf 'uncompressed_sd_image_sha256: %s\n' \
+	printf 'install_target: internal UFS, userdata partition\n'
+	printf 'rootfs_image_sha256: %s\n' \
 		"$(sha256sum "$image" | cut -d' ' -f1)"
-	printf 'uncompressed_sd_image_bytes: %s\n' "$(stat -c %s "$image")"
+	printf 'rootfs_image_bytes: %s\n' "$(stat -c %s "$image")"
 	printf '\n'
-	( cd "$artifacts" && sha256sum "${compressed##*/}" "${zip##*/}" )
+	( cd "$artifacts" && sha256sum "${zip##*/}" )
 	printf '\n'
 	cat "$bundle/SHA256SUMS"
 } > "$artifacts/MANIFEST-v$version.txt"
 
 printf '\n=== release v%s ===\n' "$version"
 cat "$artifacts/MANIFEST-v$version.txt"
-printf '\nNothing was flashed. Write the image and flash the ZIP manually.\n'
+printf '\nNothing was flashed. Flash the ZIP from TWRP, from external media.\n'

@@ -33,41 +33,9 @@ esac
 # Generate the Ubuntu initramfs inside the rootfs
 # ---------------------------------------------------------------------------
 
-echo "generating the initramfs for $kernel_release"
-mount --bind /dev "$rootfs/dev"
-mount -t proc proc "$rootfs/proc"
-mount -t sysfs sys "$rootfs/sys"
-unmount_pseudo() {
-	umount -l "$rootfs/sys" 2>/dev/null || true
-	umount -l "$rootfs/proc" 2>/dev/null || true
-	umount -l "$rootfs/dev" 2>/dev/null || true
-}
-trap unmount_pseudo EXIT
-
-chroot "$rootfs" update-initramfs -c -k "$kernel_release"
-
-initramfs=$rootfs/boot/initrd.img-$kernel_release
-test -f "$initramfs" || { echo "update-initramfs produced nothing" >&2; exit 1; }
-
-magic=$(head -c4 "$initramfs" | od -An -tx1 | tr -d ' \n')
-if [ "$magic" != 02214c18 ]; then
-	echo "initramfs is not LZ4 legacy (magic $magic)" >&2
-	echo 'Samsung ABL needs the stock LZ4 legacy stream; check' >&2
-	echo '/etc/initramfs-tools/initramfs.conf COMPRESS=lz4' >&2
-	exit 1
-fi
-
-size=$(stat -c %s "$initramfs")
-limit=$((8388608 - 8192))
-echo "initramfs: $size bytes (init_boot budget $limit)"
-if [ "$size" -gt "$limit" ]; then
-	echo 'initramfs does not fit init_boot minus its AVB footer' >&2
-	echo 'reduce MODULES or move modules to the boot partition' >&2
-	exit 1
-fi
-
-unmount_pseudo
-trap - EXIT
+initramfs=$(ROOTFS_DIR="$rootfs" KERNEL_OUT_DIR="$kernel_out" \
+	KERNEL_RELEASE="$kernel_release" \
+	bash "$repo/scripts/make-initramfs.sh")
 
 # ---------------------------------------------------------------------------
 # Image geometry

@@ -1,7 +1,7 @@
 # Estado de hardware del SM-X910 bajo Ubuntu 24.04
 
-Última actualización: 2026-08-09, tras validar las cuatro cámaras en GNOME
-Cámara, Chrome y OBS, añadir autofoco y repetir arranques en frío.
+Última actualización: 2026-08-10, al mover la raíz a la UFS interna y acotar
+qué parte de las cámaras funciona y cuál no.
 
 Ubuntu **ya arranca** en la tablet. Esta matriz distingue explícitamente lo
 heredado de lo comprobado, y ningún componente pasa a ✅ sin observación real.
@@ -15,8 +15,9 @@ heredado de lo comprobado, y ningún componente pasa a ✅ sin observación real
 - Origen del soporte de hardware: postmarketOS v1.71 (kernel r114, device r44,
   firmware r10).
 - Userspace objetivo: Ubuntu 24.04 LTS arm64, systemd, GNOME sobre Wayland.
-- Rootfs: microSD ext4. Samsung ABL carga `boot` e `init_boot` y el
-  DTB/cmdline de `vendor_boot` desde la UFS interna.
+- Rootfs: ext4 dentro de `userdata`, en la UFS interna, desde v0.18. Samsung
+  ABL carga `boot` e `init_boot` y el DTB/cmdline de `vendor_boot` de esa misma
+  UFS. Hasta v0.17 la raíz vivía en una microSD ext4.
 
 Para el primer hito se usa **el mismo kernel 7.2-rc3 y el mismo DTS ya
 probados**. Actualizar el kernel se pospone hasta alcanzar paridad: mezclar un
@@ -40,15 +41,16 @@ sondea» como prueba de funcionamiento.
 
 | Componente | pmOS v1.71 | Ubuntu | Nivel | Notas |
 |---|---|---|---|---|
-| Arranque Android v4 + rootfs microSD | ✅ | ✅ | confirmado | Arranca desde microSD con `root=LABEL=`. Initramfs propio en LZ4 legacy dentro de `init_boot` |
+| Arranque Android v4 + rootfs microSD | ✅ | ✅ | confirmado | Arranca desde microSD con `root=LABEL=UBTS9U_ROOT`. Initramfs propio en LZ4 legacy dentro de `init_boot`. Es la cadena de hasta v0.17 |
+| Arranque con rootfs en UFS | — | ⏳ | pendiente | v0.18 escribe la raíz en `userdata` y arranca con `root=LABEL=UBTS9U_UFS`. Solo cambia dónde busca la raíz el initramfs; el resto de la cadena es la misma. **Sin confirmar en el dispositivo** |
 | Pantalla interna 2960×1848@120 | ✅ | ✅ | medido | La recuperación cold-boot está validada bajo Ubuntu: el journal registra `panel id 00 00 00` → ciclo `pm_test=platform` → `80 00 04` |
 | GPU Adreno 740 | ✅ | ✅ | confirmado | Confirmado por la usuaria en el primer arranque. Falta medir `vulkaninfo`/`glmark2` |
 | Escritorio GNOME/Wayland | ✅ | ✅ | confirmado | GDM3 y GNOME 46 nativos, sin el workaround de cuentas greeter de Alpine |
 | Brillo / blanking | ✅ | ⏳ | heredado | Backlight DCS. El brillo automático no funciona en ninguna distro |
 | Táctil Goodix GT9916 | ✅ | ✅ | confirmado | Layout Samsung de eventos de 16 bytes |
 | Botones power y volumen | ✅ | ✅ | confirmado | |
-| UFS interna | ✅ | ⏳ | heredado | Seis LUN `sda`–`sdf`; usada solo para las particiones de arranque |
-| microSD | ✅ | ✅ | medido | Raíz por etiqueta `UBTS9U_ROOT`; la partición se expande en el primer arranque. Desde 2026-08-03 se crea **con journal** y `errors=remount-ro`: sin journal un apagado sucio acabó tirando el arranque a modo emergencia |
+| UFS interna | ✅ | ⏳ | pendiente | Seis LUN `sda`–`sdf`. Desde v0.18 aloja también la raíz, en `userdata` (`sda34`, 939 GiB), etiquetada `UBTS9U_UFS`. **Se reutiliza la partición tal cual: no se crea, borra ni redimensiona ninguna**, y en el primer arranque solo se redimensiona el sistema de ficheros con `resize2fs`. Sin confirmar todavía en el dispositivo |
+| microSD | ✅ | ✅ | medido | Raíz por etiqueta `UBTS9U_ROOT` hasta v0.17; la partición se expande en el primer arranque. Desde 2026-08-03 se crea **con journal** y `errors=remount-ro`: sin journal un apagado sucio acabó tirando el arranque a modo emergencia. La misma decisión se hereda en la imagen de UFS |
 | Wi-Fi WCN7850 / ath12k | ✅ | ✅ | confirmado | Conectada a la red por la usuaria; SSH en uso para el desarrollo |
 | Bluetooth y A2DP | ✅ | ✅ | confirmado | La unidad espera a `bluetoothd`, alimenta correctamente `btmgmt` y reaplica la dirección nativa; controlador y A2DP validados |
 | Altavoces 4× CS35L45 y DMIC | ✅ | ✅ | confirmado | PipeWire nativo, sin PulseAudio. Requiere el arranque tardío del ADSP y `protection-domain-mapper` |
@@ -76,7 +78,7 @@ sondea» como prueba de funcionamiento.
 | Huella (EgisTec EL7xx, SPI) | ❌ | ❌ | supuesto | Sin driver mainline |
 | Vibración / hápticos | ❌ | ❌ | supuesto | Hardware sin identificar |
 | Flash / linterna | ❌ | ✅ | observado | PM8550 SID 1, canales 0+1 agrupados por `leds-qcom-flash`; iluminación real observada en modo estrobo y linterna. El mosaico **Linterna** de ajustes rápidos está instalado, activo y probado físicamente |
-| Cámaras | ❌ | 🟡 | observado | Los cuatro sensores pasan por `libcamera` simple + software ISP y aparecen como cuatro cámaras V4L2 normales y nombradas. GNOME Cámara, Chrome WebRTC y OBS abrieron las cuatro, también después de reinicios reales; la trasera principal enfoca con su DW9808. Quedan calibración de fábrica y flash fotográfico automático |
+| Cámaras | ❌ | 🟡 | observado | Los cuatro sensores hacen fotos y pasan por `libcamera` simple + software ISP, apareciendo como cuatro cámaras V4L2 normales y nombradas. GNOME Cámara, Chrome WebRTC y OBS abrieron las cuatro, también después de reinicios reales; la trasera principal enfoca con su DW9808. **El cambio de una cámara a otra está sin pulir**: el relevo entre sensores todavía falla y puede dejar la aplicación parada o obligar a reabrir la cámara. Quedan también calibración de fábrica y flash fotográfico automático |
 | Módem | — | — | — | No aplica al modelo Wi-Fi |
 
 ### Cámaras y flash: alcance exacto de la validación
@@ -127,7 +129,16 @@ escenas ni configuración por usuario.
 Los cuatro sensores comparten CAMSS/ISP, por lo que los relés serializan sus
 entradas y mantienen dos segundos de guarda tras soltar una cámara. Dos rondas
 consecutivas alternaron 24 aperturas V4L2, diez frames por apertura, manteniendo
-los mismos PID de PipeWire y del servicio y exactamente cuatro relés. Chrome
+los mismos PID de PipeWire y del servicio y exactamente cuatro relés.
+
+**Esa medida describe un banco de pruebas, no el uso real, y el relevo entre
+cámaras sigue sin estar terminado.** Alternar sensores desde una aplicación
+puede dejarla parada o exigir reabrir la cámara: el trabajo en curso sobre el
+reinicio de los enlaces de CAMSS, la preempción de la cámara activa y la cola
+de salida de `v4l2loopback` es exactamente ese problema. Cada cámara por
+separado funciona; pasar de una a otra es lo que falta pulir.
+
+Chrome
 enumeró sólo esas cuatro cámaras y abrió cada una a 1280×720/30 fps mediante
 WebRTC. El selector V4L2 estándar de OBS mostró las mismas cuatro y capturó cada
 `/dev/video20`–`23`. Su complemento empaquetado oculta únicamente los endpoints

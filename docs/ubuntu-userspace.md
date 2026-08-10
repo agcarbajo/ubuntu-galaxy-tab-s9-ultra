@@ -17,7 +17,7 @@ mitades con responsabilidades separadas:
 | Mitad | Origen | Qué produce |
 |---|---|---|
 | Kernel y arranque | Fuentes importadas del port pmOS (`kernel/`) | `boot`, `init_boot`, `vendor_boot`, `dtbo`, módulos ath12k |
-| Userspace | `mmdebstrap` sobre archive.ubuntu.com/ports | rootfs ext4 de la microSD |
+| Userspace | `mmdebstrap` sobre archive.ubuntu.com/ports | rootfs ext4 dentro de `userdata`, en la UFS |
 
 Ninguna de las dos mitades puede depender de que la otra se haya montado a
 mano en una instalación viva.
@@ -151,41 +151,51 @@ Lo que **no** se traduce y hay que reempaquetar como `.deb`:
 - el paquete de dispositivo con udev, UCM, servicios de recuperación y
   `deviceinfo` equivalentes.
 
-## Estructura del rootfs y la microSD
+## Estructura del rootfs
 
-La microSD lleva **dos particiones**, como en la baseline:
+Desde v0.18 la raíz es **un solo sistema de ficheros ext4 dentro de
+`userdata`**, en la UFS interna, etiquetado `UBTS9U_UFS`. La imagen que
+distribuye el ZIP no tiene tabla de particiones: es el sistema de ficheros a
+secas, porque se escribe dentro de una partición que ya existe.
+
+Ahí `/boot` va dentro de la raíz. La partición separada de la microSD existía
+porque el initramfs que cabe en `init_boot` (8 MiB) no puede contener el árbol
+completo de módulos y la segunda etapa tenía que vivir en algún sitio montable;
+con una sola raíz ese sitio es `/boot` y no hace falta pedir una partición que
+no vamos a crear.
+
+Hasta v0.17 la microSD llevaba **dos particiones**:
 
 | Partición | FS | Etiqueta | Contenido |
 |---|---|---|---|
 | 1 | ext4 | `UBTS9U_BOOT` | `initramfs-extra`, DTB de referencia y metadatos de build |
 | 2 | ext4 | `UBTS9U_ROOT` | rootfs Ubuntu |
 
-Dos particiones y no una: el initramfs que cabe en `init_boot` (8 MiB) no puede
-contener el árbol completo de módulos, y en la baseline se demostró que la
-alternativa de una sola partición produce un initramfs de ~15 MiB imposible de
-empaquetar. La segunda etapa vive en la partición de boot de la tarjeta.
-
-Las etiquetas son nuevas a propósito. Reutilizar `pmOS_boot`/`pmOS_root` haría
-que un initramfs de postmarketOS y otro de Ubuntu compitiesen por la misma
-tarjeta; con etiquetas distintas cada sistema solo monta la suya y una tarjeta
-mal identificada falla de forma ruidosa en lugar de silenciosa.
+Las etiquetas son propias a propósito. Reutilizar `pmOS_boot`/`pmOS_root` haría
+que un initramfs de postmarketOS y otro de Ubuntu compitiesen por el mismo
+medio; y `UBTS9U_UFS` se distingue de `UBTS9U_ROOT` para que una tarjeta
+antigua olvidada en la ranura no gane la resolución de `root=LABEL=` contra la
+instalación interna.
 
 La imagen se genera pequeña (rootfs + margen) y una unidad
-`ubuntu-gts9u-grow-rootfs.service` expande partición y filesystem en el primer
-arranque. Dimensionar la imagen para una tarjeta concreta solo traslada el
-problema a la siguiente tarjeta.
+`ubuntu-gts9u-grow-rootfs.service` la expande en el primer arranque. En la UFS
+eso significa **solo `resize2fs`**: la partición ya ocupa las 939 GiB y ninguna
+herramienta de particionado la toca. En una microSD sí hay que extender antes la
+partición, y el script distingue los dos casos por el dispositivo y la etiqueta.
 
 ## initramfs propio de Ubuntu
 
 **No se reutiliza el initramfs de postmarketOS.** Ubuntu genera el suyo con
 `initramfs-tools`, y debe cumplir cuatro requisitos que no vienen por defecto:
 
-1. **Localizar la microSD sin números de dispositivo.** El root se indica por
-   `root=LABEL=UBTS9U_ROOT`, nunca `mmcblk1p2`. El orden de enumeración de
-   `sdhc_2` frente a la UFS no está garantizado.
-2. **Esperar a que aparezca la tarjeta.** `rootwait` ya está en la cmdline de
-   `vendor_boot`; además el hook local reintenta el `blkid` en lugar de caer al
-   shell de emergencia al primer fallo.
+1. **Localizar la raíz sin números de dispositivo.** El root se indica por
+   `root=LABEL=UBTS9U_UFS`, nunca `sda34` ni `mmcblk1p2`. El orden de
+   enumeración de los LUN de la UFS y de `sdhc_2` no está garantizado, y la
+   etiqueta es además lo que separa la instalación interna de una microSD
+   antigua.
+2. **Esperar a que aparezca el dispositivo.** `rootwait` ya está en la cmdline
+   de `vendor_boot`; además el hook local reintenta el `blkid` en lugar de caer
+   al shell de emergencia al primer fallo.
 3. **Empaquetarse en LZ4 legacy.** Esto es innegociable: el ABL del X910
    concatena el ramdisk genérico de `init_boot` con el fragmento de
    `vendor_boot`, y con un ramdisk genérico gzip Linux rechaza el initrd con
@@ -222,8 +232,7 @@ debe escribirse en `/usr/lib/firmware/...`, nunca crear un directorio `/lib`
 sobre el symlink.
 
 `hmtbtfw20.tlv` y `hmtnv20.b21` deben ir **también** en el fragmento vendor del
-`vendor_boot`, porque `hci_qca` es built-in y sondea antes de montar la
-microSD.
+`vendor_boot`, porque `hci_qca` es built-in y sondea antes de montar la raíz.
 
 ## Usuario, locale y entrada
 
@@ -250,15 +259,26 @@ en una partición.
 | 1b | `build-camera-packages.sh` | `libcamera-gts9u` y SPA libcamera para PipeWire |
 | 1c | `build-extra-packages.sh` | Fastfetch, relé V4L2 y complemento V4L2 seguro de OBS |
 | 2 | `build-ubuntu-rootfs.sh` | rootfs Ubuntu arm64 con `mmdebstrap` |
-| 3 | `build-rootfs-overlay.sh` | overlay de módulos y firmware para la microSD |
-| 4 | `build-sd-image.sh` | initramfs Ubuntu e imagen de dos particiones |
+| 3 | `build-rootfs-overlay.sh` | overlay de módulos y firmware |
+| 4 | `build-ufs-image.sh` | initramfs Ubuntu e imagen ext4 de la raíz, sin tabla de particiones |
 | 5 | `build-android-v4-bundle.sh` | `boot`, `init_boot`, `vendor_boot`, `dtbo`, `vbmeta` |
-| 6 | `make-twrp-zip.py` | ZIP TWRP determinista |
+| 6 | `make-twrp-zip.py` | ZIP TWRP determinista, con la raíz dentro |
 | 7 | `validate-bundle.sh` | validación estática, sin flashear |
+| — | `make-initramfs.sh` | initramfs LZ4 legacy comprobado; lo usan los dos constructores de imagen |
+| — | `build-sd-image.sh` | imagen de microSD de dos particiones, la forma de instalar hasta v0.17 |
 | — | `build-release.sh` | encadena 1–7 y escribe el manifiesto |
 
-`build-sd-image.sh` falla la build si el initramfs no es LZ4 legacy o no cabe
-en `init_boot`. Esos dos errores se descubren aquí y no en la tablet.
+`make-initramfs.sh` falla la build si el initramfs no es LZ4 legacy o no cabe
+en `init_boot`. Esos dos errores se descubren aquí y no en la tablet, y están
+en un solo sitio para que la imagen de UFS y la de microSD no puedan divergir
+justo en eso.
+
+`build-ufs-image.sh` produce el sistema de ficheros a secas: sin GPT, con
+`/boot` dentro, con el overlay de firmware ya integrado, con la etiqueta
+`UBTS9U_UFS`, y reservando bloques de descriptores (`-E resize=`) suficientes
+para que el primer arranque pueda crecer hasta 1 TiB en línea. Rechaza escribir
+sobre un dispositivo de bloque y aborta si la imagen supera el presupuesto de
+4 GiB, porque viaja entera dentro del ZIP.
 
 ## Orden de validación
 

@@ -3006,3 +3006,79 @@ global no sería segura. Se conserva el tuning actual hasta disponer de una
 carta gris/color bajo varias temperaturas de iluminación. Al cerrar, Chrome y
 OBS estaban cerrados, el flash en `off`, la configuración gráfica original
 restaurada y los cuatro relés activos.
+
+---
+
+## Sesión 34 — la raíz se muda a la UFS interna, en un solo ZIP
+
+Fecha: 2026-08-10. No se tocó la tablet física: esta sesión produce el artefacto
+que la usuaria probará.
+
+### Contexto
+
+Hasta v0.17 la instalación tenía dos pasos y dos artefactos: escribir a mano una
+imagen de dos particiones en una microSD, y flashear después un ZIP que escribía
+las imágenes de arranque y aplicaba sobre la tarjeta el overlay de firmware. La
+tarjeta era además un punto único de fallo y el cuello de botella de E/S.
+
+El encargo era instalar en la UFS **sin crear, borrar ni modificar
+particiones**, y entregar un único `.zip` flasheable.
+
+### Qué se revisó antes de decidir
+
+El port de Ubuntu Touch de referencia (`../port`) resuelve lo mismo escribiendo
+`super` entero: reconstruye sus particiones lógicas con `lpmake` y mete ahí el
+rootfs como `system`. Eso es exactamente lo que aquí no se quería, y además
+`super` mide 11,2 GiB, que no da para un escritorio.
+
+La inspección del dispositivo (`port/device-inspection/partitions.txt`) daba la
+respuesta: `sda34`, la `userdata` de Android, mide 984 360 924 KiB, es decir
+939 GiB. Ya existe. Reutilizarla no toca la GPT.
+
+### Qué se hizo
+
+- `scripts/build-ufs-image.sh` construye la raíz como **sistema de ficheros a
+  secas**, sin tabla de particiones: `/boot` dentro, overlay de firmware y
+  módulos ya integrado, etiqueta `UBTS9U_UFS`, `fstab` reescrito, `-E resize=`
+  para poder crecer hasta 1 TiB en línea, y `e2fsck -fp` al final para no
+  distribuir un sistema de ficheros sucio.
+- La generación del initramfs sale a `scripts/make-initramfs.sh`, compartido por
+  las dos imágenes; tener dos copias de esa comprobación era pedir que
+  divergiesen justo donde el síntoma es una pantalla negra.
+- El instalador TWRP escribe la raíz en `userdata` y la **verifica releyéndola**
+  y comparando SHA-256, antes de tocar las imágenes de arranque. Aborta si el
+  ZIP está en el propio destino, si `userdata` es menor que la imagen, o si la
+  etiqueta releída no cuadra.
+- `cmdline.txt` pasa a `root=LABEL=UBTS9U_UFS`, que además desambigua contra una
+  microSD antigua.
+- `ubuntu-gts9u-grow-rootfs` distingue los dos casos: en microSD extiende
+  partición y sistema de ficheros; en UFS **solo** `resize2fs`.
+- `validate-bundle.sh` cambia la garantía que comprueba: `userdata` ya puede
+  nombrarse, pero ningún `mkfs`, `parted`, `sgdisk`, `sfdisk`, `fdisk`,
+  `partx` ni `wipefs` puede aparecer en el instalador.
+- `build-release.sh` deja de producir la imagen `.img.xz`: la release es el ZIP.
+
+### Un fallo que la validación estática cazó
+
+La primera build falló en `validate-bundle.sh` con «installer code references a
+partition it must never write». No era un error real de escritura: era un
+`ui_print` que decía la palabra `super` al explicar lo que **no** se toca. La
+comprobación mira código con los comentarios eliminados, y una cadena visible no
+es un comentario. Se reformuló el mensaje. La comprobación es correcta y se
+dejó como está: prefiere un falso positivo a dejar pasar un `dd` a `super`.
+
+### Estado del artefacto
+
+v0.18: ZIP único de 3,1 GiB de imagen de raíz más las cinco imágenes de
+arranque, todas las comprobaciones estáticas en verde. **Sin arrancar todavía en
+la tablet**; hasta que arranque, la fila de almacenamiento del README y la de
+UFS de `hardware-status.md` dicen pendiente.
+
+### Cámaras
+
+Se rehízo el kernel para incluir el parche 3 de `v4l2loopback` que había en el
+árbol de trabajo, y la raíz lleva el conjunto actual de paquetes de cámara
+(`libcamera-gts9u` gts9u5, SPA gts9u10, `v4l2-relayd` gts9u12, device 2.17). El
+trabajo sobre el relevo entre cámaras sigue en curso y sin commitear; la
+documentación pasa a decir lo que de verdad ocurre: cada cámara y el flash
+funcionan, y cambiar de una a otra todavía falla.

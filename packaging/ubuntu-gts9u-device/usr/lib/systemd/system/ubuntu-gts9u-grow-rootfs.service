@@ -1,5 +1,5 @@
 [Unit]
-Description=Expand the Ubuntu root partition to fill the microSD
+Description=Expand the Ubuntu root filesystem to fill its partition
 DefaultDependencies=no
 After=systemd-remount-fs.service
 Before=basic.target
