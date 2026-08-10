@@ -1313,11 +1313,20 @@ La imagen generaba un único locale, `es_ES.UTF-8`, así que el asistente ofrec�
 exactamente un idioma. Se resuelve con `locales-all`, que trae los 327
 pregenerados y de paso evita ejecutar `locale-gen` bajo emulación.
 
-Distinción que conviene no perder: eso permite **elegir** cualquier idioma, con
-sus formatos, su orden alfabético y su teclado. Un GNOME traducido sigue
-necesitando su `language-pack-XX`, y sólo viaja el español; los demás son un
-`apt install` o el instalador de idiomas de Ajustes. Meter todos los paquetes
-de idioma serían más de 1 GiB en un ZIP que ya pesa casi uno.
+`locales-all` por sí solo permite **elegir** cualquier idioma, con sus
+formatos, su orden alfabético y su teclado, pero deja el escritorio en inglés:
+un GNOME traducido necesita su `language-pack-XX`.
+
+Aquí se tomó una decisión equivocada y se corrigió: se descartó incluirlos
+todos por pesar cerca de 1 GiB. El criterio estaba mal calibrado. Este
+dispositivo tiene 256 GB en su versión más pequeña y la raíz ocupa la partición
+entera de 939 GiB; el gigabyte no es el recurso escaso. Lo que sí molesta es
+una tablet que te ofrece japonés en el asistente y después te habla en inglés.
+Desde v0.21 viajan todos los paquetes de idioma.
+
+La lección general: el tamaño de la imagen sólo importa por lo que tarda en
+descargarse y flashearse, no por lo que ocupa instalada, y conviene decir cuál
+de las dos cosas se está optimizando antes de recortar.
 
 ## Actualizar sin perder datos no cabe en el instalador de TWRP
 
@@ -1339,3 +1348,16 @@ acaba de instalar tienen que ser el mismo conjunto firmado.
 
 No reinicia. Y **no está probado todavía**: se estrenará en la primera
 actualización real que haya datos que conservar.
+
+## OBS viaja de prestado
+
+`obs-studio` está en la imagen porque `obs-v4l2-gts9u` —el complemento V4L2
+parcheado con el que se validan las cuatro cámaras— depende de él. No está
+porque el port quiera distribuir un estudio de streaming: son 21 MiB y una
+aplicación que la mayoría de la gente no usará.
+
+**Es temporal, y sale cuando el trabajo de cámaras esté cerrado.** Se queda
+mientras el relevo entre cámaras siga sin pulir, porque es la herramienta con
+la que se reproduce ese fallo. Al quitarlo hay que quitar también
+`obs-plugins`, y comprobar antes que ninguna verificación de cámaras del
+proyecto dependa de él.

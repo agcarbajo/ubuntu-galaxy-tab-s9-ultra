@@ -77,6 +77,25 @@ owner=$(printf '%s\n' "$humans" | head -1)
 uid=${owner%%:*}
 name=${owner#*:}
 
+# Record the owner so the udev helper agrees with this service if the LED is
+# re-enumerated later.
+install -d -m 0755 /run/ubuntu-gts9u
+printf '%s\n' "$name" > /run/ubuntu-gts9u/desktop-user
+
+# The flash LED, owned outright rather than shared through a group.
+#
+# Group membership is decided when a session starts, and the wizard logs the
+# owner in the instant it creates the account — so on the boot that matters,
+# adding them to `video` above comes too late and the Flashlight tile still
+# does nothing.  That is the second time this bug shipped.  Ownership has no
+# such window: it is a property of the file, not of the session.  The group
+# stays as the fallback for anything that re-runs the udev rule.
+flash_brightness=/sys/class/leds/white:flash/brightness
+if [ -e "$flash_brightness" ]; then
+	chown "$name" "$flash_brightness" && \
+		echo "ubuntu-gts9u: flash LED handed to $name"
+fi
+
 mkdir -p "$dropin_dir"
 cat > "$dropin" <<EOF
 # Written at boot by ubuntu-gts9u-desktop-user.  Do not edit: it is recreated

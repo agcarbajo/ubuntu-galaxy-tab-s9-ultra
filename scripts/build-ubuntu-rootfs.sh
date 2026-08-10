@@ -103,7 +103,8 @@ pulseaudio-utils,
 libspa-0.2-bluetooth,bluez,alsa-ucm-conf,alsa-utils,
 iio-sensor-proxy,upower,power-profiles-daemon,
 fonts-ubuntu,language-pack-es,language-pack-gnome-es,
-locales-all
+locales-all,
+gnome-software,gnome-software-plugin-snap
 '
 
 packages=$(printf '%s' "$base_packages" | tr -d ' \n')
@@ -144,10 +145,11 @@ EOF
 # pre-generated, which also keeps locale-gen — slow under emulation — out of
 # the build.
 #
-# Note what this does and does not give: every language can be *selected*, and
-# its formats, sorting and keyboard follow.  A translated GNOME still needs its
-# language pack, and only Spanish ships with one; the rest are one
-# `apt install language-pack-XX` away, or Settings' own language installer.
+# Every language pack ships too, so the desktop is actually translated in
+# whichever language is picked and not just formatted for it.  That is about a
+# gigabyte, which was judged too much once and is not: this is a tablet with
+# 256 GB at the low end, and the alternative is a machine that offers you
+# Japanese and then talks to you in English.
 echo '$locale UTF-8' > "\$target/etc/locale.gen"
 echo 'LANG=$locale' > "\$target/etc/default/locale"
 ln -sf "/usr/share/zoneinfo/$timezone" "\$target/etc/localtime"
@@ -318,6 +320,19 @@ cp $stage_debs/*.deb "\$target/tmp/local-debs/"
 # cannot remove an already installed package that a local .deb Conflicts with.
 chroot "\$target" sh -c 'apt-get install -y /tmp/local-debs/*.deb'
 rm -rf "\$target/tmp/local-debs"
+
+# Every language pack.  mmdebstrap's --include takes no globs, so this is the
+# place: apt expands the pattern itself.  Roughly a gigabyte, deliberately —
+# see the note by locales-all above.
+chroot "\$target" sh -c 'DEBIAN_FRONTEND=noninteractive apt-get install -y \
+	"language-pack-*" "language-pack-gnome-*" >/dev/null'
+installed_langs=\$(chroot "\$target" sh -c \
+	'dpkg-query -W -f "\${Package}\n" "language-pack-*" 2>/dev/null | wc -l')
+echo "language packs installed: \$installed_langs"
+[ "\$installed_langs" -gt 50 ] || {
+	echo 'the language pack glob matched almost nothing' >&2
+	exit 1
+}
 
 # This is the one apt-get in the whole build that honours Recommends: the base
 # rootfs is bootstrapped without them, which is why snapd, yaru-theme-icon and

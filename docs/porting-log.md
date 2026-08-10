@@ -3312,3 +3312,48 @@ Se comprobó en el dispositivo que TWRP no tiene `rsync` y que su `tar` no
 soporta xattrs, así que una copia fichero a fichero desde el recovery perdería
 las capabilities de los binarios. La actualización pasa a `gts9u-upgrade`, en
 el sistema arrancado. Sin probar todavía.
+
+---
+
+## Sesión 40 — la linterna, otra vez, y por qué el arreglo anterior no llegó
+
+Fecha: 2026-08-11.
+
+### El arreglo de la v0.20 nunca se aplicó
+
+La cuenta creada por el asistente, `arturo`, seguía sin estar en `video`, y el
+journal sólo tenía `no desktop user yet`: el servicio no volvió a ejecutarse
+tras crearse la cuenta.
+
+La causa es la unidad `.path`. `PathChanged=/etc/passwd` parecía la elección
+obvia y no funciona: `useradd` y accountsservice escriben un fichero temporal y
+lo renombran encima, así que el inodo que systemd vigila es **sustituido**, no
+modificado, y el evento no llega. Se cambia por `PathExistsGlob=/home/*`, que
+observa el mismo hecho desde donde sí hay un evento.
+
+### Y aunque hubiera llegado, no habría bastado
+
+Los grupos suplementarios de un proceso se fijan al iniciar la sesión, y el
+asistente entra en la sesión en el mismo instante en que crea la cuenta.
+Añadirla a `video` ahí llega tarde para esa sesión.
+
+Por eso el arreglo real no pasa por grupos: `ubuntu-gts9u-desktop-user` hace
+`chown` del `brightness` del LED a su dueño. La propiedad es del fichero, no de
+la sesión, así que no hay ventana. El grupo se sigue aplicando por lo demás, y
+el ayudante udev vuelve a poner al dueño si el LED se re-enumera, leyéndolo de
+`/run/ubuntu-gts9u/desktop-user`.
+
+Verificado en el chroot: cuenta con los grupos exactos del asistente, LED en
+`root:video 660` → `arturo:video 660`; y tras devolverlo a `root:video`, el
+ayudante udev lo restaura.
+
+### Idiomas: se corrige un criterio, no un fallo
+
+Se había descartado incluir todos los paquetes de idioma por pesar cerca de
+1 GiB. Mal calibrado: el dispositivo tiene 256 GB en su versión más pequeña.
+Viajan los 526.
+
+### GNOME Software
+
+El sistema lo referencia y no venía instalado. Se añade junto a su complemento
+de snap.

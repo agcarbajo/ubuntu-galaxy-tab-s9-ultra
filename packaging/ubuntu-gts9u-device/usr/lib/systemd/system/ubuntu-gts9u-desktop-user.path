@@ -7,6 +7,15 @@ Description=Watch for the account the first-boot wizard creates
 # with no hint that rebooting fixes it.
 
 [Path]
+# Watching /etc/passwd was the obvious choice and it does not work: useradd and
+# accountsservice write a temporary file and rename it into place, so the inode
+# systemd is watching is replaced rather than modified and PathChanged never
+# fires.  Measured on the tablet — the account existed, the groups had not been
+# applied, and the journal had no second run of the service.
+#
+# A new home directory appearing is the same event seen from somewhere that
+# does get an inotify event anyone can observe.
+PathExistsGlob=/home/*
 PathChanged=/etc/passwd
 
 [Install]

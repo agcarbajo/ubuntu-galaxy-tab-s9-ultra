@@ -14,3 +14,16 @@ led_dir=/sys$devpath
 
 chgrp video "$led_dir/brightness"
 chmod 0660 "$led_dir/brightness"
+
+# If the device already has an owner, give them the attribute outright.  Group
+# membership is fixed when a session starts, so a user added to `video` while
+# already logged in cannot use it until they log in again; ownership works
+# immediately.  ubuntu-gts9u-desktop-user records who that is, and this runs
+# again whenever udev re-enumerates the LED.
+owner_file=/run/ubuntu-gts9u/desktop-user
+if [ -r "$owner_file" ]; then
+	owner=$(cat "$owner_file")
+	if [ -n "$owner" ] && id "$owner" >/dev/null 2>&1; then
+		chown "$owner" "$led_dir/brightness"
+	fi
+fi
