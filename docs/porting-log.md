@@ -3357,3 +3357,42 @@ Viajan los 526.
 
 El sistema lo referencia y no venía instalado. Se añade junto a su complemento
 de snap.
+
+---
+
+## Sesión 41 — por qué hacía falta reiniciar: `RemainAfterExit`
+
+Fecha: 2026-08-11. Las cámaras y la linterna funcionaban, pero sólo tras un
+primer reinicio después del asistente.
+
+### Confirmado con el journal, no deducido
+
+`ubuntu-gts9u-desktop-user.service` aparece **exactamente dos veces
+«Starting», una por arranque**, en los dos arranques registrados. En el
+primero, `no desktop user yet`; en el segundo, todo el trabajo: grupos, linger,
+LED y relés. La unidad `.path` no consiguió nunca una tercera ejecución.
+
+La causa es `RemainAfterExit=yes`. El servicio corre al arrancar, no encuentra
+cuenta, termina bien y queda en `active (exited)`. Cuando la unidad `.path`
+dispara y hace `systemctl start`, systemd ve una unidad ya activa y no hace
+nada — correctamente. Todo quedaba aplazado al arranque siguiente.
+
+Se quita `RemainAfterExit`. El servicio aplica ajustes y sale; no tiene estado
+que retener, y así vuelve a ser ejecutable, que es la razón de existir de la
+unidad `.path`.
+
+### Y un segundo hueco en el mismo sitio
+
+`graphical.target` se alcanza mucho antes de que exista la cuenta, así que el
+servicio de relés se saltaba por su propia condición y nadie volvía a por él.
+Ahora, tras escribir el drop-in, el ayudante hace
+`systemctl start --no-block` sobre los relés. `--no-block` no es opcional: la
+unidad de relés lleva `Requires=` sobre ésta, y esperar su *start job* desde
+dentro sería esperarse a sí misma.
+
+### Método
+
+Tres intentos de arreglar la linterna, y los dos primeros se enviaron sin poder
+probar el camino real. Lo que cerró el asunto fue leer el journal del
+dispositivo: dos ejecuciones, una por arranque, que es una firma inequívoca.
+Conviene mirar el journal antes que el código.

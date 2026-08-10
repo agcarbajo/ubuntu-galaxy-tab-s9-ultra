@@ -8,7 +8,16 @@ Before=ubuntu-gts9u-camera-relays.service
 
 [Service]
 Type=oneshot
-RemainAfterExit=yes
+# Deliberately NOT RemainAfterExit.  With it, the first run at boot — the one
+# that finds no account yet — left the unit "active (exited)", and every later
+# trigger from the .path unit was a `systemctl start` on an already-active
+# unit, which systemd correctly does nothing about.  The account would then
+# get its groups, its LED and its camera relays only on the *next* boot, which
+# is exactly what happened twice: everything worked, but only after a reboot
+# nobody had been told to do.
+#
+# Letting it go inactive costs nothing — it applies settings and exits — and
+# makes it re-runnable, which is the whole point of the .path unit.
 ExecStart=/usr/libexec/ubuntu-gts9u-desktop-user
 
 [Install]

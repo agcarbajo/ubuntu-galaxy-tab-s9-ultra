@@ -114,4 +114,15 @@ echo "ubuntu-gts9u: camera relays bound to $name (uid $uid)"
 
 if [ -d /run/systemd/system ]; then
 	systemctl daemon-reload || true
+
+	# graphical.target was reached long before the account existed, so the
+	# relay service was skipped by its own condition and nothing would ever
+	# come back for it: cameras stayed dead until the next boot.  Now that the
+	# drop-in exists the condition holds, so ask for it.
+	#
+	# --no-block matters: the relay unit Requires= this one, so waiting for its
+	# start job from inside this one would be waiting for ourselves.  If the
+	# owner's PipeWire is not up yet the relays fail and retry every two
+	# seconds, which is what Restart=always is there for.
+	systemctl start --no-block "$relay_unit" || true
 fi
