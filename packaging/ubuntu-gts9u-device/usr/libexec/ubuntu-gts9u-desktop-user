@@ -5,6 +5,14 @@
 # The image ships with no account: it is created in the first-boot wizard, so
 # nothing can be baked in at build time.  Two things depend on knowing it:
 #
+#   * group membership.  The wizard creates an administrator, which on Ubuntu
+#     means `sudo`, `adm`, `plugdev` and `users` — and nothing else.  The
+#     account the build used to create was also in the device groups, and the
+#     difference is not cosmetic: the flash LED's brightness attribute is
+#     chgrp'd to `video` by this port's own udev rule, so without that group
+#     the Flashlight tile turns itself straight back off and no light comes on.
+#     That is exactly what happened on the first image that shipped without an
+#     account.
 #   * linger.  The camera relays are system services backed by a user's
 #     PipeWire graph.  Without linger that graph only exists while someone is
 #     logged in, and an SSH login can create a temporary PipeWire socket that
@@ -37,8 +45,22 @@ if [ -z "$humans" ]; then
 	exit 0
 fi
 
+# The groups the hardware needs.  This is the set the build used to pass to
+# useradd, minus the ones the wizard already grants.  A group that does not
+# exist on this system is skipped rather than treated as an error.
+device_groups='video render input audio dialout cdrom netdev plugdev'
+
 for entry in $humans; do
 	name=${entry#*:}
+
+	for group in $device_groups; do
+		getent group "$group" >/dev/null 2>&1 || continue
+		if ! id -nG "$name" 2>/dev/null | tr ' ' '\n' | grep -qx "$group"; then
+			usermod -aG "$group" "$name" && \
+				echo "ubuntu-gts9u: added $name to $group"
+		fi
+	done
+
 	install -d -m 0755 /var/lib/systemd/linger
 	[ -e "/var/lib/systemd/linger/$name" ] || \
 		install -m 0644 /dev/null "/var/lib/systemd/linger/$name"

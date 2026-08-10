@@ -3268,3 +3268,47 @@ da, va a `/etc/skel`.
 `apt-get install -y` del gancho de paquetes locales era el único sitio del
 build que honra `Recommends`. Se purga VLC después de instalar, en vez de usar
 `--no-install-recommends`, que también dejaría fuera `obs-plugins`.
+
+---
+
+## Sesión 39 — linterna, idiomas y una actualización que conserve los datos
+
+Fecha: 2026-08-10. La v0.19 arrancó y la OOBE funcionó; la usuaria creó su
+cuenta y reportó dos fallos.
+
+### La linterna no encendía
+
+El mosaico aparecía, pero al pulsarlo se apagaba solo y no salía luz.
+
+Montando la raíz desde TWRP se vio la causa sin ambigüedad: la cuenta que creó
+el asistente, `agcar`, está en `adm sudo plugdev users`. La regla udev de este
+port hace `chgrp video` y `chmod 0660` sobre el `brightness` del LED, así que
+no tenía permiso de escritura. La cuenta que creaba el build antes sí estaba en
+`video`, junto con `render`, `input`, `audio`, `dialout`, `cdrom` y `netdev`.
+
+`ubuntu-gts9u-desktop-user` los aplica ahora, y se añade una unidad `.path`
+sobre `/etc/passwd` para que ocurra en el mismo arranque en que el asistente
+crea la cuenta, no en el siguiente.
+
+Verificado en el chroot contra una cuenta creada con los grupos exactos del
+asistente: pasa de `adm sudo plugdev users` a incluir los siete que faltaban.
+
+### Sólo salía español
+
+`/etc/locale.gen` tenía una línea. El asistente ofrece los idiomas que el
+sistema tiene generados, así que ofrecía uno. Con `locales-all` pasan de 22 a
+152 locales UTF-8 disponibles, sin ejecutar `locale-gen` bajo emulación.
+
+### De paso, lo que sí funcionó
+
+El journal de la v0.19 confirma que el servicio de usuario hizo su trabajo:
+`no desktop user yet; the first-boot wizard has not run` en el primer arranque,
+y después `linger enabled for agcar` y `camera relays bound to agcar (uid
+1000)`.
+
+### La actualización sin perder datos
+
+Se comprobó en el dispositivo que TWRP no tiene `rsync` y que su `tar` no
+soporta xattrs, así que una copia fichero a fichero desde el recovery perdería
+las capabilities de los binarios. La actualización pasa a `gts9u-upgrade`, en
+el sistema arrancado. Sin probar todavía.

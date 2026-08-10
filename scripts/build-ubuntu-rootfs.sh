@@ -72,7 +72,7 @@ netplan.io,network-manager,wpasupplicant,
 openssh-server,avahi-daemon,
 protection-domain-mapper,qrtr-tools,
 iputils-ping,curl,wget,ca-certificates,
-nano,less,htop,rsync,
+nano,less,htop,rsync,unzip,acl,
 usbutils,pciutils,ethtool,evtest,i2c-tools,v4l-utils,
 strace,tree
 '
@@ -102,7 +102,8 @@ pipewire,pipewire-pulse,pipewire-audio,wireplumber,
 pulseaudio-utils,
 libspa-0.2-bluetooth,bluez,alsa-ucm-conf,alsa-utils,
 iio-sensor-proxy,upower,power-profiles-daemon,
-fonts-ubuntu,language-pack-es,language-pack-gnome-es
+fonts-ubuntu,language-pack-es,language-pack-gnome-es,
+locales-all
 '
 
 packages=$(printf '%s' "$base_packages" | tr -d ' \n')
@@ -137,6 +138,16 @@ ff02::2		ip6-allrouters
 EOF
 
 # --- locale, timezone and keyboard ---------------------------------------
+# The first-boot wizard offers the languages the system actually has locales
+# for, and an image that generated only one offered exactly one: Spanish, with
+# no way to pick anything else.  locales-all carries all 327 of them
+# pre-generated, which also keeps locale-gen — slow under emulation — out of
+# the build.
+#
+# Note what this does and does not give: every language can be *selected*, and
+# its formats, sorting and keyboard follow.  A translated GNOME still needs its
+# language pack, and only Spanish ships with one; the rest are one
+# `apt install language-pack-XX` away, or Settings' own language installer.
 echo '$locale UTF-8' > "\$target/etc/locale.gen"
 echo 'LANG=$locale' > "\$target/etc/default/locale"
 ln -sf "/usr/share/zoneinfo/$timezone" "\$target/etc/localtime"

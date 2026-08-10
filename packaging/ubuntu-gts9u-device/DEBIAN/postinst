@@ -15,6 +15,7 @@ ubuntu-gts9u-bluetooth-address.service:multi-user.target
 ubuntu-gts9u-sensors-resume.service:multi-user.target
 ubuntu-gts9u-pogo-firmware.service:multi-user.target
 ubuntu-gts9u-desktop-user.service:multi-user.target
+ubuntu-gts9u-desktop-user.path:multi-user.target
 ubuntu-gts9u-camera-relays.service:graphical.target
 '
 

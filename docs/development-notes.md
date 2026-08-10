@@ -1279,3 +1279,63 @@ Lo que esto obliga a cambiar: nada del port puede nombrar a un usuario.
 Si el asistente no llegara a salir, la vía de vuelta es TWRP: la raíz es ext4 y
 se monta desde ahí para crear una cuenta a mano, o se reflashea. Merece la pena
 tenerlo presente porque, sin cuenta y sin asistente, no hay forma de entrar.
+
+## Lo que el asistente no le da a la cuenta que crea
+
+`gnome-initial-setup` crea un administrador, y en Ubuntu eso significa `sudo`,
+`adm`, `plugdev` y `users`. Nada más. La cuenta que creaba el build antes
+estaba además en `video`, `render`, `input`, `audio`, `dialout`, `cdrom` y
+`netdev`, y esa diferencia no es cosmética: la regla udev de este port hace
+`chgrp video` sobre el `brightness` del LED de flash, así que sin ese grupo el
+mosaico de la linterna se apaga solo al pulsarlo y no enciende nada. Fue el
+primer fallo de la primera imagen sin cuenta, y se veía exactamente así.
+
+Lo aplica ahora `ubuntu-gts9u-desktop-user`, junto al *linger* y al drop-in de
+los relés. Con dos disparadores, porque uno solo no basta:
+
+- el servicio, en cada arranque;
+- una unidad `.path` sobre `/etc/passwd`, para el arranque en el que el
+  asistente crea la cuenta. Sin ella, todo lo que la cuenta necesita llegaría
+  en el arranque *siguiente*: la usuaria terminaría la configuración y se
+  encontraría sin cámaras y con una linterna que no hace nada, sin ninguna
+  pista de que reiniciar lo arregla.
+
+Queda una carrera conocida: los grupos de un proceso se fijan al iniciar sesión,
+así que si el asistente entra en la sesión antes de que la unidad `.path`
+termine, esa primera sesión sigue sin los grupos. Un reinicio lo resuelve.
+Cambiar el LED a un mecanismo por ACL evitaría la carrera, pero `uaccess` de
+logind sólo actúa sobre nodos de `/dev`, y un LED sólo tiene atributos en
+`/sys`.
+
+## El asistente sólo ofrece los idiomas que el sistema tiene generados
+
+La imagen generaba un único locale, `es_ES.UTF-8`, así que el asistente ofrecía
+exactamente un idioma. Se resuelve con `locales-all`, que trae los 327
+pregenerados y de paso evita ejecutar `locale-gen` bajo emulación.
+
+Distinción que conviene no perder: eso permite **elegir** cualquier idioma, con
+sus formatos, su orden alfabético y su teclado. Un GNOME traducido sigue
+necesitando su `language-pack-XX`, y sólo viaja el español; los demás son un
+`apt install` o el instalador de idiomas de Ajustes. Meter todos los paquetes
+de idioma serían más de 1 GiB en un ZIP que ya pesa casi uno.
+
+## Actualizar sin perder datos no cabe en el instalador de TWRP
+
+Conservar los datos significa sustituir el sistema fichero a fichero en vez de
+escribir la imagen sobre la partición. TWRP no tiene `rsync`, y su `tar` es el
+de toybox, sin soporte de xattrs ni ACLs —comprobado en el dispositivo—. Copiar
+una raíz de Ubuntu con esas herramientas **pierde silenciosamente todas las
+capabilities de fichero**: `ping`, `dumpcap` y compañía dejarían de funcionar
+sin que nada lo dijera, y el síntoma aparecería semanas después.
+
+Por eso la actualización vive en `gts9u-upgrade`, que se ejecuta en el sistema
+ya arrancado, donde sí está `rsync -aAX`. Lee el ZIP de la release, verifica la
+imagen contra su manifiesto, la monta por *loop* y sincroniza sobre la raíz
+viva excluyendo lo que es de la usuaria: `/home`, `/root`, las cuentas y sus
+grupos, las conexiones de red, las claves de host, el `machine-id`, el journal
+y la configuración de idioma y teclado. Después escribe las cuatro imágenes de
+arranque y las relee para comprobarlas, porque el kernel y los módulos que
+acaba de instalar tienen que ser el mismo conjunto firmado.
+
+No reinicia. Y **no está probado todavía**: se estrenará en la primera
+actualización real que haya datos que conservar.

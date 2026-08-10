@@ -1,0 +1,13 @@
+[Unit]
+Description=Watch for the account the first-boot wizard creates
+# Without this, everything the account needs — its device groups, its linger,
+# the camera relay drop-in — would only be applied on the *next* boot, because
+# the wizard creates the account long after multi-user.target.  The owner would
+# finish setup and find no cameras and a Flashlight tile that does nothing,
+# with no hint that rebooting fixes it.
+
+[Path]
+PathChanged=/etc/passwd
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,136 @@
+#!/bin/bash
+# Upgrade this installation from a release ZIP, keeping the account and its
+# data.
+#
+# Why this is not part of the TWRP installer, which is where it belongs at
+# first sight: preserving data means replacing the system file by file instead
+# of writing the image over the partition, and TWRP has no rsync and a tar with
+# no xattr support.  Copying a Ubuntu root there would silently drop every file
+# capability — ping and dumpcap among them — and nothing would say so.  The
+# running system has the tools to do it properly, so the upgrade runs here.
+#
+# What is kept: /home, /root, the accounts and their groups, the network
+# connections, the host keys, the machine id, the journal, and the locale and
+# keyboard the owner chose.  Everything else comes from the new image.
+#
+# This does not reboot and does not delete the ZIP.
+set -euo pipefail
+
+zip=${1-}
+keep_dir=/var/lib/ubuntu-gts9u/upgrade
+label=UBTS9U_UFS
+
+die() { echo "gts9u-upgrade: $*" >&2; exit 1; }
+
+[ "$(id -u)" = 0 ] || die 'run this with sudo'
+[ -n "$zip" ] || die "usage: gts9u-upgrade <release.zip>"
+[ -f "$zip" ] || die "no such file: $zip"
+
+for tool in rsync unzip losetup sha256sum e2fsck; do
+	command -v "$tool" >/dev/null || die "missing tool: $tool"
+done
+
+root_dev=$(findmnt -no SOURCE /)
+[ "$(blkid -o value -s LABEL "$root_dev")" = "$label" ] || \
+	die "/ is $root_dev, which is not a $label installation"
+
+# ---------------------------------------------------------------------------
+# Unpack and verify the new root filesystem
+# ---------------------------------------------------------------------------
+
+manifest=$(unzip -p "$zip" ROOTFS-IMAGE 2>/dev/null) || true
+[ -n "$manifest" ] || die 'the ZIP carries no ROOTFS-IMAGE manifest'
+want_sha=$(printf '%s' "$manifest" | cut -d' ' -f1)
+want_bytes=$(printf '%s' "$manifest" | cut -d' ' -f2)
+[ "${#want_sha}" -eq 64 ] || die 'malformed ROOTFS-IMAGE manifest'
+
+avail=$(df --output=avail -k / | tail -1)
+[ "$avail" -gt $(( want_bytes / 1024 + 1048576 )) ] || \
+	die 'not enough free space on / to unpack the new image'
+
+work=$(mktemp -d /var/tmp/gts9u-upgrade.XXXXXX)
+image=$work/rootfs.img
+new=$work/new
+mkdir -p "$new"
+loop=
+
+cleanup() {
+	mountpoint -q "$new" && umount "$new" || true
+	[ -n "$loop" ] && losetup -d "$loop" 2>/dev/null || true
+	rm -rf "$work"
+}
+trap cleanup EXIT
+
+echo 'gts9u-upgrade: unpacking the new root filesystem...'
+unzip -p "$zip" rootfs.img > "$image"
+got_sha=$(sha256sum "$image" | cut -d' ' -f1)
+[ "$got_sha" = "$want_sha" ] || die 'the unpacked image does not match its manifest'
+
+loop=$(losetup --find --show --read-only "$image")
+mount -o ro "$loop" "$new"
+[ -f "$new/etc/os-release" ] || die 'the new image has no /etc/os-release'
+grep -q '^ID=ubuntu$' "$new/etc/os-release" || die 'the new image is not Ubuntu'
+[ -d "$new/usr/lib/modules" ] || die 'the new image has no kernel modules'
+
+# ---------------------------------------------------------------------------
+# Replace the system, keep the owner's side of it
+# ---------------------------------------------------------------------------
+
+# Anything listed here survives untouched.  The accounts have to be on it or
+# the owner would be locked out of their own machine; the rest is what a person
+# would be annoyed to lose.
+keep=(
+	/home /root
+	/etc/passwd /etc/shadow /etc/group /etc/gshadow /etc/subuid /etc/subgid
+	/etc/sudoers.d /etc/ssh/ssh_host_* /etc/machine-id
+	/etc/hostname /etc/hosts /etc/timezone /etc/localtime
+	/etc/default/locale /etc/default/keyboard /etc/locale.gen
+	/etc/NetworkManager/system-connections
+	/var/lib/AccountsService /var/lib/systemd/linger /var/lib/bluetooth
+	/var/lib/ubuntu-gts9u /var/log
+)
+excludes=()
+for path in "${keep[@]}"; do
+	excludes+=(--exclude "$path")
+done
+# Mount points and anything the kernel owns: never copy into them.
+for path in /dev /proc /sys /run /tmp /mnt /media /lost+found; do
+	excludes+=(--exclude "$path")
+done
+
+mkdir -p "$keep_dir"
+date -u +%Y-%m-%dT%H:%M:%SZ > "$keep_dir/started"
+
+echo 'gts9u-upgrade: replacing the system (this takes a few minutes)...'
+# -aAX keeps permissions, ACLs and extended attributes, which is what carries
+# file capabilities.  --delete removes what the new release dropped.
+rsync -aAX --delete "${excludes[@]}" "$new/" /
+
+# ---------------------------------------------------------------------------
+# Boot images
+# ---------------------------------------------------------------------------
+#
+# The kernel and the DTB must match the modules that were just installed, so
+# these are not optional and not separable from the step above.
+for part in boot init_boot vendor_boot dtbo; do
+	target=/dev/disk/by-partlabel/$part
+	[ -b "$target" ] || die "no partition for $part"
+	size=$(blockdev --getsize64 "$target")
+	echo "gts9u-upgrade: writing $part..."
+	unzip -p "$zip" "$part.img" | dd of="$target" bs=4M conv=fsync status=none
+	want=$(unzip -p "$zip" "$part.img" | sha256sum | cut -d' ' -f1)
+	got=$(dd if="$target" bs=4M count=$(( size / 4194304 )) status=none | \
+		sha256sum | cut -d' ' -f1)
+	[ "$want" = "$got" ] || die "$part did not read back as written"
+done
+
+sync
+date -u +%Y-%m-%dT%H:%M:%SZ > "$keep_dir/finished"
+
+cat <<'EOF'
+
+gts9u-upgrade: done.  The system has been replaced and your account, your home
+directory and your network connections were kept.
+
+Reboot when you are ready.  Nothing was rebooted for you.
+EOF
