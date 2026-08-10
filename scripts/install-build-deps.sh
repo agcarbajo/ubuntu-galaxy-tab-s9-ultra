@@ -14,6 +14,7 @@ apt-get install -y --no-install-recommends \
 	arch-test \
 	apt-utils \
 	dpkg-dev \
+	gettext \
 	gdisk \
 	parted \
 	kpartx \

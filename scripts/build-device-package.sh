@@ -21,6 +21,32 @@ rm -rf -- "$staging"
 mkdir -p "$staging" "$out"
 cp -a "$src/." "$staging/"
 
+# --- flashlight tile translations -----------------------------------------
+# The one place where what ships is not byte-for-byte what is versioned: the
+# catalogues are kept as .po next to the extension, because a .po is reviewable
+# and a .mo is not, and they are compiled here.  The .po sources are then
+# dropped from the staging tree so the package carries only the compiled form.
+#
+# The tile's source string is English, so a language with no catalogue falls
+# back to "Flashlight" rather than showing everyone Spanish.
+extension=$staging/usr/share/gnome-shell/extensions/flashlight@ubuntu-gts9u
+if [ -d "$extension/po" ]; then
+	command -v msgfmt >/dev/null || {
+		echo 'msgfmt is missing; run scripts/install-build-deps.sh' >&2
+		exit 1
+	}
+	compiled=0
+	for po in "$extension"/po/*.po; do
+		lang=$(basename "$po" .po)
+		install -d "$extension/locale/$lang/LC_MESSAGES"
+		msgfmt -o "$extension/locale/$lang/LC_MESSAGES/gts9u-flashlight.mo" "$po"
+		compiled=$((compiled + 1))
+	done
+	rm -rf -- "$extension/po"
+	echo "flashlight translations compiled: $compiled"
+	[ "$compiled" -gt 0 ] || { echo 'no catalogues compiled' >&2; exit 1; }
+fi
+
 # Normalise ownership and modes: a package must not inherit whatever the build
 # host happened to have.
 chown -R root:root "$staging"

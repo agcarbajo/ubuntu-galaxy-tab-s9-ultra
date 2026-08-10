@@ -18,6 +18,7 @@ echo '=== rootfs construction ==='
 need mmdebstrap 'apt install mmdebstrap'
 need qemu-aarch64-static 'apt install qemu-user-static'
 need dpkg-deb 'apt install dpkg'
+need msgfmt 'apt install gettext (flashlight tile translations)'
 need debootstrap 'apt install debootstrap (fallback only)'
 
 echo '=== image assembly ==='

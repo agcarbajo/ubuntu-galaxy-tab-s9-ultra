@@ -1,7 +1,7 @@
 import Gio from 'gi://Gio';
 import GObject from 'gi://GObject';
 
-import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
+import {Extension, gettext as _} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as QuickSettings from 'resource:///org/gnome/shell/ui/quickSettings.js';
 
@@ -11,7 +11,10 @@ const FlashlightToggle = GObject.registerClass(
 class FlashlightToggle extends QuickSettings.QuickToggle {
     constructor() {
         super({
-            title: 'Linterna',
+            // The source string is English so that any language without a
+            // translation falls back to something readable, rather than
+            // showing Spanish to someone who picked Japanese.
+            title: _('Flashlight'),
             iconName: 'gts9u-flashlight-symbolic',
             toggleMode: true,
         });

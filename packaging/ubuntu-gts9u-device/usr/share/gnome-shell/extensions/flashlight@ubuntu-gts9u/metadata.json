@@ -3,5 +3,6 @@
   "name": "GTS9U Flashlight",
   "description": "A quick-settings flashlight toggle for the Galaxy Tab S9 Ultra",
   "shell-version": ["46"],
-  "version": 1
+  "gettext-domain": "gts9u-flashlight",
+  "version": 2
 }
