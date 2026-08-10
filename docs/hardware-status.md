@@ -42,14 +42,14 @@ sondea» como prueba de funcionamiento.
 | Componente | pmOS v1.71 | Ubuntu | Nivel | Notas |
 |---|---|---|---|---|
 | Arranque Android v4 + rootfs microSD | ✅ | ✅ | confirmado | Arranca desde microSD con `root=LABEL=UBTS9U_ROOT`. Initramfs propio en LZ4 legacy dentro de `init_boot`. Es la cadena de hasta v0.17 |
-| Arranque con rootfs en UFS | — | ⏳ | pendiente | v0.18 escribe la raíz en `userdata` y arranca con `root=LABEL=UBTS9U_UFS`. Solo cambia dónde busca la raíz el initramfs; el resto de la cadena es la misma. **Sin confirmar en el dispositivo** |
+| Arranque con rootfs en UFS | — | ✅ | confirmado | v0.18 escribe la raíz en `userdata` y arranca con `root=LABEL=UBTS9U_UFS`. Flasheada por sideload y arrancada en el dispositivo el 2026-08-10. Solo cambia dónde busca la raíz el initramfs; el resto de la cadena es la misma |
 | Pantalla interna 2960×1848@120 | ✅ | ✅ | medido | La recuperación cold-boot está validada bajo Ubuntu: el journal registra `panel id 00 00 00` → ciclo `pm_test=platform` → `80 00 04` |
 | GPU Adreno 740 | ✅ | ✅ | confirmado | Confirmado por la usuaria en el primer arranque. Falta medir `vulkaninfo`/`glmark2` |
 | Escritorio GNOME/Wayland | ✅ | ✅ | confirmado | GDM3 y GNOME 46 nativos, sin el workaround de cuentas greeter de Alpine |
 | Brillo / blanking | ✅ | ⏳ | heredado | Backlight DCS. El brillo automático no funciona en ninguna distro |
 | Táctil Goodix GT9916 | ✅ | ✅ | confirmado | Layout Samsung de eventos de 16 bytes |
 | Botones power y volumen | ✅ | ✅ | confirmado | |
-| UFS interna | ✅ | ⏳ | pendiente | Seis LUN `sda`–`sdf`. Desde v0.18 aloja también la raíz, en `userdata` (`sda34`, 939 GiB), etiquetada `UBTS9U_UFS`. **Se reutiliza la partición tal cual: no se crea, borra ni redimensiona ninguna**, y en el primer arranque solo se redimensiona el sistema de ficheros con `resize2fs`. Sin confirmar todavía en el dispositivo |
+| UFS interna | ✅ | ✅ | medido | Seis LUN `sda`–`sdf`. Desde v0.18 aloja también la raíz, en `userdata` (`sda34`, 1 007 985 586 176 B), etiquetada `UBTS9U_UFS`. **Se reutiliza la partición tal cual: no se crea, borra ni redimensiona ninguna**, y en el primer arranque solo se redimensiona el sistema de ficheros con `resize2fs` |
 | microSD | ✅ | ✅ | medido | Raíz por etiqueta `UBTS9U_ROOT` hasta v0.17; la partición se expande en el primer arranque. Desde 2026-08-03 se crea **con journal** y `errors=remount-ro`: sin journal un apagado sucio acabó tirando el arranque a modo emergencia. La misma decisión se hereda en la imagen de UFS |
 | Wi-Fi WCN7850 / ath12k | ✅ | ✅ | confirmado | Conectada a la red por la usuaria; SSH en uso para el desarrollo |
 | Bluetooth y A2DP | ✅ | ✅ | confirmado | La unidad espera a `bluetoothd`, alimenta correctamente `btmgmt` y reaplica la dirección nativa; controlador y A2DP validados |

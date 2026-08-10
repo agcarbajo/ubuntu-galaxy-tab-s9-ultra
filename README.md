@@ -16,13 +16,10 @@ software, and later Vulkan/Turnip-based gaming stacks, become usable.
 
 Ubuntu boots and is usable as a desktop tablet: GNOME on the native panel, with
 display, GPU, touch, audio, Wi-Fi, Bluetooth, sensors, USB host, DisplayPort and
-the pogo keyboard all confirmed on the physical hardware. The last release
-confirmed end to end on the tablet is **v0.17**, from a microSD.
-
-**v0.18** moves the root filesystem to the tablet's own internal storage and
-ships as a single flashable ZIP. Its install and first boot have not been
-confirmed on hardware yet; until they are, the rows below that depend on it say
-so.
+the pogo keyboard all confirmed on the physical hardware. The current release is
+**v0.18**: it installs to the tablet's own internal storage as a single
+flashable ZIP, and it has been flashed and booted from there on the tablet. A
+microSD is no longer part of the system.
 
 Evidence level per component, what is still inherited from the postmarketOS
 baseline rather than proven under Ubuntu, and the open problems are in
@@ -51,7 +48,7 @@ postmarketOS v1.71 baseline is kept outside Git.
 | **Audio/sensor DSPs** | ✅ | ADSP and SSC both reach `running`; prerequisite for audio and sensors |
 | **Package management** | ✅ | A stock Ubuntu userspace: `apt`, PPAs and snaps all work |
 | **SSH over Wi-Fi** | ✅ | Used for development throughout |
-| **Storage** | 🟡 | Root filesystem on the internal UFS, in the partition Android used for user data: no microSD needed and no partition table change. v0.18 is the first release that installs there, and its first boot from the UFS has not been confirmed on the tablet yet |
+| **Storage** | ✅ | Root filesystem on the internal UFS, in the partition Android used for user data: no microSD needed and no partition table change. Flashed and booted from there |
 | **Backlight** | ❔ | Inherited from postmarketOS, not re-validated here. Automatic brightness works on no distribution |
 | **USB gadget / RNDIS** | ❔ | Inherited, not re-validated |
 | **Ethernet (RTL8153)** | ❔ | Enumerates and loads firmware; real link and traffic untested |

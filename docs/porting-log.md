@@ -3185,3 +3185,34 @@ desmontaron. Con el código anterior no se habría desmontado ninguno.
 la microSD de la v0.17, porque TWRP monta la primera partición de la tarjeta.
 No cabe ahí un ZIP de 992 MB. Decir «cópialo a una microSD» sin más era un mal
 consejo: la vía practicable es **sideload** o un USB-OTG.
+
+---
+
+## Sesión 37 — arranca desde la UFS
+
+Fecha: 2026-08-10. Primer arranque real con la raíz en el almacenamiento
+interno.
+
+El ZIP con las tres correcciones (aritmética en MiB, desmontaje por el
+dispositivo resuelto, y pertenencia al ZIP comprobada contra el listado) se
+flasheó por sideload y la tablet arrancó desde `userdata`. La fila de
+almacenamiento del README y las dos de `hardware-status.md` pasan a confirmado.
+
+Antes de flashear se verificó en el propio dispositivo, sin escribir nada, que
+`unzip -p` de ziptool extrae el miembro de 3,1 GB con el SHA-256 exacto del
+manifiesto. Era el último paso de la cadena del que no había prueba en
+hardware.
+
+### Pendiente que aparece al usarlo: VLC entero en la imagen
+
+`obs-v4l2-gts9u` —el complemento V4L2 parcheado con el que se validaron las
+cámaras— declara `Depends: obs-studio`, y `obs-plugins` **recomienda** `vlc`.
+El rootfs base se construye con mmdebstrap sin `Recommends`, que es justo por
+lo que hubo que declarar a mano `snapd`, `yaru-theme-icon` y `gnome-keyring`;
+pero el gancho que instala los paquetes locales usa `apt-get install -y` sin
+más, y ahí los `Recommends` sí se honran. Por esa rendija entraron 77 MiB de
+VLC, de los cuales 41 MiB son `vlc-l10n`.
+
+OBS (21 MiB) sí es intencionado en la práctica: es la dependencia del
+complemento propio y la herramienta con la que se comprobaron las cuatro
+cámaras. VLC no lo es.
