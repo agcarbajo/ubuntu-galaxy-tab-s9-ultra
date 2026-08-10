@@ -24,7 +24,16 @@ keymap=${GTS9U_KEYMAP:-es}
 kernel_release=${KERNEL_RELEASE:-7.2.0-rc3}
 modules_root=${KERNEL_MODULES_ROOT:-}
 authorized_keys=${GTS9U_AUTHORIZED_KEYS:-}
-password=${GTS9U_PW:?set GTS9U_PW to the password for the graphical user}
+# No account is created by default.  The image ships without one and GNOME's
+# first-boot wizard asks the owner for a name, a password, the language, the
+# keyboard layout and the time zone, which is both nicer than inheriting a
+# stranger's `ubuntu` account and the only way this build stays reproducible:
+# it used to require a password that could not live in the repository, so a
+# clean build was impossible for anyone who did not already know it.
+#
+# Setting GTS9U_PW brings the old behaviour back for development images, where
+# an unattended SSH login matters more than the wizard.
+password=${GTS9U_PW:-}
 
 command -v mmdebstrap >/dev/null || {
 	echo 'mmdebstrap is missing; run scripts/install-build-deps.sh' >&2
@@ -81,6 +90,7 @@ strace,tree
 #                      available for this request" and fails.
 desktop_packages='
 ubuntu-desktop-minimal,gdm3,gnome-shell,gnome-session,gnome-control-center,
+gnome-initial-setup,
 gnome-terminal,nautilus,gnome-text-editor,
 gnome-snapshot,gstreamer1.0-gl,
 mutter,xdg-desktop-portal-gnome,xdg-user-dirs,
@@ -297,6 +307,36 @@ cp $stage_debs/*.deb "\$target/tmp/local-debs/"
 # cannot remove an already installed package that a local .deb Conflicts with.
 chroot "\$target" sh -c 'apt-get install -y /tmp/local-debs/*.deb'
 rm -rf "\$target/tmp/local-debs"
+
+# This is the one apt-get in the whole build that honours Recommends: the base
+# rootfs is bootstrapped without them, which is why snapd, yaru-theme-icon and
+# gnome-keyring have to be named explicitly higher up.  Through that gap came
+# 77 MiB of VLC, of which 41 MiB are translations: obs-v4l2-gts9u needs
+# obs-studio, obs-studio recommends obs-plugins, and obs-plugins recommends
+# vlc for its media-source plugin.
+#
+# --no-install-recommends is the wrong cure, because it would also drop
+# obs-plugins, which is where OBS keeps the sources this port tests cameras
+# with.  Removing the one unwanted branch afterwards keeps the resolution
+# intact.  Recommends are only pulled in on first install, so an upgrade will
+# not bring it back.
+# No --autoremove here.  It took obs-plugins with it the first time: that
+# package only ever arrived as a Recommends, so once the transaction was
+# reopened autoremove judged it unneeded — the exact loss this approach existed
+# to avoid.  The few remaining libvlc* libraries are under 2 MiB and not worth
+# a second guess.
+chroot "\$target" sh -c 'apt-get purge -y \
+	vlc vlc-bin vlc-data vlc-l10n "vlc-plugin-*" >/dev/null 2>&1' || true
+if chroot "\$target" dpkg-query -W -f '\${Status}' vlc 2>/dev/null | \
+	grep -q ' installed'; then
+	echo 'vlc survived the purge' >&2
+	exit 1
+fi
+if ! chroot "\$target" dpkg-query -W -f '\${Status}' obs-plugins 2>/dev/null | \
+	grep -q ' installed'; then
+	echo 'the vlc purge took obs-plugins with it' >&2
+	exit 1
+fi
 HOOK
 chmod +x "$hooks/local-packages.sh"
 
@@ -308,14 +348,37 @@ target="\$1"
 chroot "\$target" locale-gen
 chroot "\$target" update-locale LANG=$locale
 
-chroot "\$target" useradd -m -s /bin/bash -G sudo,adm,dialout,cdrom,audio,video,plugdev,netdev,input,render '$username'
-echo '$username:$password' | chroot "\$target" chpasswd
 chroot "\$target" passwd -l root
-chroot "\$target" /usr/libexec/ubuntu-gts9u-enable-flashlight '$username' || true
-# Camera relays are system services backed by this user's PipeWire graph. Keep
-# its user manager alive from boot, including before the first graphical login.
-install -d -m 0755 "\$target/var/lib/systemd/linger"
-install -m 0644 /dev/null "\$target/var/lib/systemd/linger/$username"
+
+if [ -n '$password' ]; then
+	# Development image: an account the build knows, so SSH works before
+	# anyone has touched the screen.
+	chroot "\$target" useradd -m -s /bin/bash -G sudo,adm,dialout,cdrom,audio,video,plugdev,netdev,input,render '$username'
+	echo '$username:$password' | chroot "\$target" chpasswd
+	chroot "\$target" /usr/libexec/ubuntu-gts9u-enable-flashlight '$username' || true
+	# Camera relays are system services backed by this user's PipeWire graph.
+	# Keep its user manager alive from boot, including before the first
+	# graphical login.
+	chroot "\$target" /usr/libexec/ubuntu-gts9u-desktop-user || true
+else
+	# Shipping image: no account, so GDM runs gnome-initial-setup and the
+	# owner creates their own.  GDM only takes that path when the machine has
+	# no ordinary accounts at all, which is exactly the state of this rootfs,
+	# and when it is told to.  Ubuntu ships custom.conf with every key
+	# commented out, so the key has to be written rather than uncommented.
+	mkdir -p "\$target/etc/gdm3"
+	if grep -q '^InitialSetupEnable' "\$target/etc/gdm3/custom.conf" 2>/dev/null; then
+		sed -i 's/^InitialSetupEnable.*/InitialSetupEnable=true/' \
+			"\$target/etc/gdm3/custom.conf"
+	else
+		sed -i '/^\[daemon\]/a InitialSetupEnable=true' \
+			"\$target/etc/gdm3/custom.conf"
+	fi
+	grep -q '^InitialSetupEnable=true' "\$target/etc/gdm3/custom.conf" || {
+		echo 'could not enable the first-boot wizard in gdm3 custom.conf' >&2
+		exit 1
+	}
+fi
 
 chroot "\$target" systemctl enable ssh.service
 chroot "\$target" systemctl enable NetworkManager.service
@@ -390,9 +453,18 @@ else
 fi
 
 if [ -n "$authorized_keys" ] && [ -f "$authorized_keys" ]; then
-	install -d -m 0700 -o 1000 -g 1000 "$rootfs/home/$username/.ssh"
-	install -m 0600 -o 1000 -g 1000 "$authorized_keys" \
-		"$rootfs/home/$username/.ssh/authorized_keys"
+	if [ -n "$password" ]; then
+		install -d -m 0700 -o 1000 -g 1000 "$rootfs/home/$username/.ssh"
+		install -m 0600 -o 1000 -g 1000 "$authorized_keys" \
+			"$rootfs/home/$username/.ssh/authorized_keys"
+	else
+		# There is no home directory to put this in yet.  /etc/skel is copied
+		# into whatever account the first-boot wizard creates, so the key
+		# arrives with it and the owner's name never has to be guessed.
+		install -d -m 0700 "$rootfs/etc/skel/.ssh"
+		install -m 0600 "$authorized_keys" \
+			"$rootfs/etc/skel/.ssh/authorized_keys"
+	fi
 fi
 
 echo '=== rootfs summary ==='

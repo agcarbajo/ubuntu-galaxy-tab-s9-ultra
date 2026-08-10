@@ -1236,3 +1236,46 @@ banco de pruebas en WSL usa el `unzip` de Debian, que sí devuelve 11: para que
 el banco valga hay que imitar el comportamiento de ziptool, y ahora lo hace con
 un envoltorio en el `PATH` de prueba. `validate-bundle.sh` exige además que el
 instalador ejecute `unzip -l` exactamente una vez.
+
+## La cuenta la crea la usuaria, no el build
+
+Hasta la v0.18 la imagen traía un usuario `ubuntu` creado en el
+`--customize-hook`, con la contraseña que llegara en `GTS9U_PW`. Dos problemas,
+y el segundo es el grave:
+
+1. Cualquiera que instalase heredaba la cuenta de otra persona.
+2. **`GTS9U_PW` era obligatorio y no puede estar en el repositorio.** Una build
+   limpia era literalmente imposible para quien no supiera esa contraseña. Se
+   descubrió al construir la v0.18: hubo que reutilizar el rootfs de la v0.17 e
+   instalarle los paquetes por encima, en lugar de reconstruirlo.
+
+Desde v0.19 la imagen no lleva cuenta y GDM lanza `gnome-initial-setup`, que
+pregunta nombre, contraseña, idioma, teclado y zona horaria. GDM toma ese
+camino cuando **no hay ninguna cuenta ordinaria** —el estado exacto del rootfs
+recién construido— y `InitialSetupEnable=true` está en `/etc/gdm3/custom.conf`.
+Ubuntu distribuye ese fichero con todas las claves comentadas, así que hay que
+**escribir** la línea, no descomentarla.
+
+Comprobado antes de adoptarlo, en lugar de suponerlo: `gnome-initial-setup`
+46.3 de noble arm64 conserva `gis-account-page.ui` y `gis-password-page.ui`, o
+sea que su página de creación de cuenta sigue ahí. `ubuntu-desktop-bootstrap`,
+el asistente Flutter de las imágenes de Raspberry Pi, **no está en el archivo
+de noble**; `oem-config`/`ubiquity` sí, pero son el camino pesado y basado en
+X.
+
+Lo que esto obliga a cambiar: nada del port puede nombrar a un usuario.
+
+- La extensión de la linterna se activa con un *gschema override*, no
+  escribiendo en el `gsettings` de una cuenta. Ningún otro fichero de la imagen
+  toca `enabled-extensions` —las extensiones de Ubuntu vienen del modo de
+  sesión de gnome-shell—, así que poner el valor por defecto ahí añade la
+  nuestra sin desplazar las suyas.
+- El *linger* lo aplica `ubuntu-gts9u-user-linger.service` en cada arranque,
+  para todo UID entre `UID_MIN` y `UID_MAX`, porque la cuenta no existe cuando
+  se construye la imagen.
+- La clave SSH, si se da, va a `/etc/skel`, que es lo que se copia a la cuenta
+  que cree el asistente.
+
+Si el asistente no llegara a salir, la vía de vuelta es TWRP: la raíz es ext4 y
+se monta desde ahí para crear una cuenta a mano, o se reflashea. Merece la pena
+tenerlo presente porque, sin cuenta y sin asistente, no hay forma de entrar.

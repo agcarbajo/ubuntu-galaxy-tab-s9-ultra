@@ -1,0 +1,15 @@
+[Unit]
+Description=Bind the device services to the account the owner created
+# The account comes from the first-boot wizard, so this cannot be resolved when
+# the image is built: it runs every boot and picks up whoever exists by then,
+# and it must be finished before the camera relays are started.
+After=systemd-logind.service systemd-user-sessions.service
+Before=ubuntu-gts9u-camera-relays.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/ubuntu-gts9u-desktop-user
+
+[Install]
+WantedBy=multi-user.target

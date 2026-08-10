@@ -14,6 +14,7 @@ ubuntu-gts9u-powerkey.service:multi-user.target
 ubuntu-gts9u-bluetooth-address.service:multi-user.target
 ubuntu-gts9u-sensors-resume.service:multi-user.target
 ubuntu-gts9u-pogo-firmware.service:multi-user.target
+ubuntu-gts9u-desktop-user.service:multi-user.target
 ubuntu-gts9u-camera-relays.service:graphical.target
 '
 
@@ -46,20 +47,19 @@ case "$1" in
 			udevadm trigger --action=add /sys/class/leds/white:flash >/dev/null 2>&1 || true
 		fi
 
-		# Installations built from scratch create the desktop user after this
-		# package is unpacked; upgrades already have it.  The rootfs hook calls
-		# the same helper after useradd for the first case.
-		/usr/libexec/ubuntu-gts9u-enable-flashlight ubuntu || true
+		# A fresh image has no account at all: the owner creates it in the
+		# first-boot wizard, so nothing here may name one.  New accounts get
+		# the Flashlight tile from the packaged gsettings override; this call
+		# is for accounts that already existed before that override did, and
+		# whose dconf therefore already has a value the default cannot reach.
+		for existing in $(getent passwd | awk -F: '$3 >= 1000 && $3 < 60000 { print $1 }'); do
+			/usr/libexec/ubuntu-gts9u-enable-flashlight "$existing" || true
+		done
 
-		# The system camera relays consume the desktop user's PipeWire graph.
-		# Keep that user manager alive before login too: otherwise an SSH login
-		# can create a temporary PipeWire socket which disappears on logout and
-		# leaves all four persistent V4L2 nodes serving black frames.
-		if getent passwd ubuntu >/dev/null 2>&1; then
-			install -d -m 0755 /var/lib/systemd/linger
-			install -m 0644 /dev/null /var/lib/systemd/linger/ubuntu
-			loginctl enable-linger ubuntu >/dev/null 2>&1 || true
-		fi
+		# Same reason: linger is applied per boot by
+		# ubuntu-gts9u-user-linger.service, which does not need to know who the
+		# owner is.  Run it now too so an upgrade does not have to reboot.
+		/usr/libexec/ubuntu-gts9u-desktop-user || true
 
 		# Verify rather than assume: a unit that silently failed to enable
 		# shows up on the tablet only as a feature that quietly does nothing.

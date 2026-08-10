@@ -236,8 +236,25 @@ sobre el symlink.
 
 ## Usuario, locale y entrada
 
-- Usuario gráfico `ubuntu` con `sudo`, creado dentro del `--customize-hook`.
-- Locale `es_ES.UTF-8`, zona horaria `Europe/Madrid`, teclado `es`.
+- **La imagen no lleva cuenta.** Desde v0.19 la crea la usuaria en el asistente
+  de primer arranque de GNOME (`gnome-initial-setup`), que GDM lanza cuando la
+  máquina no tiene ninguna cuenta ordinaria y `InitialSetupEnable=true` está en
+  `/etc/gdm3/custom.conf`. Ahí se eligen nombre, contraseña, idioma, teclado y
+  zona horaria.
+
+  Esto no es solo comodidad: la cuenta se creaba con una contraseña pasada en
+  `GTS9U_PW`, que no puede vivir en el repositorio, así que **nadie que no la
+  supiera podía hacer una build limpia**. Ahora una release no necesita ningún
+  secreto.
+
+  `GTS9U_PW` sigue existiendo para imágenes de desarrollo, donde interesa más
+  un SSH que funcione antes de que nadie toque la pantalla.
+- Nada del port puede nombrar ya a un usuario concreto. La extensión de la
+  linterna se activa con un *gschema override*, y el *linger* de systemd lo
+  aplica en cada arranque `ubuntu-gts9u-user-linger.service` para todo UID
+  entre `UID_MIN` y `UID_MAX`.
+- Locale `es_ES.UTF-8`, zona horaria `Europe/Madrid`, teclado `es`. Son solo el
+  punto de partida: el asistente los vuelve a preguntar.
 - Hostname distinto del de postmarketOS para no confundir dos sistemas en la
   misma LAN.
 - Escalado 200 % por defecto: 2960×1848 en 14,6" es inusable al 100 %.

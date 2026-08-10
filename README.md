@@ -84,9 +84,14 @@ not reboot, and on any failure it stops with TWRP still running. The exact
 boot chain, the installation procedure step by step and the recovery paths are
 in [docs/boot-strategy.md](docs/boot-strategy.md).
 
-Flash it **from external media**. The installer refuses to run from the
-tablet's internal storage, because that is the partition it is about to
-overwrite.
+Flash it **from external media** — `adb sideload` is the simplest. The
+installer refuses to run from the tablet's internal storage, because that is
+the partition it is about to overwrite.
+
+The image ships **without a user account**. On the first boot GNOME's setup
+wizard asks for a name, a password, the language, the keyboard layout and the
+time zone, the way any Ubuntu install does. Nothing in the image is named after
+a user, and building a release needs no password and no secret of any kind.
 
 ### Installing to the UFS without repartitioning
 

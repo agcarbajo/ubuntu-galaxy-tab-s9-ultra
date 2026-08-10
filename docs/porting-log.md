@@ -3216,3 +3216,55 @@ VLC, de los cuales 41 MiB son `vlc-l10n`.
 OBS (21 MiB) sí es intencionado en la práctica: es la dependencia del
 complemento propio y la herramienta con la que se comprobaron las cuatro
 cámaras. VLC no lo es.
+
+---
+
+## Sesión 38 — la cuenta deja de venir en la imagen
+
+Fecha: 2026-08-10. Build limpia con asistente de primer arranque, para probar
+en el dispositivo.
+
+### Motivo
+
+La imagen traía un usuario `ubuntu` creado en el build con la contraseña de
+`GTS9U_PW`. Además de heredar la cuenta de otra persona, esa variable hacía
+**imposible** una build limpia para quien no la supiera; la v0.18 tuvo que
+reutilizar el rootfs de la v0.17 por eso mismo.
+
+### Comprobado antes de decidir
+
+- `gnome-initial-setup` 46.3 está en noble arm64, sólo arrastra
+  `libsysmetrics1`, y conserva `gis-account-page.ui` y `gis-password-page.ui`:
+  su página de creación de cuenta sigue existiendo.
+- `ubuntu-desktop-bootstrap`, el asistente Flutter de las imágenes de
+  Raspberry Pi, **no está** en el archivo de noble.
+- `oem-config`/`ubiquity` sí están (24.04.5), pero son el camino pesado y
+  basado en X; el nativo para GNOME Wayland 46 es `gnome-initial-setup`.
+- Nada en la imagen fija `enabled-extensions`: las extensiones de Ubuntu vienen
+  del modo de sesión de gnome-shell, así que un *override* puede poner la
+  nuestra sin desplazar ninguna.
+
+### Lo que había que desenganchar del nombre `ubuntu`
+
+Cuatro sitios en el build y dos en el paquete. El que casi se escapa:
+`ubuntu-gts9u-camera-relays.service` llevaba `User=ubuntu`, `Group=ubuntu` y
+`XDG_RUNTIME_DIR=/run/user/1000` fijos. Sin esa cuenta el servicio no arranca
+siquiera, así que la imagen con OOBE se habría quedado **sin cámaras**, que es
+justo una de las cosas a verificar. Se detectó revisando el resto del paquete,
+no al probarlo.
+
+Solución: `ubuntu-gts9u-desktop-user.service` corre en cada arranque, aplica
+*linger* a todo UID entre `UID_MIN` y `UID_MAX`, y escribe en `/run` un
+*drop-in* con el `User=`, el `XDG_RUNTIME_DIR` y el orden contra
+`user@UID.service` del dueño real. El servicio de relés depende de él y lleva
+una condición sobre ese drop-in, para que una máquina cuyo asistente aún no se
+ha completado no entre en un bucle de reinicio cada dos segundos.
+
+La extensión de la linterna pasa a un *gschema override*, y la clave SSH, si se
+da, va a `/etc/skel`.
+
+### De paso, VLC
+
+`apt-get install -y` del gancho de paquetes locales era el único sitio del
+build que honra `Recommends`. Se purga VLC después de instalar, en vez de usar
+`--no-install-recommends`, que también dejaría fuera `obs-plugins`.

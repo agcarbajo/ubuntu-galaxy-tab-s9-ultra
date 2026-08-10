@@ -1,0 +1,13 @@
+# The Flashlight quick-settings tile is a system extension, and it has to be
+# enabled for whoever ends up owning the device.  Writing it into one user's
+# gsettings only works when the build knows that user's name in advance, which
+# stopped being true when the account moved to the first-boot wizard.
+#
+# Nothing else in this image sets enabled-extensions: Ubuntu's own extensions
+# come from the session mode in gnome-shell, not from this key, so setting the
+# default here adds ours without displacing any of theirs.
+#
+# This changes the default, so the owner can still turn it off in Extensions
+# and that choice will win.
+[org.gnome.shell]
+enabled-extensions=['flashlight@ubuntu-gts9u']

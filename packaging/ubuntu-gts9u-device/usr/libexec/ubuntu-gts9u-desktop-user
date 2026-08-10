@@ -1,0 +1,76 @@
+#!/bin/sh
+# Bind the device services that need a desktop user to whichever account the
+# owner created, at every boot.
+#
+# The image ships with no account: it is created in the first-boot wizard, so
+# nothing can be baked in at build time.  Two things depend on knowing it:
+#
+#   * linger.  The camera relays are system services backed by a user's
+#     PipeWire graph.  Without linger that graph only exists while someone is
+#     logged in, and an SSH login can create a temporary PipeWire socket that
+#     disappears on logout, leaving all four persistent V4L2 nodes serving
+#     black frames.
+#   * the relay service itself, which has to run *as* that user, with that
+#     user's runtime directory.  systemd has no way to spell "whoever owns this
+#     machine" in a unit file, so the answer is written into a drop-in here.
+#
+# Everything this touches lives under /run, so it is recomputed from scratch on
+# every boot and never goes stale.
+set -eu
+
+relay_unit=ubuntu-gts9u-camera-relays.service
+dropin_dir=/run/systemd/system/$relay_unit.d
+dropin=$dropin_dir/50-desktop-user.conf
+
+min_uid=$(awk '/^UID_MIN/ { print $2 }' /etc/login.defs 2>/dev/null | head -1)
+max_uid=$(awk '/^UID_MAX/ { print $2 }' /etc/login.defs 2>/dev/null | head -1)
+[ -n "${min_uid:-}" ] || min_uid=1000
+[ -n "${max_uid:-}" ] || max_uid=60000
+
+# Ordinary login accounts only, lowest UID first: the owner's account is the
+# one the wizard made, and on this image it is the only one.
+humans=$(getent passwd | awk -F: -v lo="$min_uid" -v hi="$max_uid" \
+	'$3 >= lo && $3 <= hi && $7 !~ /(nologin|false)$/ { print $3":"$1 }' | sort -n)
+
+if [ -z "$humans" ]; then
+	echo 'ubuntu-gts9u: no desktop user yet; the first-boot wizard has not run' >&2
+	exit 0
+fi
+
+for entry in $humans; do
+	name=${entry#*:}
+	install -d -m 0755 /var/lib/systemd/linger
+	[ -e "/var/lib/systemd/linger/$name" ] || \
+		install -m 0644 /dev/null "/var/lib/systemd/linger/$name"
+	# loginctl needs a running logind, which is not the case in the chroot the
+	# image is built in.  The stamp file above is the whole of what
+	# enable-linger writes, so only ask logind when it is actually there.
+	if [ -d /run/systemd/system ]; then
+		loginctl enable-linger "$name" >/dev/null 2>&1 || true
+	fi
+	echo "ubuntu-gts9u: linger enabled for $name"
+done
+
+owner=$(printf '%s\n' "$humans" | head -1)
+uid=${owner%%:*}
+name=${owner#*:}
+
+mkdir -p "$dropin_dir"
+cat > "$dropin" <<EOF
+# Written at boot by ubuntu-gts9u-desktop-user.  Do not edit: it is recreated
+# from the account list on every boot.
+[Unit]
+After=user@$uid.service
+Wants=user@$uid.service
+
+[Service]
+User=$name
+Group=$name
+Environment=XDG_RUNTIME_DIR=/run/user/$uid
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus
+EOF
+echo "ubuntu-gts9u: camera relays bound to $name (uid $uid)"
+
+if [ -d /run/systemd/system ]; then
+	systemctl daemon-reload || true
+fi
