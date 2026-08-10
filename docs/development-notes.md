@@ -1165,3 +1165,37 @@ La comprobación de `validate-bundle.sh` que prohibía nombrar `userdata` en el
 instalador se ha convertido en dos: `userdata` ya se puede nombrar, pero ningún
 `mkfs`, `parted`, `sgdisk`, `sfdisk` ni `wipefs` puede aparecer. La garantía
 que importa no era «no tocar esa partición», era «no tocar la tabla».
+
+## El shell de TWRP hace aritmética de 32 bits, y una imagen de 3 GiB no cabe
+
+El primer flasheo de la v0.18 abortó con «malformed rootfs image size» sobre un
+ZIP correcto. La imagen mide 3 271 557 120 bytes; el instalador comprobaba
+`[ "$ROOTFS_SIZE" -gt 0 ]` y esa comparación era falsa.
+
+TWRP ejecuta `update-binary` con `/sbin/sh`, que es un enlace a
+`/system/bin/sh`: **mksh**. El binario es ELF de 64 bits para aarch64 —lo cual
+despista— pero el tipo aritmético de mksh es `int32_t`. 3 271 557 120 supera
+2³¹, así que se interpreta como −1 023 410 176 y cualquier `-gt 0` falla. Todas
+las comprobaciones anteriores habían pasado porque los tamaños de las
+particiones de arranque (100 663 296 y menores) sí caben en 32 bits: el primer
+número que pasaba de 2 GiB fue el primero que falló.
+
+Reglas que se derivan:
+
+- **Ningún valor manejado por el instalador puede pasar de 2 GiB.** Los tamaños
+  se cuentan en MiB. El manifiesto `ROOTFS-IMAGE` publica los bytes para las
+  personas y para las comprobaciones de este repositorio, y **además** los MiB,
+  que es el campo que lee el instalador.
+- **`blockdev --getsize64` sobre `userdata` no se puede comparar en el shell**:
+  son ~1,008 × 10¹². La capacidad se comprueba leyendo con `dd` el último MiB
+  que ocupará la imagen y contando los bytes devueltos; una partición que se
+  queda corta devuelve menos, o nada.
+- **Probar el instalador con `bash` no sirve.** El primer banco de pruebas con
+  particiones loopback pasó en verde justo antes de que el flasheo real
+  fallase, porque `bash` tiene aritmética de 64 bits. El banco ahora lo ejecuta
+  con `mksh`, y `validate-bundle.sh` rechaza cualquier literal de diez cifras
+  o más en el instalador.
+
+No es un problema de TWRP ni de este dispositivo: es lo que hay en cualquier
+recovery con el shell de Android, y volverá a morder a la primera imagen que
+crezca por encima de 2 GiB.

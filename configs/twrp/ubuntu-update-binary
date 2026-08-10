@@ -145,31 +145,57 @@ if [ "$HAS_ROOTFS_IMAGE" -eq 1 ]; then
             ;;
     esac
 
+    # Everything below counts in MiB, and that is not tidiness: TWRP runs this
+    # script with mksh, whose arithmetic and test(1) are 32-bit signed.  A
+    # 3 271 557 120 byte image wraps to a negative number there, so `-gt 0` on
+    # the byte count rejects a perfectly good ZIP.  That is exactly how v0.18
+    # failed its first flash.  No value here may exceed 2 GiB.
     ROOTFS_LINE="$(unzip -p "$ZIPFILE" ROOTFS-IMAGE 2>/dev/null)"
     ROOTFS_SHA="$(echo "$ROOTFS_LINE" | cut -d' ' -f1)"
-    ROOTFS_SIZE="$(echo "$ROOTFS_LINE" | cut -d' ' -f2)"
+    ROOTFS_MIB="$(echo "$ROOTFS_LINE" | cut -d' ' -f3)"
     [ "${#ROOTFS_SHA}" -eq 64 ] || abort "malformed rootfs image manifest"
-    [ "$ROOTFS_SIZE" -gt 0 ] 2>/dev/null || abort "malformed rootfs image size"
-    ROOTFS_MIB=$((ROOTFS_SIZE / 1048576))
-    [ $((ROOTFS_MIB * 1048576)) -eq "$ROOTFS_SIZE" ] || \
-        abort "the rootfs image is not a whole number of MiB"
+    [ "$ROOTFS_MIB" -gt 0 ] 2>/dev/null || abort "malformed rootfs image size"
 
-    DATA_SIZE="$(blkdev_size "$DATA_TARGET")"
-    [ "$DATA_SIZE" -ge "$ROOTFS_SIZE" ] || \
-        abort "userdata is $DATA_SIZE bytes, smaller than the $ROOTFS_SIZE byte image"
+    # Does userdata really extend past the end of the image?  Reading the last
+    # MiB the image will occupy answers that without naming the size of the
+    # partition, which is a number no shell here can hold: a partition that
+    # stops short returns fewer bytes, or none at all.
+    PROBE="$(dd if="$DATA_TARGET" bs=1M skip=$((ROOTFS_MIB - 1)) count=1 \
+        2>/dev/null | wc -c)"
+    [ "$PROBE" -eq 1048576 ] || \
+        abort "userdata is smaller than the $ROOTFS_MIB MiB image"
 
     # A partition that is still mounted would be written underneath a live
     # filesystem, and TWRP would then flush its own stale cache over what we
-    # just wrote.  Plain umount, not lazy: if something is genuinely using it,
-    # stopping is the correct outcome.
-    while read device mountpoint rest; do
-        [ "$device" = "$DATA_TARGET" ] || continue
+    # just wrote.  TWRP does mount this one: it offers it as "Internal
+    # Storage".
+    #
+    # /proc/mounts names the resolved device, never the by-name symlink, so
+    # both spellings have to be matched or the loop below quietly finds
+    # nothing.
+    DATA_REAL="$(readlink -f "$DATA_TARGET" 2>/dev/null)"
+    [ -n "$DATA_REAL" ] || DATA_REAL="$DATA_TARGET"
+
+    data_mountpoints() {
+        while read device mountpoint rest; do
+            case "$device" in
+                "$DATA_TARGET"|"$DATA_REAL") echo "$mountpoint" ;;
+            esac
+        done < /proc/mounts
+    }
+
+    for mountpoint in $(data_mountpoints); do
         ui_print "Unmounting $mountpoint before writing Ubuntu."
-        umount "$mountpoint" || abort "cannot unmount $mountpoint"
-    done <<UNMOUNT
-$(grep "^$DATA_TARGET " /proc/mounts 2>/dev/null)
-UNMOUNT
-    umount /data >/dev/null 2>&1 || true
+        # Plain umount, not lazy: a lazy unmount detaches the name but leaves
+        # the filesystem live, which is precisely the cache that would land on
+        # top of the image afterwards.
+        umount "$mountpoint" || umount -f "$mountpoint" || \
+            abort "cannot unmount $mountpoint; nothing has been written"
+    done
+
+    remaining="$(data_mountpoints)"
+    [ -z "$remaining" ] || \
+        abort "userdata is still mounted at $remaining; nothing has been written"
 fi
 
 VBMETA_TARGET="$(resolve_part vbmeta)"

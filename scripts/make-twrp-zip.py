@@ -135,7 +135,14 @@ def main() -> None:
                 f"the root filesystem image is {rootfs_size} bytes, "
                 "which is not a whole number of MiB"
             )
-        rootfs_manifest = f"{digest(args.rootfs)} {rootfs_size} rootfs.img\n"
+        # The size is published twice on purpose.  The byte count is for people
+        # and for this repository's own checks; the MiB count is what the
+        # installer reads, because TWRP's mksh does 32-bit arithmetic and any
+        # image over 2 GiB wraps negative the moment a byte count is compared.
+        rootfs_mib = rootfs_size // (1024 * 1024)
+        rootfs_manifest = (
+            f"{digest(args.rootfs)} {rootfs_size} {rootfs_mib} rootfs.img\n"
+        )
 
     overlay_files: list[Path] = []
     overlay_manifest = ""

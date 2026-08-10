@@ -3082,3 +3082,54 @@ Se rehízo el kernel para incluir el parche 3 de `v4l2loopback` que había en el
 trabajo sobre el relevo entre cámaras sigue en curso y sin commitear; la
 documentación pasa a decir lo que de verdad ocurre: cada cámara y el flash
 funcionan, y cambiar de una a otra todavía falla.
+
+---
+
+## Sesión 35 — el primer flasheo real de la v0.18, y por qué abortó
+
+Fecha: 2026-08-10. Dos intentos en la tablet, ninguno llegó a escribir nada.
+
+### Intento 1, desde el almacenamiento interno
+
+`Installing zip file '/sdcard/ubuntu-24.04-gts9uwifi-v0.18-sm-x910-twrp.zip'` →
+`ERROR: the ZIP is stored on the installation target`.
+
+Esto es la protección funcionando: `/sdcard` es `/data/media`, dentro de la
+partición que el instalador va a sobrescribir. No hay nada que arreglar aquí,
+salvo que el README y `boot-strategy.md` ya lo decían y conviene que se lea
+antes.
+
+### Intento 2, por sideload
+
+`Installing zip file '/sideload/package.zip'` → `ERROR: malformed rootfs image
+size`, con el ZIP intacto y verificado.
+
+La causa es que TWRP ejecuta `update-binary` con **mksh**, cuya aritmética es de
+32 bits aunque el binario sea aarch64 de 64. La imagen mide 3 271 557 120
+bytes, que pasa de 2³¹ y se lee como negativo, así que `[ "$ROOTFS_SIZE" -gt 0 ]`
+resultaba falso. Las comprobaciones previas pasaron porque todos los tamaños
+anteriores (100 663 296 y menores) caben en 32 bits.
+
+Se confirmó extrayendo el ramdisk de `TWRP-gts9u-V2.img`: `/sbin/sh` →
+`/system/bin/sh`, ELF aarch64, y sus cadenas incluyen «Use 'exit' to leave
+mksh». El mismo ramdisk confirmó que sí están disponibles `wc`, `dd`, `unzip`,
+`sha256sum`, `tune2fs`, `e2fsck`, `blockdev`, `cut` y `resize2fs`.
+
+### Qué se cambió
+
+- El manifiesto `ROOTFS-IMAGE` publica ahora un tercer campo con el tamaño en
+  MiB, y el instalador lee ese. Los bytes se conservan para las personas y para
+  `validate-bundle.sh`.
+- La comprobación de capacidad ya no compara `blockdev --getsize64` de
+  `userdata` (~1,008 × 10¹², imposible en ese shell): lee con `dd` el último MiB
+  que ocupará la imagen y comprueba que devuelve 1 048 576 bytes.
+- `validate-bundle.sh` rechaza cualquier literal de diez cifras o más en el
+  código del instalador.
+- El banco de pruebas de loopback pasa a ejecutarse con `mksh` en lugar de
+  `bash`. Ese es el fallo de método real: el banco había dado verde
+  inmediatamente antes del flasheo, porque `bash` cuenta con 64 bits.
+
+### Estado
+
+v0.18 repaquetada. La imagen de raíz no cambia; sólo el instalador y el
+manifiesto. Sigue sin arrancar en la tablet.

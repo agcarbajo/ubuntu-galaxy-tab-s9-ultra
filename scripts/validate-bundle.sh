@@ -212,11 +212,18 @@ if [ -n "$zip" ] && [ -f "$zip" ]; then
 		fi
 		rootfs_line=$(unzip -p "$zip" ROOTFS-IMAGE 2>/dev/null)
 		rootfs_bytes=$(printf '%s\n' "$rootfs_line" | cut -d' ' -f2)
+		rootfs_mib=$(printf '%s\n' "$rootfs_line" | cut -d' ' -f3)
 		if [ "${rootfs_bytes:-0}" -gt 0 ] 2>/dev/null && \
 			[ $((rootfs_bytes % 1048576)) -eq 0 ]; then
 			pass "the root filesystem image is $((rootfs_bytes / 1048576)) whole MiB"
 		else
 			fail "the root filesystem image size '$rootfs_bytes' is not whole MiB"
+		fi
+		if [ "${rootfs_mib:-0}" -gt 0 ] 2>/dev/null && \
+			[ "$rootfs_mib" -eq $((rootfs_bytes / 1048576)) ]; then
+			pass "the manifest publishes the size in MiB as well as bytes"
+		else
+			fail "the manifest MiB field '$rootfs_mib' does not match the byte count"
 		fi
 	else
 		info 'no rootfs.img: this is an update ZIP, not a full installation'
@@ -245,6 +252,22 @@ if [ -n "$zip" ] && [ -f "$zip" ]; then
 			pass 'the installer refuses to run from the partition it overwrites'
 		else
 			fail 'the installer does not check where the ZIP itself is stored'
+		fi
+
+		# TWRP runs the installer with mksh, whose arithmetic and test(1) are
+		# 32-bit signed.  Any quantity above 2 GiB wraps to a negative number
+		# there, and the symptom is an abort on a ZIP that is perfectly fine —
+		# which is how v0.18 failed its first flash, on the image's own byte
+		# count.  Sizes in the installer are therefore counted in MiB, and a
+		# ten-digit literal is the cheapest sign that someone went back to
+		# bytes.
+		if printf '%s\n' "$installer" | sed 's/#.*//' | \
+			grep -qE '[^0-9][0-9]{10,}'; then
+			fail 'installer code has a literal above 2 GiB; mksh cannot compare it'
+			printf '%s\n' "$installer" | sed 's/#.*//' | \
+				grep -nE '[^0-9][0-9]{10,}' | head -3 | sed 's/^/      /'
+		else
+			pass 'installer code keeps every number inside 32-bit range'
 		fi
 
 		# Check executable code, not prose: the installer's own comments name
