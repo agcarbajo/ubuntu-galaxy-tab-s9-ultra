@@ -1451,3 +1451,21 @@ La regla que sale de esto: al preservar estado, **conservar directorios de
 estado enteros, no el fichero concreto que uno recuerda**. La lista de
 `gts9u-upgrade` pasa a incluir `/etc/netplan`, `/var/lib/systemd`,
 `/var/lib/NetworkManager` y compañía.
+
+## El Rp no era: queda la corriente
+
+Barrido completo con reconexión forzada en cada paso, que es la única forma
+válida de probarlo —un sink lee el Rp al conectarse—: `CC_CNTL1` a `0x40`,
+`0x50`, `0x60` y `0x70`, verificado por lectura tras cada *attach*. El hub no
+enumera con ninguno. **La hipótesis del Rp está descartada.**
+
+De las diferencias entre el PC que sí lo levanta y esta tablet queda la
+corriente. El SM5714 define `OTG_CURRENT_500/900/1200/1500mA` en los bits 7:6
+de `BSTCNTL1` —de ahí que 900 mA a 5,1 V sea `0x46`— y **la tabla de modos de
+Samsung elige 900 mA en todas las filas OTG** de esta placa. Conviene no
+confundirse con el `POWER_SUPPLY_PROP_VOLTAGE_MAX` de su driver, que imprime
+«set otg current limit 1500mA» y **no escribe ningún registro**: es un log, no
+una configuración.
+
+Así que subirlo se aparta de lo que hace el fabricante, aunque el chip lo
+admita. Por eso `otg_ma` es un parámetro con 900 mA por defecto, igual que hoy.

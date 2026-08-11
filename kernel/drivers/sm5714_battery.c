@@ -54,6 +54,14 @@
 #define SM5714_CHG_REG_BSTCNTL1		0x23
 #define  SM5714_CHG_BSTCNTL1_OTG_MASK	(GENMASK(7, 6) | GENMASK(3, 0))
 #define  SM5714_CHG_BSTCNTL1_5V1_900MA	0x46
+/*
+ * BSTCNTL1 bits 7:6 select the OTG current limit and bits 3:0 the boost
+ * voltage, which is why 900 mA at 5.1 V spells 0x46.  The SM5714 also offers
+ * 1200 and 1500 mA; Samsung's operating table picks 900 mA in every OTG row on
+ * this board, so that stays the default here.
+ */
+#define  SM5714_CHG_BSTCNTL1_5V1	0x06
+#define  SM5714_CHG_BSTCNTL1_MA_SHIFT	6
 #define SM5714_CHG_REG_DEVICEID		0x50
 
 /* MUIC block (8-bit registers, at SM5714_MUIC_I2C_ADDR). */
@@ -129,6 +137,24 @@ static struct sm5714_battery *sm5714_primary;
 static int sm5714_get_online_raw(struct sm5714_battery *sm);
 static int sm5714_get_online(struct sm5714_battery *sm);
 static int sm5714_get_temp(struct sm5714_battery *sm, int *val);
+/*
+ * OTG current limit, as the BSTCNTL1 selector: 0 = 500 mA, 1 = 900 mA,
+ * 2 = 1200 mA, 3 = 1500 mA.  Samsung uses 900 mA in every OTG operating mode
+ * on this board, so that is the default and nothing changes for the docks and
+ * dongles already validated with it.
+ *
+ * It exists as a knob because a bus-powered USB-C hub that a PC drives fine
+ * never brings its controller up here; the advertised Rp, the OTG data path,
+ * the interrupt masks and a lost suspend event have all been measured and
+ * excluded, and what the port can supply is what is left.  Raising it departs
+ * from the vendor's configuration, so it is opt-in and reversible rather than
+ * a new default nobody asked for.
+ */
+static unsigned int otg_ma = 1;
+module_param(otg_ma, uint, 0644);
+MODULE_PARM_DESC(otg_ma,
+		 "OTG current limit: 0=500mA, 1=900mA (default), 2=1200mA, 3=1500mA");
+
 int sm5714_battery_set_pd_contract(unsigned int mv, unsigned int ma);
 int sm5714_battery_set_direct_charge(bool active);
 int sm5714_battery_set_otg(bool active);
@@ -551,7 +577,9 @@ int sm5714_battery_set_otg(bool active)
 			ret = sm5714_chg_update_bits(
 				sm, SM5714_CHG_REG_BSTCNTL1,
 				SM5714_CHG_BSTCNTL1_OTG_MASK,
-				SM5714_CHG_BSTCNTL1_5V1_900MA);
+				SM5714_CHG_BSTCNTL1_5V1 |
+				((otg_ma & 3) <<
+				 SM5714_CHG_BSTCNTL1_MA_SHIFT));
 		if (!ret)
 			ret = sm5714_chg_update_bits(
 				sm, SM5714_CHG_REG_CNTL2,
@@ -565,7 +593,9 @@ int sm5714_battery_set_otg(bool active)
 
 		if (!ret)
 			dev_info(sm->dev,
-				 "enabled USB OTG boost at 5.1 V / 900 mA\n");
+				 "enabled USB OTG boost at 5.1 V / %u mA\n",
+				 (const unsigned int []){ 500, 900, 1200,
+							  1500 }[otg_ma & 3]);
 	} else {
 		mutex_lock(&sm->chg_lock);
 		ret = sm5714_chg_update_bits(
