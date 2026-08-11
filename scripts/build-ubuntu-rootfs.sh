@@ -356,10 +356,16 @@ echo "language packs installed: \$installed_langs"
 # No --autoremove here.  It took obs-plugins with it the first time: that
 # package only ever arrived as a Recommends, so once the transaction was
 # reopened autoremove judged it unneeded — the exact loss this approach existed
-# to avoid.  The few remaining libvlc* libraries are under 2 MiB and not worth
-# a second guess.
+# to avoid.  Noble's apt nevertheless also removed obs-plugins when the VLC
+# plugin family was purged from a freshly bootstrapped arm64 rootfs.  Reinstall
+# it explicitly without Recommends: this restores the package that provides
+# OBS's source framework without pulling VLC back in.  The few remaining
+# libvlc* libraries are under 2 MiB and not worth a second guess.
 chroot "\$target" sh -c 'apt-get purge -y \
 	vlc vlc-bin vlc-data vlc-l10n "vlc-plugin-*" >/dev/null 2>&1' || true
+chroot "\$target" sh -c \
+	'DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+	obs-plugins >/dev/null'
 if chroot "\$target" dpkg-query -W -f '\${Status}' vlc 2>/dev/null | \
 	grep -q ' installed'; then
 	echo 'vlc survived the purge' >&2
@@ -368,6 +374,12 @@ fi
 if ! chroot "\$target" dpkg-query -W -f '\${Status}' obs-plugins 2>/dev/null | \
 	grep -q ' installed'; then
 	echo 'the vlc purge took obs-plugins with it' >&2
+	exit 1
+fi
+if ! cmp -s \
+	"\$target/usr/lib/aarch64-linux-gnu/obs-plugins/linux-v4l2.so" \
+	"\$target/usr/lib/obs-v4l2-gts9u/linux-v4l2.so"; then
+	echo 'the OBS V4L2 diversion no longer contains the gts9u plugin' >&2
 	exit 1
 fi
 HOOK

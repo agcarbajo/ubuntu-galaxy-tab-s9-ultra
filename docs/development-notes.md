@@ -1386,11 +1386,18 @@ parcheado con el que se validan las cuatro cámaras— depende de él. No está
 porque el port quiera distribuir un estudio de streaming: son 21 MiB y una
 aplicación que la mayoría de la gente no usará.
 
-**Es temporal, y sale cuando el trabajo de cámaras esté cerrado.** Se queda
-mientras el relevo entre cámaras siga sin pulir, porque es la herramienta con
-la que se reproduce ese fallo. Al quitarlo hay que quitar también
-`obs-plugins`, y comprobar antes que ninguna verificación de cámaras del
-proyecto dependa de él.
+**Es temporal, y sale cuando el trabajo de cámaras esté cerrado.** Se conserva
+en la v0.26 porque sigue siendo tanto la herramienta de verificación como el
+paquete que sustituye el selector V4L2 de OBS para ocultar los endpoints CAMSS
+crudos. Al quitarlo hay que quitar también `obs-plugins`, y comprobar antes que
+un OBS instalado después enumera sólo las cuatro cámaras procesadas.
+
+El hook del rootfs instala los paquetes locales honrando `Recommends`, por lo
+que `obs-plugins` arrastra VLC. La limpieza purga VLC y después reinstala
+explícitamente `obs-plugins --no-install-recommends`: en Noble, purgar la
+familia `vlc-plugin-*` también retiró `obs-plugins` aunque no se pidió
+`autoremove`. El build compara además el plugin V4L2 activo con la copia de
+`obs-v4l2-gts9u`; no basta con que el paquete figure como instalado.
 
 ## El puerto USB-C pierde conexiones, y el chip no siempre avisa
 

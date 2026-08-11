@@ -3606,3 +3606,18 @@ flash terminó en cero.
 No se cambió CCM ni AWB. Las escenas disponibles no contienen una carta gris o
 de color controlada; ajustar una matriz para una pared y una mesa iluminada por
 flash habría sido adivinar y podía empeorar el resto de iluminaciones.
+
+### La primera construcción limpia de la v0.26 encontró otro fallo
+
+La primera construcción completa llegó hasta el hook de paquetes locales y se
+detuvo correctamente: la purga de `vlc-plugin-*` había retirado también
+`obs-plugins`. Eso dejaba `obs-studio` y `obs-v4l2-gts9u` instalados, pero sin el
+paquete que aporta las fuentes de OBS. La comprobación que ya existía evitó
+publicar un ZIP incompleto.
+
+El hook reinstala ahora `obs-plugins` con `--no-install-recommends` después de
+retirar VLC. Se reprodujo la secuencia sobre aquella misma raíz ARM64 fallida:
+VLC siguió ausente, `obs-plugins 30.0.2+dfsg-3build1` volvió y el SHA-256 del
+`linux-v4l2.so` activo coincidió con la copia de `obs-v4l2-gts9u`, mientras el
+binario original permaneció en la ruta desviada. El build comprueba desde ahora
+esa igualdad, no sólo el estado de dpkg.
