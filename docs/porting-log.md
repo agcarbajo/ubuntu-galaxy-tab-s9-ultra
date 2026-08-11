@@ -3438,3 +3438,44 @@ bajo. La que sobrevivió salió de leer registros del chip por i2c y contar
 interrupciones en `/proc/interrupts`, no de leer código. Y una prueba mal
 diseñada —subir el Rp con el accesorio ya conectado, cuando un sink lo lee al
 conectarse— casi hace descartar la única hipótesis que sigue viva.
+
+---
+
+## Sesión 43 — la primera actualización en sitio, y lo que rompió
+
+Fecha: 2026-08-11. `gts9u-upgrade` se estrenó sobre la tablet arrancada, con la
+v0.23. Funcionó, y encontró tres defectos: dos suyos y uno mucho más viejo.
+
+### Defecto propio 1: rsync borraba su propio directorio de trabajo
+
+`--delete` con origen la imagen montada y destino `/` fue a por
+`/var/tmp/gts9u-upgrade.XXXX`, que no existe en el origen: intentó borrar el
+punto de montaje del que estaba leyendo, y **sí borró el ZIP** desde el que
+después había que escribir las imágenes de arranque. Se excluye `/var/tmp`, y
+se comprueba explícitamente que el ZIP y el montaje siguen ahí antes de seguir.
+
+### Defecto propio 2: la lista de «qué conservar» miraba al sitio equivocado
+
+Se perdieron el wifi y el brillo. El perfil de red **no** está en
+`/etc/NetworkManager/system-connections` —ese directorio estaba vacío— sino
+generado por netplan en `/run`, con el original en `/etc/netplan`. El brillo
+vive en `/var/lib/systemd/backlight`. La lista pasa a conservar directorios de
+estado enteros.
+
+### Defecto viejo: las imágenes nunca han llevado capabilities
+
+Al verificar si la actualización conservaba `security.capability`, el recorrido
+de la imagen encontró **cero** ficheros con ellas, y el árbol de origen tiene
+tres. No se perdían al actualizar: `tar --xattrs` copia solo `user.*`, así que
+**ninguna imagen de este port las ha llevado nunca**, ni en microSD ni en UFS.
+Arreglado con `--xattrs-include='*'` en los dos constructores de imagen.
+
+Irónico: el argumento para hacer la actualización en el sistema vivo y no en
+TWRP era precisamente no perder las capabilities. Resultó que ya se perdían
+antes, en un sitio que nadie había mirado.
+
+### Lo que sí salió bien
+
+Las cuatro imágenes de arranque coincidieron con el manifiesto al releerlas, y
+la cuenta, el `home` y el sistema sobrevivieron. La tablet arrancó con el
+kernel nuevo. Se restauraron las tres capabilities en caliente.

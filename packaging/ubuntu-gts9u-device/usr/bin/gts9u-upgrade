@@ -79,15 +79,23 @@ grep -q '^ID=ubuntu$' "$new/etc/os-release" || die 'the new image is not Ubuntu'
 # Anything listed here survives untouched.  The accounts have to be on it or
 # the owner would be locked out of their own machine; the rest is what a person
 # would be annoyed to lose.
+# The first real upgrade lost the Wi-Fi configuration and the screen
+# brightness, because this list only named the obvious files and not the state
+# directories behind them: NetworkManager keeps more than the connection
+# profiles under /var/lib, and the brightness a person set lives in
+# /var/lib/systemd/backlight.  The rule that came out of it: keep whole state
+# directories, not the one file inside them you happened to think of.
 keep=(
 	/home /root
 	/etc/passwd /etc/shadow /etc/group /etc/gshadow /etc/subuid /etc/subgid
 	/etc/sudoers.d /etc/ssh/ssh_host_* /etc/machine-id
 	/etc/hostname /etc/hosts /etc/timezone /etc/localtime
 	/etc/default/locale /etc/default/keyboard /etc/locale.gen
-	/etc/NetworkManager/system-connections
-	/var/lib/AccountsService /var/lib/systemd/linger /var/lib/bluetooth
-	/var/lib/ubuntu-gts9u /var/log
+	/etc/NetworkManager /etc/netplan /etc/wpa_supplicant
+	/var/lib/AccountsService /var/lib/systemd /var/lib/bluetooth
+	/var/lib/NetworkManager /var/lib/upower /var/lib/power-profiles-daemon
+	/var/lib/ubuntu-gts9u /var/lib/gdm3 /var/lib/colord
+	/var/log
 )
 excludes=()
 for path in "${keep[@]}"; do
@@ -97,6 +105,12 @@ done
 for path in /dev /proc /sys /run /tmp /mnt /media /lost+found; do
 	excludes+=(--exclude "$path")
 done
+# /var/tmp holds this upgrade's own working directory — with the new image
+# loop-mounted inside it — and, usually, the ZIP being installed.  The image
+# has an empty /var/tmp, so without this --delete walks into both: it tries to
+# remove the mount it is reading from, and it deletes the ZIP that the boot
+# images are still to be written from.  Both happened on the first real run.
+excludes+=(--exclude /var/tmp)
 
 mkdir -p "$keep_dir"
 date -u +%Y-%m-%dT%H:%M:%SZ > "$keep_dir/started"
@@ -105,6 +119,44 @@ echo 'gts9u-upgrade: replacing the system (this takes a few minutes)...'
 # -aAX keeps permissions, ACLs and extended attributes, which is what carries
 # file capabilities.  --delete removes what the new release dropped.
 rsync -aAX --delete "${excludes[@]}" "$new/" /
+
+# The step below reads the ZIP again.  If anything above removed it, stopping
+# here leaves a system with a new userspace and its old kernel, which is
+# survivable; carrying on without the boot images would not be.
+[ -f "$zip" ] || die 'the ZIP disappeared during the sync; boot images not written'
+mountpoint -q "$new" || die 'the new image was unmounted during the sync'
+
+# File capabilities, re-applied from the image rather than trusted to survive.
+#
+# rsync -X does carry security.capability, but the kernel clears that xattr
+# whenever a file's owner changes, so the result depends on the order rsync
+# happens to do things in.  This is the one attribute whose loss is completely
+# silent — a binary keeps working for root and quietly stops working for
+# everyone else — so it is worth the extra pass.
+echo 'gts9u-upgrade: re-applying file capabilities...'
+python3 - "$new" <<'PY'
+import os, sys
+
+src = sys.argv[1]
+applied = failed = 0
+for root, _dirs, files in os.walk(src):
+    for name in files:
+        path = os.path.join(root, name)
+        try:
+            value = os.getxattr(path, "security.capability",
+                                follow_symlinks=False)
+        except OSError:
+            continue
+        target = "/" + os.path.relpath(path, src)
+        try:
+            os.setxattr(target, "security.capability", value,
+                        follow_symlinks=False)
+            applied += 1
+        except OSError as error:
+            failed += 1
+            print(f"  {target}: {error.strerror}")
+print(f"gts9u-upgrade: capabilities applied to {applied} files, {failed} failed")
+PY
 
 # ---------------------------------------------------------------------------
 # Boot images

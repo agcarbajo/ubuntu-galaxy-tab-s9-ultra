@@ -1414,3 +1414,40 @@ actual por defecto**. Subirlo a ciegas no es seguro: el puerto entrega 900 mA
 de verdad, y un dispositivo que crea otra cosa puede hundir el raíl. Y hay
 precedente de romper algo al tocarlo: el propio driver bajó el Rp porque con
 `0x59` «se caía repetidamente un dongle OTG pasivo».
+
+## Las imágenes se han distribuido siempre sin capabilities de fichero
+
+`tar --xattrs` copia **solo el espacio `user.*`**. `security.capability` se
+descarta sin decir nada, así que todas las imágenes de este port —microSD y
+UFS— han salido con `ping` sin `cap_net_raw`, `snap-confine` sin su conjunto de
+capabilities y `gst-ptp-helper` sin las suyas. Hace falta
+`--xattrs-include='*'` en los dos extremos del `tar`.
+
+Se descubrió por accidente, buscando otra cosa: al comprobar si
+`gts9u-upgrade` conservaba las capabilities, el recorrido de la imagen encontró
+**cero** ficheros con ellas, mientras el árbol del que se construye tiene tres.
+O sea, no se perdían al actualizar; nunca habían llegado.
+
+Es el peor tipo de fallo: silencioso y de efecto diferido. Un binario sin su
+capability sigue funcionando para root y deja de funcionar para todo el mundo
+más, semanas después, sin nada en ningún log.
+
+`gts9u-upgrade` reaplica además las capabilities explícitamente tras el rsync.
+No es redundante: el kernel borra `security.capability` cuando cambia el dueño
+de un fichero, así que conservarlas depende del orden en que rsync haga las
+cosas.
+
+## Dónde guarda Ubuntu la configuración de red, que no es donde parece
+
+La primera actualización en sitio perdió el wifi pese a proteger
+`/etc/NetworkManager/system-connections`. Ese directorio estaba vacío: `nmcli
+-f NAME,FILENAME` reveló que el perfil vive en
+`/run/NetworkManager/system-connections/netplan-NM-<uuid>.nmconnection`, es
+decir, **generado por netplan**. El almacén persistente es `/etc/netplan`.
+
+Y el brillo lo guarda `systemd-backlight` en `/var/lib/systemd/backlight`.
+
+La regla que sale de esto: al preservar estado, **conservar directorios de
+estado enteros, no el fichero concreto que uno recuerda**. La lista de
+`gts9u-upgrade` pasa a incluir `/etc/netplan`, `/var/lib/systemd`,
+`/var/lib/NetworkManager` y compañía.

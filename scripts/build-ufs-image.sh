@@ -97,8 +97,15 @@ release_mount() {
 trap release_mount EXIT
 
 echo 'copying the rootfs'
-tar -C "$rootfs" --numeric-owner --xattrs --acls -cf - . \
-	| tar -C "$mnt" --numeric-owner --xattrs --acls -xf -
+# GNU tar's --xattrs carries only the user.* namespace by default, so
+# security.capability is dropped in silence: every image this port built before
+# this line shipped a ping without cap_net_raw and a snap-confine without its
+# capability set.  Nothing warns; the binaries simply lose privileges they were
+# built with, and it surfaces much later as "why does this need sudo now".
+tar -C "$rootfs" --numeric-owner --acls \
+	--xattrs --xattrs-include='*' -cf - . \
+	| tar -C "$mnt" --numeric-owner --acls \
+	--xattrs --xattrs-include='*' -xf -
 
 # The firmware and the isolated ath12k modules are installed here rather than
 # by the installer.  On the microSD they had to be applied at flash time,

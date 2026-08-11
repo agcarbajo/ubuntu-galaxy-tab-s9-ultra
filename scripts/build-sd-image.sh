@@ -125,8 +125,12 @@ mount "$part2" "$base/mnt/root"
 mount "$part1" "$base/mnt/boot"
 
 echo 'copying the rootfs'
-tar -C "$rootfs" --numeric-owner --xattrs --acls -cf - . \
-	| tar -C "$base/mnt/root" --numeric-owner --xattrs --acls -xf -
+# --xattrs alone carries only user.*, so security.capability is dropped in
+# silence.  See the same note in build-ufs-image.sh.
+tar -C "$rootfs" --numeric-owner --acls \
+	--xattrs --xattrs-include='*' -cf - . \
+	| tar -C "$base/mnt/root" --numeric-owner --acls \
+	--xattrs --xattrs-include='*' -xf -
 
 # /boot lives on its own partition: the second-stage initramfs pieces and the
 # reference DTB go there, and the copy under the root filesystem is removed so
