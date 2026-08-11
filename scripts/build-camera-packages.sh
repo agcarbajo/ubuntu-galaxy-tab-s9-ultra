@@ -15,9 +15,9 @@ suite=${UBUNTU_SUITE:-noble}
 mirror=${UBUNTU_MIRROR:-http://ports.ubuntu.com/ubuntu-ports}
 
 libcamera_commit=62d4bfc450798cbd57722fa349a245b93b11d1cd
-libcamera_version=0.7.2+53.g62d4bfc-gts9u3
+libcamera_version=0.7.2+53.g62d4bfc-gts9u5
 pipewire_commit=a2287be601710eea0d073261223ec34b92384c8a
-pipewire_version=1.0.5-gts9u6
+pipewire_version=1.0.5-gts9u10
 skip_build=${SKIP_CAMERA_BUILD:-0}
 skip_libcamera_build=${SKIP_LIBCAMERA_BUILD:-$skip_build}
 skip_pipewire_build=${SKIP_PIPEWIRE_BUILD:-$skip_build}
@@ -105,9 +105,9 @@ EOF
 		;;
 	libspa-0.2-libcamera-gts9u)
 		cat >> "$pkgdir/DEBIAN/control" <<'EOF'
-Provides: libspa-0.2-libcamera
-Conflicts: libspa-0.2-libcamera
-Replaces: libspa-0.2-libcamera
+Provides: libspa-0.2-libcamera (= 1.0.5-1ubuntu3.3), pipewire-libcamera (= 1.0.5-1ubuntu3.3)
+Conflicts: libspa-0.2-libcamera, pipewire-libcamera
+Replaces: libspa-0.2-libcamera, pipewire-libcamera
 EOF
 		;;
 	esac
@@ -147,13 +147,14 @@ git checkout --quiet $libcamera_commit
 git apply \
 	/build/camera-inputs/libcamera/0001-libipa-add-hynix-hi1337-hi847-gain-helpers.patch \
 	/build/camera-inputs/libcamera/0002-simple-software-autofocus.patch \
-	/build/camera-inputs/libcamera/0003-software-isp-preserve-full-field-of-view.patch
+	/build/camera-inputs/libcamera/0003-software-isp-preserve-full-field-of-view.patch \
+	/build/camera-inputs/libcamera/0004-simple-reset-qcom-camss-links-before-configure.patch
 meson setup build \
 	--prefix=/usr \
 	--libdir=lib/aarch64-linux-gnu \
 	-Dpipelines=simple \
 	-Dipas=simple \
-	-Dgstreamer=enabled \
+	-Dgstreamer=disabled \
 	-Dcam=enabled \
 	-Dcam-output-kms=disabled \
 	-Dcam-output-sdl2=disabled \
@@ -175,6 +176,11 @@ echo 'libcamera built'"
 else
 	test -f "$buildroot/build/stage-libcamera/usr/lib/aarch64-linux-gnu/libcamera.so"
 fi
+
+# Applications must only enumerate the four stable V4L2 relay devices. The
+# direct GStreamer provider exposes the physical cameras again, races the
+# relays for CAMSS and produces duplicate "Built-in" entries.
+rm -f "$buildroot/build/stage-libcamera/usr/lib/aarch64-linux-gnu/gstreamer-1.0/libgstlibcamera.so"
 
 mkdir -p "$buildroot/build/stage-libcamera-DEBIAN"
 cat > "$buildroot/build/stage-libcamera-DEBIAN/postinst" <<'POSTINST'
@@ -238,6 +244,9 @@ package_tree /build/stage-pipewire-camera libspa-0.2-libcamera-gts9u \
 	"$pipewire_version" \
 	"libc6, libstdc++6, pipewire (>= 1.0.5), pipewire (<< 1.1), wireplumber, libcamera-gts9u (= $libcamera_version)" \
 	'PipeWire 1.0 libcamera SPA adapted for libcamera 0.7'
+
+test "$(dpkg-deb -f "$out/libspa-0.2-libcamera-gts9u_${pipewire_version}_arm64.deb" Depends)" = \
+	"libc6, libstdc++6, pipewire (>= 1.0.5), pipewire (<< 1.1), wireplumber, libcamera-gts9u (= $libcamera_version)"
 
 step 'results'
 ls -l \

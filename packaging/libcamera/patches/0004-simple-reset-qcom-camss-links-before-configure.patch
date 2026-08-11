@@ -1,0 +1,30 @@
+Subject: simple: reset shared qcom-camss links before selecting a camera
+
+The SM8550 CAMSS exposes all four sensors through shared CSID and VFE sink
+pads. Camera discovery leaves the last sensor path enabled, and the routing
+heuristic skips some conflicting links on routing-capable entities. The next
+camera then fails to configure with EBUSY while enabling its CSIPHY link.
+
+The simple pipeline already serializes cameras that share pads. Reset all
+mutable CAMSS links before enabling the selected path so switching cameras
+also works across independent PipeWire clients.
+
+--- a/src/libcamera/pipeline/simple/simple.cpp
++++ b/src/libcamera/pipeline/simple/simple.cpp
+@@ -764,6 +764,16 @@ int SimpleCameraData::setupLinks()
+ {
+ 	int ret;
+ 
++	/* Qualcomm CAMSS sensors share receiver sink pads. Camera enumeration
++	 * leaves the final sensor path enabled, which can make the first real
++	 * configure fail with EBUSY. Cameras sharing those pads are serialized
++	 * by this pipeline handler, so clear the graph before selecting one. */
++	if (sensor_->entity()->device()->driver() == "qcom-camss") {
++		ret = sensor_->entity()->device()->disableLinks();
++		if (ret < 0)
++			return ret;
++	}
++
+ 	/*
+ 	 * Configure all links along the pipeline. Some entities may not allow
+ 	 * multiple sink links to be enabled together, even on different sink

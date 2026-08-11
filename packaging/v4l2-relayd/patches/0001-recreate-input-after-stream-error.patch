@@ -17,7 +17,7 @@ connection instead of stale state. Failed inputs are dropped immediately.
  #include <sys/ioctl.h>
  #include <linux/videodev2.h>
  
-@@ -46,9 +48,11 @@ static gchar *opt_splash =
+@@ -46,9 +48,13 @@ static gchar *opt_splash =
  
  static GMainLoop *loop = NULL;
  static guint input_bus_watch_id = 0;
@@ -26,6 +26,8 @@ connection instead of stale state. Failed inputs are dropped immediately.
  static guint splash_bus_watch_id = 0;
  static guint v4l2_event_poll_id = 0;
 +static int input_lock_fd = -1;
++static GMutex output_pts_lock;
++static GstClockTime output_next_pts = 0;
  static GstElement *input_pipeline = NULL;
  static GstElement *output_pipeline = NULL;
  static GstElement *splash_pipeline = NULL;
@@ -45,7 +47,7 @@ connection instead of stale state. Failed inputs are dropped immediately.
 +          /* A failed PipeWire input can still have CAMSS callbacks in
 +           * flight. Releasing the next camera immediately lets those
 +           * callbacks overlap and eventually crashes PipeWire. */
-+          g_usleep (2000000);
++          g_usleep (750000);
 +          flock (input_lock_fd, LOCK_UN);
 +        }
 +        return FALSE;
@@ -53,16 +55,58 @@ connection instead of stale state. Failed inputs are dropped immediately.
        break;
      }
      default:
-@@ -270,17 +291,52 @@ splash_pipeline_get ()
+@@ -165,14 +188,27 @@ backend_appsink_new_sample (GstAppSink *appsink,
+   GstBuffer *buffer;
+ 
+   sample = gst_app_sink_pull_sample (appsink);
++  if (sample == NULL)
++    return GST_FLOW_EOS;
+   buffer = gst_sample_get_buffer (sample);
+-  /* gst_app_src_push_buffer wants to take the ownership of the buffer,
+-   * so it must hold an additional reference first. */
+-  gst_buffer_ref (buffer);
+-  gst_app_src_push_buffer (appsrc, buffer);
++  /* The input and output pipelines do not share a running time. Copy the
++   * camera frame and give every output buffer a stable 30 fps timeline. */
++  buffer = gst_buffer_copy_deep (buffer);
+   gst_sample_unref (sample);
+ 
+-  return GST_FLOW_OK;
++  if (buffer == NULL)
++    return GST_FLOW_ERROR;
++
++  g_mutex_lock (&output_pts_lock);
++  GST_BUFFER_PTS (buffer) = output_next_pts;
++  GST_BUFFER_DTS (buffer) = output_next_pts;
++  GST_BUFFER_DURATION (buffer) = gst_util_uint64_scale_int (GST_SECOND, 1, 30);
++  output_next_pts += GST_BUFFER_DURATION (buffer);
++  g_mutex_unlock (&output_pts_lock);
++  GST_BUFFER_OFFSET (buffer) = GST_BUFFER_OFFSET_NONE;
++  GST_BUFFER_OFFSET_END (buffer) = GST_BUFFER_OFFSET_NONE;
++
++  return gst_app_src_push_buffer (appsrc, buffer);
+ }
+ 
+ static GstElement*
+@@ -223,6 +254,7 @@ backend_pipeline_create (const gchar *name,
+   g_object_set (appsink,
+                 "caps", caps,
++                "sync", FALSE,
+                 "drop", TRUE,
+                 "max-buffers", 4,
+                 "emit-signals", TRUE,
+                 NULL);
+@@ -270,17 +302,53 @@ splash_pipeline_get ()
  static void
  input_pipeline_enable ()
  {
++  g_autofree gchar *lock_path = g_build_filename (g_get_user_runtime_dir (), "gts9u-camera.lock", NULL);
 +  if (input_disable_timeout_id != 0) {
 +    g_source_remove (input_disable_timeout_id);
 +    input_disable_timeout_id = 0;
 +  }
 +  if (input_lock_fd < 0)
-+    input_lock_fd = open ("/run/user/1000/gts9u-camera.lock",
++    input_lock_fd = open (lock_path,
 +                          O_CREAT | O_CLOEXEC | O_RDWR, 0660);
 +  if (input_lock_fd < 0 || flock (input_lock_fd, LOCK_EX) < 0) {
 +    GST_ERROR ("Could not lock the shared camera ISP: %s", g_strerror (errno));
@@ -87,7 +131,7 @@ connection instead of stale state. Failed inputs are dropped immediately.
 +  if (input_lock_fd >= 0) {
 +    /* PipeWire returns from NULL before the CAMSS worker has always released
 +     * its last buffers. Keep the inter-camera lock through that short tail. */
-+    g_usleep (2000000);
++    g_usleep (750000);
 +    flock (input_lock_fd, LOCK_UN);
 +  }
 +  input_disable_timeout_id = 0;
@@ -110,7 +154,7 @@ connection instead of stale state. Failed inputs are dropped immediately.
  }
  
  static gboolean
-@@ -457,18 +513,30 @@ main (int   argc,
+@@ -457,18 +524,30 @@ main (int   argc,
    GST_INFO ("Running...");
    g_main_loop_run (loop);
  

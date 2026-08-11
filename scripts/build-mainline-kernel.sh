@@ -54,6 +54,7 @@ test -f "$cfg/config-mainline.aarch64"
 test -f "$cfg/config-gts9uwifi.fragment"
 test -f "$repo/packaging/v4l2loopback/patches/0001-backward-compatible-client-usage-event.patch"
 test -f "$repo/packaging/v4l2loopback/patches/0002-fix-buffer-queue-management.patch"
+test -f "$repo/packaging/v4l2loopback/patches/0003-preserve-output-queue-for-capture.patch"
 
 mkdir -p "$(dirname "$kernel_tree")" "$build_dir" "$out_dir"
 
@@ -495,7 +496,8 @@ if [ "${BUILD_WIFI_MODULES:-1}" = 1 ]; then
 	git -C "$loopback_tree" checkout --quiet "$v4l2loopback_commit"
 	git -C "$loopback_tree" apply \
 		"$repo/packaging/v4l2loopback/patches/0001-backward-compatible-client-usage-event.patch" \
-		"$repo/packaging/v4l2loopback/patches/0002-fix-buffer-queue-management.patch"
+		"$repo/packaging/v4l2loopback/patches/0002-fix-buffer-queue-management.patch" \
+		"$repo/packaging/v4l2loopback/patches/0003-preserve-output-queue-for-capture.patch"
 	make -C "$kernel_tree" O="$build_dir" ARCH=arm64 LLVM=1 \
 		-j"$(nproc)" M="$loopback_tree" modules
 	install -d "$release_dir/updates"

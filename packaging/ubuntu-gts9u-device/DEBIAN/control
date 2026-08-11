@@ -1,5 +1,5 @@
 Package: ubuntu-gts9u-device
-Version: 2.6
+Version: 2.17
 Section: admin
 Priority: optional
 Architecture: arm64
@@ -8,7 +8,8 @@ Depends: systemd, e2fsprogs, gdisk, parted, util-linux, cloud-guest-utils,
  gnome-shell,
  protection-domain-mapper, bluez, alsa-ucm-conf,
  hexagonrpcd, libssc, iio-sensor-proxy,
- libcamera-gts9u, libspa-0.2-libcamera-gts9u,
+ libcamera-gts9u (= 0.7.2+53.g62d4bfc-gts9u5),
+ libspa-0.2-libcamera-gts9u (= 1.0.5-gts9u10),
  v4l2-relayd-gts9u, obs-v4l2-gts9u
 Description: Device support for the Samsung Galaxy Tab S9 Ultra Wi-Fi
  Board-specific integration for the SM-X910 (gts9uwifi) running an Ubuntu

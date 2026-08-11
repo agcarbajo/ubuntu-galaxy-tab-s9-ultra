@@ -1,0 +1,231 @@
+Subject: relayd: hand over the shared ISP between overlapping clients
+
+OBS and browsers open a newly selected camera before closing the previous
+device. Debounce short enumeration probes, keep readers primed with a paced
+black stream, and let a persistent new client request the shared CAMSS/ISP.
+
+--- a/src/v4l2-relayd.c
++++ b/src/v4l2-relayd.c
+@@ -17,6 +17,8 @@
+ 
+ #include <errno.h>
+ #include <fcntl.h>
++#include <signal.h>
++#include <stdio.h>
+ #include <unistd.h>
+ #include <sys/file.h>
+ #include <sys/ioctl.h>
+@@ -44,15 +46,21 @@
+ static gchar *opt_input = NULL;
+ static gchar *opt_output = NULL;
+ static gchar *opt_splash =
+-    "dataurisrc uri=data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAEElEQVQoz2NgGAWjYBTAAAADEAABaJFtwwAAAABJRU5ErkJggg== ! pngdec ! imagefreeze num-buffers=2 ! videoscale ! videoconvert"; /* 16x16 black PNG */
++    "dataurisrc uri=data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAEElEQVQoz2NgGAWjYBTAAAADEAABaJFtwwAAAABJRU5ErkJggg== ! pngdec ! imagefreeze is-live=true ! videoscale ! videoconvert"; /* 16x16 black PNG */
+ 
+ static GMainLoop *loop = NULL;
+ static guint input_bus_watch_id = 0;
++static guint input_enable_timeout_id = 0;
+ static guint input_disable_timeout_id = 0;
++static guint preempt_signal_id = 0;
+ static guint output_bus_watch_id = 0;
+ static guint splash_bus_watch_id = 0;
+ static guint v4l2_event_poll_id = 0;
+ static int input_lock_fd = -1;
++static gboolean input_lock_held = FALSE;
++static gboolean input_client_active = FALSE;
++static gboolean input_preempted = FALSE;
++static pid_t requested_owner = 0;
+ static GMutex output_pts_lock;
+ static GstClockTime output_next_pts = 0;
+ static GstElement *input_pipeline = NULL;
+@@ -161,12 +169,13 @@
+         input_pipeline = NULL;
+         input_bus_watch_id = 0;
+         gst_object_unref (pipeline);
+-        if (input_lock_fd >= 0) {
++        if (input_lock_held) {
+           /* A failed PipeWire input can still have CAMSS callbacks in
+            * flight. Releasing the next camera immediately lets those
+            * callbacks overlap and eventually crashes PipeWire. */
+           g_usleep (750000);
+           flock (input_lock_fd, LOCK_UN);
++          input_lock_held = FALSE;
+         }
+         return FALSE;
+       }
+@@ -258,7 +267,7 @@
+   appsink = gst_element_factory_make ("appsink", NULL);
+   g_object_set (appsink,
+                 "caps", caps,
+-                "sync", FALSE,
++                "sync", g_strcmp0 (name, "splash-pipeline") == 0,
+                 "drop", TRUE,
+                 "max-buffers", 4,
+                 "emit-signals", TRUE,
+@@ -304,10 +313,31 @@
+   return splash_pipeline;
+ }
+ 
+-static void
+-input_pipeline_enable ()
++static pid_t
++input_lock_owner ()
+ {
+-  g_autofree gchar *lock_path = g_build_filename (g_get_user_runtime_dir (), "gts9u-camera.lock", NULL);
++  gchar buffer[32];
++  ssize_t length;
++
++  if (input_lock_fd < 0)
++    return 0;
++  length = pread (input_lock_fd, buffer, sizeof buffer - 1, 0);
++  if (length <= 0)
++    return 0;
++  buffer[length] = '\0';
++
++  return (pid_t) g_ascii_strtoll (buffer, NULL, 10);
++}
++
++static gboolean
++input_pipeline_enable (gpointer user_data G_GNUC_UNUSED)
++{
++  g_autofree gchar *lock_path = g_build_filename (g_get_user_runtime_dir (), "gts9u-camera.lock", NULL);
++  pid_t owner;
++
++  input_enable_timeout_id = 0;
++  if (!input_client_active || input_preempted || input_pipeline != NULL)
++    return G_SOURCE_REMOVE;
+   if (input_disable_timeout_id != 0) {
+     g_source_remove (input_disable_timeout_id);
+     input_disable_timeout_id = 0;
+@@ -314,12 +344,34 @@
+   if (input_lock_fd < 0)
+     input_lock_fd = open (lock_path,
+                           O_CREAT | O_CLOEXEC | O_RDWR, 0660);
+-  if (input_lock_fd < 0 || flock (input_lock_fd, LOCK_EX) < 0) {
++  if (input_lock_fd < 0) {
+     GST_ERROR ("Could not lock the shared camera ISP: %s", g_strerror (errno));
+-    return;
++    return G_SOURCE_REMOVE;
+   }
++  if (flock (input_lock_fd, LOCK_EX | LOCK_NB) < 0) {
++    if (errno != EWOULDBLOCK) {
++      GST_ERROR ("Could not lock the shared camera ISP: %s", g_strerror (errno));
++      return G_SOURCE_REMOVE;
++    }
++    owner = input_lock_owner ();
++    if (owner > 1 && owner != getpid () && owner != requested_owner) {
++      GST_INFO ("Requesting camera handover from relay %ld", (long) owner);
++      kill (owner, SIGUSR1);
++      requested_owner = owner;
++    }
++    input_enable_timeout_id = g_timeout_add (100, input_pipeline_enable, NULL);
++    return G_SOURCE_REMOVE;
++  }
++  input_lock_held = TRUE;
++  requested_owner = 0;
++  if (ftruncate (input_lock_fd, 0) < 0)
++    GST_WARNING ("Could not reset camera lock owner: %s", g_strerror (errno));
++  dprintf (input_lock_fd, "%ld\n", (long) getpid ());
++  fsync (input_lock_fd);
+   gst_element_set_state (splash_pipeline_get (), GST_STATE_NULL);
+   gst_element_set_state (input_pipeline_get (), GST_STATE_PLAYING);
++
++  return G_SOURCE_REMOVE;
+ }
+ 
+ static gboolean
+@@ -334,11 +386,12 @@
+     gst_object_unref (input_pipeline);
+     input_pipeline = NULL;
+   }
+-  if (input_lock_fd >= 0) {
++  if (input_lock_held) {
+     /* PipeWire returns from NULL before the CAMSS worker has always released
+      * its last buffers. Keep the inter-camera lock through that short tail. */
+     g_usleep (750000);
+     flock (input_lock_fd, LOCK_UN);
++    input_lock_held = FALSE;
+   }
+   input_disable_timeout_id = 0;
+   gst_element_set_state (splash_pipeline_get (), GST_STATE_PLAYING);
+@@ -355,6 +408,38 @@
+     input_disable_timeout_id = g_timeout_add (500, input_pipeline_destroy, NULL);
+ }
+ 
++static void
++input_pipeline_request_enable ()
++{
++  input_client_active = TRUE;
++  if (input_disable_timeout_id != 0) {
++    g_source_remove (input_disable_timeout_id);
++    input_disable_timeout_id = 0;
++  }
++  if (input_preempted || input_pipeline != NULL)
++    return;
++  if (input_enable_timeout_id == 0)
++    input_enable_timeout_id = g_timeout_add (250, input_pipeline_enable, NULL);
++}
++
++static gboolean
++input_pipeline_preempt (gpointer user_data G_GNUC_UNUSED)
++{
++  GST_INFO ("Releasing the ISP for a newly selected camera");
++  input_preempted = TRUE;
++  if (input_enable_timeout_id != 0) {
++    g_source_remove (input_enable_timeout_id);
++    input_enable_timeout_id = 0;
++  }
++  if (input_disable_timeout_id != 0) {
++    g_source_remove (input_disable_timeout_id);
++    input_disable_timeout_id = 0;
++  }
++  input_pipeline_destroy (NULL);
++
++  return G_SOURCE_CONTINUE;
++}
++
+ static gboolean
+ v4l2sink_event_callback (gint         fd,
+                          GIOCondition condition,
+@@ -380,10 +465,18 @@
+ 
+         memcpy (&usage, &event.u, sizeof usage);
+         GST_DEBUG ("Current V4L2 client: %u", usage.count);
+-        if (usage.count)
+-          input_pipeline_enable ();
+-        else
++        if (usage.count) {
++          input_pipeline_request_enable ();
++        } else {
++          input_client_active = FALSE;
++          input_preempted = FALSE;
++          requested_owner = 0;
++          if (input_enable_timeout_id != 0) {
++            g_source_remove (input_enable_timeout_id);
++            input_enable_timeout_id = 0;
++          }
+           input_pipeline_disable ();
++        }
+ 
+         break;
+       }
+@@ -523,14 +616,19 @@
+   GST_DEBUG_CATEGORY_INIT (GST_CAT_DEFAULT, "V4L2_RELAYD", 0, "v4l2-relayd");
+ 
+   loop = g_main_loop_new (NULL, FALSE);
++  preempt_signal_id = g_unix_signal_add (SIGUSR1, input_pipeline_preempt, NULL);
+   output_pipeline = output_pipeline_create ();
+   gst_element_set_state (output_pipeline, GST_STATE_PLAYING);
+ 
+   GST_INFO ("Running...");
+   g_main_loop_run (loop);
+ 
++  if (input_enable_timeout_id != 0)
++    g_source_remove (input_enable_timeout_id);
+   if (input_disable_timeout_id != 0)
+     g_source_remove (input_disable_timeout_id);
++  if (preempt_signal_id != 0)
++    g_source_remove (preempt_signal_id);
+   if (input_bus_watch_id != 0)
+     g_source_remove (input_bus_watch_id);
+   if (output_bus_watch_id != 0)

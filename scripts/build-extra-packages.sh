@@ -22,9 +22,15 @@ fastfetch_ver=${FASTFETCH_VERSION:-2.66.0}
 # and let an upgrade quietly drop the patch.
 fastfetch_pkgver=${fastfetch_ver}-gts9u1
 v4l2_relayd_commit=80e8f54563f624fe2f80a954af8cce27cc3a9636
-v4l2_relayd_version=0.1.2-gts9u3
+v4l2_relayd_version=0.1.2-gts9u12
 obs_v4l2_commit=a4578a6a307e857b7ceafa2723cc1eb345f05100
 obs_v4l2_version=30.0.2+dfsg-3build1-gts9u1
+only=${ONLY_EXTRA_PACKAGE:-all}
+
+case "$only" in
+	all|fastfetch|v4l2-relayd|obs-v4l2) ;;
+	*) echo "unknown ONLY_EXTRA_PACKAGE: $only" >&2; exit 2 ;;
+esac
 
 mkdir -p "$out"
 
@@ -82,6 +88,7 @@ apt-get install -y -qq --no-install-recommends $(printf '%s' "$build_deps" | tr 
 echo 'build dependencies present'"
 
 # ---------------------------------------------------------------------------
+if [ "$only" = all ] || [ "$only" = fastfetch ]; then
 step "fastfetch $fastfetch_ver"
 
 # On ARM, fastfetch takes the CPU name from the device tree compatible and then
@@ -149,12 +156,17 @@ find "$pkgdir" -exec touch -h -d '@0' {} +
 dpkg-deb --root-owner-group --build "$pkgdir" \
 	"$out/fastfetch_${fastfetch_pkgver}_arm64.deb" >/dev/null
 echo "built fastfetch_${fastfetch_pkgver}_arm64.deb"
+fi
 
 # ---------------------------------------------------------------------------
+if [ "$only" = all ] || [ "$only" = v4l2-relayd ]; then
 step "v4l2-relayd $v4l2_relayd_commit"
 install -m 0644 \
 	"$repo/packaging/v4l2-relayd/patches/0001-recreate-input-after-stream-error.patch" \
 	"$buildroot/tmp/v4l2-relayd-recovery.patch"
+install -m 0644 \
+	"$repo/packaging/v4l2-relayd/patches/0002-preempt-active-camera-on-handover.patch" \
+	"$buildroot/tmp/v4l2-relayd-handover.patch"
 run "cd /build
 rm -rf v4l2-relayd-gts9u stage-v4l2-relayd
 git clone --quiet https://git.launchpad.net/ubuntu/+source/v4l2-relayd \
@@ -162,11 +174,19 @@ git clone --quiet https://git.launchpad.net/ubuntu/+source/v4l2-relayd \
 cd v4l2-relayd-gts9u
 git checkout --quiet $v4l2_relayd_commit
 git apply /tmp/v4l2-relayd-recovery.patch
-NOCONFIGURE=1 ./autogen.sh >/dev/null
-./configure --prefix=/usr --with-systemdsystemunitdir=no \
-	--with-modulesloaddir=no >/dev/null
-make -j\"\$(nproc)\" >/dev/null
-make DESTDIR=/build/stage-v4l2-relayd install >/dev/null
+git apply /tmp/v4l2-relayd-handover.patch
+# v4l2-relayd is a single C source file. Compiling it directly avoids running
+# architecture-independent autotools generators through slow ARM emulation and
+# keeps unused upstream systemd/modprobe defaults out of this device package.
+install -d /build/stage-v4l2-relayd/usr/bin
+cc -std=gnu11 -O2 -Wall -Werror \
+	-DG_LOG_DOMAIN=\\\"v4l2_relayd\\\" \
+	-DV4L2_RELAYD_VERSION=\\\"0.1.2\\\" \
+	-o /build/stage-v4l2-relayd/usr/bin/v4l2-relayd \
+	src/v4l2-relayd.c \
+	\$(pkg-config --cflags --libs glib-2.0 gio-unix-2.0 \
+		gstreamer-1.0 gstreamer-app-1.0 gstreamer-video-1.0)
+strip --strip-unneeded /build/stage-v4l2-relayd/usr/bin/v4l2-relayd
 test -x /build/stage-v4l2-relayd/usr/bin/v4l2-relayd
 echo 'v4l2-relayd built'"
 
@@ -200,8 +220,10 @@ find "$pkgdir" -exec touch -h -d '@0' {} +
 dpkg-deb --root-owner-group --build "$pkgdir" \
 	"$out/v4l2-relayd-gts9u_${v4l2_relayd_version}_arm64.deb" >/dev/null
 echo "built v4l2-relayd-gts9u_${v4l2_relayd_version}_arm64.deb"
+fi
 
 # ---------------------------------------------------------------------------
+if [ "$only" = all ] || [ "$only" = obs-v4l2 ]; then
 step "OBS V4L2 plugin $obs_v4l2_commit"
 install -m 0644 \
 	"$repo/packaging/obs-v4l2/patches/0001-hide-internal-camss-nodes.patch" \
@@ -286,3 +308,4 @@ find "$pkgdir" -exec touch -h -d '@0' {} +
 dpkg-deb --root-owner-group --build "$pkgdir" \
 	"$out/obs-v4l2-gts9u_${obs_v4l2_version}_arm64.deb" >/dev/null
 echo "built obs-v4l2-gts9u_${obs_v4l2_version}_arm64.deb"
+fi

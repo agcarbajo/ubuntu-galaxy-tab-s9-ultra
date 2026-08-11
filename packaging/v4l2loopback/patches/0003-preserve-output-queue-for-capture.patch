@@ -1,0 +1,18 @@
+Subject: v4l2loopback: preserve producer queue for capture REQBUFS
+
+The output and capture sides share the driver's backing buffers. A capture
+client requesting its MMAP buffers must not clear the producer's queued output
+buffers; doing so makes GStreamer and OBS receive one frame before the writer
+fails its next DQBUF. Only initialise the output queue for output allocations.
+
+--- a/v4l2loopback.c
++++ b/v4l2loopback.c
+@@ -1752,6 +1752,7 @@ static int vidioc_reqbufs(struct file *file, void *fh,
+ 	default:
+ 		opener->io_method = V4L2L_IO_MMAP;
+-		prepare_buffer_queue(dev, req_count);
++		if (reqbuf->type == V4L2_BUF_TYPE_VIDEO_OUTPUT)
++			prepare_buffer_queue(dev, req_count);
+ 		dev->used_buffer_count = opener->buffer_count = req_count;
+ 	}
+ exit_reqbufs_unlock:
