@@ -254,6 +254,29 @@ Con eso, y con `ssc-light` fuera de la tabla de drivers
 (`disable-broken-ssc-light.patch`), el mismo arranque da **1 tick/2 s** y
 48,9 °C con la autorrotación intacta.
 
+La ausencia de los campos opcionales del sobre SSC tampoco era la causa. El
+cliente oficial de Android/CHRE envía para un sensor *on-change* un
+`sns_std_request` con `batch_period=0`, `flush_period=3000000` e
+`is_passive=false`. Se reprodujo literalmente ese protobuf en libssc y se
+probó tras un reinicio completo: GNOME vio `HasAmbientLight=true`, pero
+`ClaimLight` volvió a expirar y `LightLevel` permaneció en 0 lux. No conservar
+ese parche: el propio protocolo dice que omitir `is_passive` equivale a una
+petición activa, y la evidencia física no cambió.
+
+Hay dos rutas, aunque la búsqueda predeterminada sólo devuelve una. Una consulta
+explícita descubre además `ambient_light_sub`, nombre `stk_stk31610_sub`, SUID
+`5230347032368999062:3046173514946711665`, disponible y *on-change*. También
+acepta la transacción QMI con el sobre Android exacto y no publica ni el evento
+de configuración ni una muestra. Quedan así medidas las dos instancias del
+registro (`stk31610_0` y `_1`); seleccionar otra entrada del mismo `data_type`
+no sirve porque el firmware sólo devuelve un SUID para `ambient_light`.
+
+No implementar brillo automático a partir de la cámara como sustituto
+silencioso. Abrir un sensor de imagen periódicamente tendría coste de energía,
+privacidad y arbitraje con las aplicaciones, y la autoexposición elimina una
+relación estable entre luminancia de píxel y lux. Es una arquitectura distinta
+que necesita una decisión explícita, no una corrección del ALS.
+
 Dos lecciones más allá de este fallo:
 
 - **Un `ppoll` con timeout cero que devuelve `Timeout` siempre no es un

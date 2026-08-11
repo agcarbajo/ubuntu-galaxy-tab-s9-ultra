@@ -57,7 +57,7 @@ postmarketOS v1.71 baseline is kept outside Git.
 | **S Pen battery / charging** | ❌ | The pen's charge level is neither read nor exposed |
 | **S Pen pairing (BLE)** | ❌ | The pen is not paired; its Bluetooth side is untouched |
 | **S Pen gestures** | ❌ | Needs the Samsung GATT profile, plus a daemon and settings of this port's own: GNOME can only map a stylus button to five mouse actions |
-| **Ambient light** | ❌ | STK31610 is discovered by the SSC but never completes its enable, so it is not exposed |
+| **Ambient light / automatic brightness** | ❌ | Both STK31610 paths (`ambient_light` and `ambient_light_sub`) are discovered, but the Samsung DSP driver never completes an enable or emits lux; GNOME support is ready but the unusable ALS is deliberately not exposed |
 | **Speaker protection** | ❌ | Cirrus protection firmware not loaded; hardware volume kept conservative |
 | **Fingerprint** | ❌ | No mainline driver for the EgisTec sensor |
 | **Vibration / haptics** | ❌ | Hardware not identified |

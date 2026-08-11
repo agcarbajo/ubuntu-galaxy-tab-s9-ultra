@@ -46,7 +46,7 @@ sondea» como prueba de funcionamiento.
 | Pantalla interna 2960×1848@120 | ✅ | ✅ | medido | La recuperación cold-boot está validada bajo Ubuntu: el journal registra `panel id 00 00 00` → ciclo `pm_test=platform` → `80 00 04` |
 | GPU Adreno 740 | ✅ | ✅ | confirmado | Confirmado por la usuaria en el primer arranque. Falta medir `vulkaninfo`/`glmark2` |
 | Escritorio GNOME/Wayland | ✅ | ✅ | confirmado | GDM3 y GNOME 46 nativos, sin el workaround de cuentas greeter de Alpine |
-| Brillo / blanking | ✅ | ⏳ | heredado | Backlight DCS. El brillo automático no funciona en ninguna distro |
+| Brillo / blanking | ✅ | ⏳ | medido | Backlight DCS y control manual nativo. GNOME tiene `ambient-enabled=true`, pero no puede hacer brillo automático porque ninguna de las dos rutas STK31610 entrega lux |
 | Táctil Goodix GT9916 | ✅ | ✅ | confirmado | Layout Samsung de eventos de 16 bytes |
 | Botones power y volumen | ✅ | ✅ | confirmado | |
 | UFS interna | ✅ | ✅ | medido | Seis LUN `sda`–`sdf`. Desde v0.18 aloja también la raíz, en `userdata` (`sda34`, 1 007 985 586 176 B), etiquetada `UBTS9U_UFS`. **Se reutiliza la partición tal cual: no se crea, borra ni redimensiona ninguna**, y en el primer arranque solo se redimensiona el sistema de ficheros con `resize2fs` |
@@ -66,7 +66,7 @@ sondea» como prueba de funcionamiento.
 | DisplayPort USB-C | ✅ | ✅ | confirmado | Salida de vídeo confirmada por la usuaria |
 | Ethernet RTL8153 | 🟡 | ⏳ | heredado | Enumera y carga firmware; falta enlace y tráfico reales |
 | UAS | ❓ | ❓ | supuesto | Nunca probado: no hubo unidad con interfaz UAS |
-| Luz ambiental STK31610 | ❌ | ❌ | medido | El SSC lo descubre, acepta el `enable` y nunca manda la respuesta de configuración, así que `ssc_sensor_light_open_sync()` no termina jamás. El driver `ssc-light` ya no se ofrece; vía agotada también en pmOS |
+| Luz ambiental STK31610 | ❌ | ❌ | medido | SSC publica `ambient_light` (`stk_stk31610`) y `ambient_light_sub` (`stk_stk31610_sub`). Ambos aceptan QMI pero nunca mandan configuración ni lux. También fallan el sobre exacto de Android, on-change, continuo, DRI y polling. `ssc-light` no se ofrece para evitar bloquear GNOME; la frontera está en el driver DSP propietario |
 | Proximidad | — | — | — | El firmware SSC stock del X910 no instancia el sensor |
 | S Pen: escritura (Wacom I²C 0x56) | ❌ | ✅ | confirmado | Driver propio: hover con distancia, presión 0–4095, inclinación ±63 y botón lateral. Enganche automático, ~440 Hz y rotación correcta en las cuatro orientaciones. La salida de rango se sintetiza también por silencio (timer de 250 ms): sin eso el controlador enmudecía al apartar el lápiz y `BTN_TOOL_PEN` se quedaba a 1 hasta el reinicio |
 | S Pen: acoplamiento (detección de guardado) | ❌ | ❌ | **no empezado** | Sin detectar cuándo entra o sale del hueco. Vía prevista: un `power_supply`/switch en el kernel, sin userspace nuevo |

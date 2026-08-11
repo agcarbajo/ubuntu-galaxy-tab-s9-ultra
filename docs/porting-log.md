@@ -3687,3 +3687,45 @@ OBS, la ausencia de cuenta ordinaria y de paquetes temporales, y el orden de
 las unidades instalado. La validación estática independiente volvió a pasar el
 contrato completo del ZIP. Los hashes definitivos son los indicados en la
 sección de release anterior; sustituyen a la primera v0.26 con 2.18.
+
+## Sesión 47 — brillo automático: las dos rutas STK31610 se detienen en el DSP
+
+Fecha: 2026-08-11. El punto de partida ya tenía toda la integración de GNOME:
+`org.gnome.settings-daemon.plugins.power ambient-enabled=true`, backlight DCS
+en `/sys/class/backlight/ae94000.dsi.0` y `iio-sensor-proxy` con soporte SSC.
+El sensor de luz seguía oculto por diseño porque reclamarlo bloqueaba el proxy.
+
+Se revisó primero la diferencia de protocolo que aún no estaba probada. El
+cliente Android/CHRE oficial incluye en `sns_std_request` una especificación de
+batch con periodo cero y flush de tres segundos, y marca explícitamente la
+petición como activa. Se construyeron para ARM64 `libssc 0.4.4-gts9u1`
+(`4aa9c17c…`) e `iio-sensor-proxy 3.9-gts9u1` (`b94af25e…`) con ese sobre exacto
+y el driver de luz habilitado. Tras restaurar `is_dri=1` y reiniciar, GNOME
+detectó `HasAmbientLight=true`; a las 21:39:58 `gsd-power` registró
+`Claiming light sensor failed: Se alcanzó el tiempo de expiración`.
+`LightLevel` continuó en 0, el brillo en 284/2047 y el proxy quedó esperando en
+vez de consumir un núcleo gracias al arreglo anterior del bucle síncrono.
+
+La enumeración explícita de `ambient_light_sub` aportó la segunda instancia que
+la consulta predeterminada no muestra:
+
+- `ambient_light`: `stk_stk31610`, SUID
+  `5158289438331071126:3046173514946711665`;
+- `ambient_light_sub`: `stk_stk31610_sub`, SUID
+  `5230347032368999062:3046173514946711665`.
+
+La secundaria anuncia `available=yes`, 5 Hz y modo *on-change*. Aceptó la
+transacción QMI cuyo cuerpo acababa en
+`0a:07:08:00:10:c0:8d:b7:01:18:00`, exactamente el batch y el cliente activo
+anteriores, pero durante 20 s no emitió configuración ni lux. Esto coincide
+con las pruebas exhaustivas de pmOS de ambas instancias, continuo, DRI,
+polling, petición física Samsung, rails y buses: la frontera restante es el
+driver propietario dentro del DSP, no GNOME ni el cliente Linux.
+
+Los parches diagnósticos no se conservaron. La tablet volvió a `libssc 0.4.4`
+e `iio-sensor-proxy 3.9`, con `ssc-light` oculto, `is_dri=1` en los dos ficheros
+de registro y el proxy activo. La comprobación de salida dejó cero unidades
+fallidas, `/dev/video20–23`, el sink de altavoces y el micrófono digital. No se
+publica una falsa solución ni se abre una cámara periódicamente como ALS: eso
+sería un sustituto con implicaciones de batería, privacidad y concurrencia que
+requiere una decisión separada.
