@@ -3621,3 +3621,27 @@ VLC siguió ausente, `obs-plugins 30.0.2+dfsg-3build1` volvió y el SHA-256 del
 `linux-v4l2.so` activo coincidió con la copia de `obs-v4l2-gts9u`, mientras el
 binario original permaneció en la ruta desviada. El build comprueba desde ahora
 esa igualdad, no sólo el estado de dpkg.
+
+### Release limpia y estado final
+
+La tercera pasada —la primera con margen suficiente para dejar terminar también
+todas las locales configuradas bajo QEMU— construyó de principio a fin la v0.26
+desde el commit `978332d`. El rootfs contiene 1521 paquetes y conserva exactamente
+`ubuntu-gts9u-device 2.18`, `v4l2-relayd-gts9u 0.1.2-gts9u15`,
+`libcamera-gts9u 0.7.2+53.g62d4bfc-gts9u5` y
+`libspa-0.2-libcamera-gts9u 1.0.5-gts9u10`. No hay cuenta ordinaria, VLC ni
+`/tmp/local-debs`; el plugin V4L2 activo y la copia de `obs-v4l2-gts9u` tienen
+el mismo SHA-256.
+
+La imagen UFS mide 3.780.116.480 bytes y tiene SHA-256
+`0d55bf1d07991939b2cfaa3d6e1244194b162cfb37f05773eb8c9033e5671b50`.
+El ZIP TWRP mide 1.155.854.605 bytes y tiene SHA-256
+`3cfc1460d3b8c0863dd298118c2d720a123423c7408a41a13711b3a3d0ade8cb`.
+La validación independiente volvió a pasar tamaños de partición, cabeceras
+Android v4, DTB, LZ4, flags AVB, CRC y contrato del instalador. No se flasheó.
+
+La última lectura del hardware mantuvo el boot ID
+`ea55e3d3-6104-4bc0-a8b1-c0c944764ee0`: servicio de relés activo, cuatro
+procesos, `/dev/video20–23`, `Linger=yes`, raíz `UBTS9U_UFS`, cero unidades
+fallidas y flash apagado. Por tanto, la construcción de la release no alteró el
+estado ya validado de la tablet.
