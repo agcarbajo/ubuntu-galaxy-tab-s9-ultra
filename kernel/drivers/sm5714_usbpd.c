@@ -65,6 +65,26 @@
 #define SM5714_REG_TX_REQ		0x7e
 #define SM5714_REG_PD_STATE3		0xd8
 
+/* How often the attach watchdog samples CC while the port is idle. */
+#define SM5714_CC_WATCH_MS		4000
+
+/*
+ * Rp advertised to a device we are powering, as the SM5714's CC_CNTL1 bits
+ * 5:4.  0 keeps the stock advertisement, which is what every accessory
+ * validated on this board expects; raising it is an experiment, not a default.
+ *
+ * It exists because a bus-powered USB-C hub that a PC drives happily never
+ * brings its controller up here, and the advertised current is the most
+ * plausible difference left.  Raising it blindly is not safe: the port
+ * genuinely sources only 900 mA, and a device that believes otherwise can
+ * brown the rail out.  Hence a knob, defaulting to today's behaviour, so the
+ * theory can be tested on hardware without shipping it to anyone.
+ */
+static unsigned int otg_rp;
+module_param(otg_rp, uint, 0644);
+MODULE_PARM_DESC(otg_rp,
+		 "Rp advertised while sourcing: 0 stock (default), 1..3 raise it");
+
 /* Implemented by the companion charger/fuel-gauge driver on this board. */
 int sm5714_battery_set_pd_contract(unsigned int mv, unsigned int ma);
 int sm5714_battery_set_otg(bool active);
@@ -78,6 +98,7 @@ struct sm5714_usbpd {
 	struct tcpm_port *port;
 	struct fwnode_handle *connector;
 	struct delayed_work cc_resync_work;
+	struct delayed_work cc_watch_work;
 	struct delayed_work otg_det_work;
 	struct gpio_desc *otg_det_gpio;
 	enum typec_cc_polarity polarity;
@@ -85,6 +106,8 @@ struct sm5714_usbpd {
 	bool pr_swap_snk_to_src;
 	bool retained_sink_dfp;
 	bool retained_dock_reset;
+	bool irq_saw_attach;
+	bool watch_saw_attach;
 	unsigned int negotiated_mv;
 	unsigned int negotiated_ma;
 };
@@ -122,6 +145,54 @@ static void sm5714_usbpd_cc_resync_work(struct work_struct *work)
 			 cc);
 	tcpm_cc_change(sm->port);
 	tcpm_vbus_change(sm->port);
+}
+
+/*
+ * Recover an attachment the chip detected but never announced.
+ *
+ * Measured on this board: after a detach, the SM5714 can update CC_STATUS for
+ * the next accessory and raise no ATTACH interrupt at all.  The interrupt
+ * count stays frozen, INT1..INT5 read back empty, the masks are correct, and
+ * TCPM sits unattached forever while the connector plainly has something in
+ * it.  Re-probing the driver clears it instantly, which is what pointed here.
+ *
+ * The recovery has to be narrow.  An earlier attempt to re-arm the resync
+ * unconditionally made TCPM oscillate between host and unattached, because
+ * poking it while genuinely idle feeds back through start_toggling().  So this
+ * only speaks up when the hardware says something is attached *and* the
+ * interrupt path never reported it: in a healthy attach/detach cycle it stays
+ * silent and costs one i2c read.
+ *
+ * The work is deferrable, so an idle, unplugged tablet is never woken for it.
+ */
+static void sm5714_usbpd_cc_watch_work(struct work_struct *work)
+{
+	struct sm5714_usbpd *sm =
+		container_of(to_delayed_work(work), struct sm5714_usbpd,
+			     cc_watch_work);
+	unsigned int cc;
+	bool attached;
+
+	if (IS_ERR_OR_NULL(sm->port))
+		goto again;
+
+	if (regmap_read(sm->regmap, SM5714_REG_CC_STATUS, &cc))
+		goto again;
+
+	attached = cc & SM5714_CC_ATTACH_MASK;
+
+	if (attached && !sm->irq_saw_attach && !sm->watch_saw_attach) {
+		dev_info(sm->dev,
+			 "CC status 0x%02x with no attach interrupt; resyncing TCPM\n",
+			 cc);
+		tcpm_cc_change(sm->port);
+		tcpm_vbus_change(sm->port);
+	}
+	sm->watch_saw_attach = attached;
+
+again:
+	queue_delayed_work(system_dfl_wq, &sm->cc_watch_work,
+			   msecs_to_jiffies(SM5714_CC_WATCH_MS));
 }
 
 static void sm5714_usbpd_otg_det_work(struct work_struct *work)
@@ -369,7 +440,8 @@ static int sm5714_usbpd_set_cc(struct tcpc_dev *tcpc,
 			 */
 			ret = regmap_update_bits(sm->regmap,
 						 SM5714_REG_CC_CNTL1,
-						 GENMASK(5, 4), 0);
+						 GENMASK(5, 4),
+						 (otg_rp & 3) << 4);
 			break;
 		}
 		if (sm->pr_swap_snk_to_src) {
@@ -387,7 +459,8 @@ static int sm5714_usbpd_set_cc(struct tcpc_dev *tcpc,
 		}
 
 		/* No natural DRP attachment exists: force source/DFP. */
-		ret = regmap_write(sm->regmap, SM5714_REG_CC_CNTL1, 0x49);
+		ret = regmap_write(sm->regmap, SM5714_REG_CC_CNTL1,
+				   0x49 | ((otg_rp & 3) << 4));
 		if (!ret)
 			ret = regmap_write(sm->regmap, SM5714_REG_CC_CNTL3,
 					   0x81);
@@ -720,6 +793,13 @@ static irqreturn_t sm5714_usbpd_irq(int irq, void *data)
 
 	mutex_unlock(&sm->lock);
 
+	/* Remember whether the interrupt path is doing its job, so the watchdog
+	 * stays quiet whenever it is. */
+	if (intr[0] & SM5714_INT1_ATTACH)
+		sm->irq_saw_attach = true;
+	if (intr[0] & SM5714_INT1_DETACH)
+		sm->irq_saw_attach = false;
+
 	if (intr[0] & (SM5714_INT1_ATTACH | SM5714_INT1_DETACH) ||
 	    intr[1] & SM5714_INT2_SRC_ADV)
 		tcpm_cc_change(sm->port);
@@ -749,6 +829,7 @@ static int sm5714_usbpd_probe(struct i2c_client *client)
 		return PTR_ERR(sm->regmap);
 	mutex_init(&sm->lock);
 	INIT_DELAYED_WORK(&sm->cc_resync_work, sm5714_usbpd_cc_resync_work);
+	INIT_DEFERRABLE_WORK(&sm->cc_watch_work, sm5714_usbpd_cc_watch_work);
 	INIT_DELAYED_WORK(&sm->otg_det_work, sm5714_usbpd_otg_det_work);
 	i2c_set_clientdata(client, sm);
 
@@ -867,6 +948,10 @@ static int sm5714_usbpd_probe(struct i2c_client *client)
 	mod_delayed_work(system_dfl_wq, &sm->cc_resync_work,
 			 msecs_to_jiffies(sm->retained_dock_reset ? 3000 :
 					  1500));
+	/* Start the attach watchdog after that first resync has settled, so the
+	 * two never race over the same edge. */
+	queue_delayed_work(system_dfl_wq, &sm->cc_watch_work,
+			   msecs_to_jiffies(5000));
 	dev_info(dev, "SM5714 USB Type-C/PD controller registered\n");
 	return 0;
 
@@ -881,6 +966,7 @@ static void sm5714_usbpd_remove(struct i2c_client *client)
 {
 	struct sm5714_usbpd *sm = i2c_get_clientdata(client);
 
+	cancel_delayed_work_sync(&sm->cc_watch_work);
 	cancel_delayed_work_sync(&sm->cc_resync_work);
 	cancel_delayed_work_sync(&sm->otg_det_work);
 	if (sm->otg_det_gpio)

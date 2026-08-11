@@ -1361,3 +1361,56 @@ mientras el relevo entre cámaras siga sin pulir, porque es la herramienta con
 la que se reproduce ese fallo. Al quitarlo hay que quitar también
 `obs-plugins`, y comprobar antes que ninguna verificación de cámaras del
 proyecto dependa de él.
+
+## El puerto USB-C pierde conexiones, y el chip no siempre avisa
+
+Medido en el dispositivo, no deducido. Con un hub enchufado y sin enumerar:
+
+| Medida | Valor |
+|---|---|
+| `CC_STATUS` (0x28) | `0x22` — `ATTACH=SINK`, hay algo conectado |
+| `INT1`…`INT5` | `00` — ninguna interrupción pendiente |
+| Máscaras (0x06…0x0a) | `e6 cf ff 08 ff`, las que programa el driver |
+| IRQ 166 (`8-0033`) | congelada desde el desenchufe anterior |
+
+O sea: **el chip detecta el accesorio en `CC_STATUS` y no genera el ATTACH**.
+TCPM se queda desconectado indefinidamente. Un `unbind`/`bind` del driver lo
+recupera al instante, porque su reprobado programa la resincronización.
+
+No es determinista: en la misma sesión, un enchufe posterior sí se detectó
+solo. Por eso el arreglo es una **red de seguridad**, no un valor de registro
+adivinado: un trabajo diferido que cada 4 s compara `CC_STATUS` con lo que la
+ruta de interrupción ha reportado, y solo llama a `tcpm_cc_change()` cuando el
+hardware dice que hay algo y la interrupción **no** lo ha anunciado.
+
+Esa condición es estrecha a propósito. Ya hay un comentario en el driver que
+avisa de lo contrario: re-armar la resincronización sin condiciones hacía
+**oscilar TCPM entre host y desconectado**, porque tocarlo mientras está
+legítimamente ocioso realimenta `start_toggling()`. El trabajo es *deferrable*,
+así que una tablet ociosa y sin nada enchufado no se despierta por él.
+
+## Lo que sabemos y lo que no del hub que no enumera
+
+Un hub USB-C bus-powered con 3 USB y Ethernet no enumera en la tablet. Lo que
+está **descartado con evidencia**:
+
+- **No está roto**: el mismo hub, con un pendrive, funciona en un PC por USB-C.
+- **No es el camino de datos OTG**: en t=369 la tablet tenía un dispositivo
+  enumerado *mientras ella entregaba VBUS*, antes de un PR_SWAP a sink.
+- **No es la máscara de interrupciones**: Samsung escribe `~ENABLED_INT`, o sea
+  1 = enmascarado, y nuestro `0xe6` sí habilita VBUSPOK, ATTACH y DETACH.
+- **No es una suspensión que se comiera el evento**: el único ciclo de
+  suspensión del arranque es el del panel.
+
+Queda en pie una hipótesis: **el Rp que anunciamos**. En una conexión natural
+de sink el driver pone los bits 5:4 de `CC_CNTL1` a cero, el mínimo, y el
+puerto reporta `power_operation_mode = default`; un PC anuncia 1,5 A o 3 A.
+Escribir ese registro con el hub ya conectado no cambió nada, pero eso **no
+prueba nada**: un sink lee el Rp al conectarse, y además el driver lo fuerza al
+mínimo justo en el instante del attach.
+
+Por eso se añade `otg_rp` como parámetro de módulo, **con el comportamiento
+actual por defecto**. Subirlo a ciegas no es seguro: el puerto entrega 900 mA
+de verdad, y un dispositivo que crea otra cosa puede hundir el raíl. Y hay
+precedente de romper algo al tocarlo: el propio driver bajó el Rp porque con
+`0x59` «se caía repetidamente un dongle OTG pasivo».

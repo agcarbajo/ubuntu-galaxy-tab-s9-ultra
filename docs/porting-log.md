@@ -3396,3 +3396,45 @@ Tres intentos de arreglar la linterna, y los dos primeros se enviaron sin poder
 probar el camino real. Lo que cerró el asunto fue leer el journal del
 dispositivo: dos ejecuciones, una por arranque, que es una firma inequívoca.
 Conviene mirar el journal antes que el código.
+
+---
+
+## Sesión 42 — el puerto USB-C pierde conexiones, y un hub que no se rinde
+
+Fecha: 2026-08-11. Sesión de depuración en caliente sobre la tablet arrancada,
+por SSH, con el hardware delante.
+
+### Lo que se arregla
+
+**El puerto deja de enterarse de conexiones.** Medido, no supuesto: con un hub
+enchufado y sin enumerar, `CC_STATUS=0x22` (hay algo conectado), `INT1..INT5`
+a cero, máscaras correctas y la IRQ 166 congelada desde el desenchufe
+anterior. El chip detecta y no avisa. Un `unbind`/`bind` lo recupera al
+instante.
+
+No es determinista —un enchufe posterior sí se detectó solo—, así que el
+arreglo es un vigilante diferido cada 4 s que solo actúa cuando el hardware
+dice que hay algo **y** la interrupción no lo ha anunciado. La condición es
+estrecha a propósito: el driver ya avisaba de que re-armar la resincronización
+sin condiciones hacía oscilar TCPM entre host y desconectado.
+
+### Lo que no se arregla, y lo que se descarta
+
+El hub sigue sin enumerar. Descartado con evidencia: que esté roto (funciona en
+un PC), que el camino OTG no sirva (en t=369 hubo un dispositivo enumerado con
+la tablet dando VBUS), que las máscaras estén mal, y que una suspensión se
+comiera el evento.
+
+Queda el Rp anunciado, que el driver pone al mínimo en la conexión natural de
+sink. Se añade `otg_rp` como parámetro de módulo **con el valor de hoy por
+defecto**, para poder probarlo en caliente sin arriesgar lo que ya funciona:
+hay precedente de romperlo, porque el Rp se bajó precisamente porque `0x59`
+tiraba un dongle OTG pasivo.
+
+### Método
+
+Tres hipótesis mías cayeron por medirlas: hub muerto, camino OTG roto y Rp
+bajo. La que sobrevivió salió de leer registros del chip por i2c y contar
+interrupciones en `/proc/interrupts`, no de leer código. Y una prueba mal
+diseñada —subir el Rp con el accesorio ya conectado, cuando un sink lo lee al
+conectarse— casi hace descartar la única hipótesis que sigue viva.
