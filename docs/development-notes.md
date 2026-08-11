@@ -1030,25 +1030,55 @@ V4L2 normales.
 
 ### Los relés de sistema necesitan un PipeWire persistente
 
-Los nodos `/dev/video20`–`23` pertenecen a servicios de sistema, pero sus
-fuentes viven en el grafo PipeWire del usuario `ubuntu`. En un arranque sin
-sesión gráfica, una conexión SSH podía iniciar temporalmente `user@1000` y
-PipeWire; al cerrar SSH desaparecía ese servidor mientras los cuatro relés
+Los nodos `/dev/video20`–`23` pertenecen a un servicio de sistema, pero sus
+fuentes viven en el grafo PipeWire de la cuenta que creó OOBE. No existe un
+usuario ni un UID conocidos al construir la imagen. En un arranque sin sesión
+gráfica, una conexión SSH podía iniciar temporalmente ese gestor de usuario y
+PipeWire; al cerrar SSH desaparecía el servidor mientras los cuatro relés
 seguían vivos, unidos al socket antiguo y entregando frames negros.
 
-La imagen crea `/var/lib/systemd/linger/ubuntu` inmediatamente después de
-crear el usuario, y el `postinst` de `ubuntu-gts9u-device` hace lo mismo al
-actualizar instalaciones existentes. El lanzador no considera listo un socket
-por sí solo: espera un `MainPID` vivo de `pipewire.service`, conserva ese PID y
-vigila tanto PipeWire como cada relé. Cualquier cambio reinicia el conjunto
-completo mediante systemd. Se verificó forzando dos reinicios de PipeWire y con
-tres arranques completos de la tablet.
+`ubuntu-gts9u-desktop-user` encuentra las cuentas humanas por el intervalo
+`UID_MIN`–`UID_MAX`, habilita *linger* y escribe en `/run` un drop-in con el
+nombre, UID, runtime y bus reales. La unidad de relés sólo arranca si existe ese
+drop-in y nunca contiene `User=ubuntu` ni `/run/user/1000`. El lanzador no
+considera listo un socket por sí solo: espera un `MainPID` vivo de
+`pipewire.service`, conserva ese PID y vigila tanto PipeWire como cada relé.
+Cualquier cambio reinicia el conjunto completo mediante systemd.
+
+La versión 2.17 de la imagen llevaba por error todavía la variante construida
+con `PathExistsGlob=/home/*`. Al ser una condición por nivel, relanzaba el
+oneshot hasta el límite de systemd y podía bloquear la dependencia de cámaras.
+No bastaba corregir el fichero con el mismo número de versión: apt no tenía
+motivo para reemplazarlo. La 2.18 sube versión y su `postinst` hace
+`daemon-reload`, limpia los tres estados fallidos, reinicia el watcher por
+flanco y vuelve a resolver la cuenta. Si los relés estaban activos, los
+reinicia después de la actualización para ejecutar el binario recién instalado
+en vez del inode antiguo.
+
+### Dos carreras pequeñas explicaban el negro al cambiar
+
+La preempción se pide con `SIGUSR1`. Si la señal llegaba justo después de cerrar
+el consumidor anterior, marcar siempre `input_preempted = TRUE` dejaba aquel
+relé en splash negro aunque ya no hubiese cliente que preemptar. La marca se
+aplica ahora sólo cuando `input_client_active` sigue siendo cierto; un error del
+input recrea además la tubería mientras el consumidor permanezca abierto.
+
+La segunda carrera estaba en un fichero de siete bytes. Cada dueño hacía
+`ftruncate()` y `dprintf()` sobre el descriptor común, pero truncar no devuelve
+el offset a cero. Tras varios cambios los PID quedaban precedidos por huecos NUL,
+`g_ascii_strtoll()` leía dueño cero y el siguiente relé no enviaba la señal. Se
+hace `lseek(..., SEEK_SET)` antes de cada escritura. Es una buena prueba de por
+qué el nombre visible, el nodo abierto y un proceso vivo no demuestran que el
+relevo esté ocurriendo.
 
 Al diagnosticar un `v4l2loopback` con buffers duplicados hay que consumir a
-ritmo de vídeo. Un `v4l2-ctl` sin pausa puede agotar los buffers iniciales mucho
-antes de que llegue un frame nuevo y producir una imagen negra falsa. La prueba
-posterior al reinicio usa un único consumidor, descarta 120 frames a 33 ms y
-exige además un PNG no trivial; así obtuvo imagen real de los cuatro nodos.
+ritmo de vídeo. Un `v4l2-ctl` sin pausa puede leer 75 veces el último buffer
+antes de que venza incluso el debounce de 250 ms y producir una congelación
+falsa. La validación WebRTC mantiene un único consumidor, espera imagen no
+negra, compara muestras separadas dos segundos y exige tiempo multimedia,
+brillo y cambio de píxeles. Tres rondas seguidas y el primer consumidor tras un
+arranque en frío obtuvieron 4/4; OBS se verificó con dos capturas separadas tres
+segundos por cada fuente estándar.
 
 La revisión de color no justificó cambiar el CCM global. Las frontales quedaron
 próximas a neutro y las traseras mostraron un sesgo verde moderado bajo flash en

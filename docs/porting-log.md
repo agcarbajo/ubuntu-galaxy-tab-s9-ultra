@@ -3523,3 +3523,86 @@ El asistente preseleccionaba español porque la imagen fijaba `locale.gen` en
 `es_ES`, teclado `es` y zona `Europe/Madrid`. Pasa a `en_US.UTF-8`, teclado
 `us` y UTC: es lo que ve quien instale esto sin conocer a nadie del proyecto,
 y el asistente pregunta las tres cosas igualmente.
+
+---
+
+## Sesión 45 — relevo de las cuatro cámaras en aplicaciones normales
+
+Fecha: 2026-08-11. Se retomó la v0.25 con cuatro cámaras que funcionaban en
+GNOME Cámara pero podían quedar negras o estáticas al alternarlas desde OBS o
+Chrome. Antes de tocar nada se conservó en el commit `bf6adb8` todo el trabajo
+pendiente de libcamera, `v4l2-relayd`, `v4l2loopback`, WirePlumber y scripts de
+build.
+
+### La actualización ejecutaba código viejo con un fichero nuevo
+
+La tablet seguía llevando `ubuntu-gts9u-device 2.17`, pero el paquete construido
+con ese mismo número contenía todavía `PathExistsGlob=/home/*`. APT no distingue
+dos contenidos con versión idéntica. La condición por nivel relanzaba
+`ubuntu-gts9u-desktop-user` hasta su límite y el servicio de cámaras, que depende
+de él, quedaba parado.
+
+El paquete pasa a 2.18. Su `postinst` recarga las unidades, limpia los estados
+fallidos, reinicia el watcher corregido `PathChanged=/home` y ejecuta la
+resolución dinámica de la cuenta. Si los relés estaban activos antes de la
+actualización, los reinicia al final: un mero `start` habría conservado el
+proceso del binario antiguo.
+
+### Dos fallos distintos en el relevo
+
+El primer fallo era una carrera con la preempción. Un `SIGUSR1` que llegase
+justo después de cerrar el lector marcaba el relé anterior como preemptado para
+siempre. Ahora sólo se marca si aún hay cliente activo y un error de la entrada
+programa su recreación si el lector continúa abierto.
+
+El segundo apareció en el estrés WebRTC. El fichero de bloqueo se truncaba antes
+de escribir el PID, pero el descriptor conservaba su offset. Los PID sucesivos
+quedaban detrás de huecos NUL; el lector interpretaba dueño cero y no podía
+señalar al proceso que retenía CAMSS. `lseek(..., 0, SEEK_SET)` antes de
+`dprintf()` cierra el fallo. El resultado está empaquetado como
+`v4l2-relayd-gts9u 0.1.2-gts9u15`, y el paquete de dispositivo exige exactamente
+esa versión.
+
+### Evidencia de aplicaciones, no sólo de drivers
+
+Se arrancó OBS con un `XDG_CONFIG_HOME` vacío. La escena comenzó realmente
+vacía y se añadió desde la interfaz una fuente normal «Dispositivo de captura
+de video (V4L2)». El selector mostró exactamente las cuatro GTS9U, sin nodos
+RAW ni escenas preconstruidas. La misma fuente recorrió las cuatro cámaras; dos
+capturas separadas tres segundos cambiaron respectivamente 31,12 %, 20,04 %,
+22,98 % y 23,91 % de los píxeles del preview. Esto descarta la imagen estática
+que había motivado la sesión.
+
+El banco WebRTC enumera antes de abrir nada, selecciona después cada `deviceId`
+exacto, espera imagen no negra y compara muestras separadas dos segundos. Tres
+rondas consecutivas pasaron 4/4 a 1280×720, con 45,35–97,78 % de píxeles
+cambiantes según cámara y escena. GNOME Cámara guardó además cuatro JPEG reales:
+dos frontales derechas y dos traseras derechas, con campos de visión distintos;
+el flash iluminó las traseras.
+
+Discord en la sesión Chrome de la persona propietaria enumeró los mismos cuatro
+nombres e identificadores. Su selector de preflight cambió la etiqueta a las
+traseras pero mantuvo abierto `/dev/video20`; la página WebRTC del mismo Chrome
+abrió inmediatamente cada trasera cuando pidió su `deviceId` exacto. Se deja
+como peculiaridad de la interfaz de Discord: no se añade un userscript, escena
+ni preferencia por perfil que no existiría en una instalación limpia.
+
+### Segundo arranque en frío
+
+El primer reinicio cambió la IP por DHCP y dejó la tablet en GDM, como debe
+ocurrir sin autologin. Los relés no dependen de esa sesión: el marcador resolvió
+`agcar`, habilitó *linger* y generó el drop-in de `/run`. Un intento de medir con
+`v4l2-ctl` consumió el último buffer 75 veces antes del debounce y produjo un
+falso «frame único»; no es una prueba válida de vídeo continuo.
+
+Para excluir cualquier recuperación manual se hizo un segundo reinicio completo
+y Chrome fue el primer consumidor. Con boot ID
+`ea55e3d3-6104-4bc0-a8b1-c0c944764ee0`, cuatro relés y ninguna unidad fallida,
+las cuatro cámaras pasaron a la primera: 1280×720, 2,030–2,034 s de avance y
+98,76–100 % de píxeles cambiantes. La raíz seguía siendo `UBTS9U_UFS`, el
+módulo `v4l2loopback` coincidía con `7.2.0-rc3-dirty` y estaba firmado, y el
+flash terminó en cero.
+
+No se cambió CCM ni AWB. Las escenas disponibles no contienen una carta gris o
+de color controlada; ajustar una matriz para una pared y una mesa iluminada por
+flash habría sido adivinar y podía empeorar el resto de iluminaciones.

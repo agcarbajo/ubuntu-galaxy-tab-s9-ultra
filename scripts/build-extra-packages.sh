@@ -22,7 +22,7 @@ fastfetch_ver=${FASTFETCH_VERSION:-2.66.0}
 # and let an upgrade quietly drop the patch.
 fastfetch_pkgver=${fastfetch_ver}-gts9u1
 v4l2_relayd_commit=80e8f54563f624fe2f80a954af8cce27cc3a9636
-v4l2_relayd_version=0.1.2-gts9u12
+v4l2_relayd_version=0.1.2-gts9u15
 obs_v4l2_commit=a4578a6a307e857b7ceafa2723cc1eb345f05100
 obs_v4l2_version=30.0.2+dfsg-3build1-gts9u1
 only=${ONLY_EXTRA_PACKAGE:-all}

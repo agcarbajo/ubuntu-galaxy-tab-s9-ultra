@@ -31,6 +31,21 @@ case "$1" in
 			systemctl enable "$unit" >/dev/null 2>&1 || true
 		done
 
+		# Version 2.17 briefly shipped the desktop-user path unit with a
+		# level-triggered PathExistsGlob.  Once a home existed it relaunched the
+		# oneshot until both units hit systemd's start limit, which in turn kept
+		# the camera relay dependency stopped.  Loading the corrected edge-
+		# triggered unit is not enough on an upgrade: clear that persisted failure
+		# and put the path watcher back into service in the same transaction.
+		if [ -d /run/systemd/system ]; then
+			systemctl daemon-reload || true
+			systemctl reset-failed \
+				ubuntu-gts9u-desktop-user.service \
+				ubuntu-gts9u-desktop-user.path \
+				ubuntu-gts9u-camera-relays.service || true
+			systemctl restart ubuntu-gts9u-desktop-user.path || true
+		fi
+
 		# The gsettings override that keeps gnome-settings-daemon off the
 		# power key only takes effect once the schemas are recompiled.
 		if command -v glib-compile-schemas >/dev/null 2>&1; then
@@ -57,10 +72,19 @@ case "$1" in
 			/usr/libexec/ubuntu-gts9u-enable-flashlight "$existing" || true
 		done
 
-		# Same reason: linger is applied per boot by
-		# ubuntu-gts9u-user-linger.service, which does not need to know who the
-		# owner is.  Run it now too so an upgrade does not have to reboot.
+		# Apply the dynamic owner, device groups, linger and relay drop-in now too
+		# so an upgrade does not have to reboot.  Remember whether the relays were
+		# already serving clients: the helper deliberately uses `start`, which is
+		# right at first boot but would leave an upgraded relay binary running from
+		# its old inode until the next reboot.
+		relays_were_active=false
+		if systemctl is-active --quiet ubuntu-gts9u-camera-relays.service 2>/dev/null; then
+			relays_were_active=true
+		fi
 		/usr/libexec/ubuntu-gts9u-desktop-user || true
+		if $relays_were_active; then
+			systemctl restart ubuntu-gts9u-camera-relays.service || true
+		fi
 
 		# Verify rather than assume: a unit that silently failed to enable
 		# shows up on the tablet only as a feature that quietly does nothing.

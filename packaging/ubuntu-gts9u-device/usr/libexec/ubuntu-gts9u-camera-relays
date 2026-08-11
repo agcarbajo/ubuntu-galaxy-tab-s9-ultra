@@ -19,7 +19,8 @@ stop_relays() {
 trap stop_relays TERM INT EXIT
 
 # The PipeWire socket belongs to the desktop user. Waiting for both the socket
-# and its service makes a cold boot deterministic without racing user@1000.
+# and its service makes a cold boot deterministic without racing the owner's
+# dynamically resolved user manager.
 pipewire_main_pid() {
 	systemctl --user show pipewire.service -p MainPID --value 2>/dev/null || true
 }

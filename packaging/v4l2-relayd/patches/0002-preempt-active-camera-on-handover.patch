@@ -15,7 +15,7 @@ black stream, and let a persistent new client request the shared CAMSS/ISP.
  #include <unistd.h>
  #include <sys/file.h>
  #include <sys/ioctl.h>
-@@ -44,15 +46,21 @@
+@@ -44,17 +46,24 @@
  static gchar *opt_input = NULL;
  static gchar *opt_output = NULL;
  static gchar *opt_splash =
@@ -38,7 +38,10 @@ black stream, and let a persistent new client request the shared CAMSS/ISP.
  static GMutex output_pts_lock;
  static GstClockTime output_next_pts = 0;
  static GstElement *input_pipeline = NULL;
-@@ -161,12 +169,13 @@
++static gboolean input_pipeline_enable (gpointer user_data);
+ static GstElement *output_pipeline = NULL;
+ static GstElement *splash_pipeline = NULL;
+@@ -161,12 +170,18 @@
          input_pipeline = NULL;
          input_bus_watch_id = 0;
          gst_object_unref (pipeline);
@@ -51,6 +54,11 @@ black stream, and let a persistent new client request the shared CAMSS/ISP.
            flock (input_lock_fd, LOCK_UN);
 +          input_lock_held = FALSE;
          }
++        requested_owner = 0;
++        if (input_client_active && !input_preempted && input_enable_timeout_id == 0) {
++          GST_INFO ("Retrying camera input after stream error");
++          input_enable_timeout_id = g_timeout_add (100, input_pipeline_enable, NULL);
++        }
          return FALSE;
        }
 @@ -258,7 +267,7 @@
@@ -123,7 +131,7 @@ black stream, and let a persistent new client request the shared CAMSS/ISP.
 +  }
 +  input_lock_held = TRUE;
 +  requested_owner = 0;
-+  if (ftruncate (input_lock_fd, 0) < 0)
++  if (ftruncate (input_lock_fd, 0) < 0 || lseek (input_lock_fd, 0, SEEK_SET) < 0)
 +    GST_WARNING ("Could not reset camera lock owner: %s", g_strerror (errno));
 +  dprintf (input_lock_fd, "%ld\n", (long) getpid ());
 +  fsync (input_lock_fd);
@@ -170,7 +178,7 @@ black stream, and let a persistent new client request the shared CAMSS/ISP.
 +input_pipeline_preempt (gpointer user_data G_GNUC_UNUSED)
 +{
 +  GST_INFO ("Releasing the ISP for a newly selected camera");
-+  input_preempted = TRUE;
++  input_preempted = input_client_active;
 +  if (input_enable_timeout_id != 0) {
 +    g_source_remove (input_enable_timeout_id);
 +    input_enable_timeout_id = 0;

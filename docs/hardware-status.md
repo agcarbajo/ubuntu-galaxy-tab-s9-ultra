@@ -78,7 +78,7 @@ sondea» como prueba de funcionamiento.
 | Huella (EgisTec EL7xx, SPI) | ❌ | ❌ | supuesto | Sin driver mainline |
 | Vibración / hápticos | ❌ | ❌ | supuesto | Hardware sin identificar |
 | Flash / linterna | ❌ | ✅ | observado | PM8550 SID 1, canales 0+1 agrupados por `leds-qcom-flash`; iluminación real observada en modo estrobo y linterna. El mosaico **Linterna** de ajustes rápidos está instalado, activo y probado físicamente |
-| Cámaras | ❌ | 🟡 | observado | Los cuatro sensores hacen fotos y pasan por `libcamera` simple + software ISP, apareciendo como cuatro cámaras V4L2 normales y nombradas. GNOME Cámara, Chrome WebRTC y OBS abrieron las cuatro, también después de reinicios reales; la trasera principal enfoca con su DW9808. **El cambio de una cámara a otra está sin pulir**: el relevo entre sensores todavía falla y puede dejar la aplicación parada o obligar a reabrir la cámara. Quedan también calibración de fábrica y flash fotográfico automático |
+| Cámaras | ❌ | 🟡 | observado | Los cuatro sensores hacen fotos y pasan por `libcamera` simple + software ISP, apareciendo como exactamente cuatro cámaras V4L2 normales y nombradas. GNOME Cámara, Chrome WebRTC y OBS abrieron y alternaron las cuatro con vídeo cambiante, también después de un arranque en frío; la trasera principal enfoca con su DW9808. El relevo entre sensores queda cerrado. Siguen abiertos la calibración de fábrica y el flash fotográfico automático |
 | Módem | — | — | — | No aplica al modelo Wi-Fi |
 
 ### Cámaras y flash: alcance exacto de la validación
@@ -127,32 +127,41 @@ contra el kernel exacto. Las cámaras se llaman `GTS9U-Front-Ultra-Wide`,
 escenas ni configuración por usuario.
 
 Los cuatro sensores comparten CAMSS/ISP, por lo que los relés serializan sus
-entradas y mantienen dos segundos de guarda tras soltar una cámara. Dos rondas
-consecutivas alternaron 24 aperturas V4L2, diez frames por apertura, manteniendo
-los mismos PID de PipeWire y del servicio y exactamente cuatro relés.
+entradas. Si una aplicación abre la cámara nueva antes de cerrar la anterior,
+el relé nuevo pide la preempción del dueño actual y espera a que libcamera haya
+soltado CAMSS. Los enlaces de medios se reinician antes de cada configuración y
+la cola de salida de `v4l2loopback` sobrevive a la negociación del consumidor.
+El propietario del bloqueo se reescribe desde el offset cero: sin ese detalle,
+el fichero acumulaba huecos NUL y el siguiente relé no podía descubrir a quién
+señalar, dejando una imagen negra o estática.
 
-**Esa medida describe un banco de pruebas, no el uso real, y el relevo entre
-cámaras sigue sin estar terminado.** Alternar sensores desde una aplicación
-puede dejarla parada o exigir reabrir la cámara: el trabajo en curso sobre el
-reinicio de los enlaces de CAMSS, la preempción de la cámara activa y la cola
-de salida de `v4l2loopback` es exactamente ese problema. Cada cámara por
-separado funciona; pasar de una a otra es lo que falta pulir.
+Chrome enumeró sólo esas cuatro cámaras y abrió cada una a 1280×720 mediante
+WebRTC. Tres rondas seguidas exigieron más de un segundo de tiempo multimedia y
+cambio de píxeles entre muestras separadas dos segundos; las doce aperturas
+pasaron. Tras otro arranque en frío, el primer consumidor repitió 4/4 con
+2,030–2,034 s y 98,76–100 % de píxeles cambiantes en la escena disponible. El
+selector V4L2 estándar de un perfil OBS completamente vacío mostró las mismas
+cuatro y capturó cada `/dev/video20`–`23`. Dos capturas separadas tres segundos
+por cámara cambiaron entre 20,04 % y 31,12 % de los píxeles del preview, por lo
+que no eran imágenes cacheadas. El complemento empaquetado oculta únicamente
+los endpoints RAW internos `Qualcomm Camera Subsystem` y corrige el caso en que
+no existen los directorios `by-id`/`by-path`, que antes terminaba en `SIGSEGV`.
 
-Chrome
-enumeró sólo esas cuatro cámaras y abrió cada una a 1280×720/30 fps mediante
-WebRTC. El selector V4L2 estándar de OBS mostró las mismas cuatro y capturó cada
-`/dev/video20`–`23`. Su complemento empaquetado oculta únicamente los endpoints
-RAW internos `Qualcomm Camera Subsystem` y corrige el caso en que no existen
-los directorios `by-id`/`by-path`, que antes terminaba en `SIGSEGV`.
+Discord en Chrome enumera también los cuatro identificadores V4L2 correctos.
+Su selector de previsualización observado conserva internamente el stream
+predeterminado `/dev/video20` aunque la etiqueta cambie a una trasera; el mismo
+Chrome abre inmediatamente esas traseras por su `deviceId` exacto en WebRTC.
+Esto queda documentado como comportamiento de esa interfaz de Discord, no como
+un alias o una cámara ausente del sistema; no se instala ningún userscript ni
+configuración por perfil para maquillarlo.
 
-Tres reinicios reales terminaron con cuatro nodos, cuatro relés y las cuatro
-fuentes PipeWire utilizables antes de iniciar sesión gráfica. El usuario
-`ubuntu` conserva su gestor systemd mediante *linger* y el servicio vigila el
-PID real de PipeWire: si éste cambia, destruye y recrea el conjunto completo de
-relés en vez de dejar nodos V4L2 activos que sólo entregan negro. La recuperación
-se forzó dos veces y reconstruyó los cuatro relés sin intervención. Tras el
-último reinicio, Chrome volvió a abrir las cuatro cámaras y la fuente V4L2
-estándar de OBS abrió `/dev/video20` sin escenas preconfiguradas.
+Los arranques reales terminan con cuatro nodos, cuatro relés y las cuatro
+fuentes PipeWire utilizables antes de iniciar sesión gráfica. La cuenta creada
+por la persona propietaria conserva su gestor systemd mediante *linger*; su
+nombre y UID se resuelven en cada arranque y se escriben en un drop-in bajo
+`/run`, nunca en la unidad empaquetada. El servicio vigila el PID real de
+PipeWire: si éste cambia, destruye y recrea el conjunto completo de relés en vez
+de dejar nodos V4L2 activos que sólo entregan negro.
 
 Las capturas posteriores al reinicio mostraron canales equilibrados en las dos
 frontales y una dominante verde moderada en superficies neutras iluminadas por
