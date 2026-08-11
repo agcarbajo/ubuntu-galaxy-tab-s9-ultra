@@ -200,8 +200,12 @@ realmente.
    `alsa-ucm-conf` de Ubuntu sin conflicto; se instala en
    `conf.d/sm8550/` y `Qualcomm/sm8550/GTS9U/` y tiene prioridad.
 2. **PipeWire frente a PulseAudio — resuelto a favor de PipeWire.** No hizo
-   falta PulseAudio: PipeWire nativo expone los cuatro CS35L45 y los DMIC. A2DP
-   sigue sin probar porque el controlador Bluetooth no se mantiene estable.
+   falta PulseAudio: PipeWire nativo expone los cuatro CS35L45 y los DMIC. El
+   arranque ordena la recuperación del panel antes del ADSP y refresca
+   WirePlumber cuando aparece `controlC0`; dos reinicios consecutivos dejaron
+   `HiFi`, altavoz y micrófono activos, con 351.781 y 351.547 muestras no nulas.
+   A2DP sigue sin probar porque el controlador Bluetooth no se mantiene
+   estable.
 3. **`initramfs-tools` — resuelto, con trabajo.** Cumple los tres requisitos
    duros, pero solo tras forzar `COMPRESS=lz4`, corregir `MODULES` y podar la
    base de datos de udev para caber en `init_boot`.

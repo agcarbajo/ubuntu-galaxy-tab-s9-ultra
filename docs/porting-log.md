@@ -3645,3 +3645,37 @@ La última lectura del hardware mantuvo el boot ID
 procesos, `/dev/video20–23`, `Linger=yes`, raíz `UBTS9U_UFS`, cero unidades
 fallidas y flash apagado. Por tanto, la construcción de la release no alteró el
 estado ya validado de la tablet.
+
+## Sesión 46 — el Dummy Input era una carrera con la recuperación del panel
+
+Fecha: 2026-08-11. Tras un reinicio, GNOME sólo ofrecía Dummy Input/Output. No
+faltaba el driver: `/proc/asound/cards` contenía la X910, existían los cinco PCM
+y WirePlumber había creado `alsa_card.platform-sound`. El objeto, sin embargo,
+sólo tenía `off` y `pro-audio`; había arrancado a las 19:17:02 y la tarjeta no
+terminó de registrarse hasta las 19:17:14. Reiniciar únicamente WirePlumber
+recargó UCM, activó `HiFi` y devolvió altavoz y micrófono. Una grabación produjo
+352.871 muestras no nulas.
+
+La primera corrección del paquete esperaba `controlC0` y refrescaba WirePlumber
+una vez por arranque. La prueba negativa dejó el perfil explícitamente en
+`off`; como WirePlumber conserva una selección deliberada, la versión final
+también selecciona y comprueba `HiFi`. El paquete pasa a
+`ubuntu-gts9u-device 2.21` y declara `pulseaudio-utils`, que aporta `pactl`.
+
+El siguiente reinicio mostró que aquello arreglaba la enumeración pero no toda
+la causa: PipeWire abría el micrófono y recibía exclusivamente ceros, igual que
+ALSA directo. El registro capturó el orden dañino: el ADSP subió, la recuperación
+del panel entró en su suspensión `platform`, APM agotó el opcode `1001021` y
+`va_macro` reanudó con `-EACCES`. Era el fallo intermitente ya documentado, pero
+ahora quedó ligado a una secuencia concreta.
+
+La unidad del ADSP quiere y espera desde ahora a
+`ubuntu-gts9u-panel-coldboot-recover`; la resolución del usuario espera a su vez
+al ADSP y sólo después refresca HiFi y permite arrancar los relés. Dos reinicios
+consecutivos midieron exactamente ese orden. Los boot ID
+`a4f0a3b9-0446-48a2-a915-b8c6995af27f` y
+`7f3fbb28-c259-401f-8762-2807551d149a` produjeron respectivamente 351.781 y
+351.547 muestras de micrófono no nulas, abrieron la salida en silencio, dejaron
+cuatro relés, `/dev/video20–23` y cero unidades fallidas. No volvió a aparecer
+el `-EACCES`. El timeout inicial aislado de APM aún aparece en uno de los dos
+arranques, pero no impide el registro posterior ni la captura real.

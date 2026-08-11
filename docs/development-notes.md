@@ -1121,6 +1121,21 @@ imagen de cámara produjo 729.285 muestras no nulas antes de usar CAMSS y
 buffer silencioso como regresión de cámara habría sido otro falso positivo; hay
 que exigir además los mensajes del APM y repetir desde arranque completo.
 
+La causa quedó medida después: no era una carrera entre audio y cámara, sino
+entre el arranque tardío del ADSP y la recuperación en frío del panel. Esta
+última ejecuta un ciclo `pm_test=platform`; si suspende cuando APM y VA macro
+están sondeándose, el registro contiene `CMD timeout for [1001021]` seguido de
+`va_macro ... -EACCES`. La tarjeta ALSA puede aparecer de todos modos, pero los
+DMIC entregan exclusivamente ceros.
+
+El orden obligatorio es ahora panel → ADSP → usuario de escritorio → relés de
+cámara. Además, WirePlumber puede haber arrancado antes de que exista la
+tarjeta: en ese caso conserva un objeto con perfiles `off`/`pro-audio` y GNOME
+muestra Dummy Input/Output. `ubuntu-gts9u-desktop-user` espera `controlC0`,
+reinicia sólo WirePlumber, selecciona `HiFi` y usa un sello en `/run` para
+hacerlo una vez por arranque. No se reinicia el ADSP en caliente: ASoC no vuelve
+a registrar la tarjeta con este kernel.
+
 ### Los números de adaptador I²C no son una ABI
 
 Al habilitar los controladores CCI de cámara, el STM32 pogo siguió siendo el

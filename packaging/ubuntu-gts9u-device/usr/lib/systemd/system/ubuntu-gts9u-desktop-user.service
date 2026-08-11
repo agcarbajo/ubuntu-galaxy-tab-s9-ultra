@@ -3,7 +3,8 @@ Description=Bind the device services to the account the owner created
 # The account comes from the first-boot wizard, so this cannot be resolved when
 # the image is built: it runs every boot and picks up whoever exists by then,
 # and it must be finished before the camera relays are started.
-After=systemd-logind.service systemd-user-sessions.service
+Wants=ubuntu-gts9u-adsp-boot.service
+After=systemd-logind.service systemd-user-sessions.service ubuntu-gts9u-adsp-boot.service
 Before=ubuntu-gts9u-camera-relays.service
 
 [Service]

@@ -115,6 +115,72 @@ echo "ubuntu-gts9u: camera relays bound to $name (uid $uid)"
 if [ -d /run/systemd/system ]; then
 	systemctl daemon-reload || true
 
+	# The ADSP is started after the root filesystem is mounted.  On some boots
+	# the owner's user manager and WirePlumber are already running by the time
+	# the resulting ALSA card appears.  WirePlumber then keeps the incomplete
+	# card it saw first: only the off/pro-audio profiles exist and GNOME shows
+	# Dummy Output/Input even though /proc/asound/cards is healthy.  The sound
+	# card's later udev event does not make WirePlumber rebuild that object.
+	#
+	# Wait for the actual control node, then refresh only the session manager.
+	# Restarting the ADSP here would be actively harmful: ASoC cannot rebind the
+	# card after a hot remoteproc restart on this kernel.  A per-boot stamp keeps
+	# PathChanged=/home or package upgrades from disrupting an already healthy
+	# session more than once.  Do this before starting the camera relays because
+	# WirePlumber also owns the libcamera nodes they consume.
+	audio_stamp=/run/ubuntu-gts9u/audio-session-refreshed-$uid
+	if [ ! -e "$audio_stamp" ]; then
+		attempt=0
+		while [ ! -e /dev/snd/controlC0 ] && [ "$attempt" -lt 20 ]; do
+			sleep 1
+			attempt=$((attempt + 1))
+		done
+
+		if [ -e /dev/snd/controlC0 ]; then
+			systemctl start "user@$uid.service" || true
+			attempt=0
+			while [ ! -S "/run/user/$uid/bus" ] && [ "$attempt" -lt 10 ]; do
+				sleep 1
+				attempt=$((attempt + 1))
+			done
+
+			if [ -S "/run/user/$uid/bus" ] &&
+				runuser -u "$name" -- env \
+					XDG_RUNTIME_DIR="/run/user/$uid" \
+					DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
+					systemctl --user restart wireplumber.service; then
+				# A profile explicitly left at `off` is persistent state.  It is
+				# uncommon, but selecting HiFi here also makes recovery work after
+				# such a state instead of relying on WirePlumber's default choice.
+				profile_set=
+				attempt=0
+				while [ "$attempt" -lt 10 ]; do
+					if runuser -u "$name" -- env \
+						XDG_RUNTIME_DIR="/run/user/$uid" \
+						DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
+						pactl set-card-profile alsa_card.platform-sound HiFi \
+						>/dev/null 2>&1; then
+						profile_set=1
+						break
+					fi
+					sleep 1
+					attempt=$((attempt + 1))
+				done
+
+				if [ "$profile_set" = 1 ]; then
+					install -m 0644 /dev/null "$audio_stamp"
+					echo "ubuntu-gts9u: refreshed $name's HiFi session after ALSA appeared"
+				else
+					echo "ubuntu-gts9u: WirePlumber did not expose the HiFi profile for $name" >&2
+				fi
+			else
+				echo "ubuntu-gts9u: could not refresh $name's audio session" >&2
+			fi
+		else
+			echo 'ubuntu-gts9u: ALSA card did not appear; leaving the camera relays independent' >&2
+		fi
+	fi
+
 	# graphical.target was reached long before the account existed, so the
 	# relay service was skipped by its own condition and nothing would ever
 	# come back for it: cameras stayed dead until the next boot.  Now that the

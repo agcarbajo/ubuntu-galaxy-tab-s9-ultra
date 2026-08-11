@@ -1,6 +1,11 @@
 [Unit]
-Description=Boot the SM-X910 audio DSP after the microSD rootfs is mounted
-After=local-fs.target
+Description=Boot the SM-X910 audio DSP after the root filesystem is mounted
+# The cold-boot panel recovery performs a platform suspend/resume cycle.  If
+# it overlaps ADSP startup, APM times out and the VA microphone block resumes
+# with -EACCES; the ALSA card then exists but capture is all zeros.  Boot the
+# DSP only after that one-off cycle has returned.
+Wants=ubuntu-gts9u-panel-coldboot-recover.service
+After=local-fs.target ubuntu-gts9u-panel-coldboot-recover.service
 ConditionPathExists=/usr/lib/firmware/qcom/sm8550/adsp.mdt
 
 [Service]
