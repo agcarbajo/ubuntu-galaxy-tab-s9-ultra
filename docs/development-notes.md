@@ -1469,3 +1469,28 @@ una configuración.
 
 Así que subirlo se aparta de lo que hace el fabricante, aunque el chip lo
 admita. Por eso `otg_ma` es un parámetro con 900 mA por defecto, igual que hoy.
+
+## Era la corriente, y el pico de arranque no aparece en ningún log
+
+El hub bus-powered con 3 USB y Ethernet arranca con `otg_ma=3` (1500 mA) y no
+con 900 mA. Medido: `BSTCNTL1=0xc6`, y en `lsusb` aparecen el hub Genesys Logic
+y su RTL8153, que engancha `r8152` y presenta interfaz.
+
+Lo revelador es lo que declaran una vez enumerados: **el hub pide 100 mA y el
+Ethernet 180 mA**. Nada. Lo que necesitaba el margen era el **pico de arranque**
+de sus reguladores y del PHY. Con el techo en 900 mA la protección del cargador
+cortaba antes de que el hub llegase a señalizar el *attach*, y como el corte
+ocurre en el cargador y no en el host, **no aparece nada en ningún log**: ni
+over-current, ni error de enumeración, ni un intento fallido. Desde el host,
+sencillamente no hay nada enchufado.
+
+Esa es la razón de que costara tanto: el síntoma de «le falta corriente» y el
+de «no hay nada conectado» son idénticos vistos desde Linux.
+
+Lo que hace seguro subirlo es que **el techo y el anuncio son independientes**.
+`otg_ma` sube el límite de la protección; `otg_rp` deja el anuncio en el valor
+de fábrica, así que a ningún dispositivo se le dice que puede tirar 1,5 A de
+forma continua. Se le da margen para encender, no permiso para consumir.
+
+Orden de las pruebas, que costó aprenderlo: **el límite hay que subirlo antes
+de enchufar**. Igual que el Rp, esto se decide al conectar.

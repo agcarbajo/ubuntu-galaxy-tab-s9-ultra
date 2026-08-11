@@ -3479,3 +3479,47 @@ antes, en un sitio que nadie había mirado.
 Las cuatro imágenes de arranque coincidieron con el manifiesto al releerlas, y
 la cuenta, el `home` y el sistema sobrevivieron. La tablet arrancó con el
 kernel nuevo. Se restauraron las tres capabilities en caliente.
+
+---
+
+## Sesión 44 — era la corriente
+
+Fecha: 2026-08-11. Instalación limpia de la v0.24 y cierre del caso del hub.
+
+### El hub funciona
+
+Con `otg_ma=3` (1500 mA) puesto **antes** de enchufar, el hub bus-powered
+arranca a la primera: `BSTCNTL1=0xc6`, y `lsusb` muestra el hub Genesys Logic y
+el RTL8153, que engancha `r8152` y presenta interfaz de red.
+
+Lo que declaran una vez enumerados: hub 100 mA, Ethernet 180 mA. Lo que
+necesitaba el margen era el pico de arranque. Con el techo en 900 mA la
+protección del cargador cortaba antes de que el hub señalizase, y como el corte
+es del cargador y no del host, **no queda rastro en ningún log**. Por eso
+«le falta corriente» y «no hay nada enchufado» se veían idénticos desde Linux.
+
+Se sube el valor por defecto a 1500 mA. El anuncio de Rp se queda como estaba:
+son ajustes independientes, así que se da margen para encender sin decirle a
+nadie que puede consumir 1,5 A de forma continua.
+
+### La instalación limpia validó lo demás
+
+`ping` con `cap_net_raw` —primera vez en el port—, LED de linterna en
+`agcar:video` y los siete grupos aplicados sin reiniciar, 41 catálogos de
+idioma, cinco nodos de cámara.
+
+### Y encontró un fallo mío
+
+`ubuntu-gts9u-desktop-user.service` y su `.path` en estado *failed*. Al quitar
+`RemainAfterExit` en la sesión 41, el servicio pasa a inactivo al terminar, y
+`PathExistsGlob` dispara **por nivel**: relanzaba en bucle hasta el límite de
+arranques de systemd. El trabajo se aplicaba en la primera pasada —por eso
+linterna y cámaras iban—, pero las unidades quedaban marcadas como fallidas.
+Se cambia a `PathChanged=/home`, que es por flanco.
+
+### Y una decisión de idioma
+
+El asistente preseleccionaba español porque la imagen fijaba `locale.gen` en
+`es_ES`, teclado `es` y zona `Europe/Madrid`. Pasa a `en_US.UTF-8`, teclado
+`us` y UTC: es lo que ve quien instale esto sin conocer a nadie del proyecto,
+y el asistente pregunta las tres cosas igualmente.

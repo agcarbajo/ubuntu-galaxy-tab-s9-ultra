@@ -18,9 +18,16 @@ suite=${UBUNTU_SUITE:-noble}
 mirror=${UBUNTU_MIRROR:-http://ports.ubuntu.com/ubuntu-ports}
 hostname=${GTS9U_HOSTNAME:-ubuntu-gts9u}
 username=${GTS9U_USER:-ubuntu}
-locale=${GTS9U_LOCALE:-es_ES.UTF-8}
-timezone=${GTS9U_TIMEZONE:-Europe/Madrid}
-keymap=${GTS9U_KEYMAP:-es}
+# Neutral defaults, because these are what the first-boot wizard starts from:
+# whatever the image ships is what it shows pre-selected.  Shipping Spanish
+# meant every owner was offered Spanish first, including those who had never
+# heard of this port's author.  English, a US layout and UTC are the neutral
+# choices, and the wizard asks for all three anyway.
+#
+# The variables remain, so a build for one particular person can still set them.
+locale=${GTS9U_LOCALE:-en_US.UTF-8}
+timezone=${GTS9U_TIMEZONE:-UTC}
+keymap=${GTS9U_KEYMAP:-us}
 kernel_release=${KERNEL_RELEASE:-7.2.0-rc3}
 modules_root=${KERNEL_MODULES_ROOT:-}
 authorized_keys=${GTS9U_AUTHORIZED_KEYS:-}

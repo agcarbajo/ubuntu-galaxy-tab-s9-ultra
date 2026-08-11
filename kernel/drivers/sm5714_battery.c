@@ -56,9 +56,8 @@
 #define  SM5714_CHG_BSTCNTL1_5V1_900MA	0x46
 /*
  * BSTCNTL1 bits 7:6 select the OTG current limit and bits 3:0 the boost
- * voltage, which is why 900 mA at 5.1 V spells 0x46.  The SM5714 also offers
- * 1200 and 1500 mA; Samsung's operating table picks 900 mA in every OTG row on
- * this board, so that stays the default here.
+ * voltage, which is why 900 mA at 5.1 V spells 0x46 and 1500 mA at 5.1 V
+ * spells 0xc6.  The limit itself comes from otg_ma; see the note there.
  */
 #define  SM5714_CHG_BSTCNTL1_5V1	0x06
 #define  SM5714_CHG_BSTCNTL1_MA_SHIFT	6
@@ -139,21 +138,29 @@ static int sm5714_get_online(struct sm5714_battery *sm);
 static int sm5714_get_temp(struct sm5714_battery *sm, int *val);
 /*
  * OTG current limit, as the BSTCNTL1 selector: 0 = 500 mA, 1 = 900 mA,
- * 2 = 1200 mA, 3 = 1500 mA.  Samsung uses 900 mA in every OTG operating mode
- * on this board, so that is the default and nothing changes for the docks and
- * dongles already validated with it.
+ * 2 = 1200 mA, 3 = 1500 mA.
  *
- * It exists as a knob because a bus-powered USB-C hub that a PC drives fine
- * never brings its controller up here; the advertised Rp, the OTG data path,
- * the interrupt masks and a lost suspend event have all been measured and
- * excluded, and what the port can supply is what is left.  Raising it departs
- * from the vendor's configuration, so it is opt-in and reversible rather than
- * a new default nobody asked for.
+ * Samsung uses 900 mA in every OTG row of its operating table, and this port
+ * kept that until a bus-powered USB-C hub that a PC drives fine turned out
+ * never to start here.  Everything else was measured and excluded — the
+ * advertised Rp across all four values, the OTG data path, the interrupt
+ * masks, a lost suspend event — and raising this to 1500 mA brought the hub and
+ * its RTL8153 up on the first try.
+ *
+ * What makes it safe is that the two settings are independent.  This is a
+ * ceiling, not a supply: the hub asks for 100 mA and the Ethernet for 180 mA
+ * once enumerated.  What needed the headroom was the inrush while their
+ * regulators and PHY start, and at 900 mA the charger's protection cut in
+ * before the hub could signal attach — silently, which is why nothing ever
+ * appeared in any log.  Meanwhile the Rp advertisement stays at the stock
+ * value, so no device is *told* it may draw 1.5 A continuously.
+ *
+ * Set otg_ma=1 to go back to the vendor limit.
  */
-static unsigned int otg_ma = 1;
+static unsigned int otg_ma = 3;
 module_param(otg_ma, uint, 0644);
 MODULE_PARM_DESC(otg_ma,
-		 "OTG current limit: 0=500mA, 1=900mA (default), 2=1200mA, 3=1500mA");
+		 "OTG current limit: 0=500mA, 1=900mA (vendor), 2=1200mA, 3=1500mA (default)");
 
 int sm5714_battery_set_pd_contract(unsigned int mv, unsigned int ma);
 int sm5714_battery_set_direct_charge(bool active);

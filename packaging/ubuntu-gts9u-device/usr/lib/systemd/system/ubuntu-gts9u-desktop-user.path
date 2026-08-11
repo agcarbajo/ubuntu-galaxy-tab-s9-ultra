@@ -13,9 +13,15 @@ Description=Watch for the account the first-boot wizard creates
 # fires.  Measured on the tablet — the account existed, the groups had not been
 # applied, and the journal had no second run of the service.
 #
-# A new home directory appearing is the same event seen from somewhere that
-# does get an inotify event anyone can observe.
-PathExistsGlob=/home/*
+# Watching /home for changes catches the same event from somewhere that does
+# get an inotify edge: creating a home directory changes the directory.
+#
+# It must be PathChanged and not PathExistsGlob=/home/*.  PathExists* is level
+# triggered: it fires whenever the condition holds and the service is not
+# running, so with a oneshot that exits — which this one now is — it re-fires
+# the instant the service finishes, loops, and systemd stops both units on the
+# start limit.  That is exactly what the first build with this unit did.
+PathChanged=/home
 PathChanged=/etc/passwd
 
 [Install]
