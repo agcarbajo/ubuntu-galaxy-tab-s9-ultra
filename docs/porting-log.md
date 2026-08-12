@@ -4071,3 +4071,37 @@ SSC = 600 + `MSG_TYPE` está verificada con 9→609 y 12→612), con
 Estado: sin cambios en el dispositivo. Registro original, `boot` `0cf7c7c0…`,
 `vendor_boot` `e77aca73…`, proxy `4c2a2a9c…`, cero unidades fallidas, ADSP
 `running`, brújula viva. Sigue sin haber brillo automático.
+
+## Sesión 53 — no hay otro sensor de luz al que suscribirse
+
+Fecha: 2026-08-12, continuación. Quedaba una idea con fundamento: el blob
+contiene un sensor **`light_seamless`** (`light_seamless_sensor.c`,
+`light_seamless_sensor_instance_island.c:send event curr_lux:%u`,
+`Enable light rate %u`). En un producto *dual optic* como éste era razonable que
+el HAL de Android se suscribiera al sensor fusionado y no a cada chip.
+
+Se compiló una variante de `ssccli` con el `data_type` seleccionable por
+variable de entorno (`libssc-sensor-light.c:277`) y se barrieron los candidatos:
+
+| data_type | publicado | `rx` tras enable |
+|---|---|---|
+| `ambient_light` | sí | **0** |
+| `ambient_light_sub` | sí | **0** |
+| `light_seamless` | **no** | — |
+| `rgb`, `als`, `light`, `oem13`, `sns_oem13`, `ambient_light_v` | no | — |
+
+El DSP sólo publica los dos sensores físicos, y los dos aceptan la habilitación
+y no emiten nada. `light_seamless` existe en el código del firmware pero **no se
+instancia** en esta tablet: el registro de Samsung del X910 no trae su
+configuración (el de sheng sí trae un `sns_oem13.Light`). No hay, por tanto, un
+sensor alternativo al que suscribirse.
+
+Se localizó también la ruta de fábrica: `MSG_TYPE_FACTORY_ENABLE` se envía a
+`MSG_SSC_CORE` con payload vacío (`ssc_core.c:672`), es decir el mensaje SSC
+**613**, y el driver tiene una comprobación `is factory`. Queda como único
+candidato accionable no probado, pendiente de averiguar el `data_type` del
+sensor SSC_CORE de Samsung, que no aparece entre las cadenas del segmento.
+
+Estado: sin cambios en el dispositivo. Binarios de prueba borrados, `boot`
+`0cf7c7c0…`, `vendor_boot` `e77aca73…`, proxy `4c2a2a9c…`, cero unidades
+fallidas, ADSP `running`, acelerómetro dando muestras.
