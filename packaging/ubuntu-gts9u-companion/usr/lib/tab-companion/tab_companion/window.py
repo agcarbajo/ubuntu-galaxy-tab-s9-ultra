@@ -74,7 +74,7 @@ class CompanionWindow(Adw.ApplicationWindow):
 
         hero = Adw.PreferencesGroup()
         picture = Gtk.Picture.new_for_resource(
-            "/io/github/agcarbajo/TabCompanion/images/spen-horizontal.svg"
+            "/io/github/agcarbajo/TabCompanion/images/spen-tip-left.svg"
         )
         picture.set_content_fit(Gtk.ContentFit.CONTAIN)
         picture.set_size_request(-1, 150)
@@ -154,15 +154,22 @@ class CompanionWindow(Adw.ApplicationWindow):
             "tip-left": "Tip pointing left",
         }.get(state.pen_orientation, "Orientation not available")
         self.pen_detail.set_label(orientation)
-        self.pen_picture.set_can_shrink(True)
-        self.pen_picture.set_halign(
-            Gtk.Align.END if state.pen_orientation == "tip-right" else Gtk.Align.CENTER
+        resource = {
+            "tip-right": "/io/github/agcarbajo/TabCompanion/images/spen-tip-right.svg",
+            "tip-left": "/io/github/agcarbajo/TabCompanion/images/spen-tip-left.svg",
+        }.get(
+            state.pen_orientation,
+            "/io/github/agcarbajo/TabCompanion/images/spen-tip-left.svg",
         )
+        self.pen_picture.set_resource(resource)
+        self.pen_picture.set_can_shrink(True)
+        self.pen_picture.set_halign(Gtk.Align.CENTER)
 
         if state.pen_battery >= 0:
             self.battery_row.set_subtitle(f"{state.pen_battery}%")
-        elif state.pen_charging:
-            self.battery_row.set_subtitle("Charging; percentage is not exposed")
+        elif state.pen_state == "docked":
+            charge = "Charging" if state.pen_charging else "Not charging"
+            self.battery_row.set_subtitle(f"{charge}; percentage is not exposed")
         else:
             self.battery_row.set_subtitle("Not exposed by the hardware")
         self.ble_row.set_subtitle(

@@ -1,0 +1,162 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: MIT
+"""Session D-Bus boundary for Tab Companion hardware state."""
+
+from dataclasses import dataclass, fields
+from glob import glob
+from pathlib import Path
+
+from gi.repository import Gio, GLib
+
+
+BUS_NAME = "io.github.agcarbajo.TabCompanion.Hardware"
+OBJECT_PATH = "/io/github/agcarbajo/TabCompanion/Hardware"
+INTERFACE = BUS_NAME
+
+INTROSPECTION = """
+<node>
+  <interface name="io.github.agcarbajo.TabCompanion.Hardware">
+    <property name="PenState" type="s" access="read"/>
+    <property name="PenOrientation" type="s" access="read"/>
+    <property name="PenBattery" type="i" access="read"/>
+    <property name="PenCharging" type="b" access="read"/>
+    <property name="KeyboardPresent" type="b" access="read"/>
+    <property name="BluetoothAvailable" type="b" access="read"/>
+    <property name="GestureAvailable" type="b" access="read"/>
+  </interface>
+</node>
+"""
+
+
+@dataclass(frozen=True)
+class State:
+    PenState: str = "unavailable"
+    PenOrientation: str = "unknown"
+    PenBattery: int = -1
+    PenCharging: bool = False
+    KeyboardPresent: bool = False
+    BluetoothAvailable: bool = False
+    GestureAvailable: bool = False
+
+
+SIGNATURES = {
+    "PenState": "s",
+    "PenOrientation": "s",
+    "PenBattery": "i",
+    "PenCharging": "b",
+    "KeyboardPresent": "b",
+    "BluetoothAvailable": "b",
+    "GestureAvailable": "b",
+}
+
+
+def read_text(path, fallback=""):
+    try:
+        return Path(path).read_text(encoding="ascii").strip()
+    except (OSError, UnicodeError):
+        return fallback
+
+
+class HardwareService:
+    def __init__(self):
+        self.connection = None
+        self.registration = None
+        self.state = State()
+        self.wacom = self._find_wacom()
+
+    @staticmethod
+    def _find_wacom():
+        matches = glob("/sys/bus/i2c/devices/*/pen_docked")
+        return Path(matches[0]).parent if matches else None
+
+    @staticmethod
+    def _keyboard_present():
+        for path in glob("/sys/bus/i2c/devices/*/diagnostics"):
+            diagnostics = read_text(path)
+            if "attached=1" in diagnostics and "connected=1" in diagnostics:
+                return True
+        return False
+
+    def sample(self):
+        if self.wacom is None:
+            self.wacom = self._find_wacom()
+
+        docked = self.wacom is not None and read_text(self.wacom / "pen_docked") == "1"
+        raw_orientation = read_text(self.wacom / "pen_orientation") if self.wacom else ""
+        # X910 calibration, measured 2026-08-12 with the docked tip pointing
+        # towards the USB-C port: Samsung direction 2 (downside) is tip-right.
+        orientation = {"downside": "tip-right", "upside": "tip-left"}.get(
+            raw_orientation, "unknown"
+        )
+        charge = read_text(self.wacom / "pen_charging") if self.wacom else "unknown"
+        battery = -1
+        capacity = read_text("/sys/class/power_supply/gts9u-spen/capacity")
+        if capacity.isdigit():
+            battery = min(100, max(0, int(capacity)))
+
+        new_state = State(
+            PenState="docked" if docked else ("unpaired" if self.wacom else "unavailable"),
+            PenOrientation=orientation if docked else "unknown",
+            PenBattery=battery,
+            PenCharging=docked and charge in {"charging", "full"},
+            KeyboardPresent=self._keyboard_present(),
+            BluetoothAvailable=Path("/sys/class/bluetooth/hci0").exists(),
+            # Only the controller is present today; no Samsung S Pen GATT
+            # transport has been paired or characterised yet.
+            GestureAvailable=False,
+        )
+        self._publish(new_state)
+        return GLib.SOURCE_CONTINUE
+
+    def _publish(self, new_state):
+        old_state = self.state
+        self.state = new_state
+        if self.connection is None:
+            return
+        changed = {}
+        for field in fields(State):
+            name = field.name
+            value = getattr(new_state, name)
+            if value != getattr(old_state, name):
+                changed[name] = GLib.Variant(SIGNATURES[name], value)
+        if changed:
+            self.connection.emit_signal(
+                None,
+                OBJECT_PATH,
+                "org.freedesktop.DBus.Properties",
+                "PropertiesChanged",
+                GLib.Variant("(sa{sv}as)", (INTERFACE, changed, [])),
+            )
+
+    def get_property(self, _connection, _sender, _path, _interface, name):
+        return GLib.Variant(SIGNATURES[name], getattr(self.state, name))
+
+    def acquired(self, connection, _name):
+        self.connection = connection
+        node = Gio.DBusNodeInfo.new_for_xml(INTROSPECTION)
+        self.registration = connection.register_object(
+            OBJECT_PATH, node.interfaces[0], None, self.get_property, None
+        )
+        self.sample()
+        GLib.timeout_add_seconds(1, self.sample)
+
+
+def main():
+    service = HardwareService()
+    owner = Gio.bus_own_name(
+        Gio.BusType.SESSION,
+        BUS_NAME,
+        Gio.BusNameOwnerFlags.NONE,
+        service.acquired,
+        None,
+        None,
+    )
+    loop = GLib.MainLoop()
+    try:
+        loop.run()
+    finally:
+        Gio.bus_unown_name(owner)
+
+
+if __name__ == "__main__":
+    main()

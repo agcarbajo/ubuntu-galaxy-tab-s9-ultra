@@ -23,15 +23,19 @@
 
 #include <linux/bits.h>
 #include <linux/delay.h>
+#include <linux/gpio/consumer.h>
 #include <linux/i2c.h>
 #include <linux/input.h>
 #include <linux/input/touchscreen.h>
 #include <linux/interrupt.h>
 #include <linux/module.h>
+#include <linux/mutex.h>
 #include <linux/of.h>
+#include <linux/power_supply.h>
 #include <linux/regulator/consumer.h>
 #include <linux/slab.h>
 #include <linux/spinlock.h>
+#include <linux/workqueue.h>
 #include <linux/timer.h>
 #include <linux/unaligned.h>
 
@@ -114,6 +118,28 @@
  */
 #define WACOM_CMD_SAMPLERATE_MAX	0x31
 
+/* Samsung's garage/docking protocol, verified against the X910 source drop. */
+#define WACOM_CMD_GARAGE_STATUS		0xee
+#define WACOM_PACKET_ID_MASK		GENMASK(3, 0)
+#define WACOM_PACKET_REPLY		0x0e
+#define WACOM_REPLY_GARAGE_CHARGE	0x06
+#define WACOM_GARAGE_DIRECTION_UP	0x01
+#define WACOM_GARAGE_DIRECTION_DOWN	0x02
+
+enum samsung_wacom_charge_state {
+	WACOM_CHARGE_OFF = 0,
+	WACOM_CHARGE_START,
+	WACOM_CHARGE_TRANSIT,
+	WACOM_CHARGE_RESET,
+	WACOM_CHARGE_AFTER_START,
+	WACOM_CHARGE_AFTER_RESET,
+	WACOM_CHARGE_ON_KEEP_1,
+	WACOM_CHARGE_OFF_KEEP_1,
+	WACOM_CHARGE_ON_KEEP_2,
+	WACOM_CHARGE_OFF_KEEP_2,
+	WACOM_CHARGE_FULL,
+};
+
 /* Feature report 3, the same request shape mainline's wacom_i2c uses. */
 static const u8 wacom_query_cmd[] = { 0x04, 0x00, 0x33, 0x02, 0x05, 0x00 };
 
@@ -136,12 +162,58 @@ static const u8 wacom_query_cmd[] = { 0x04, 0x00, 0x33, 0x02, 0x05, 0x00 };
 struct samsung_wacom {
 	struct i2c_client *client;
 	struct input_dev *input;
+	struct gpio_desc *pdct;
+	struct power_supply *pen_supply;
+	struct work_struct garage_work;
+	struct mutex command_lock;
 	struct touchscreen_properties props;
 	/* Guards in_range and out_of_range against the proximity timer. */
 	spinlock_t lock;
 	struct timer_list prox_timer;
 	bool in_range;
+	bool docked;
+	u8 garage_direction;
+	int charge_status;
 	unsigned int out_of_range;
+};
+
+static enum power_supply_property samsung_wacom_pen_properties[] = {
+	POWER_SUPPLY_PROP_STATUS,
+	POWER_SUPPLY_PROP_PRESENT,
+	POWER_SUPPLY_PROP_SCOPE,
+	POWER_SUPPLY_PROP_MODEL_NAME,
+};
+
+static int samsung_wacom_pen_get_property(struct power_supply *psy,
+					  enum power_supply_property property,
+					  union power_supply_propval *value)
+{
+	struct samsung_wacom *wacom = power_supply_get_drvdata(psy);
+
+	switch (property) {
+	case POWER_SUPPLY_PROP_STATUS:
+		value->intval = wacom->charge_status;
+		return 0;
+	case POWER_SUPPLY_PROP_PRESENT:
+		value->intval = wacom->docked;
+		return 0;
+	case POWER_SUPPLY_PROP_SCOPE:
+		value->intval = POWER_SUPPLY_SCOPE_DEVICE;
+		return 0;
+	case POWER_SUPPLY_PROP_MODEL_NAME:
+		value->strval = "Samsung S Pen";
+		return 0;
+	default:
+		return -EINVAL;
+	}
+}
+
+static const struct power_supply_desc samsung_wacom_pen_supply = {
+	.name = "gts9u-spen",
+	.type = POWER_SUPPLY_TYPE_BATTERY,
+	.properties = samsung_wacom_pen_properties,
+	.num_properties = ARRAY_SIZE(samsung_wacom_pen_properties),
+	.get_property = samsung_wacom_pen_get_property,
 };
 
 struct samsung_wacom_features {
@@ -204,11 +276,174 @@ static void samsung_wacom_set_max_rate(struct samsung_wacom *wacom)
 	static const u8 cmd = WACOM_CMD_SAMPLERATE_MAX;
 	int ret;
 
+	mutex_lock(&wacom->command_lock);
 	ret = i2c_master_send(wacom->client, &cmd, sizeof(cmd));
+	mutex_unlock(&wacom->command_lock);
 	if (ret != sizeof(cmd))
 		dev_dbg(&wacom->client->dev,
 			"could not raise the sample rate: %d\n", ret);
 }
+
+static int samsung_wacom_charge_status(u8 state)
+{
+	switch (state) {
+	case WACOM_CHARGE_FULL:
+		return POWER_SUPPLY_STATUS_FULL;
+	case WACOM_CHARGE_START:
+	case WACOM_CHARGE_TRANSIT:
+	case WACOM_CHARGE_RESET:
+	case WACOM_CHARGE_AFTER_START:
+	case WACOM_CHARGE_AFTER_RESET:
+	case WACOM_CHARGE_ON_KEEP_1:
+	case WACOM_CHARGE_ON_KEEP_2:
+		return POWER_SUPPLY_STATUS_CHARGING;
+	case WACOM_CHARGE_OFF:
+	case WACOM_CHARGE_OFF_KEEP_1:
+	case WACOM_CHARGE_OFF_KEEP_2:
+		return POWER_SUPPLY_STATUS_NOT_CHARGING;
+	default:
+		return POWER_SUPPLY_STATUS_UNKNOWN;
+	}
+}
+
+static void samsung_wacom_notify_garage(struct samsung_wacom *wacom)
+{
+	sysfs_notify(&wacom->client->dev.kobj, NULL, "pen_docked");
+	sysfs_notify(&wacom->client->dev.kobj, NULL, "pen_orientation");
+	sysfs_notify(&wacom->client->dev.kobj, NULL, "pen_charging");
+	if (wacom->pen_supply)
+		power_supply_changed(wacom->pen_supply);
+}
+
+static void samsung_wacom_request_garage_status(struct work_struct *work)
+{
+	struct samsung_wacom *wacom = container_of(work, struct samsung_wacom,
+						    garage_work);
+	static const u8 cmd = WACOM_CMD_GARAGE_STATUS;
+	int ret;
+
+	if (!READ_ONCE(wacom->docked))
+		return;
+
+	mutex_lock(&wacom->command_lock);
+	ret = i2c_master_send(wacom->client, &cmd, sizeof(cmd));
+	mutex_unlock(&wacom->command_lock);
+	if (ret != sizeof(cmd))
+		dev_warn(&wacom->client->dev,
+			 "could not query S Pen orientation/charge: %d\n", ret);
+}
+
+static bool samsung_wacom_handle_garage_reply(struct samsung_wacom *wacom,
+					       const u8 *data)
+{
+	u8 direction;
+	u8 charge_state;
+
+	if ((data[0] & WACOM_PACKET_ID_MASK) != WACOM_PACKET_REPLY ||
+	    data[1] != WACOM_REPLY_GARAGE_CHARGE)
+		return false;
+
+	charge_state = data[2] & WACOM_PACKET_ID_MASK;
+	direction = data[5];
+	WRITE_ONCE(wacom->charge_status,
+		   samsung_wacom_charge_status(charge_state));
+	if (direction == WACOM_GARAGE_DIRECTION_UP ||
+	    direction == WACOM_GARAGE_DIRECTION_DOWN)
+		WRITE_ONCE(wacom->garage_direction, direction);
+
+	dev_info(&wacom->client->dev,
+		 "S Pen garage reply: docked=%u direction=%u charge-state=%u\n",
+		 READ_ONCE(wacom->docked), READ_ONCE(wacom->garage_direction),
+		 charge_state);
+	samsung_wacom_notify_garage(wacom);
+	return true;
+}
+
+static irqreturn_t samsung_wacom_pdct_irq(int irq, void *dev_id)
+{
+	struct samsung_wacom *wacom = dev_id;
+	bool docked = gpiod_get_value_cansleep(wacom->pdct) > 0;
+
+	/* Both edges share the threaded line; ignore duplicate level reports. */
+	if (docked == READ_ONCE(wacom->docked))
+		return IRQ_HANDLED;
+
+	WRITE_ONCE(wacom->docked, docked);
+	if (!docked) {
+		WRITE_ONCE(wacom->garage_direction, 0);
+		WRITE_ONCE(wacom->charge_status,
+			   POWER_SUPPLY_STATUS_NOT_CHARGING);
+	}
+
+	input_report_switch(wacom->input, SW_PEN_INSERTED, docked);
+	input_sync(wacom->input);
+	samsung_wacom_notify_garage(wacom);
+	dev_info(&wacom->client->dev, "S Pen %s\n",
+		 docked ? "docked" : "undocked");
+
+	if (docked)
+		schedule_work(&wacom->garage_work);
+
+	return IRQ_HANDLED;
+}
+
+static ssize_t pen_docked_show(struct device *dev,
+			       struct device_attribute *attribute, char *buf)
+{
+	struct samsung_wacom *wacom = dev_get_drvdata(dev);
+
+	return sysfs_emit(buf, "%u\n", READ_ONCE(wacom->docked));
+}
+static DEVICE_ATTR_RO(pen_docked);
+
+static ssize_t pen_orientation_show(struct device *dev,
+				    struct device_attribute *attribute,
+				    char *buf)
+{
+	struct samsung_wacom *wacom = dev_get_drvdata(dev);
+	const char *orientation = "unknown";
+
+	if (READ_ONCE(wacom->garage_direction) == WACOM_GARAGE_DIRECTION_UP)
+		orientation = "upside";
+	else if (READ_ONCE(wacom->garage_direction) == WACOM_GARAGE_DIRECTION_DOWN)
+		orientation = "downside";
+
+	return sysfs_emit(buf, "%s\n", orientation);
+}
+static DEVICE_ATTR_RO(pen_orientation);
+
+static ssize_t pen_charging_show(struct device *dev,
+				 struct device_attribute *attribute, char *buf)
+{
+	struct samsung_wacom *wacom = dev_get_drvdata(dev);
+	const char *status = "unknown";
+
+	switch (READ_ONCE(wacom->charge_status)) {
+	case POWER_SUPPLY_STATUS_CHARGING:
+		status = "charging";
+		break;
+	case POWER_SUPPLY_STATUS_FULL:
+		status = "full";
+		break;
+	case POWER_SUPPLY_STATUS_NOT_CHARGING:
+		status = "not-charging";
+		break;
+	}
+
+	return sysfs_emit(buf, "%s\n", status);
+}
+static DEVICE_ATTR_RO(pen_charging);
+
+static struct attribute *samsung_wacom_attrs[] = {
+	&dev_attr_pen_docked.attr,
+	&dev_attr_pen_orientation.attr,
+	&dev_attr_pen_charging.attr,
+	NULL,
+};
+
+static const struct attribute_group samsung_wacom_group = {
+	.attrs = samsung_wacom_attrs,
+};
 
 /*
  * Leaving range is synthesised, never announced, so it is emitted from two
@@ -266,6 +501,8 @@ static irqreturn_t samsung_wacom_irq(int irq, void *dev_id)
 
 	ret = i2c_master_recv(wacom->client, data, sizeof(data));
 	if (ret != sizeof(data))
+		return IRQ_HANDLED;
+	if (samsung_wacom_handle_garage_reply(wacom, data))
 		return IRQ_HANDLED;
 
 	/*
@@ -349,12 +586,21 @@ static void samsung_wacom_stop_timer(void *data)
 	timer_shutdown_sync(&wacom->prox_timer);
 }
 
+static void samsung_wacom_cancel_garage_work(void *data)
+{
+	struct samsung_wacom *wacom = data;
+
+	cancel_work_sync(&wacom->garage_work);
+}
+
 static int samsung_wacom_probe(struct i2c_client *client)
 {
 	struct device *dev = &client->dev;
 	struct samsung_wacom_features features;
+	struct power_supply_config supply_config = {};
 	struct samsung_wacom *wacom;
 	struct input_dev *input;
+	int pdct_irq;
 	int attempt;
 	int error;
 
@@ -403,14 +649,27 @@ static int samsung_wacom_probe(struct i2c_client *client)
 
 	wacom->client = client;
 	wacom->input = input;
+	wacom->pdct = devm_gpiod_get(dev, "pdct", GPIOD_IN);
+	if (IS_ERR(wacom->pdct))
+		return dev_err_probe(dev, PTR_ERR(wacom->pdct),
+				     "cannot claim S Pen dock detect\n");
+	wacom->docked = gpiod_get_value_cansleep(wacom->pdct) > 0;
+	wacom->charge_status = POWER_SUPPLY_STATUS_UNKNOWN;
+	mutex_init(&wacom->command_lock);
+	INIT_WORK(&wacom->garage_work, samsung_wacom_request_garage_status);
 	spin_lock_init(&wacom->lock);
 	timer_setup(&wacom->prox_timer, samsung_wacom_prox_timeout, 0);
+	i2c_set_clientdata(client, wacom);
 
 	/*
 	 * Registered before the interrupt so that teardown runs the other way
 	 * round: the handler that arms the timer goes first, then the timer.
 	 */
 	error = devm_add_action_or_reset(dev, samsung_wacom_stop_timer, wacom);
+	if (error)
+		return error;
+	error = devm_add_action_or_reset(dev, samsung_wacom_cancel_garage_work,
+					 wacom);
 	if (error)
 		return error;
 
@@ -434,6 +693,7 @@ static int samsung_wacom_probe(struct i2c_client *client)
 	input_set_capability(input, EV_KEY, BTN_TOOL_PEN);
 	input_set_capability(input, EV_KEY, BTN_TOUCH);
 	input_set_capability(input, EV_KEY, BTN_STYLUS);
+	input_set_capability(input, EV_SW, SW_PEN_INSERTED);
 	input_set_abs_params(input, ABS_X, 0, features.x_max, 0, 0);
 	input_set_abs_params(input, ABS_Y, 0, features.y_max, 0, 0);
 	input_set_abs_params(input, ABS_PRESSURE, 0, features.pressure_max, 0, 0);
@@ -464,12 +724,45 @@ static int samsung_wacom_probe(struct i2c_client *client)
 	if (error)
 		return dev_err_probe(dev, error, "cannot register input\n");
 
+	input_report_switch(input, SW_PEN_INSERTED, wacom->docked);
+	input_sync(input);
+
+	pdct_irq = gpiod_to_irq(wacom->pdct);
+	if (pdct_irq < 0)
+		return dev_err_probe(dev, pdct_irq,
+				     "cannot map S Pen dock interrupt\n");
+	error = devm_request_threaded_irq(dev, pdct_irq, NULL,
+					  samsung_wacom_pdct_irq,
+					  IRQF_ONESHOT | IRQF_TRIGGER_RISING |
+					  IRQF_TRIGGER_FALLING,
+					  "gts9u-spen-dock", wacom);
+	if (error)
+		return dev_err_probe(dev, error,
+				     "cannot claim S Pen dock interrupt\n");
+
+	supply_config.drv_data = wacom;
+	supply_config.fwnode = dev_fwnode(dev);
+	wacom->pen_supply = devm_power_supply_register(dev,
+						       &samsung_wacom_pen_supply,
+						       &supply_config);
+	if (IS_ERR(wacom->pen_supply))
+		return dev_err_probe(dev, PTR_ERR(wacom->pen_supply),
+				     "cannot register S Pen power supply\n");
+
+	error = devm_device_add_group(dev, &samsung_wacom_group);
+	if (error)
+		return dev_err_probe(dev, error,
+				     "cannot expose S Pen dock state\n");
+
 	samsung_wacom_set_max_rate(wacom);
+	if (wacom->docked)
+		schedule_work(&wacom->garage_work);
 
 	dev_info(dev,
-		 "Wacom EMR digitiser: %u x %u, pressure %u, tilt +/-%u/%u, module %u\n",
+		 "Wacom EMR digitiser: %u x %u, pressure %u, tilt +/-%u/%u, module %u, docked=%u\n",
 		 features.x_max, features.y_max, features.pressure_max,
-		 features.tilt_x_max, features.tilt_y_max, features.module_ver);
+		 features.tilt_x_max, features.tilt_y_max, features.module_ver,
+		 wacom->docked);
 
 	return 0;
 }

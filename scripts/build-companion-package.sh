@@ -21,7 +21,8 @@ cat > "$resource_dir/io.github.agcarbajo.TabCompanion.gresource.xml" <<'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <gresources>
   <gresource prefix="/io/github/agcarbajo/TabCompanion/images">
-    <file alias="spen-horizontal.svg">spen-horizontal.svg</file>
+    <file alias="spen-tip-left.svg">spen-tip-left.svg</file>
+    <file alias="spen-tip-right.svg">spen-tip-right.svg</file>
   </gresource>
 </gresources>
 EOF
@@ -29,7 +30,8 @@ glib-compile-resources --sourcedir="$resource_dir" \
 	--target="$resource_dir/io.github.agcarbajo.TabCompanion.gresource" \
 	"$resource_dir/io.github.agcarbajo.TabCompanion.gresource.xml"
 rm "$resource_dir/io.github.agcarbajo.TabCompanion.gresource.xml" \
-	"$resource_dir/spen-horizontal.svg"
+	"$resource_dir/spen-tip-left.svg" \
+	"$resource_dir/spen-tip-right.svg"
 
 # Load the resource before Python starts importing the UI.
 sed -i '5i\from gi.repository import Gio\nGio.resources_register(Gio.Resource.load("/usr/share/tab-companion/io.github.agcarbajo.TabCompanion.gresource"))' \
@@ -43,7 +45,9 @@ python3 -m compileall -q "$staging/usr/lib/tab-companion"
 chown -R root:root "$staging"
 find "$staging" -type d -exec chmod 0755 {} +
 find "$staging" -type f -exec chmod 0644 {} +
-chmod 0755 "$staging/usr/bin/tab-companion" "$staging/DEBIAN/postinst" "$staging/DEBIAN/postrm"
+chmod 0755 "$staging/usr/bin/tab-companion" \
+	"$staging/usr/libexec/tab-companion-hardware" \
+	"$staging/DEBIAN/postinst" "$staging/DEBIAN/postrm"
 find "$staging" -exec touch -h -d '@0' {} +
 
 dpkg-deb --root-owner-group --build "$staging" "$deb"

@@ -1,0 +1,11 @@
+[Unit]
+Description=Tab Companion hardware service
+
+[Service]
+Type=dbus
+BusName=io.github.agcarbajo.TabCompanion.Hardware
+ExecStart=/usr/libexec/tab-companion-hardware
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

@@ -4308,3 +4308,66 @@ El `.desktop` pasó `desktop-file-validate`, los metadatos pasaron
 módulos Python pasaron `compileall`. La apariencia en GNOME/Wayland real queda
 pendiente de confirmación por la propietaria; una captura headless no sustituye
 esa observación.
+
+## Sesión 59 — Tab Companion, fase 2: garaje y carga discreta del S Pen
+
+Fecha: 2026-08-12. Se añadió `pdct-gpios = <&tlmm 137 GPIO_ACTIVE_HIGH>`
+al digitalizador y se extendió el driver Wacom con `SW_PEN_INSERTED`, atributos
+`pen_docked`, `pen_orientation`, `pen_charging` y la fuente de alimentación
+`gts9u-spen`. El comando Samsung `0xee` se serializa con el ajuste de frecuencia
+y su respuesta de garaje se separa de los frames EMR.
+
+El caso físico disponible quedó medido después de arrancar el kernel final:
+
+```text
+Wacom EMR digitiser: 19589 x 31376, pressure 4095, tilt +/-63/63, module 2, docked=1
+S Pen garage reply: docked=1 direction=2 charge-state=9
+pen_docked:1
+pen_orientation:downside
+pen_charging:not-charging
+SW_PEN_INSERTED_QUERY=10 (10 means set)
+type=Battery
+present=1
+status=Not charging
+scope=Device
+model_name=Samsung S Pen
+```
+
+La propietaria dejó el lápiz con la punta hacia la derecha/USB-C. Esto calibra
+`direction=2` como `tip-right`. No se pudo retirar ni invertir, así que el otro
+flanco y `tip-left` siguen sin validación física. Tampoco existe porcentaje en
+el protocolo: UPower no enumera `gts9u-spen` y la aplicación muestra
+«percentage is not exposed».
+
+`ubuntu-gts9u-companion` 0.2.0 añade el servicio de usuario activable por D-Bus
+y mantiene la separación: sólo el backend conoce sysfs; la ventana sólo ve
+propiedades D-Bus. La consulta real fue:
+
+```text
+PenState = 'docked'
+PenOrientation = 'tip-right'
+PenBattery = -1
+PenCharging = false
+KeyboardPresent = true
+BluetoothAvailable = true
+GestureAvailable = false
+```
+
+La UI se volvió a capturar bajo Xvfb en la propia tablet. El SVG aparece
+físicamente invertido, con punta derecha, estado `Docked` y carga sin porcentaje.
+La apariencia en la sesión GNOME bloqueada no se considera validada.
+
+Se guardó un rollback de `boot`, `vendor_boot` y módulos antes de escribir. Las
+imágenes finales se validaron estáticamente y se releyeron de las particiones:
+
+```text
+boot        417d279d472665f0f51b591b0a29c3050de2c29a39ea25c32037510dcca3fba3
+vendor_boot bf312f08a6876194e3ce30d52a81f8da23dd88132c4660698eb5cde17a69e6bc
+```
+
+Salud final: ninguna unidad fallida; `/dev/video20`–`23` presentes; ADSP
+`running`; `iio-sensor-proxy` activo y `HasAccelerometer=true`; sink y fuente
+PipeWire presentes; `paplay` terminó con 0; Wacom y EF-DX920 enumerados, y el
+diagnóstico pogo conservó `attached=1 connected=1`. La escritura real del S Pen
+después de este reinicio no pudo repetirse sin alguien que moviese el lápiz;
+se comprobó la misma ABI de entrada, pero no se eleva eso a prueba física.

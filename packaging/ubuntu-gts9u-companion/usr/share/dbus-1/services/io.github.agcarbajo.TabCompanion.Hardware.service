@@ -1,0 +1,4 @@
+[D-BUS Service]
+Name=io.github.agcarbajo.TabCompanion.Hardware
+Exec=/usr/libexec/tab-companion-hardware
+SystemdService=tab-companion-hardware.service

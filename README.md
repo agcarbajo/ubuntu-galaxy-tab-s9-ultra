@@ -30,7 +30,7 @@ postmarketOS v1.71 baseline is kept outside Git.
 |---|---|---|
 | **Display** | ✅ | 2960×1848 at 120 Hz, DSI + DSC + TE, native panel |
 | **Desktop** | ✅ | GNOME 46 on Wayland with GDM3, stock Ubuntu packages |
-| **Tab Companion** | 🟡 | Native GTK4/libadwaita settings app for S Pen actions and EF-DX920 special keys; packaged, preinstalled by the rootfs build and exercised headlessly on the tablet. Hardware controls are not active yet |
+| **Tab Companion** | 🟡 | Native GTK4/libadwaita settings app, packaged and preinstalled. Its user D-Bus service now reports the measured S Pen dock/orientation/charge state and EF-DX920 presence; action execution is not active yet |
 | **GPU** | ✅ | Adreno 740 through Mesa (Freedreno/Turnip); no Android graphics stack |
 | **Touchscreen** | ✅ | Goodix Berlin / GT9916, Samsung 16-byte event layout |
 | **Buttons** | ✅ | Power and volume; a short press on power suspends |
@@ -55,8 +55,8 @@ postmarketOS v1.71 baseline is kept outside Git.
 | **USB gadget / RNDIS** | ❔ | Inherited, not re-validated |
 | **Ethernet (RTL8153)** | ❔ | Enumerates and loads firmware; real link and traffic untested |
 | **Waydroid** | ❔ | Never tried |
-| **S Pen docking** | ❌ | Going into and out of the silo is not detected |
-| **S Pen battery / charging** | ❌ | The pen's charge level is neither read nor exposed |
+| **S Pen docking** | 🟡 | GPIO137 and `SW_PEN_INSERTED` report the pen docked. The Wacom garage protocol identifies the current, physically known tip-right orientation; removal and the opposite orientation await a hands-on test |
+| **S Pen battery / charging** | 🟡 | Exposed as `gts9u-spen`: present and discrete charging/full/not-charging state work. Samsung's protocol provides no percentage, so none is fabricated and UPower does not list it as a capacity-bearing battery |
 | **S Pen pairing (BLE)** | ❌ | The pen is not paired; its Bluetooth side is untouched |
 | **S Pen gestures** | ❌ | Needs the Samsung GATT profile, plus a daemon and settings of this port's own: GNOME can only map a stylus button to five mouse actions |
 | **Ambient light / automatic brightness** | ❌ | 0x48 answers on no AP-reachable bus, so a mainline IIO driver has nothing to bind to. That is a limit on the AP route only: the working compass is equally invisible to the AP, because SSC sensors hang off the DSP's own I²C. The ALS remains an SSC-side failure — it enumerates and accepts its enable but never emits lux. GNOME's support is ready and the unusable ALS is deliberately not exposed |

@@ -1903,3 +1903,25 @@ fuera. Las palancas externas conocidas —registro, petición de habilitación,
 mensajes `OPTION_DEFINE`, modo de fábrica— ya están todas descartadas por
 medida. No emprender esta ruta esperando un arreglo: emprenderla, como mucho,
 para documentar la causa.
+
+## El garaje del S Pen da orientación y estado, pero no porcentaje
+
+El X910 lleva `PDCT` en TLMM GPIO137, activo alto cuando el lápiz está dentro.
+La ABI del port es el switch estándar `SW_PEN_INSERTED`; no se crea un evento
+privado. El estado complementario sale del comando Wacom `0xee`: la respuesta
+de subtipo 6 lleva el estado discreto de carga en el nibble bajo del byte 2 y
+la dirección en el byte 5.
+
+Calibración física del 2026-08-12: con el lápiz acoplado y la punta mirando al
+USB-C/derecha, el controlador respondió `direction=2` (`downside`). Por tanto
+Tab Companion traduce `downside -> tip-right`; `upside -> tip-left` es la
+contraria inferida y aún requiere una observación física. Durante el arranque
+el GPIO hace una transición breve fuera/dentro; el estado estable y la
+respuesta posterior son los que se publican.
+
+El fuente oficial no contiene un porcentaje. Sólo permite distinguir estados
+como carga, mantenimiento, carga completa o no carga. El kernel registra
+`gts9u-spen` como `power_supply` con `PRESENT`, `STATUS`, `SCOPE` y
+`MODEL_NAME`, sin `CAPACITY`. UPower ignora correctamente esa fuente como
+batería con nivel. La API D-Bus usa `PenBattery=-1`; añadir un porcentaje
+estimado sería inventar telemetría.

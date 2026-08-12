@@ -1487,6 +1487,7 @@
 		compatible = "samsung,gts9u-wacom-w90xx";
 		reg = <0x56>;
 		avdd-supply = <&vreg_l13b_3p0>;
+		pdct-gpios = <&tlmm 137 GPIO_ACTIVE_HIGH>;
 		interrupts-extended = <&tlmm 154 IRQ_TYPE_LEVEL_LOW>;
 		pinctrl-names = "default";
 		pinctrl-0 = <&epen_irqs>;

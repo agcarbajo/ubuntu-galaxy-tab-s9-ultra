@@ -33,7 +33,7 @@ class HardwareClient(GObject.Object):
         self.proxy = None
         Gio.DBusProxy.new_for_bus(
             Gio.BusType.SESSION,
-            Gio.DBusProxyFlags.DO_NOT_AUTO_START,
+            Gio.DBusProxyFlags.NONE,
             None,
             BUS_NAME,
             OBJECT_PATH,
