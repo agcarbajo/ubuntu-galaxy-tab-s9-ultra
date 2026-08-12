@@ -21,6 +21,7 @@ class HardwareState:
     remapping_available: bool = False
     capturing_key: str = ""
     last_special_key: str = ""
+    button_actions_available: bool = False
     bluetooth_available: bool = False
     gesture_available: bool = False
 
@@ -70,6 +71,7 @@ class HardwareClient(GObject.Object):
             remapping_available=self._value("RemappingAvailable", False),
             capturing_key=self._value("CapturingKey", ""),
             last_special_key=self._value("LastSpecialKey", ""),
+            button_actions_available=self._value("ButtonActionsAvailable", False),
             bluetooth_available=self._value("BluetoothAvailable", False),
             gesture_available=self._value("GestureAvailable", False),
         )

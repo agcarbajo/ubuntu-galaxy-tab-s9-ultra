@@ -57,8 +57,8 @@ postmarketOS v1.71 baseline is kept outside Git.
 | **Waydroid** | ❔ | Never tried |
 | **S Pen docking** | 🟡 | GPIO137 and `SW_PEN_INSERTED` report the pen docked. The Wacom garage protocol identifies the current, physically known tip-right orientation; removal and the opposite orientation await a hands-on test |
 | **S Pen battery / charging** | 🟡 | Exposed as `gts9u-spen`: present and discrete charging/full/not-charging state work. Samsung's protocol provides no percentage, so none is fabricated and UPower does not list it as a capacity-bearing battery |
-| **S Pen pairing (BLE)** | ❌ | The pen is not paired; its Bluetooth side is untouched |
-| **S Pen gestures** | ❌ | Needs the Samsung GATT profile, plus a daemon and settings of this port's own: GNOME can only map a stylus button to five mouse actions |
+| **S Pen pairing (BLE)** | ❌ | The pen is not paired. Neither Samsung's open kernel/Platform source nor a docked scan reveals a safe GATT identity, so the port does not guess UUIDs or pair an arbitrary device |
+| **S Pen gestures** | 🟡 | Single, double and long side-button presses are implemented from the existing EMR `BTN_STYLUS` path and the recogniser is software-tested. Physical button testing and all seven air-motion gestures remain open; motion needs the unknown Samsung BLE GATT profile |
 | **Ambient light / automatic brightness** | ❌ | 0x48 answers on no AP-reachable bus, so a mainline IIO driver has nothing to bind to. That is a limit on the AP route only: the working compass is equally invisible to the AP, because SSC sensors hang off the DSP's own I²C. The ALS remains an SSC-side failure — it enumerates and accepts its enable but never emits lux. GNOME's support is ready and the unusable ALS is deliberately not exposed |
 | **Speaker protection** | ❌ | Cirrus protection firmware not loaded; hardware volume kept conservative |
 | **Fingerprint** | ❌ | No mainline driver for the EgisTec sensor |

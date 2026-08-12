@@ -1946,3 +1946,19 @@ en `/dev/uinput` como `Tab Companion virtual keyboard`; la regla udev limita
 el nodo al grupo `input`. Aplicaciones y comandos usan destinos explícitos por
 asignación, mientras medios, volumen, atrás, inicio, overview y captura se
 emiten como teclas Linux.
+
+## El botón del S Pen no necesita BLE; el movimiento sí
+
+`BTN_STYLUS` ya llega por el digitalizador EMR mientras la punta está en rango.
+Tab Companion lo lee sin `EVIOCGRAB`: una liberación espera 300 ms antes de
+declararse simple, una segunda dentro de esa ventana la convierte en doble y
+600 ms pulsado producen larga. Las tres rutas usan exactamente el mismo motor
+de acciones que el teclado. Esto no descubre movimientos en el aire.
+
+La búsqueda en los fuentes abiertos Kernel y Platform del X910 no encontró
+UUID, perfil GATT ni formato de Air actions. El escaneo con el lápiz acoplado
+tampoco lo anuncia, pero no es una prueba negativa del perfil: falta sacarlo y
+ponerlo en emparejamiento. No registrar UUIDs genéricos ni filtrar sólo por un
+nombre supuesto; podría emparejar otro dispositivo. La siguiente prueba válida
+es física: modo pairing, `bluetoothctl scan on`, listado de servicios y captura
+de notificaciones al ejecutar cada gesto conocido.

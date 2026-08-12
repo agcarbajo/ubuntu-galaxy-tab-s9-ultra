@@ -221,9 +221,13 @@ class CompanionWindow(Adw.ApplicationWindow):
             self.battery_row.set_subtitle(f"{charge}; percentage is not exposed")
         else:
             self.battery_row.set_subtitle("Not exposed by the hardware")
-        self.ble_row.set_subtitle(
-            "Bluetooth controller available" if state.bluetooth_available else "S Pen is not paired"
-        )
+        if state.button_actions_available:
+            bluetooth = "Button actions ready; air motion still needs S Pen BLE"
+        elif state.bluetooth_available:
+            bluetooth = "Bluetooth controller available; S Pen is not paired"
+        else:
+            bluetooth = "S Pen is not paired"
+        self.ble_row.set_subtitle(bluetooth)
         if state.capturing_key:
             keyboard = "Press the key to assign it"
         elif state.keyboard_present and state.remapping_available:
@@ -243,6 +247,7 @@ class CompanionWindow(Adw.ApplicationWindow):
             f"Cover keyboard: {'present' if state.keyboard_present else 'not reported'}\n"
             f"Remapping: {'available' if state.remapping_available else 'unavailable'}\n"
             f"Last special key: {state.last_special_key or 'none'}"
+            f"\nS Pen button actions: {'available' if state.button_actions_available else 'unavailable'}"
         )
         about = Adw.AboutWindow(
             transient_for=self,

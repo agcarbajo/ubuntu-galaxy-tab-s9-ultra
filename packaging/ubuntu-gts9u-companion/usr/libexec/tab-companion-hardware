@@ -18,6 +18,7 @@ BUS_NAME = "io.github.agcarbajo.TabCompanion.Hardware"
 OBJECT_PATH = "/io/github/agcarbajo/TabCompanion/Hardware"
 INTERFACE = BUS_NAME
 KEYBOARD_NAME = "Book Cover Keyboard Slim (EF-DX920)"
+PEN_NAME = "Wacom EMR Digitizer"
 MAPPINGS = {
     "key-galaxy-ai", "key-dex", "key-search-settings",
     "key-fn-f1", "key-fn-f2", "key-fn-f3", "key-fn-f4", "key-fn-f5",
@@ -26,6 +27,7 @@ MAPPINGS = {
 EV_SYN = 0
 EV_KEY = 1
 SYN_REPORT = 0
+BTN_STYLUS = 331
 KEY_F24 = 194
 INPUT_EVENT = struct.Struct("llHHi")
 UI_SET_EVBIT = 0x40045564
@@ -61,6 +63,7 @@ INTROSPECTION = """
     <property name="RemappingAvailable" type="b" access="read"/>
     <property name="CapturingKey" type="s" access="read"/>
     <property name="LastSpecialKey" type="s" access="read"/>
+    <property name="ButtonActionsAvailable" type="b" access="read"/>
     <property name="BluetoothAvailable" type="b" access="read"/>
     <property name="GestureAvailable" type="b" access="read"/>
   </interface>
@@ -78,6 +81,7 @@ class State:
     RemappingAvailable: bool = False
     CapturingKey: str = ""
     LastSpecialKey: str = ""
+    ButtonActionsAvailable: bool = False
     BluetoothAvailable: bool = False
     GestureAvailable: bool = False
 
@@ -85,7 +89,8 @@ class State:
 SIGNATURES = {
     "PenState": "s", "PenOrientation": "s", "PenBattery": "i",
     "PenCharging": "b", "KeyboardPresent": "b", "RemappingAvailable": "b",
-    "CapturingKey": "s", "LastSpecialKey": "s", "BluetoothAvailable": "b",
+    "CapturingKey": "s", "LastSpecialKey": "s", "ButtonActionsAvailable": "b",
+    "BluetoothAvailable": "b",
     "GestureAvailable": "b",
 }
 
@@ -133,6 +138,12 @@ class HardwareService:
         self.settings = Gio.Settings.new("io.github.agcarbajo.TabCompanion")
         self.keyboard_fd = None
         self.keyboard_watch = None
+        self.pen_fd = None
+        self.pen_watch = None
+        self.pen_pressed = False
+        self.pen_long_fired = False
+        self.pen_long_timer = None
+        self.pen_single_timer = None
         self.capture_mapping = ""
         try:
             self.virtual_keyboard = VirtualKeyboard()
@@ -158,6 +169,13 @@ class HardwareService:
                 return "/dev/input/" + Path(path).name
         return None
 
+    @staticmethod
+    def _find_pen_event():
+        for path in glob("/sys/class/input/event*"):
+            if read_text(Path(path) / "device/name") == PEN_NAME:
+                return "/dev/input/" + Path(path).name
+        return None
+
     def _ensure_keyboard_reader(self):
         if self.keyboard_fd is not None:
             return
@@ -180,6 +198,27 @@ class HardwareService:
             os.close(self.keyboard_fd)
             self.keyboard_fd = None
         self.keyboard_watch = None
+
+    def _ensure_pen_reader(self):
+        if self.pen_fd is not None:
+            return
+        path = self._find_pen_event()
+        if not path:
+            return
+        try:
+            self.pen_fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+        except OSError:
+            self.pen_fd = None
+            return
+        self.pen_watch = GLib.io_add_watch(
+            self.pen_fd, GLib.IO_IN | GLib.IO_HUP | GLib.IO_ERR, self._pen_event
+        )
+
+    def _close_pen_reader(self):
+        if self.pen_fd is not None:
+            os.close(self.pen_fd)
+            self.pen_fd = None
+        self.pen_watch = None
 
     def _keyboard_event(self, _source, condition):
         if condition & (GLib.IO_HUP | GLib.IO_ERR):
@@ -216,6 +255,61 @@ class HardwareService:
             self._replace_dynamic(LastSpecialKey=f"{mapping}:{code}")
             self.execute_mapping(mapping)
 
+    def _pen_event(self, _source, condition):
+        if condition & (GLib.IO_HUP | GLib.IO_ERR):
+            self._close_pen_reader()
+            return GLib.SOURCE_REMOVE
+        try:
+            data = os.read(self.pen_fd, INPUT_EVENT.size * 32)
+        except BlockingIOError:
+            return GLib.SOURCE_CONTINUE
+        except OSError:
+            self._close_pen_reader()
+            return GLib.SOURCE_REMOVE
+        if not data:
+            self._close_pen_reader()
+            return GLib.SOURCE_REMOVE
+        for offset in range(0, len(data) - INPUT_EVENT.size + 1, INPUT_EVENT.size):
+            _sec, _usec, event_type, code, value = INPUT_EVENT.unpack_from(data, offset)
+            if event_type == EV_KEY and code == BTN_STYLUS and value in {0, 1}:
+                self._pen_button(value == 1)
+        return GLib.SOURCE_CONTINUE
+
+    def _pen_button(self, pressed):
+        if pressed:
+            if self.pen_pressed:
+                return
+            self.pen_pressed = True
+            self.pen_long_fired = False
+            self.pen_long_timer = GLib.timeout_add(600, self._pen_long_press)
+            return
+        if not self.pen_pressed:
+            return
+        self.pen_pressed = False
+        if self.pen_long_timer is not None:
+            GLib.source_remove(self.pen_long_timer)
+            self.pen_long_timer = None
+        if self.pen_long_fired:
+            return
+        if self.pen_single_timer is not None:
+            GLib.source_remove(self.pen_single_timer)
+            self.pen_single_timer = None
+            self.execute_mapping("gesture-double-press")
+        else:
+            self.pen_single_timer = GLib.timeout_add(300, self._pen_single_press)
+
+    def _pen_long_press(self):
+        self.pen_long_timer = None
+        if self.pen_pressed:
+            self.pen_long_fired = True
+            self.execute_mapping("gesture-long-press")
+        return GLib.SOURCE_REMOVE
+
+    def _pen_single_press(self):
+        self.pen_single_timer = None
+        self.execute_mapping("gesture-single-press")
+        return GLib.SOURCE_REMOVE
+
     def execute_mapping(self, mapping):
         if mapping not in MAPPINGS and not mapping.startswith("gesture-"):
             return False
@@ -246,6 +340,7 @@ class HardwareService:
         if self.wacom is None:
             self.wacom = self._find_wacom()
         self._ensure_keyboard_reader()
+        self._ensure_pen_reader()
         docked = self.wacom is not None and read_text(self.wacom / "pen_docked") == "1"
         raw_orientation = read_text(self.wacom / "pen_orientation") if self.wacom else ""
         orientation = {"downside": "tip-right", "upside": "tip-left"}.get(
@@ -263,6 +358,7 @@ class HardwareService:
             RemappingAvailable=self.virtual_keyboard is not None and self.keyboard_fd is not None,
             CapturingKey=self.capture_mapping,
             LastSpecialKey=self.state.LastSpecialKey,
+            ButtonActionsAvailable=self.pen_fd is not None,
             BluetoothAvailable=Path("/sys/class/bluetooth/hci0").exists(),
             GestureAvailable=False,
         ))
@@ -314,6 +410,10 @@ class HardwareService:
 
     def close(self):
         self._close_keyboard_reader()
+        self._close_pen_reader()
+        for timer in (self.pen_long_timer, self.pen_single_timer):
+            if timer is not None:
+                GLib.source_remove(timer)
         if self.virtual_keyboard is not None:
             self.virtual_keyboard.close()
 

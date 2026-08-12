@@ -4413,3 +4413,34 @@ el diálogo `Target for Galaxy AI` sin traceback. Quedan sin prueba física el
 evento de cada tecla especial y el aprendizaje de Fn: no había nadie para
 pulsarlas, y una inyección `uinput` sólo valida la salida, no lo que emite el
 STM32.
+
+## Sesión 61 — Tab Companion, fase 4: botón EMR y frontera BLE
+
+Fecha: 2026-08-12. Se buscaron identificadores del S Pen en los árboles
+Samsung Kernel y Platform del paquete abierto X910. No contienen UUID de
+servicio, protocolo GATT ni formato de notificaciones de Air actions. Unido al
+escaneo anterior con el lápiz acoplado, esto no permite construir un
+emparejador que identifique el dispositivo con seguridad. No se añadió uno a
+ciegas.
+
+Sí se cerró la parte independiente de BLE. `ubuntu-gts9u-companion` 0.4.0 abre
+el Wacom EMR ya existente y convierte `BTN_STYLUS` en pulsación simple, doble o
+larga, con ventanas de 300 y 600 ms. El autómata se ejercitó directamente en la
+tablet y entregó:
+
+```text
+single: ['gesture-single-press']
+double: ['gesture-double-press']
+long: ['gesture-long-press']
+```
+
+El servicio real publica `ButtonActionsAvailable=true` y
+`GestureAvailable=false`: lo primero significa que existe la ruta del botón,
+lo segundo que aún no hay transporte de movimiento. La captura final de la UI
+muestra literalmente «Button actions ready; air motion still needs S Pen BLE».
+
+La prueba física del botón no fue posible porque el lápiz permaneció acoplado.
+También quedan sin implementar/validar deslizamientos arriba, abajo, izquierda
+y derecha, y círculos horario/antihorario. Su siguiente paso exige a la
+propietaria: desacoplar, activar pairing, inventariar el GATT y producir un
+evento de cada gesto; cualquier código anterior a esa captura sería supuesto.
