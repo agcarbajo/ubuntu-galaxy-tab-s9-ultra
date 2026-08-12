@@ -1,8 +1,14 @@
 #!/bin/sh
 set -e
 
+if [ "$1" = remove ] || [ "$1" = purge ]; then
+	systemctl disable --now tab-companion-spen-pairing.service >/dev/null 2>&1 || true
+fi
+
 if command -v glib-compile-schemas >/dev/null 2>&1; then
 	glib-compile-schemas /usr/share/glib-2.0/schemas
 fi
+
+systemctl daemon-reload >/dev/null 2>&1 || true
 
 exit 0

@@ -30,7 +30,7 @@ postmarketOS v1.71 baseline is kept outside Git.
 |---|---|---|
 | **Display** | ✅ | 2960×1848 at 120 Hz, DSI + DSC + TE, native panel |
 | **Desktop** | ✅ | GNOME 46 on Wayland with GDM3, stock Ubuntu packages |
-| **Tab Companion** | 🟡 | Native GTK4/libadwaita settings app, packaged and preinstalled. Its D-Bus service reports S Pen and EF-DX920 state and its tested `uinput` engine executes keyboard mappings. Galaxy AI, DeX and Search have stock-source codes; `Fn+F1–F5` must still be learned from real presses |
+| **Tab Companion** | 🟡 | Native GTK4/libadwaita settings app, packaged and preinstalled. Its D-Bus service reports S Pen and EF-DX920 state and its tested `uinput` engine executes keyboard mappings. Galaxy AI, DeX, Finder, Settings and `Fn+F1–F11` are physically validated; `Fn+F12` emits no controller event |
 | **GPU** | ✅ | Adreno 740 through Mesa (Freedreno/Turnip); no Android graphics stack |
 | **Touchscreen** | ✅ | Goodix Berlin / GT9916, Samsung 16-byte event layout |
 | **Buttons** | ✅ | Power and volume; a short press on power suspends |
@@ -55,10 +55,10 @@ postmarketOS v1.71 baseline is kept outside Git.
 | **USB gadget / RNDIS** | ❔ | Inherited, not re-validated |
 | **Ethernet (RTL8153)** | ❔ | Enumerates and loads firmware; real link and traffic untested |
 | **Waydroid** | ❔ | Never tried |
-| **S Pen docking** | 🟡 | GPIO137 and `SW_PEN_INSERTED` report the pen docked. The Wacom garage protocol identifies the current, physically known tip-right orientation; removal and the opposite orientation await a hands-on test |
-| **S Pen battery / charging** | 🟡 | Exposed as `gts9u-spen`: present and discrete charging/full/not-charging state work. Samsung's protocol provides no percentage, so none is fabricated and UPower does not list it as a capacity-bearing battery |
-| **S Pen pairing (BLE)** | ❌ | The pen is not paired. Neither Samsung's open kernel/Platform source nor a docked scan reveals a safe GATT identity, so the port does not guess UUIDs or pair an arbitrary device |
-| **S Pen gestures** | 🟡 | Single, double and long side-button presses are implemented from the existing EMR `BTN_STYLUS` path and the recogniser is software-tested. Physical button testing and all seven air-motion gestures remain open; motion needs the unknown Samsung BLE GATT profile |
+| **S Pen docking** | ✅ | GPIO137 and `SW_PEN_INSERTED` report removal/reinsertion; both physical orientations are confirmed and exposed by Tab Companion |
+| **S Pen battery / charging** | 🟡 | Automatic dock charging and discrete state work. The identified Samsung BLE Battery characteristic returned the real 100 % level while connected; an intermediate physical level is still pending |
+| **S Pen pairing (BLE)** | 🟡 | The bundled pen is bonded and trusted. A restricted system service reproduces One UI's dock-initiated authorization flow and never accepts an arbitrary Bluetooth device; clean-boot/reconnection validation remains open |
+| **S Pen gestures** | 🟡 | Single, double and long side-button presses work through EMR. Over BLE, all six air gestures were captured and classified on the physical pen: up, down, left, right, clockwise and counterclockwise. Each runs its Tab Companion mapping; visible per-action UI checks remain open |
 | **Ambient light / automatic brightness** | ❌ | 0x48 answers on no AP-reachable bus, so a mainline IIO driver has nothing to bind to. That is a limit on the AP route only: the working compass is equally invisible to the AP, because SSC sensors hang off the DSP's own I²C. The ALS remains an SSC-side failure — it enumerates and accepts its enable but never emits lux. GNOME's support is ready and the unusable ALS is deliberately not exposed |
 | **Speaker protection** | ❌ | Cirrus protection firmware not loaded; hardware volume kept conservative |
 | **Fingerprint** | ❌ | No mainline driver for the EgisTec sensor |

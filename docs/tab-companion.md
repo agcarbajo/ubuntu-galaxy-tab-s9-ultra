@@ -10,6 +10,9 @@ GNOME y no necesita ejecutarse para que el demonio aplique asignaciones.
 - `tab-companion-hardware.service` corre como servicio de usuario, detecta las
   capacidades presentes y publica
   `io.github.agcarbajo.TabCompanion.Hardware`.
+- `tab-companion-spen-pairing.service` corre como servicio de sistema: puede
+  ordenar el reset Wacom de emparejamiento y acepta en BlueZ únicamente un
+  dispositivo SPEN con UUID Samsung mientras `pen_docked=1`.
 - Sólo el backend lee sysfs y los dispositivos de entrada.
 - Las acciones de teclado y botón del lápiz salen por
   `Tab Companion virtual keyboard` (`uinput`). El backend captura el EF-DX920
@@ -20,19 +23,33 @@ GNOME y no necesita ejecutarse para que el demonio aplique asignaciones.
 
 El dibujo cambia con `PenOrientation`. En el X910 está calibrado con una medida
 real: respuesta Samsung `downside` es punta hacia la derecha/USB-C. La app
-distingue acoplado, cercano y no emparejado, aunque hoy sólo está medido el
-primer caso.
+distingue acoplado, cercano, emparejado en reposo y no emparejado.
 
 Al insertar el lápiz, el kernel envía automáticamente la secuencia Samsung
 habilitar/iniciar/mantener y consulta el cargador cada 30 segundos. El
 porcentaje muestra «no expuesto» porque el protocolo del garaje sólo entrega
 cargando/completo/no cargando. Cuando responde carga completa se publica 100 %;
-un `-1` en `PenBattery` significa desconocido, no cero. El nivel intermedio se
-intentará obtener del servicio Battery de BLE.
+un `-1` en `PenBattery` significa desconocido, no cero. Una vez enlazado, el
+backend lee el porcentaje real de la característica Samsung Battery Level; la
+primera lectura física devolvió 100 %.
 
-Las filas de pulsación simple, doble y larga ya usan `BTN_STYLUS`. Los
-deslizamientos y círculos guardan su asignación, pero no se ejecutan mientras
-`GestureAvailable=false`: falta caracterizar el perfil BLE de Samsung.
+El emparejamiento no usa el diálogo Bluetooth clásico. Con el lápiz insertado,
+el comando Wacom `0xea` abre el anuncio y el propio S Pen inicia una solicitud
+de autorización. El servicio la acepta sólo si coinciden simultáneamente el
+acoplamiento físico, el nombre SPEN y ambos UUID FD6C/FEF5. El vínculo se
+guarda como `Paired`, `Bonded` y `Trusted`, igual que el flujo transparente de
+One UI desde el punto de vista de la usuaria. El agente sólo se registra como
+predeterminado durante esa ventana, que se cierra a los 65 segundos o en cuanto
+termina el enlace, para no interferir con otros emparejamientos Bluetooth.
+
+Las filas de pulsación simple, doble y larga usan `BTN_STYLUS`. El transporte
+de aire es el servicio FD6C, Mode `0x10` y Button State con muestras
+incrementales `dx`/`dy`. El clasificador acumula la trayectoria: separa primero
+los círculos por energía en ambos ejes y área firmada, y después los
+deslizamientos por eje dominante y signo. Arriba, abajo, izquierda, derecha,
+horario y antihorario quedaron validados con el lápiz físico y ejecutan la
+asignación guardada. Al comenzar movimiento se cancela la pulsación larga para
+que un gesto no dispare dos acciones.
 
 ## Teclado funda
 
@@ -62,25 +79,25 @@ Estas pruebas necesitan a la propietaria y no están marcadas como superadas:
 
 1. abrir la app en la sesión GNOME real y confirmar aspecto, desplazamiento y
    tamaño táctil de los controles;
-2. confirmar que la carga alcanza el estado completo y que la app muestra
-   100 %;
+2. dejar que la batería baje de 100 % y confirmar un porcentaje BLE intermedio;
 3. con la punta en hover, probar simple, doble y larga del botón con una acción
    inocua, como volumen;
 4. comprobar escritura normal y el LED de Caps Lock con la retransmisión del
    teclado activa; las acciones de Galaxy AI, DeX, Finder, Ajustes y Fn+F1–F11
    ya se validaron físicamente;
-5. sacar el lápiz, ponerlo en modo emparejamiento y capturar con BlueZ nombre,
-   UUIDs, características y notificaciones; después producir una muestra de
-   cada deslizamiento y círculo.
+5. confirmar reconexión automática al sacar/reinsertar y tras un arranque limpio;
+6. asignar una acción visible distinta a cada uno de los seis gestos y confirmar
+   desde la interfaz que cada fila ejecuta su destino.
 
 No se deben documentar direcciones Bluetooth, MAC, SSID ni credenciales. La
-fase BLE sólo puede cerrarse cuando las notificaciones distingan los siete
-movimientos de forma repetible.
+fase BLE sólo puede cerrarse tras la prueba visual de las acciones y la
+reconexión desde un arranque limpio.
 
 ## Diagnóstico rápido
 
 ```sh
 systemctl --user status tab-companion-hardware.service
+systemctl status tab-companion-spen-pairing.service
 gdbus introspect --session \
   --dest io.github.agcarbajo.TabCompanion.Hardware \
   --object-path /io/github/agcarbajo/TabCompanion/Hardware \

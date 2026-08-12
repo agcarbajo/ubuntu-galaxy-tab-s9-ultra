@@ -10,7 +10,10 @@ import os
 from pathlib import Path
 import struct
 import subprocess
+import time
 
+import dbus
+import dbus.mainloop.glib
 from gi.repository import Gio, GLib
 
 
@@ -19,6 +22,17 @@ OBJECT_PATH = "/io/github/agcarbajo/TabCompanion/Hardware"
 INTERFACE = BUS_NAME
 KEYBOARD_NAME = "Book Cover Keyboard Slim (EF-DX920)"
 PEN_NAME = "Wacom EMR Digitizer"
+BLUEZ = "org.bluez"
+BLUEZ_DEVICE = "org.bluez.Device1"
+BLUEZ_GATT = "org.bluez.GattCharacteristic1"
+DBUS_PROPERTIES = "org.freedesktop.DBus.Properties"
+SPEN_SERVICES = {
+    "0000fd6c-0000-1000-8000-00805f9b34fb",
+    "0000fef5-0000-1000-8000-00805f9b34fb",
+}
+SPEN_BATTERY_UUID = "5a87b4ef-3bfa-76a8-e642-92933c31434f"
+SPEN_BUTTON_UUID = "6c290d2e-1c03-aca1-ab48-a9b908bae79e"
+SPEN_MODE_UUID = "aca1ab48-08ba-e79e-ab48-a9b9e6429293"
 MAPPINGS = {
     "key-galaxy-ai", "key-dex", "key-finder", "key-settings",
     "key-fn-f1", "key-fn-f2", "key-fn-f3", "key-fn-f4", "key-fn-f5",
@@ -132,6 +146,43 @@ def read_text(path, fallback=""):
         return fallback
 
 
+def classify_spen_motion(points):
+    """Classify Samsung's incremental dx/dy samples from one button hold."""
+    if len(points) < 5:
+        return None
+    sum_x = sum(point[0] for point in points)
+    sum_y = sum(point[1] for point in points)
+    abs_x = sum(abs(point[0]) for point in points)
+    abs_y = sum(abs(point[1]) for point in points)
+    if abs_x + abs_y < 300:
+        return None
+
+    x = 0
+    y = 0
+    area2 = 0
+    for dx, dy in points:
+        next_x = x + dx
+        next_y = y + dy
+        area2 += x * next_y - next_x * y
+        x = next_x
+        y = next_y
+
+    # A circle covers both axes and encloses far more signed area than a swipe.
+    if min(abs_x, abs_y) > 1000 and abs(area2) > 500000:
+        return (
+            "gesture-circle-clockwise"
+            if area2 > 0
+            else "gesture-circle-counterclockwise"
+        )
+    if abs_x > abs_y:
+        if abs(sum_x) < 80:
+            return None
+        return "gesture-swipe-right" if sum_x > 0 else "gesture-swipe-left"
+    if abs(sum_y) < 80:
+        return None
+    return "gesture-swipe-down" if sum_y > 0 else "gesture-swipe-up"
+
+
 class VirtualKeyboard:
     def __init__(self):
         self.fd = os.open("/dev/uinput", os.O_RDWR | os.O_NONBLOCK)
@@ -184,10 +235,24 @@ class HardwareService:
         self.pen_long_fired = False
         self.pen_long_timer = None
         self.pen_single_timer = None
+        self.pen_motion = []
+        self.pen_motion_energy = 0
+        self.pen_motion_active = False
         self.capture_mapping = ""
         self.capture_timer = None
         self.capture_passthrough = set()
         self.virtual_watch = None
+        self.system_bus = None
+        self.bluez_manager = None
+        self.ble_device_path = None
+        self.ble_paired = False
+        self.ble_connected = False
+        self.ble_battery = -1
+        self.ble_characteristics = {}
+        self.ble_subscribed = set()
+        self.ble_mode_set = False
+        self.ble_next_battery_read = 0.0
+        self._init_spen_ble()
         self._migrate_keyboard_codes()
         try:
             self.virtual_keyboard = VirtualKeyboard()
@@ -203,6 +268,155 @@ class HardwareService:
                 "keyboard-source-codes", GLib.Variant("a{si}", DEFAULT_SOURCE_CODES)
             )
             self.settings.set_uint("keyboard-mapping-version", 1)
+
+    def _init_spen_ble(self):
+        try:
+            self.system_bus = dbus.SystemBus()
+            self.bluez_manager = dbus.Interface(
+                self.system_bus.get_object(BLUEZ, "/"),
+                "org.freedesktop.DBus.ObjectManager",
+            )
+            self.system_bus.add_signal_receiver(
+                self._bluez_properties_changed,
+                dbus_interface=DBUS_PROPERTIES,
+                signal_name="PropertiesChanged",
+                path_keyword="path",
+            )
+        except dbus.DBusException:
+            self.system_bus = None
+            self.bluez_manager = None
+
+    @staticmethod
+    def _is_spen(properties):
+        name = str(properties.get("Alias") or properties.get("Name") or "")
+        services = {str(uuid).lower() for uuid in properties.get("UUIDs", [])}
+        return name.startswith("SPEN") and SPEN_SERVICES <= services
+
+    def _refresh_spen_ble(self):
+        if self.bluez_manager is None:
+            return
+        try:
+            objects = self.bluez_manager.GetManagedObjects()
+        except dbus.DBusException:
+            self._ble_disconnected()
+            return
+        match = next(
+            (
+                (path, interfaces[BLUEZ_DEVICE])
+                for path, interfaces in objects.items()
+                if BLUEZ_DEVICE in interfaces
+                and interfaces[BLUEZ_DEVICE].get("Paired", False)
+                and self._is_spen(interfaces[BLUEZ_DEVICE])
+            ),
+            (None, None),
+        )
+        device_path, device = match
+        self.ble_paired = device is not None
+        connected = bool(device and device.get("Connected", False))
+        if not connected:
+            self._ble_disconnected(device_path)
+            return
+        if device_path != self.ble_device_path:
+            self._ble_disconnected(device_path)
+        self.ble_device_path = device_path
+        self.ble_connected = True
+        self.ble_characteristics = {
+            str(interfaces[BLUEZ_GATT]["UUID"]).lower(): path
+            for path, interfaces in objects.items()
+            if path.startswith(f"{device_path}/") and BLUEZ_GATT in interfaces
+        }
+        if SPEN_MODE_UUID in self.ble_characteristics and not self.ble_mode_set:
+            try:
+                dbus.Interface(
+                    self.system_bus.get_object(
+                        BLUEZ, self.ble_characteristics[SPEN_MODE_UUID]
+                    ),
+                    BLUEZ_GATT,
+                ).WriteValue(dbus.Array([dbus.Byte(0x10)], signature="y"), {})
+                self.ble_mode_set = True
+            except dbus.DBusException:
+                pass
+        now = time.monotonic()
+        if SPEN_BATTERY_UUID in self.ble_characteristics and now >= self.ble_next_battery_read:
+            self.ble_next_battery_read = now + 30
+            try:
+                value = dbus.Interface(
+                    self.system_bus.get_object(
+                        BLUEZ, self.ble_characteristics[SPEN_BATTERY_UUID]
+                    ),
+                    BLUEZ_GATT,
+                ).ReadValue({})
+                self.ble_battery = int(value[0]) if value else -1
+            except dbus.DBusException:
+                pass
+        for uuid in (SPEN_BATTERY_UUID, SPEN_BUTTON_UUID):
+            path = self.ble_characteristics.get(uuid)
+            if path is None or path in self.ble_subscribed:
+                continue
+            try:
+                dbus.Interface(
+                    self.system_bus.get_object(BLUEZ, path), BLUEZ_GATT
+                ).StartNotify()
+            except dbus.DBusException:
+                continue
+            self.ble_subscribed.add(path)
+
+    def _ble_disconnected(self, device_path=None):
+        self.ble_device_path = device_path
+        self.ble_connected = False
+        self.ble_characteristics = {}
+        self.ble_subscribed.clear()
+        self.ble_mode_set = False
+        self.ble_next_battery_read = 0.0
+
+    def _bluez_properties_changed(self, interface, changed, _invalidated, path=None):
+        if interface == BLUEZ_DEVICE and path == self.ble_device_path:
+            if changed.get("Connected") is not None and not changed["Connected"]:
+                self._ble_disconnected(path)
+            return
+        if interface != BLUEZ_GATT or "Value" not in changed:
+            return
+        value = bytes(changed["Value"])
+        if path == self.ble_characteristics.get(SPEN_BATTERY_UUID):
+            if value and value[0] <= 100:
+                self.ble_battery = value[0]
+            return
+        if path == self.ble_characteristics.get(SPEN_BUTTON_UUID):
+            self._spen_ble_button_data(value)
+
+    def _spen_ble_button_data(self, value):
+        offset = 0
+        count = 1
+        if len(value) >= 2 and value[0] == 0xF0:
+            count = value[1]
+            offset = 2
+        for _index in range(count):
+            if offset >= len(value):
+                break
+            header = value[offset]
+            if header == 3:
+                self._pen_button(True)
+                offset += 1
+            elif header == 0 and offset + 6 <= len(value):
+                self._pen_button(False)
+                offset += 6
+            elif header in {14, 15, 142, 143} and offset + 6 <= len(value):
+                dx = int.from_bytes(value[offset + 1:offset + 3], "little", signed=True)
+                dy = int.from_bytes(value[offset + 3:offset + 5], "little", signed=True)
+                if header in {15, 143} and not self.pen_pressed:
+                    self._pen_button(True)
+                self.pen_motion.append((dx, dy))
+                self.pen_motion_energy += abs(dx) + abs(dy)
+                if self.pen_motion_energy >= 300 and not self.pen_motion_active:
+                    self.pen_motion_active = True
+                    if self.pen_long_timer is not None:
+                        GLib.source_remove(self.pen_long_timer)
+                        self.pen_long_timer = None
+                if header in {14, 142}:
+                    self._pen_button(False)
+                offset += 6
+            else:
+                break
 
     @staticmethod
     def _find_wacom():
@@ -382,6 +596,9 @@ class HardwareService:
                 return
             self.pen_pressed = True
             self.pen_long_fired = False
+            self.pen_motion = []
+            self.pen_motion_energy = 0
+            self.pen_motion_active = False
             self.pen_long_timer = GLib.timeout_add(600, self._pen_long_press)
             return
         if not self.pen_pressed:
@@ -390,6 +607,15 @@ class HardwareService:
         if self.pen_long_timer is not None:
             GLib.source_remove(self.pen_long_timer)
             self.pen_long_timer = None
+        if self.pen_motion_active:
+            mapping = classify_spen_motion(self.pen_motion)
+            self.pen_motion = []
+            self.pen_motion_energy = 0
+            self.pen_motion_active = False
+            if mapping is not None:
+                print(f"S Pen BLE gesture={mapping}", flush=True)
+                self.execute_mapping(mapping)
+            return
         if self.pen_long_fired:
             return
         if self.pen_single_timer is not None:
@@ -442,6 +668,7 @@ class HardwareService:
             self.wacom = self._find_wacom()
         self._ensure_keyboard_reader()
         self._ensure_pen_reader()
+        self._refresh_spen_ble()
         docked = self.wacom is not None and read_text(self.wacom / "pen_docked") == "1"
         raw_orientation = read_text(self.wacom / "pen_orientation") if self.wacom else ""
         orientation = {"downside": "tip-right", "upside": "tip-left"}.get(
@@ -449,9 +676,11 @@ class HardwareService:
         )
         charge = read_text(self.wacom / "pen_charging") if self.wacom else "unknown"
         capacity = read_text("/sys/class/power_supply/gts9u-spen/capacity")
-        battery = min(100, max(0, int(capacity))) if capacity.isdigit() else -1
+        battery = self.ble_battery
+        if battery < 0 and capacity.isdigit():
+            battery = min(100, max(0, int(capacity)))
         self._publish(State(
-            PenState="docked" if docked else ("unpaired" if self.wacom else "unavailable"),
+            PenState="docked" if docked else ("nearby" if self.ble_connected else ("paired" if self.ble_paired else ("unpaired" if self.wacom else "unavailable"))),
             PenOrientation=orientation if docked else "unknown",
             PenBattery=battery,
             PenCharging=docked and charge in {"charging", "full"},
@@ -459,9 +688,12 @@ class HardwareService:
             RemappingAvailable=self.virtual_keyboard is not None and self.keyboard_fd is not None,
             CapturingKey=self.capture_mapping,
             LastSpecialKey=self.state.LastSpecialKey,
-            ButtonActionsAvailable=self.pen_fd is not None,
+            ButtonActionsAvailable=self.pen_fd is not None or self.ble_connected,
             BluetoothAvailable=Path("/sys/class/bluetooth/hci0").exists(),
-            GestureAvailable=False,
+            GestureAvailable=(
+                self.ble_connected
+                and self.ble_characteristics.get(SPEN_BUTTON_UUID) in self.ble_subscribed
+            ),
         ))
         return GLib.SOURCE_CONTINUE
 
@@ -537,6 +769,7 @@ def main():
         keyboard.close()
         return
 
+    dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
     service = HardwareService()
     owner = Gio.bus_own_name(
         Gio.BusType.SESSION, BUS_NAME, Gio.BusNameOwnerFlags.NONE,

@@ -121,6 +121,7 @@
 /* Samsung's garage/docking protocol, verified against the X910 source drop. */
 #define WACOM_CMD_GARAGE_STATUS		0xee
 #define WACOM_CMD_BLE_CHARGE_ENABLE	0xe9
+#define WACOM_CMD_BLE_PAIR_RESET	0xea
 #define WACOM_CMD_BLE_CHARGE_START	0xeb
 #define WACOM_CMD_BLE_CHARGE_KEEP_ON	0xec
 #define WACOM_CMD_BLE_CHARGE_KEEP_OFF	0xed
@@ -503,10 +504,51 @@ static ssize_t pen_charging_show(struct device *dev,
 }
 static DEVICE_ATTR_RO(pen_charging);
 
+static ssize_t pen_ble_reset_store(struct device *dev,
+				   struct device_attribute *attribute,
+				   const char *buf, size_t count)
+{
+	struct samsung_wacom *wacom = dev_get_drvdata(dev);
+	bool reset;
+	int ret;
+
+	ret = kstrtobool(buf, &reset);
+	if (ret)
+		return ret;
+	if (!reset)
+		return -EINVAL;
+	if (!READ_ONCE(wacom->docked))
+		return -ENODEV;
+
+	/*
+	 * This is the command used by Samsung's "Reset S Pen" flow.  Unlike the
+	 * normal START pattern, RESET clears the pen's previous BLE bond and makes
+	 * it advertise for a new host while it remains on the charging garage.
+	 * Keep it explicit: issuing it on every dock would destroy a valid bond.
+	 */
+	cancel_delayed_work_sync(&wacom->charge_work);
+	ret = samsung_wacom_send_command(wacom, WACOM_CMD_BLE_PAIR_RESET);
+	if (ret) {
+		mod_delayed_work(system_wq, &wacom->charge_work, 0);
+		return ret;
+	}
+
+	wacom->charge_stage = 1;
+	WRITE_ONCE(wacom->charge_status, POWER_SUPPLY_STATUS_CHARGING);
+	samsung_wacom_notify_garage(wacom);
+	mod_delayed_work(system_wq, &wacom->charge_work,
+			 msecs_to_jiffies(WACOM_CHARGE_START_DELAY_MS));
+	dev_info(dev, "S Pen BLE pairing reset requested\n");
+
+	return count;
+}
+static DEVICE_ATTR_WO(pen_ble_reset);
+
 static struct attribute *samsung_wacom_attrs[] = {
 	&dev_attr_pen_docked.attr,
 	&dev_attr_pen_orientation.attr,
 	&dev_attr_pen_charging.attr,
+	&dev_attr_pen_ble_reset.attr,
 	NULL,
 };
 

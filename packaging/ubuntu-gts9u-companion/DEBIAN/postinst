@@ -10,4 +10,10 @@ if command -v udevadm >/dev/null 2>&1 && [ -e /dev/uinput ]; then
 	udevadm settle || true
 fi
 
+if command -v systemctl >/dev/null 2>&1; then
+	systemctl daemon-reload
+	systemctl enable tab-companion-spen-pairing.service >/dev/null 2>&1 || true
+	systemctl restart tab-companion-spen-pairing.service || true
+fi
+
 exit 0

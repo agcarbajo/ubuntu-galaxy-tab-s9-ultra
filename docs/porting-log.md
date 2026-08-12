@@ -4535,3 +4535,57 @@ teclado virtual confirmó que las asignaciones elegidas producen, entre otros,
 Fn+F1–F11 funcionan; la única combinación inoperante es Fn+F12, coherente con
 la ausencia de evento en el controlador. Queda validar visualmente en GNOME el
 selector desplazado antes de dar por cerrada esa corrección de interfaz.
+
+## Sesión 64 — emparejamiento BLE iniciado desde el garaje
+
+Fecha: 2026-08-13. One UI no presenta el S Pen como un accesorio que la usuaria
+empareje manualmente: basta con dejarlo insertado. El fuente Wacom oficial
+explica la parte física: `0xea` hace reset del patrón y un minuto de carga. Se
+añadió el atributo de escritura `pen_ble_reset`, limitado a lápiz acoplado; el
+kernel cancela el trabajo de carga, envía el comando y reanuda la secuencia de
+mantenimiento. La nueva imagen arrancada y verificada es:
+
+```text
+boot        bbaaf263740850c4f50906b96ae621b70cf732176e4c1a7760ed83f73e0f2f31
+vendor_boot bf312f08a6876194e3ce30d52a81f8da23dd88132c4660698eb5cde17a69e6bc
+```
+
+El lápiz anunció simultáneamente los servicios Samsung FD6C y FEF5. Un intento
+de `Pair()` clásico falla con Authentication Failed porque invierte el flujo.
+La decompilación de `AirCommand.apk` mostró el comportamiento real: conecta
+GATT con el lápiz aún sin vínculo, registra un receptor de pairing y acepta la
+solicitud de consentimiento que inicia el propio S Pen. Al hacer lo mismo con
+BlueZ, la prueba física produjo `Connected`, `Bonded`, `Paired` y servicios
+resueltos, sin PIN ni intervención en pantalla.
+
+FD6C expone Battery Level, Button State, Status, FW Version, Mode, Battery Raw,
+fecha de fabricación y canales de prueba/sensores. Battery Level devolvió
+`64 00`, es decir 100 %, y Mode aceptó `10`. El formato de Button State coincide
+con Air Command: 0/3 son botón arriba/abajo; 14/15 y 142/143 llevan `dx`, `dy`
+incrementales y número de secuencia. Una captura sin vínculo había caído justo
+al sacar el lápiz; esto ya se entiende como consecuencia de no haber completado
+la autorización, no como ausencia de datos de movimiento.
+
+`ubuntu-gts9u-companion` 0.6.0 instala
+`tab-companion-spen-pairing.service`. Corre como root sólo para escribir el
+reset Wacom y hablar con el bus de sistema. Su agente rechaza cualquier petición
+salvo que `pen_docked=1`, el nombre sea SPEN y el candidato anuncie FD6C y FEF5;
+después marca únicamente ese lápiz como confiable. Sólo ocupa el agente BlueZ
+predeterminado durante la ventana de 65 segundos y lo libera al terminar, de
+modo que no bloquea el emparejamiento de otros accesorios. El servicio de usuario lee
+Battery Level, escribe Mode 0x10, se suscribe a Battery/Button y decodifica las
+muestras de movimiento. Ambos servicios quedaron instalados y activos. Para
+probar el flujo definitivo se retiró únicamente el vínculo incompleto del S Pen
+y se reinició el servicio con `pen_docked=1`: abrió una sola ventana, emparejó
+sin interacción y Tab Companion publicó `PenBattery=100` y
+`GestureAvailable=true`.
+
+Con el lápiz fuera se capturaron las seis trayectorias. La primera serie se
+clasificó exactamente como arriba, abajo, izquierda, derecha, horario y
+antihorario. Tras integrar el clasificador, una segunda serie en vivo produjo
+los seis eventos correspondientes; una repetición aislada del círculo horario
+confirmó el signo del área. Los deslizamientos usan eje dominante y suma
+firmada; los círculos exigen recorrido amplio en ambos ejes y área orientada.
+El inicio de movimiento cancela la pulsación larga para no duplicar acciones.
+Quedan abiertas la prueba visual con destinos distintos y la reconexión tras
+un arranque completo de la tablet.

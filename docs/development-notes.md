@@ -1914,17 +1914,18 @@ la dirección en el byte 5.
 
 Calibración física del 2026-08-12: con el lápiz acoplado y la punta mirando al
 USB-C/derecha, el controlador respondió `direction=2` (`downside`). Por tanto
-Tab Companion traduce `downside -> tip-right`; `upside -> tip-left` es la
-contraria inferida y aún requiere una observación física. Durante el arranque
+Tab Companion traduce `downside -> tip-right` y `upside -> tip-left`; ambas
+orientaciones y la extracción/reinserción están confirmadas. Durante el arranque
 el GPIO hace una transición breve fuera/dentro; el estado estable y la
 respuesta posterior son los que se publican.
 
-El fuente oficial no contiene un porcentaje. Sólo permite distinguir estados
-como carga, mantenimiento, carga completa o no carga. El kernel registra
+El protocolo Wacom del garaje no contiene un porcentaje. Sólo permite distinguir
+estados como carga, mantenimiento, carga completa o no carga. El kernel registra
 `gts9u-spen` como `power_supply` con `PRESENT`, `STATUS`, `SCOPE` y
 `MODEL_NAME`, sin `CAPACITY`. UPower ignora correctamente esa fuente como
-batería con nivel. La API D-Bus usa `PenBattery=-1`; añadir un porcentaje
-estimado sería inventar telemetría.
+batería con nivel. La API D-Bus usa `PenBattery=-1` hasta que puede leer la
+característica Battery Level del perfil BLE Samsung; esa ruta sí devolvió un
+100 % físico. No se estima ningún nivel.
 
 ## El EF-DX920 ya entrega keycodes Linux; no necesita otra tabla en kernel
 
@@ -1937,17 +1938,15 @@ emite 709. Fn+F1–F11 emiten 757, 758, 759, 705, 254, 172, 224, 225, 113, 114
 y 115. Fn+F12 no produce ni siquiera un evento bruto en el firmware V37.
 
 No existe keymap para `Fn+F1`–`Fn+F5` en el DTS: el EF-DX920 es modelo `0xd6`
-y usa el flujo bypass. Sin pulsar las teclas no se puede saber qué código
-produce su firmware. El backend tiene por eso `BeginKeyCapture`: guarda en
-GSettings el siguiente `EV_KEY` real. No asignar F1–F5 estándar por intuición,
-porque secuestraría teclas normales y seguiría sin demostrar qué envía Fn.
+y usa el flujo bypass. Los códigos se obtuvieron pulsando el teclado físico; el
+backend conserva además `BeginKeyCapture` para volver a medirlos si cambia el
+firmware. No asignar F1–F5 estándar por intuición.
 
-El demonio no hace `EVIOCGRAB`: el teclado normal sigue llegando a GNOME y
-sólo las fuentes configuradas disparan una segunda acción. La salida se crea
-en `/dev/uinput` como `Tab Companion virtual keyboard`; la regla udev limita
-el nodo al grupo `input`. Aplicaciones y comandos usan destinos explícitos por
-asignación, mientras medios, volumen, atrás, inicio, overview y captura se
-emiten como teclas Linux.
+El demonio usa `EVIOCGRAB` y retransmite por `/dev/uinput` todos los eventos
+normales, incluidos `SW_LID` y la salida del LED de Caps Lock. Sólo sustituye la
+fuente cuya asignación no sea «Conservar la acción predeterminada»; sin captura
+exclusiva se sumarían la acción original y la elegida. La regla udev limita
+`uinput` al grupo `input`.
 
 ## El botón del S Pen no necesita BLE; el movimiento sí
 
@@ -1957,10 +1956,28 @@ declararse simple, una segunda dentro de esa ventana la convierte en doble y
 600 ms pulsado producen larga. Las tres rutas usan exactamente el mismo motor
 de acciones que el teclado. Esto no descubre movimientos en el aire.
 
-La búsqueda en los fuentes abiertos Kernel y Platform del X910 no encontró
-UUID, perfil GATT ni formato de Air actions. El escaneo con el lápiz acoplado
-tampoco lo anuncia, pero no es una prueba negativa del perfil: falta sacarlo y
-ponerlo en emparejamiento. No registrar UUIDs genéricos ni filtrar sólo por un
-nombre supuesto; podría emparejar otro dispositivo. La siguiente prueba válida
-es física: modo pairing, `bluetoothctl scan on`, listado de servicios y captura
-de notificaciones al ejecutar cada gesto conocido.
+El software stock `AirCommand.apk` aportó la parte que no estaba en los fuentes
+abiertos. El emparejamiento es iniciado por el lápiz después del reset Wacom
+`0xea`: Android abre GATT y acepta `PAIRING_VARIANT_CONSENT`, sin llamar a un
+emparejamiento clásico. En hardware, BlueZ recibió esa autorización y confirmó
+`Bonded`, `Paired` y servicios resueltos.
+
+El servicio de aplicación es FD6C. Se identificaron Battery Level, Button
+State, Status, Firmware, Mode, Battery Raw y los canales de diagnóstico. Mode
+`0x10` mantiene el funcionamiento remoto. Button State usa cabeceras 0/3 para
+soltar/pulsar y 14/15 (142/143 si la muestra es impura) seguidas de `dx`, `dy`
+little-endian y secuencia. Los desplazamientos son incrementales: Air Command
+los acumula antes de clasificar la trayectoria. El servicio permanente sólo
+acepta un SPEN con ambos UUID FD6C/FEF5 mientras el sensor físico dice acoplado;
+no abre una autorización general a dispositivos cercanos. El agente sólo es el
+predeterminado durante la ventana de 65 segundos y se desregistra al enlazar o
+agotar el plazo, para no secuestrar el emparejamiento normal de otros accesorios.
+
+La captura física separó claramente las seis trayectorias. Los deslizamientos
+se resuelven por el eje dominante y el signo de la suma; los círculos tienen
+energía alta en ambos ejes y se distinguen por el signo del área orientada.
+La repetición en vivo reconoció, en orden, arriba, abajo, izquierda, derecha,
+antihorario y horario; una prueba adicional del horario confirmó el signo. Al
+superar el umbral de movimiento se cancela el temporizador de pulsación larga,
+evitando que el mismo trazo ejecute dos asignaciones. El volcado muestra a
+muestra queda sólo en el script de diagnóstico, no en el servicio permanente.

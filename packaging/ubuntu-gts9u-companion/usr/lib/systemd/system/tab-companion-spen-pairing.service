@@ -1,0 +1,13 @@
+[Unit]
+Description=Tab Companion docked S Pen pairing
+After=bluetooth.service
+Wants=bluetooth.service
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/tab-companion-spen-pairing
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

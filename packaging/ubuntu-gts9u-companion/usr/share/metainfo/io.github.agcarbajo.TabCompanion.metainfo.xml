@@ -13,6 +13,9 @@
   <launchable type="desktop-id">io.github.agcarbajo.TabCompanion.desktop</launchable>
   <url type="homepage">https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra</url>
   <releases>
+    <release version="0.6.0" date="2026-08-13">
+      <description><p>Pair the docked S Pen automatically, report its BLE battery level and map all six physical air gestures.</p></description>
+    </release>
     <release version="0.5.0" date="2026-08-12">
       <description><p>Fix touch-scrolled action selection and map the measured EF-DX920 special keys.</p></description>
     </release>

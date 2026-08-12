@@ -254,6 +254,7 @@ class CompanionWindow(Adw.ApplicationWindow):
         status = {
             "docked": "Docked and charging" if state.pen_charging else "Docked",
             "nearby": "Undocked and nearby",
+            "paired": "Paired; S Pen sleeping",
             "unpaired": "Not paired",
             "unavailable": "Hardware service unavailable",
         }.get(state.pen_state, "Unknown state")
@@ -282,8 +283,10 @@ class CompanionWindow(Adw.ApplicationWindow):
             self.battery_row.set_subtitle(f"{charge}; percentage is not exposed")
         else:
             self.battery_row.set_subtitle("Not exposed by the hardware")
-        if state.button_actions_available:
-            bluetooth = "Button actions ready; air motion still needs S Pen BLE"
+        if state.gesture_available:
+            bluetooth = "Paired; BLE battery and air-motion transport ready"
+        elif state.button_actions_available:
+            bluetooth = "Button actions ready; waiting for the S Pen BLE link"
         elif state.bluetooth_available:
             bluetooth = "Bluetooth controller available; S Pen is not paired"
         else:

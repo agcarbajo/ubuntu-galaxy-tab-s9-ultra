@@ -1,0 +1,303 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: MIT
+"""Pair the bundled S Pen through its dock-initiated BlueZ flow."""
+
+from glob import glob
+from pathlib import Path
+import time
+
+import dbus
+import dbus.mainloop.glib
+import dbus.service
+from gi.repository import GLib
+
+
+BLUEZ = "org.bluez"
+AGENT_PATH = "/io/github/agcarbajo/TabCompanion/SpenAgent"
+DEVICE_IFACE = "org.bluez.Device1"
+ADAPTER_IFACE = "org.bluez.Adapter1"
+PROPERTIES_IFACE = "org.freedesktop.DBus.Properties"
+SPEN_SERVICES = {
+    "0000fd6c-0000-1000-8000-00805f9b34fb",
+    "0000fef5-0000-1000-8000-00805f9b34fb",
+}
+
+
+def is_spen(properties):
+    name = str(properties.get("Alias") or properties.get("Name") or "")
+    services = {str(uuid).lower() for uuid in properties.get("UUIDs", [])}
+    return name.startswith("SPEN") and SPEN_SERVICES <= services
+
+
+class Agent(dbus.service.Object):
+    def __init__(self, service):
+        super().__init__(service.bus, AGENT_PATH)
+        self.service = service
+
+    def _accept(self, device):
+        if not self.service.acceptable(device):
+            raise dbus.DBusException(
+                "Pairing request is not from the docked S Pen",
+                name="org.bluez.Error.Rejected",
+            )
+
+    @dbus.service.method("org.bluez.Agent1", in_signature="", out_signature="")
+    def Release(self):
+        pass
+
+    @dbus.service.method("org.bluez.Agent1", in_signature="o", out_signature="s")
+    def RequestPinCode(self, device):
+        self._accept(device)
+        return "0000"
+
+    @dbus.service.method("org.bluez.Agent1", in_signature="o", out_signature="u")
+    def RequestPasskey(self, device):
+        self._accept(device)
+        return dbus.UInt32(0)
+
+    @dbus.service.method("org.bluez.Agent1", in_signature="ouq", out_signature="")
+    def DisplayPasskey(self, device, _passkey, _entered):
+        self._accept(device)
+
+    @dbus.service.method("org.bluez.Agent1", in_signature="os", out_signature="")
+    def DisplayPinCode(self, device, _pincode):
+        self._accept(device)
+
+    @dbus.service.method("org.bluez.Agent1", in_signature="ou", out_signature="")
+    def RequestConfirmation(self, device, _passkey):
+        self._accept(device)
+
+    @dbus.service.method("org.bluez.Agent1", in_signature="o", out_signature="")
+    def RequestAuthorization(self, device):
+        self._accept(device)
+
+    @dbus.service.method("org.bluez.Agent1", in_signature="os", out_signature="")
+    def AuthorizeService(self, device, _uuid):
+        self._accept(device)
+
+    @dbus.service.method("org.bluez.Agent1", in_signature="", out_signature="")
+    def Cancel(self):
+        pass
+
+
+class PairingService:
+    def __init__(self):
+        self.bus = dbus.SystemBus()
+        self.manager = dbus.Interface(
+            self.bus.get_object(BLUEZ, "/"),
+            "org.freedesktop.DBus.ObjectManager",
+        )
+        objects = self.manager.GetManagedObjects()
+        self.adapter_path = next(
+            path for path, interfaces in objects.items() if ADAPTER_IFACE in interfaces
+        )
+        adapter_object = self.bus.get_object(BLUEZ, self.adapter_path)
+        self.adapter = dbus.Interface(adapter_object, ADAPTER_IFACE)
+        self.adapter_properties = dbus.Interface(adapter_object, PROPERTIES_IFACE)
+        self.agent = Agent(self)
+        self.agent_manager = dbus.Interface(
+            self.bus.get_object(BLUEZ, "/org/bluez"), "org.bluez.AgentManager1"
+        )
+        self.agent_registered = False
+        self.reset_path = self._find_reset_path()
+        self.reset_for_dock = False
+        self.pairing = False
+        self.pairing_deadline = 0.0
+        self.pairable_before = False
+        self.candidate = None
+        self.connecting = set()
+        self.next_connect = 0.0
+        self.started_discovery = False
+        self.bus.add_signal_receiver(
+            self.interfaces_added,
+            dbus_interface="org.freedesktop.DBus.ObjectManager",
+            signal_name="InterfacesAdded",
+        )
+        self.bus.add_signal_receiver(
+            self.properties_changed,
+            dbus_interface=PROPERTIES_IFACE,
+            signal_name="PropertiesChanged",
+            path_keyword="path",
+        )
+
+    @staticmethod
+    def _find_reset_path():
+        matches = glob("/sys/bus/i2c/devices/*/pen_ble_reset")
+        return Path(matches[0]) if matches else None
+
+    @staticmethod
+    def docked():
+        matches = glob("/sys/bus/i2c/devices/*/pen_docked")
+        if not matches:
+            return False
+        try:
+            return Path(matches[0]).read_text(encoding="ascii").strip() == "1"
+        except OSError:
+            return False
+
+    def devices(self):
+        return {
+            path: interfaces[DEVICE_IFACE]
+            for path, interfaces in self.manager.GetManagedObjects().items()
+            if DEVICE_IFACE in interfaces
+        }
+
+    def paired_spen(self):
+        return next(
+            (
+                (path, properties)
+                for path, properties in self.devices().items()
+                if properties.get("Paired", False) and is_spen(properties)
+            ),
+            (None, None),
+        )
+
+    def acceptable(self, path):
+        properties = self.devices().get(path)
+        return (
+            properties is not None
+            and is_spen(properties)
+            and (properties.get("Paired", False) or (self.pairing and self.docked()))
+            and (self.candidate in {None, path} or properties.get("Paired", False))
+        )
+
+    def connect(self, path):
+        now = time.monotonic()
+        if path in self.connecting or now < self.next_connect:
+            return
+        self.next_connect = now + 8
+        self.connecting.add(path)
+
+        def finished(*_args):
+            self.connecting.discard(path)
+
+        def failed(error):
+            self.connecting.discard(path)
+            name = error.get_dbus_name()
+            if name not in {
+                "org.bluez.Error.AlreadyConnected",
+                "org.bluez.Error.InProgress",
+                "org.freedesktop.DBus.Error.NoReply",
+            }:
+                print(f"S Pen connect failed: {name}", flush=True)
+
+        dbus.Interface(self.bus.get_object(BLUEZ, path), DEVICE_IFACE).Connect(
+            reply_handler=finished,
+            error_handler=failed,
+        )
+
+    def register_agent(self):
+        if self.agent_registered:
+            return
+        self.agent_manager.RegisterAgent(AGENT_PATH, "DisplayYesNo")
+        self.agent_manager.RequestDefaultAgent(AGENT_PATH)
+        self.agent_registered = True
+
+    def begin_pairing(self):
+        if self.reset_path is None:
+            self.reset_path = self._find_reset_path()
+        if self.reset_path is None:
+            return
+        self.pairable_before = bool(
+            self.adapter_properties.Get(ADAPTER_IFACE, "Pairable")
+        )
+        self.adapter_properties.Set(ADAPTER_IFACE, "Powered", dbus.Boolean(True))
+        self.adapter_properties.Set(ADAPTER_IFACE, "Pairable", dbus.Boolean(True))
+        self.register_agent()
+        try:
+            self.adapter.StartDiscovery()
+            self.started_discovery = True
+        except dbus.DBusException as error:
+            if error.get_dbus_name() != "org.bluez.Error.InProgress":
+                raise
+        self.pairing = True
+        self.pairing_deadline = time.monotonic() + 65
+        self.candidate = None
+        try:
+            self.reset_path.write_text("1\n", encoding="ascii")
+        except OSError as error:
+            print(f"S Pen pairing reset failed: {error}", flush=True)
+            self.finish_pairing()
+            return
+        print("S Pen dock pairing window started", flush=True)
+
+    def finish_pairing(self):
+        if self.started_discovery:
+            try:
+                self.adapter.StopDiscovery()
+            except dbus.DBusException:
+                pass
+            self.started_discovery = False
+        if self.pairing:
+            self.adapter_properties.Set(
+                ADAPTER_IFACE, "Pairable", dbus.Boolean(self.pairable_before)
+            )
+        self.pairing = False
+        self.pairing_deadline = 0.0
+        self.candidate = None
+        if self.agent_registered:
+            try:
+                self.agent_manager.UnregisterAgent(AGENT_PATH)
+            except dbus.DBusException:
+                pass
+            self.agent_registered = False
+
+    def consider(self, path, properties):
+        if not is_spen(properties):
+            return
+        if properties.get("Paired", False):
+            dbus.Interface(
+                self.bus.get_object(BLUEZ, path), PROPERTIES_IFACE
+            ).Set(DEVICE_IFACE, "Trusted", dbus.Boolean(True))
+            self.finish_pairing()
+            if not properties.get("Connected", False):
+                self.connect(path)
+            return
+        if self.pairing and self.docked():
+            self.candidate = path
+            self.connect(path)
+
+    def interfaces_added(self, path, interfaces):
+        if DEVICE_IFACE in interfaces:
+            self.consider(path, interfaces[DEVICE_IFACE])
+
+    def properties_changed(self, interface, _changed, _invalidated, path=None):
+        if interface != DEVICE_IFACE:
+            return
+        properties = self.devices().get(path)
+        if properties is not None:
+            self.consider(path, properties)
+
+    def tick(self):
+        docked = self.docked()
+        paired_path, paired = self.paired_spen()
+        if self.pairing and time.monotonic() >= self.pairing_deadline:
+            self.finish_pairing()
+        if paired_path is not None:
+            self.reset_for_dock = docked
+            self.consider(paired_path, paired)
+        elif docked and not self.reset_for_dock:
+            self.reset_for_dock = True
+            self.begin_pairing()
+        elif not docked:
+            self.reset_for_dock = False
+            self.finish_pairing()
+        return GLib.SOURCE_CONTINUE
+
+    def close(self):
+        self.finish_pairing()
+
+
+def main():
+    dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
+    service = PairingService()
+    service.tick()
+    GLib.timeout_add_seconds(2, service.tick)
+    try:
+        GLib.MainLoop().run()
+    finally:
+        service.close()
+
+
+if __name__ == "__main__":
+    main()
