@@ -277,6 +277,42 @@ privacidad y arbitraje con las aplicaciones, y la autoexposición elimina una
 relación estable entre luminancia de píxel y lux. Es una arquitectura distinta
 que necesita una decisión explícita, no una corrección del ALS.
 
+**La vía AP está cerrada por medida, no por hipótesis.** El registro Samsung
+sitúa los dos STK31610 en I²C `bus_instance` 3 y 4, esclavo 72 (0x48), con
+raíles `dummy_vdd` (nadie los conmuta: se esperan siempre alimentados). Esos dos
+`bus_instance` son exactamente `i2c_hub_3` (`i2c@98c000`) e `i2c_hub_4`
+(`i2c@990000`) — el DTS stock los llama `qupv3_hub_i2c3`/`_i2c4` y les cuelga el
+SM5440 y el MAX77816 **desde el AP**, así que AP y SSC comparten esos motores de
+verdad. Un `i2cdetect -r` completo de los dos devuelve sólo 0x63 y 0x18, y 0x48
+hace NAK en los 16 buses del AP. Los vecinos contestan en el mismo par de hilos,
+de modo que el bus está bien y **el chip no responde a ninguno de los dos
+maestros**. No volver a plantear un driver IIO mainline para el STK31610: no
+tiene a qué enlazarse. Tampoco buscar el mapa de registros del STK31610/STK3A6X:
+la falta de datasheet nunca fue el bloqueo.
+
+**Ojo con la numeración de buses del SSC.** No es transferible entre dominios:
+el LSM6DSO va por SPI (`bus_type=3`, `bus_instance=1`) y el AK0991x por I²C
+(`bus_instance=2`, 0x0c). Al habilitar `i2c_hub_2` en el AP no apareció 0x0c,
+así que `bus_instance` 2 **no** es el SE2 del hub. La coincidencia para 3/4 se
+apoya en el DTS stock, no en la aritmética de índices; comprobar siempre contra
+el árbol Samsung antes de asumir que `bus_instance N` es el SE N.
+
+**Bajo Ubuntu no funciona ningún sensor I²C del SSC, sólo el de SPI.**
+`gdbus introspect` sobre `net.hadess.SensorProxy` no lista la interfaz
+`.Compass`: la brújula no está expuesta, aunque en pmOS daba rumbo real. El
+acelerómetro y el giroscopio, que son los que cuelgan de SPI, sí funcionan. Esto
+convierte «el ALS no da lux» en un caso particular de un fallo más amplio, y es
+la pista viva que queda: no tratar el ALS como una anomalía aislada.
+
+Una diferencia concreta frente a pmOS, por si se retoma: pmOS deja `i2c_hub_4`
+**deshabilitado** en el AP y le da ese pinctrl al DSP con
+`pinctrl-0 = <&hub_i2c4_data_clk>` en `&remoteproc_adsp`, mientras que esta rama
+habilita `i2c_hub_4` para el MAX77816 del teclado y borra el pinctrl del ADSP
+entero. `stk31610_1` está configurado justo en ese `bus_instance` 4. Aun así, el
+ALS tampoco daba lux en pmOS con el SE4 en manos del SSC, así que devolvérselo
+no es por sí solo la solución — pero es la única asimetría de propiedad medida
+entre las dos ramas.
+
 Dos lecciones más allá de este fallo:
 
 - **Un `ppoll` con timeout cero que devuelve `Timeout` siempre no es un

@@ -3766,3 +3766,77 @@ estado anterior: sin paquete Mesa alternativo, diversiones, variables
 `GSK_RENDERER`/`ANGLE_DEFAULT_PLATFORM`, flags de Chromium ni cambios de
 Mutter. Los artefactos quedan documentados como limitación menor, no como una
 función reparada.
+
+## Sesión 48 — brillo automático: la vía AP queda cerrada por medida
+
+Fecha: 2026-08-12. La sesión 47 había dejado el ALS como «frontera en el driver
+DSP». Quedaba sin comprobar una afirmación que se venía arrastrando: que el
+STK31610 estuviese físicamente donde dice su propio registro.
+
+### El registro y el árbol stock coinciden; el silicio no
+
+`kailua_stk31610_0/1.json` (extraídos de `vendor.img` y presentes en el árbol
+HexagonFS instalado) sitúan los dos chips en `bus_type=0` (I²C),
+`bus_instance` 3 y 4, `slave_config=72` (**0x48**), 400 kHz y raíles
+`dummy_vdd`. El DTS stock resuelve `qupv3_hub_i2c3 = i2c@98c000` y
+`qupv3_hub_i2c4 = i2c@990000`, y su overlay les cuelga el SM5440 (0x63) y el
+MAX77816 (0x18) **desde el AP**: los dos motores son compartidos de verdad, no
+exclusivos del SSC.
+
+Esta rama ya conduce ambos en GPI-DMA. Un `i2cdetect -y -r` completo devuelve:
+
+- SE3 (`/dev/i2c-4`): sólo `UU` en 0x63;
+- SE4 (`/dev/i2c-5`): sólo 0x18.
+
+Y 0x48 hace NAK en los dieciséis buses del AP. Los vecinos contestan en el mismo
+par de hilos, con los raíles de sensores medidos vivos (`vreg_l1b_1p8` y
+`vreg_l16b_3p0`, ambos `enabled`, 1,8 V y 3,0 V, un consumidor cada uno). Con el
+bus acreditado por sus vecinos, **el chip no responde a ninguno de los dos
+maestros**.
+
+### Barrido de los motores que faltaban, y su control negativo
+
+Para no cerrar en falso se habilitaron `i2c_hub_2` (gpio20/21) e `i2c_hub_5`
+(gpio6/7) en GPI-DMA — los únicos dos que quedaban sin mapear, porque los pines
+de SE0, SE1 y SE7 los usa esta placa para enables de cámara, un regulador y el
+raíl del pogo. Fue necesario reescribir **boot y `vendor_boot`**: con sólo
+`boot` el árbol vivo seguía siendo el antiguo, tal y como ya advierte
+`docs/boot-strategy.md`; se perdió un ciclo por no leerlo antes.
+
+El empaquetado se validó reproduciendo primero las imágenes instaladas byte a
+byte con el DTB viejo (`boot` `0cf7c7c0…`, `vendor_boot` `e77aca73…`), de modo
+que las de diagnóstico sólo diferían en el DTB.
+
+Resultado: SE2 sólo enseña 0x18, SE3 0x63, SE4 0x18, SE5 vacío. Ni 0x0c ni 0x48.
+El control positivo **falló**: el AK0991x, que el registro pone en
+`bus_instance=2` a 0x0c, tampoco aparece. Es decir, `bus_instance` del SSC no es
+el índice de SE del hub, y la coincidencia para 3/4 se sostiene por el DTS
+stock, no por aritmética. (Salvedad honesta: el adaptador de SE2 mostró 0x18,
+igual que SE4, lo que podría indicar aliasing del canal GPI; el resultado
+negativo de SE2/SE5 es por eso más débil que el de SE3/SE4, que se midieron en
+la configuración de producción ya probada.)
+
+### El hallazgo que reencuadra el problema
+
+`gdbus introspect` sobre `net.hadess.SensorProxy` no lista la interfaz
+`.Compass`. Bajo Ubuntu **no funciona ningún sensor I²C del SSC**: sólo el
+LSM6DSO, que va por SPI (`bus_type=3`, `bus_instance=1`). En pmOS la brújula
+daba rumbo real. El ALS deja pues de ser una anomalía aislada y pasa a ser un
+caso particular de un fallo más amplio de la ruta I²C del SSC — que es la pista
+que queda viva para la próxima sesión.
+
+Asimetría medida entre ramas: pmOS deja `i2c_hub_4` deshabilitado en el AP y da
+ese pinctrl al DSP (`pinctrl-0 = <&hub_i2c4_data_clk>`); esta rama lo habilita
+para el MAX77816 y borra el pinctrl del ADSP. `stk31610_1` está en ese
+`bus_instance` 4. Aun así el ALS tampoco daba lux en pmOS, así que devolver el
+SE4 no es por sí solo la solución.
+
+### Estado final
+
+Ningún cambio funcional sobrevive: el DTS vuelve a compilar el mismo DTB que la
+release (`22db3b18…`) y las dos particiones se restauraron desde copia con
+relectura y comparación de SHA-256. Comprobación de salida en la tablet: cero
+unidades fallidas, `boot` y `vendor_boot` con los hashes de la v0.26, 16 buses
+I²C, `/dev/video20–23`, sink de altavoces, ADSP `running`, acelerómetro y
+orientación correctos. No se publica brillo automático: sin lux no lo hay, y no
+se sustituye el ALS por la cámara a espaldas de la usuaria.

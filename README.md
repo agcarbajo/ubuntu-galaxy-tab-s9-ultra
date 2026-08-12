@@ -39,7 +39,7 @@ postmarketOS v1.71 baseline is kept outside Git.
 | **Wi-Fi** | ✅ | WCN7850 / ath12k, official firmware and the QRD board data |
 | **Bluetooth** | ✅ | Controller and A2DP, with the tablet's own address from the Samsung EFS |
 | **Speakers / microphones** | ✅ | Four CS35L45 and the digital microphones, natively through PipeWire |
-| **Motion sensors** | ✅ | Accelerometer, gyroscope, compass and autorotation via the SSC DSP, at idle CPU cost |
+| **Motion sensors** | 🟡 | Accelerometer, gyroscope and autorotation via the SSC DSP, at idle CPU cost. The **compass is not exposed under Ubuntu**: `iio-sensor-proxy` publishes no `net.hadess.SensorProxy.Compass` interface, so only the SPI-attached IMU works. Every SSC **I²C** sensor is silent on this build |
 | **Battery** | ✅ | SM5714 telemetry: percentage, voltage, current and pack temperature |
 | **Charging (USB-PD/PPS)** | ✅ | 25 W into the pack over PPS with the SM5440 2:1 pump, sustained and thermally flat |
 | **Suspend / resume** | ✅ | Deep suspend, validated with the cover |
@@ -57,7 +57,7 @@ postmarketOS v1.71 baseline is kept outside Git.
 | **S Pen battery / charging** | ❌ | The pen's charge level is neither read nor exposed |
 | **S Pen pairing (BLE)** | ❌ | The pen is not paired; its Bluetooth side is untouched |
 | **S Pen gestures** | ❌ | Needs the Samsung GATT profile, plus a daemon and settings of this port's own: GNOME can only map a stylus button to five mouse actions |
-| **Ambient light / automatic brightness** | ❌ | Both STK31610 paths (`ambient_light` and `ambient_light_sub`) are discovered, but the Samsung DSP driver never completes an enable or emits lux; GNOME support is ready but the unusable ALS is deliberately not exposed |
+| **Ambient light / automatic brightness** | ❌ | Neither STK31610 answers at its own registry address (0x48) on **any** bus the AP can reach, including the two serial engines its registry names; nothing but the charge pump and the keyboard booster lives there. The AP-side driver route is therefore closed, not merely untried, and the SSC path never emits lux. GNOME's support is ready and the unusable ALS is deliberately not exposed |
 | **Speaker protection** | ❌ | Cirrus protection firmware not loaded; hardware volume kept conservative |
 | **Fingerprint** | ❌ | No mainline driver for the EgisTec sensor |
 | **Vibration / haptics** | ❌ | Hardware not identified |
