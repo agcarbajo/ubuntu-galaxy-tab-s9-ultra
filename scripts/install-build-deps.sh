@@ -15,6 +15,10 @@ apt-get install -y --no-install-recommends \
 	apt-utils \
 	dpkg-dev \
 	gettext \
+	libglib2.0-bin \
+	libglib2.0-dev-bin \
+	desktop-file-utils \
+	appstream \
 	gdisk \
 	parted \
 	kpartx \

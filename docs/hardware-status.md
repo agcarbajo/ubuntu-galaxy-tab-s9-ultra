@@ -46,6 +46,7 @@ sondea» como prueba de funcionamiento.
 | Pantalla interna 2960×1848@120 | ✅ | ✅ | medido | La recuperación cold-boot está validada bajo Ubuntu: el journal registra `panel id 00 00 00` → ciclo `pm_test=platform` → `80 00 04` |
 | GPU Adreno 740 | ✅ | ✅ | medido | Freedreno/Turnip funciona correctamente en juegos. Se observan artefactos menores y esporádicos en algunos clientes Wayland (un gradiente de Discord/Chromium y ciertos controles GTK tras repintados). La investigación de la sesión 48 no produjo un arreglo genérico sin regresiones, por lo que no se instala ningún override de Mesa, ANGLE, GTK ni lanzadores de aplicaciones |
 | Escritorio GNOME/Wayland | ✅ | ✅ | confirmado | GDM3 y GNOME 46 nativos, sin el workaround de cuentas greeter de Alpine |
+| Tab Companion | — | 🟡 | medido | Paquete `ubuntu-gts9u-companion` 0.1.0 instalado. La app GTK4/libadwaita arranca bajo Xvfb en la propia tablet, carga el esquema GSettings, icono, `.desktop` y sus dos secciones; la captura se inspeccionó. Falta confirmación visual en la sesión GNOME real y conectar el servicio D-Bus al hardware |
 | Brillo / blanking | ✅ | ⏳ | medido | Backlight DCS y control manual nativo. GNOME tiene `ambient-enabled=true`, pero no puede hacer brillo automático porque ninguna de las dos rutas STK31610 entrega lux |
 | Táctil Goodix GT9916 | ✅ | ✅ | confirmado | Layout Samsung de eventos de 16 bytes |
 | Botones power y volumen | ✅ | ✅ | confirmado | |

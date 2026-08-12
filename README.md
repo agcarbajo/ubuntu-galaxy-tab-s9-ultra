@@ -30,6 +30,7 @@ postmarketOS v1.71 baseline is kept outside Git.
 |---|---|---|
 | **Display** | ✅ | 2960×1848 at 120 Hz, DSI + DSC + TE, native panel |
 | **Desktop** | ✅ | GNOME 46 on Wayland with GDM3, stock Ubuntu packages |
+| **Tab Companion** | 🟡 | Native GTK4/libadwaita settings app for S Pen actions and EF-DX920 special keys; packaged, preinstalled by the rootfs build and exercised headlessly on the tablet. Hardware controls are not active yet |
 | **GPU** | ✅ | Adreno 740 through Mesa (Freedreno/Turnip); no Android graphics stack |
 | **Touchscreen** | ✅ | Goodix Berlin / GT9916, Samsung 16-byte event layout |
 | **Buttons** | ✅ | Power and volume; a short press on power suspends |

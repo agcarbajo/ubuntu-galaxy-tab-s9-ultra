@@ -235,6 +235,7 @@ chmod +x "$hooks/configure.sh"
 # does not ship at all.  All are installed inside the same mmdebstrap
 # invocation, so the rootfs never depends on a manual dpkg run afterwards.
 bash "$repo/scripts/build-device-package.sh" >/dev/null
+bash "$repo/scripts/build-companion-package.sh" >/dev/null
 
 # A package filename is not a valid cache key: the locally patched
 # iio-sensor-proxy deliberately keeps its upstream version, so changing one of
@@ -306,7 +307,7 @@ rm -rf -- "$stage_debs"
 mkdir -p "$stage_debs"
 for pkg in libssc hexagonrpcd iio-sensor-proxy \
 	libcamera-gts9u libspa-0.2-libcamera-gts9u \
-	ubuntu-gts9u-device fastfetch v4l2-relayd-gts9u; do
+	ubuntu-gts9u-device ubuntu-gts9u-companion fastfetch v4l2-relayd-gts9u; do
 	deb=$(ls -t "$base"/out/packages/${pkg}_*.deb 2>/dev/null | head -1 || true)
 	if [ -z "$deb" ]; then
 		echo "missing local package: $pkg" >&2

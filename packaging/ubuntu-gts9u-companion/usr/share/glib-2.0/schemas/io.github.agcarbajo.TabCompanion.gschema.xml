@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist gettext-domain="ubuntu-gts9u-companion">
+  <schema id="io.github.agcarbajo.TabCompanion" path="/io/github/agcarbajo/TabCompanion/">
+    <key name="gesture-single-press" type="s"><default>'none'</default></key>
+    <key name="gesture-double-press" type="s"><default>'none'</default></key>
+    <key name="gesture-long-press" type="s"><default>'none'</default></key>
+    <key name="gesture-swipe-up" type="s"><default>'none'</default></key>
+    <key name="gesture-swipe-down" type="s"><default>'none'</default></key>
+    <key name="gesture-swipe-left" type="s"><default>'none'</default></key>
+    <key name="gesture-swipe-right" type="s"><default>'none'</default></key>
+    <key name="gesture-circle-clockwise" type="s"><default>'none'</default></key>
+    <key name="gesture-circle-counterclockwise" type="s"><default>'none'</default></key>
+    <key name="key-galaxy-ai" type="s"><default>'none'</default></key>
+    <key name="key-dex" type="s"><default>'none'</default></key>
+    <key name="key-search-settings" type="s"><default>'none'</default></key>
+    <key name="key-fn-f1" type="s"><default>'none'</default></key>
+    <key name="key-fn-f2" type="s"><default>'none'</default></key>
+    <key name="key-fn-f3" type="s"><default>'none'</default></key>
+    <key name="key-fn-f4" type="s"><default>'none'</default></key>
+    <key name="key-fn-f5" type="s"><default>'none'</default></key>
+  </schema>
+</schemalist>

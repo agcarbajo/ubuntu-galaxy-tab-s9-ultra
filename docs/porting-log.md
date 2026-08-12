@@ -4274,3 +4274,37 @@ La lectura del fuente oficial Samsung aportó la ruta para la fase 2: GPIO137
 la carga BLE también la gobierna el Wacom. El mismo fuente no expone porcentaje
 de batería. Estas conclusiones quedan en `development-notes.md` para no repetir
 la investigación.
+
+## Sesión 58 — Tab Companion, fase 1: app y paquete instalados
+
+Fecha: 2026-08-12. Se creó `ubuntu-gts9u-companion` 0.1.0 como paquete Debian
+independiente y determinista. Instala `tab-companion`, App ID
+`io.github.agcarbajo.TabCompanion`, lanzador, metadatos AppStream, icono hicolor
+escalable y simbólico, esquema GSettings y recursos Gio. El rootfs construye el
+paquete desde las fuentes versionadas y lo incluye en la misma transacción APT
+que el resto de paquetes locales.
+
+La interfaz es GTK4/libadwaita y separa hardware de presentación desde el
+primer commit: `HardwareClient` sólo conoce la interfaz D-Bus
+`io.github.agcarbajo.TabCompanion.Hardware`; la ventana no contiene rutas de
+sysfs ni nombres de `eventN`. Las asignaciones de gestos y teclas comparten el
+mismo catálogo de acciones y se guardan en GSettings.
+
+Se instaló el `.deb` real en la tablet:
+
+```text
+ubuntu-gts9u-companion  0.1.0
+```
+
+Sin sesión gráfica desbloqueada, se ejecutó allí bajo Xvfb a 1200×900 y
+`GSK_RENDERER=cairo`. Permaneció activa hasta finalizar la prueba, sin traceback,
+y produjo una captura PNG de 1200×900. La inspección confirma el lápiz grande y
+horizontal, estado debajo, tarjetas de estado y Air actions, y navegación a
+Cover keyboard. El estado dice literalmente «Hardware service unavailable»:
+es deliberado hasta que exista el backend, no un dato simulado que parezca real.
+
+El `.desktop` pasó `desktop-file-validate`, los metadatos pasaron
+`appstreamcli validate`, el esquema se compiló con `--strict` y todos los
+módulos Python pasaron `compileall`. La apariencia en GNOME/Wayland real queda
+pendiente de confirmación por la propietaria; una captura headless no sustituye
+esa observación.

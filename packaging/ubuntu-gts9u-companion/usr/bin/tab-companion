@@ -1,0 +1,10 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: MIT
+
+import sys
+
+sys.path.insert(0, "/usr/lib/tab-companion")
+
+from tab_companion.main import main
+
+raise SystemExit(main(sys.argv))

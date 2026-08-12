@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Tab Companion
+Comment=Configure the S Pen and cover keyboard
+Exec=tab-companion
+Icon=io.github.agcarbajo.TabCompanion
+Terminal=false
+Type=Application
+Categories=Settings;HardwareSettings;
+Keywords=S Pen;Stylus;Keyboard;Samsung;
+StartupNotify=true
+DBusActivatable=false
