@@ -1828,3 +1828,43 @@ No se distribuye ningún workaround de esta sesión: no hay variables en
 navegador ni cambio de Mutter. Si se retoma, el punto de partida útil es la
 entrega implícita de buffers dma-buf en Ozone/Wayland; el compositor no anuncia
 los protocolos de sincronización explícita y Chrome usa `wl_buffer.release`.
+
+### Desensamblado Hexagon de `sns_stk31610`: sitio localizado, causa no
+
+Receta que funciona, para no volver a perder tiempo con las herramientas:
+`llvm-objdump` **no** admite binario crudo, pero sí un ELF. Envolver `adsp.b18`
+en un ELF32 con `e_machine = 164` (EM_HEXAGON), una `PT_LOAD` y una sección
+`.text` en `0xb3200000` basta: `llvm-objdump-18 -d b18.elf` produce 453 900
+líneas con los `immext` ya fusionados, que es lo que permite buscar
+referencias a cadenas por su dirección.
+
+El sitio que registra `[TOP-ALGO] all data was skipped` está en
+**`b332ff88`–`b332fff0`**, dentro del código *island* del HAL. Su cadena de
+guardas, leída hacia atrás:
+
+```
+b332fea8: p0 = cmp.eq(r2, ##0x300)   ; r2 = memw(r3+#0x8); si no es 768, sale
+b332feb0: if (!p0) jump 0xb3330090   ; salida silenciosa, sin registrar nada
+b332ff10: call 0xb3120fa8            ; framework (otro segmento)
+b332ff18: if (!p0) jump 0xb3330090   ; si devuelve 0, sale
+b332ff20: if (memw(r29+#0x1c)==0) jump 0xb3330090
+b332ff40: p0 = cmp.eq(r0,#0x0)       ; r0 = memcmp(...)
+          if (r0 != 0) jump 0xb332fff4   ; rama «datos aceptados»
+          si no, cae en el log «all data was skipped»
+```
+
+El log está limitado a una vez por un contador en `r17+0x24`.
+
+**Corrección de una lectura propia:** `0xb32949f0` **no** es la función que
+decide aceptar o descartar; es `memcmp` (bucle byte a byte que retorna
+`mux(p0,#-0x1,#0x1)`, y sus vecinas son `strcpy`/`strchr`). Conviene desconfiar
+de identificar funciones por su posición en la cadena de llamadas sin mirarlas.
+
+**Hasta aquí llega esta vía, y conviene decir por qué.** Para convertir esto en
+un arreglo haría falta simbolizar el framework SEE, reconstruir las estructuras
+y emular; y aun consiguiéndolo, **el firmware está firmado**, así que el
+resultado sólo serviría si la condición resultara ser algo ajustable desde
+fuera. Las palancas externas conocidas —registro, petición de habilitación,
+mensajes `OPTION_DEFINE`, modo de fábrica— ya están todas descartadas por
+medida. No emprender esta ruta esperando un arreglo: emprenderla, como mucho,
+para documentar la causa.
