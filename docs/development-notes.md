@@ -343,6 +343,30 @@ petición de habilitación se envía, el DSP responde `Control` con
 `Result = SUCCESS` y un Client ID, y después **no llega ni una indicación**. No
 es un fallo de cliente, de permisos ni de QMI.
 
+### La referencia Xiaomi sheng cierra la vía del registro
+
+La Xiaomi Pad 6S Pro 12.4 (`xiaomi-sheng`) es el contraste bueno: **mismo SoC
+SM8550, mismo SEE, mismo `libssc`+`adsprpcd-sensorspd`**, y su brillo automático
+funciona. Su paquete `sheng-sensors` trae el registro completo. No confundir con
+la Xiaomi Pad 6 (`pipa`), que es otro SoC y ya se descartó en pmOS.
+
+Su ALS es un Sensortek **STK3BCX** en `bus_instance` **4**, esclavo **72**
+(0x48) — el mismo bus y la misma dirección que nuestro `stk31610_1`. Diferencias
+de configuración: raíles reales `sensor_vdd`/`sensor_vddio`, `is_dri=0`
+(polling), `dri_irq_num=16`, `irq_pull_type=2`.
+
+Se replicó esa forma **exacta** sobre las dos instancias STK31610 y se comprobó
+tras reinicio completo: acelerómetro 544 muestras, magnetómetro 19, **luz
+ninguna**. Con eso la vía del registro queda agotada: no es la configuración.
+
+La diferencia que queda no es tocable desde aquí: sheng corre el firmware ADSP
+de Xiaomi, que contiene un `sns_stk3bcx` que funciona, y esta tablet corre el de
+Samsung con `sns_stk31610`. El driver vive dentro del blob firmado, y la
+alternativa —cargar el `adsp.mbn` de referencia de Qualcomm— ya está descartada
+porque el arranque seguro de Samsung lo rechaza (ver la nota de
+`&remoteproc_adsp` en el DTS). **No volver a intentar arreglar el ALS mediante
+el registro ni copiando configuración de otro dispositivo.**
+
 Una diferencia concreta frente a pmOS, por si se retoma: pmOS deja `i2c_hub_4`
 **deshabilitado** en el AP y le da ese pinctrl al DSP con
 `pinctrl-0 = <&hub_i2c4_data_clk>` en `&remoteproc_adsp`, mientras que esta rama

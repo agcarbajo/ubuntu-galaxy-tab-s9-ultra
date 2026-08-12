@@ -3914,3 +3914,40 @@ Todo revertido y verificado: registro `identical` frente a su copia, binario del
 proxy con el SHA de la release (`4c2a2a9c…`), `boot` `0cf7c7c0…` y `vendor_boot`
 `e77aca73…`, cero unidades fallidas, 21 nodos de vídeo, ADSP `running`, regla
 polkit temporal y ficheros de diagnóstico borrados. Sin brillo automático.
+
+## Sesión 50 — la referencia sheng agota la vía del registro
+
+Fecha: 2026-08-12, continuación. La usuaria aportó una referencia excelente: la
+Xiaomi Pad 6S Pro 12.4 (`xiaomi-sheng`), **mismo SoC SM8550, mismo SEE, mismo
+`libssc` + `adsprpcd-sensorspd`**, con brillo automático funcionando. No es la
+Xiaomi Pad 6 (`pipa`) que pmOS ya había descartado: aquélla es otro SoC.
+
+De su paquete `sheng-sensors-20240917-r1.apk` sale el registro completo. Su ALS
+es un Sensortek **STK3BCX** en `bus_instance` **4**, esclavo **72** (0x48): el
+mismo bus y la misma dirección que nuestro `stk31610_1`. Las únicas diferencias
+de configuración eran las cuatro que ya se sospechaban:
+
+| campo | sheng (va) | X910 (no va) |
+|---|---|---|
+| `vdd_rail` / `vddio_rail` | `sensor_vdd` / `sensor_vddio` | `dummy_vdd` / `dummy_vdd` |
+| `is_dri` | 0 (polling) | 1 |
+| `dri_irq_num` | 16 | 0 |
+| `irq_pull_type` | 2 | 0 |
+
+Se replicó la forma exacta de sheng sobre las dos instancias STK31610 y se
+comprobó **tras un reinicio completo**: acelerómetro 544 muestras, magnetómetro
+19, luz ninguna. (Un detalle de método: el primer intento no cambió
+`vddio_rail` porque `sed` sin `/g` sólo sustituye la primera aparición y el JSON
+va en una línea; se corrigió y se repitió el ciclo entero.)
+
+Con esto la vía del registro queda agotada. Lo que separa a las dos tablets no
+es configurable: sheng arranca el firmware ADSP de Xiaomi, que lleva un
+`sns_stk3bcx` funcional, y la X910 arranca el de Samsung con `sns_stk31610`. El
+driver vive dentro del blob firmado y no se puede sustituir: el arranque seguro
+de Samsung rechaza el `adsp.mbn` de referencia de Qualcomm, cosa ya documentada
+en la nota de `&remoteproc_adsp`.
+
+Estado final: registro restaurado a su copia (`dummy_vdd`, `dri_irq_num=0`,
+`is_dri=1`), proxy con el SHA de release `4c2a2a9c…`, `boot` `0cf7c7c0…`,
+`vendor_boot` `e77aca73…`, cero unidades fallidas y acelerómetro dando muestras.
+Sigue sin haber brillo automático, y sigue sin publicarse una solución falsa.
