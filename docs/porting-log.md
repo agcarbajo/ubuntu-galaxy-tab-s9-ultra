@@ -4224,3 +4224,53 @@ ocultaba el complemento parcheado que se acaba de retirar.
 
 La instalación de la usuaria se deja intacta a petición suya; esto afecta sólo a
 las imágenes que se construyan a partir de ahora.
+
+## Sesión 57 — Tab Companion, fase 0: reconocimiento sin código de producto
+
+Fecha: 2026-08-12. Se abrió el trabajo del S Pen y las teclas especiales del
+EF-DX920 con una fotografía remota previa. La tablet estaba en
+`192.168.1.171`, con el lápiz acoplado y sin posibilidad de interacción física.
+
+Salud inicial, medida antes de tocar el producto:
+
+```text
+0 loaded units listed.
+/dev/video20
+/dev/video21
+/dev/video22
+/dev/video23
+/sys/class/remoteproc/remoteproc0/name=adsp
+/sys/class/remoteproc/remoteproc0/state=running
+44. Built-in Audio Built-in speakers (4x CS35L45)
+36. Built-in Audio Built-in digital microphones
+```
+
+`evtest` confirmó en `event2` la ABI actual del lápiz: `BTN_TOOL_PEN`,
+`BTN_TOUCH`, `BTN_STYLUS`, presión 0–4095, distancia 0–255 e inclinación ±63.
+Durante cinco segundos no hubo eventos porque el lápiz permaneció acoplado. El
+teclado estaba presente como `event3`, V37 y modelo `0xd6`; otra ventana de
+cinco segundos terminó con el contador sin cambios:
+
+```text
+attached=1 model=0xd6 connected=1 data_ready=0 key_events=0
+last_key=0x0000 keys_down=0 recoveries=0 flash_version=00370037
+```
+
+Por tanto no se han atribuido códigos a Galaxy AI, DeX, buscador/ajustes ni
+`Fn+F1-F5`: sin una pulsación real hacerlo sería inventar evidencia. El
+firmware entrega directamente keycodes Linux de 15 bits y el driver actual los
+publica sin tabla, de modo que la captura física posterior será concluyente.
+
+UPower sólo vio `sm5714-battery`, `sm5714-usb` y
+`tcpm-source-psy-8-0033`: ningún dispositivo del lápiz. Bluetooth arrancó
+bloqueado por software; tras retirar el bloqueo quedó `Powered: yes` y el
+escaneo activo de 25 s descubrió 22 dispositivos. Ninguno se anunció con nombre
+de S Pen y sólo había un Pro Controller emparejado. Como el lápiz no se sacó ni
+se puso en modo de emparejamiento, esto se registra como prueba negativa
+limitada, no como ausencia de BLE.
+
+La lectura del fuente oficial Samsung aportó la ruta para la fase 2: GPIO137
+`PDCT` es *pen in/out*, la orientación se consulta al propio Wacom con `0xee` y
+la carga BLE también la gobierna el Wacom. El mismo fuente no expone porcentaje
+de batería. Estas conclusiones quedan en `development-notes.md` para no repetir
+la investigación.

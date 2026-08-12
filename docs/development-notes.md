@@ -657,6 +657,29 @@ hardware que ya funciona, antes de entrar en el GATT, que es la parte de coste
 no acotable. La UI es el último 10 %, y la lista de gestos la dicta el
 protocolo: diseñarla antes de conocerlo es inventarse la mitad.
 
+### El acoplamiento y la orientación ya tienen una ABI en el driver de Samsung
+
+El fuente oficial del X910 elimina dos incógnitas antes de escribir código. La
+línea `PDCT` de TLMM GPIO137 no es proximidad sobre la pantalla: el driver la
+llama *garage*, la configura con IRQ en ambos flancos y la usa como señal
+`pen in/out`. En este modelo nivel alto significa dentro del hueco. La ABI de
+entrada que publica Samsung es `SW_PEN_INSERT`; para el hueco bidireccional del
+S9 añade `SW_PEN_REVERSE_INSERT`.
+
+La orientación tampoco se debe inferir de la rotación de pantalla. Al guardar
+el lápiz, el host envía el comando Wacom `0xee`
+(`COM_REQUEST_GARAGEDIRECTION`) y la respuesta `REPLY_PACKET`, subtipo 6, trae
+en el byte 5 `EPEN_GARAGE_UPSIDE=1` o `EPEN_GARAGE_DOWNSIDE=2`. Es además el
+mismo subtipo que usa la respuesta del estado de carga BLE, por lo que el
+driver debe serializar la petición y conservar qué respuesta espera.
+
+La carga BLE sí la gobierna el digitalizador Wacom, no BlueZ: los comandos
+documentados por Samsung son `0xe8`–`0xed`, `0xef` y `0xf3`, y las
+notificaciones distinguen apagado, inicio, tránsito, reset, mantenimiento y
+carga completa. Esto aporta **estado de carga**, pero el fuente del driver no
+expone un porcentaje de batería del lápiz; no se debe inventar uno ni confundir
+el tiempo de carga con capacidad.
+
 ## Lo que no hay que repetir
 
 Heredado de postmarketOS; cada punto costó al menos una iteración física.
