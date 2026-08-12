@@ -3858,3 +3858,59 @@ unidades fallidas, `boot` y `vendor_boot` con los hashes de la v0.26, 16 buses
 I²C, `/dev/video20–23`, sink de altavoces, ADSP `running`, acelerómetro y
 orientación correctos. No se publica brillo automático: sin lux no lo hay, y no
 se sustituye el ALS por la cámara a espaldas de la usuaria.
+
+## Sesión 49 — la ruta I²C del SSC no estaba rota; el ALS sigue solo
+
+Fecha: 2026-08-12, continuación. Se abrió con el encargo de «arreglar la ruta
+I²C del SSC», conclusión de la sesión anterior. **La premisa era falsa y era mía:
+esa ruta funciona.**
+
+`ssccli`, que instala el propio `libssc`, resuelve el diagnóstico sin tocar
+`iio-sensor-proxy`:
+
+- `--sensor accelerometer`: 84 muestras (SPI, `bus_instance=1`);
+- `--sensor magnetometer`: 30 muestras (I²C, `bus_instance=2`);
+- `--sensor compass`: rumbo vivo 127–134°;
+- `--sensor light`: **nada**.
+
+Dos sensores I²C del SSC entregan datos. No hay nada que arreglar en el bus; el
+ALS está solo en su fallo.
+
+### Qué se descartó, y con qué rigor
+
+Con la brújula como control se atacaron los dos únicos campos en que el registro
+del ALS se aparta del suyo:
+
+1. raíles `dummy_vdd` → `/pmic/client/sensor_vdd` y `/pmic/client/sensor_vddio`,
+   los mismos del AK0991x;
+2. `is_dri=1` → `0` en `stk31610_{0,1}.ambient_light.config`, forzando polling.
+
+Ambos a la vez, y verificados **tras un reinicio completo** para que el DSP
+releyera el registro y no sólo tras reiniciar `hexagonrpcd-adsp-sensorspd`.
+Acelerómetro y magnetómetro siguieron dando muestras; la luz, cero. Los dos
+campos quedan descartados y anotados para no repetirlos.
+
+`ssccli -v --sensor light` sitúa la frontera con precisión: la petición de
+habilitación sale, el DSP contesta `Control` con `Result = SUCCESS` y un
+Client ID, y a partir de ahí no llega **ni una sola indicación**. El transporte,
+el cliente QMI y los permisos están bien; lo que no llega es la muestra.
+
+Dado que el SSC publica el sensor como disponible —lo que implica que su rutina
+de arranque pasó, y el firmware tiene una ruta de error `STK3A6X HW absent` que
+no toma—, lo más consistente sigue siendo que el chip existe y responde en el
+bus privado del DSP, y que la configuración de *streaming* dentro del blob nunca
+se completa.
+
+### Trabajo innecesario, anotado para que no se repita
+
+Se recompiló `iio-sensor-proxy` sin `disable-broken-ssc-light.patch` para tener
+un cliente del ALS. No hacía falta: `ssccli` ya lo es. La build sirvió para
+confirmar que con `ssc_light` activo `HasAmbientLight` pasa a `true` y
+`LightLevel` se queda en 0, que es lo que ya decía la sesión 47.
+
+### Estado final
+
+Todo revertido y verificado: registro `identical` frente a su copia, binario del
+proxy con el SHA de la release (`4c2a2a9c…`), `boot` `0cf7c7c0…` y `vendor_boot`
+`e77aca73…`, cero unidades fallidas, 21 nodos de vídeo, ADSP `running`, regla
+polkit temporal y ficheros de diagnóstico borrados. Sin brillo automático.

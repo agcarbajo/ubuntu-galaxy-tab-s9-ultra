@@ -320,9 +320,28 @@ transporte, registro y DRI:
 
 El ALS es el único que pide raíles `dummy_vdd` y un DRI 0 con pull 0, que tiene
 toda la pinta de plantilla de placa de referencia sin rellenar — y el firmware
-ADSP contiene justamente la cadena de error `i2c_power_on failure`. Esa es la
-hipótesis viva: no que falte el chip, sino que su entrada de registro no
-describe esta placa.
+ADSP contiene justamente la cadena de error `i2c_power_on failure`.
+
+**Esa hipótesis se probó y NO era.** Se editó el registro instalado en
+`/usr/share/qcom/sm8550/Samsung/gts9uwifi/sensors/registry` para dar al ALS
+exactamente lo que usa la brújula —`vdd_rail=/pmic/client/sensor_vdd` y
+`vddio_rail=/pmic/client/sensor_vddio`— y además `is_dri=0` en
+`stk31610_{0,1}.ambient_light.config` para forzar polling. Se comprobó **tras un
+reinicio completo**, no sólo tras reiniciar `hexagonrpcd-adsp-sensorspd`, para
+que el DSP releyese el registro. Resultado: acelerómetro 84 muestras,
+magnetómetro 30, **luz ninguna**. Los dos campos sospechosos quedan descartados;
+no repetirlos.
+
+**Usar `ssccli`, no `iio-sensor-proxy`, para trabajar el ALS.** `libssc` ya
+instala `ssccli`, que acepta `--sensor light|accelerometer|magnetometer|compass`
+y `-v` para volcar el QMI entero. Funciona aunque `disable-broken-ssc-light.patch`
+haya quitado `ssc_light` del proxy, porque no pasa por él. En esta sesión se
+recompiló el proxy sin ese parche antes de darse cuenta: trabajo innecesario.
+
+Lo que `ssccli -v --sensor light` deja ver es que el transporte está bien: la
+petición de habilitación se envía, el DSP responde `Control` con
+`Result = SUCCESS` y un Client ID, y después **no llega ni una indicación**. No
+es un fallo de cliente, de permisos ni de QMI.
 
 Una diferencia concreta frente a pmOS, por si se retoma: pmOS deja `i2c_hub_4`
 **deshabilitado** en el AP y le da ese pinctrl al DSP con
