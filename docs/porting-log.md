@@ -4190,3 +4190,37 @@ Tras reinicio sin intervención: las dos unidades activas, `swappiness=100`,
 `page-cluster=0`, cero unidades fallidas, GDM y ADSP correctos, y el swapfile
 reutilizado en vez de recreado (`enabled the existing swapfile`, mtime
 conservado).
+
+## Sesión 56 — OBS se baja de la imagen
+
+Fecha: 2026-08-12. Cerrado el trabajo de cámaras, se retira OBS de las builds
+futuras. La nota «OBS viaja de prestado» ya dejaba escrito que este día
+llegaría y qué había que deshacer.
+
+Qué sale, en la v2.23 del paquete de dispositivo:
+
+- el paso `obs-v4l2` de `build-extra-packages.sh` (88 líneas) y el directorio
+  `packaging/obs-v4l2/`;
+- la dependencia `obs-v4l2-gts9u` del paquete de dispositivo, que era lo único
+  que arrastraba `obs-studio` a la imagen: OBS nunca estuvo en una lista de
+  paquetes, sólo llegaba por esa dependencia;
+- `libobs-dev` de las dependencias del chroot de compilación;
+- y la **danza de VLC** entera. Existía sólo porque `obs-studio` recomienda
+  `obs-plugins` y éste recomienda `vlc`: 77 MiB, de los cuales 41 MiB eran
+  traducciones. Había que purgar la familia `vlc-plugin-*` y volver a instalar
+  `obs-plugins --no-install-recommends`, porque en Noble la purga se llevaba
+  también `obs-plugins`. Sin OBS no queda nada de eso.
+
+En su lugar queda una comprobación de tres líneas que **puede fallar**: la build
+aborta si `obs-studio`, `obs-plugins` o `vlc` aparecen instalados. No es una
+comprobación decorativa —los tres llegaron una vez como `Recommends` de otra
+cosa— y una imagen que volviera a engordar así sólo se notaría en el tamaño.
+
+Lo que **no** cambia: los relés `/dev/video20–23`, `v4l2-relayd-gts9u`, la regla
+udev de cámaras y el software ISP de libcamera siguen igual. La única
+consecuencia visible es que quien instale OBS por su cuenta verá en su selector
+V4L2 los nodos CAMSS internos además de las cuatro cámaras procesadas: eso lo
+ocultaba el complemento parcheado que se acaba de retirar.
+
+La instalación de la usuaria se deja intacta a petición suya; esto afecta sólo a
+las imágenes que se construyan a partir de ahora.

@@ -278,20 +278,20 @@ if [ "$camera_missing" = 1 ] || [ "$camera_cached" != "$camera_fingerprint" ]; t
 	printf '%s\n' "$camera_fingerprint" > "$camera_stamp"
 fi
 
-# Noble lacks fastfetch and this port also carries the camera relay and the
-# OBS V4L2 safety patch. Hash those inputs so a clean image cannot silently
-# reuse the old manual GStreamer integration from a previous build.
+# Noble lacks fastfetch and this port also carries the camera relay. Hash those
+# inputs so a clean image cannot silently reuse the old manual GStreamer
+# integration from a previous build.
 extra_stamp=$base/out/packages/.gts9u-extra-inputs.sha256
 extra_fingerprint=$(
 	{
 		sha256sum "$repo/scripts/build-extra-packages.sh"
-		find "$repo/packaging/v4l2-relayd" "$repo/packaging/obs-v4l2" \
+		find "$repo/packaging/v4l2-relayd" \
 			-type f -print0 | sort -z | xargs -0 sha256sum
 	} | sha256sum | awk '{print $1}'
 )
 extra_cached=$(cat "$extra_stamp" 2>/dev/null || true)
 extra_missing=0
-for pkg in fastfetch v4l2-relayd-gts9u obs-v4l2-gts9u; do
+for pkg in fastfetch v4l2-relayd-gts9u; do
 	ls "$base"/out/packages/${pkg}_*.deb >/dev/null 2>&1 || extra_missing=1
 done
 if [ "$extra_missing" = 1 ] || [ "$extra_cached" != "$extra_fingerprint" ]; then
@@ -306,7 +306,7 @@ rm -rf -- "$stage_debs"
 mkdir -p "$stage_debs"
 for pkg in libssc hexagonrpcd iio-sensor-proxy \
 	libcamera-gts9u libspa-0.2-libcamera-gts9u \
-	ubuntu-gts9u-device fastfetch v4l2-relayd-gts9u obs-v4l2-gts9u; do
+	ubuntu-gts9u-device fastfetch v4l2-relayd-gts9u; do
 	deb=$(ls -t "$base"/out/packages/${pkg}_*.deb 2>/dev/null | head -1 || true)
 	if [ -z "$deb" ]; then
 		echo "missing local package: $pkg" >&2
@@ -341,47 +341,24 @@ echo "language packs installed: \$installed_langs"
 	exit 1
 }
 
-# This is the one apt-get in the whole build that honours Recommends: the base
-# rootfs is bootstrapped without them, which is why snapd, yaru-theme-icon and
-# gnome-keyring have to be named explicitly higher up.  Through that gap came
-# 77 MiB of VLC, of which 41 MiB are translations: obs-v4l2-gts9u needs
-# obs-studio, obs-studio recommends obs-plugins, and obs-plugins recommends
-# vlc for its media-source plugin.
+# OBS Studio used to ride along here: obs-v4l2-gts9u needed it, obs-studio
+# recommends obs-plugins, and obs-plugins recommends vlc, which is how 77 MiB of
+# VLC used to reach the image through the one apt-get in this build that honours
+# Recommends.  The camera work it served as the verification tool for is closed,
+# so the whole branch is gone and with it the purge-and-reinstall dance that kept
+# VLC out without losing obs-plugins.
 #
-# --no-install-recommends is the wrong cure, because it would also drop
-# obs-plugins, which is where OBS keeps the sources this port tests cameras
-# with.  Removing the one unwanted branch afterwards keeps the resolution
-# intact.  Recommends are only pulled in on first install, so an upgrade will
-# not bring it back.
-# No --autoremove here.  It took obs-plugins with it the first time: that
-# package only ever arrived as a Recommends, so once the transaction was
-# reopened autoremove judged it unneeded — the exact loss this approach existed
-# to avoid.  Noble's apt nevertheless also removed obs-plugins when the VLC
-# plugin family was purged from a freshly bootstrapped arm64 rootfs.  Reinstall
-# it explicitly without Recommends: this restores the package that provides
-# OBS's source framework without pulling VLC back in.  The few remaining
-# libvlc* libraries are under 2 MiB and not worth a second guess.
-chroot "\$target" sh -c 'apt-get purge -y \
-	vlc vlc-bin vlc-data vlc-l10n "vlc-plugin-*" >/dev/null 2>&1' || true
-chroot "\$target" sh -c \
-	'DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-	obs-plugins >/dev/null'
-if chroot "\$target" dpkg-query -W -f '\${Status}' vlc 2>/dev/null | \
-	grep -q ' installed'; then
-	echo 'vlc survived the purge' >&2
-	exit 1
-fi
-if ! chroot "\$target" dpkg-query -W -f '\${Status}' obs-plugins 2>/dev/null | \
-	grep -q ' installed'; then
-	echo 'the vlc purge took obs-plugins with it' >&2
-	exit 1
-fi
-if ! cmp -s \
-	"\$target/usr/lib/aarch64-linux-gnu/obs-plugins/linux-v4l2.so" \
-	"\$target/usr/lib/obs-v4l2-gts9u/linux-v4l2.so"; then
-	echo 'the OBS V4L2 diversion no longer contains the gts9u plugin' >&2
-	exit 1
-fi
+# Assert rather than assume.  None of the three should be reachable now, but
+# each arrived as a Recommends of something else once already, and an image that
+# silently grew a streaming studio and a media player again would only show up
+# as size.
+for unwanted in obs-studio obs-plugins vlc; do
+	if chroot "\$target" dpkg-query -W -f '\${Status}' "\$unwanted" 2>/dev/null | \
+		grep -q ' installed'; then
+		echo "\$unwanted is installed; something pulled it back in" >&2
+		exit 1
+	fi
+done
 HOOK
 chmod +x "$hooks/local-packages.sh"
 

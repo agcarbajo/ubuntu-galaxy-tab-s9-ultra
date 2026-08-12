@@ -1648,25 +1648,37 @@ acaba de instalar tienen que ser el mismo conjunto firmado.
 No reinicia. Y **no está probado todavía**: se estrenará en la primera
 actualización real que haya datos que conservar.
 
-## OBS viaja de prestado
+## OBS viajaba de prestado, y ya se ha bajado
 
-`obs-studio` está en la imagen porque `obs-v4l2-gts9u` —el complemento V4L2
-parcheado con el que se validan las cuatro cámaras— depende de él. No está
-porque el port quiera distribuir un estudio de streaming: son 21 MiB y una
-aplicación que la mayoría de la gente no usará.
+`obs-studio` estaba en la imagen porque `obs-v4l2-gts9u` —el complemento V4L2
+parcheado con el que se validaron las cuatro cámaras— dependía de él. Nunca
+estuvo porque el port quisiera distribuir un estudio de streaming: eran 21 MiB
+y una aplicación que la mayoría de la gente no usará.
 
-**Es temporal, y sale cuando el trabajo de cámaras esté cerrado.** Se conserva
-en la v0.26 porque sigue siendo tanto la herramienta de verificación como el
-paquete que sustituye el selector V4L2 de OBS para ocultar los endpoints CAMSS
-crudos. Al quitarlo hay que quitar también `obs-plugins`, y comprobar antes que
-un OBS instalado después enumera sólo las cuatro cámaras procesadas.
+**Retirado en la v2.23 del paquete de dispositivo**, cerrado ya el trabajo de
+cámaras. Lo que se fue con él:
 
-El hook del rootfs instala los paquetes locales honrando `Recommends`, por lo
-que `obs-plugins` arrastra VLC. La limpieza purga VLC y después reinstala
-explícitamente `obs-plugins --no-install-recommends`: en Noble, purgar la
-familia `vlc-plugin-*` también retiró `obs-plugins` aunque no se pidió
-`autoremove`. El build compara además el plugin V4L2 activo con la copia de
-`obs-v4l2-gts9u`; no basta con que el paquete figure como instalado.
+- el paso `obs-v4l2` de `build-extra-packages.sh` y `packaging/obs-v4l2/`;
+- la dependencia `obs-v4l2-gts9u` del paquete de dispositivo;
+- `libobs-dev` de las dependencias de compilación;
+- y, sobre todo, **la danza de VLC**. El hook del rootfs instala los paquetes
+  locales honrando `Recommends`: `obs-studio` recomienda `obs-plugins` y éste
+  recomienda `vlc`, así llegaban 77 MiB de VLC, de los cuales 41 MiB eran
+  traducciones. Había que purgar VLC y reinstalar `obs-plugins
+  --no-install-recommends` porque en Noble purgar la familia `vlc-plugin-*`
+  se llevaba también `obs-plugins`. Sin OBS no hay nada de eso.
+
+En su lugar queda una comprobación que **sí puede fallar**: el build aborta si
+`obs-studio`, `obs-plugins` o `vlc` aparecen instalados en la imagen. Ninguno
+debería ser alcanzable ya, pero los tres llegaron una vez como `Recommends` de
+otra cosa, y una imagen que volviera a engordar con un estudio de streaming y un
+reproductor sólo se notaría en el tamaño.
+
+Consecuencia que conviene conocer: el complemento parcheado era también lo que
+ocultaba los endpoints CAMSS crudos del selector V4L2 de OBS. Quien instale OBS
+por su cuenta verá en esa lista, además de las cuatro cámaras procesadas, los
+nodos internos. Los relés `/dev/video20–23` y el resto de aplicaciones no
+cambian: la regla udev y `v4l2-relayd-gts9u` siguen igual.
 
 ## El puerto USB-C pierde conexiones, y el chip no siempre avisa
 

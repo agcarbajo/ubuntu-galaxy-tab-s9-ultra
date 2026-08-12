@@ -23,12 +23,10 @@ fastfetch_ver=${FASTFETCH_VERSION:-2.66.0}
 fastfetch_pkgver=${fastfetch_ver}-gts9u1
 v4l2_relayd_commit=80e8f54563f624fe2f80a954af8cce27cc3a9636
 v4l2_relayd_version=0.1.2-gts9u15
-obs_v4l2_commit=a4578a6a307e857b7ceafa2723cc1eb345f05100
-obs_v4l2_version=30.0.2+dfsg-3build1-gts9u1
 only=${ONLY_EXTRA_PACKAGE:-all}
 
 case "$only" in
-	all|fastfetch|v4l2-relayd|obs-v4l2) ;;
+	all|fastfetch|v4l2-relayd) ;;
 	*) echo "unknown ONLY_EXTRA_PACKAGE: $only" >&2; exit 2 ;;
 esac
 
@@ -65,7 +63,7 @@ libdbus-1-dev libdrm-dev libpulse-dev libchafa-dev zlib1g-dev
 libegl-dev libglx-dev libosmesa6-dev libxcb-randr0-dev libsqlite3-dev
 autoconf automake autoconf-archive libtool libglib2.0-dev
 libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
-libobs-dev libv4l-dev libavcodec-dev libavformat-dev libavutil-dev libudev-dev'
+libv4l-dev libavcodec-dev libavformat-dev libavutil-dev libudev-dev'
 
 if [ ! -d "$buildroot/usr/bin" ]; then
 	mmdebstrap \
@@ -210,7 +208,7 @@ Conflicts: v4l2-relayd
 Replaces: v4l2-relayd
 Description: On-demand V4L2 camera relay for the Galaxy Tab S9 Ultra
  Publishes the four processed libcamera PipeWire sources through ordinary
- V4L2 devices for browsers, OBS and other Linux camera applications.
+ V4L2 devices for browsers and other Linux camera applications.
 EOF
 chown -R root:root "$pkgdir"
 find "$pkgdir" -type d -exec chmod 0755 {} +
@@ -220,92 +218,4 @@ find "$pkgdir" -exec touch -h -d '@0' {} +
 dpkg-deb --root-owner-group --build "$pkgdir" \
 	"$out/v4l2-relayd-gts9u_${v4l2_relayd_version}_arm64.deb" >/dev/null
 echo "built v4l2-relayd-gts9u_${v4l2_relayd_version}_arm64.deb"
-fi
-
-# ---------------------------------------------------------------------------
-if [ "$only" = all ] || [ "$only" = obs-v4l2 ]; then
-step "OBS V4L2 plugin $obs_v4l2_commit"
-install -m 0644 \
-	"$repo/packaging/obs-v4l2/patches/0001-hide-internal-camss-nodes.patch" \
-	"$buildroot/tmp/obs-v4l2-gts9u.patch"
-run "cd /build
-rm -rf obs-v4l2-gts9u stage-obs-v4l2
-git clone --quiet https://git.launchpad.net/ubuntu/+source/obs-studio \
-	obs-v4l2-gts9u
-cd obs-v4l2-gts9u
-git checkout --quiet $obs_v4l2_commit
-git apply /tmp/obs-v4l2-gts9u.patch
-install -d /build/stage-obs-v4l2/usr/lib/obs-v4l2-gts9u
-obs_cflags=\$(pkg-config --cflags libobs libavcodec libavformat libavutil libudev | \
-	sed 's/ \\\$[^ ]*//g')
-obs_libs=\$(pkg-config --libs libobs libavcodec libavformat libavutil libudev)
-cc -std=gnu17 -O2 -fPIC -DHAVE_UDEV -shared -Wl,--no-undefined \
-	-o /build/stage-obs-v4l2/usr/lib/obs-v4l2-gts9u/linux-v4l2.so \
-	plugins/linux-v4l2/linux-v4l2.c \
-	plugins/linux-v4l2/v4l2-controls.c \
-	plugins/linux-v4l2/v4l2-input.c \
-	plugins/linux-v4l2/v4l2-helpers.c \
-	plugins/linux-v4l2/v4l2-output.c \
-	plugins/linux-v4l2/v4l2-decoder.c \
-	plugins/linux-v4l2/v4l2-udev.c \
-	\$obs_cflags \$obs_libs \
-	-lv4l2
-strip --strip-unneeded \
-	/build/stage-obs-v4l2/usr/lib/obs-v4l2-gts9u/linux-v4l2.so
-echo 'OBS V4L2 plugin built'"
-
-step 'package OBS V4L2 plugin'
-pkgdir=$base/build/deb/obs-v4l2-gts9u
-rm -rf -- "$pkgdir"
-mkdir -p "$pkgdir/DEBIAN"
-cp -a "$buildroot/build/stage-obs-v4l2/." "$pkgdir/"
-cat > "$pkgdir/DEBIAN/control" <<EOF
-Package: obs-v4l2-gts9u
-Version: $obs_v4l2_version
-Section: video
-Priority: optional
-Architecture: arm64
-Maintainer: Ubuntu gts9uwifi port contributors <noreply@example.invalid>
-Depends: obs-studio (= 30.0.2+dfsg-3build1), dpkg
-Description: Safe OBS V4L2 device list for the Galaxy Tab S9 Ultra
- Replaces OBS's V4L2 source plugin with a device-specific build that hides
- raw Qualcomm CAMSS endpoints and exposes the four processed GTS9U cameras.
-EOF
-cat > "$pkgdir/DEBIAN/postinst" <<'EOF'
-#!/bin/sh
-set -e
-target=/usr/lib/aarch64-linux-gnu/obs-plugins/linux-v4l2.so
-divert=$target.distrib
-owner=$(dpkg-divert --listpackage "$target" 2>/dev/null || true)
-if [ -z "$owner" ]; then
-	dpkg-divert --package obs-v4l2-gts9u --add --rename \
-		--divert "$divert" "$target"
-elif [ "$owner" != obs-v4l2-gts9u ]; then
-	echo "unexpected diversion owner for $target: $owner" >&2
-	exit 1
-fi
-install -m 0755 /usr/lib/obs-v4l2-gts9u/linux-v4l2.so "$target"
-EOF
-cat > "$pkgdir/DEBIAN/prerm" <<'EOF'
-#!/bin/sh
-set -e
-case "$1" in
-	remove|deconfigure)
-		target=/usr/lib/aarch64-linux-gnu/obs-plugins/linux-v4l2.so
-		divert=$target.distrib
-		rm -f "$target"
-		dpkg-divert --package obs-v4l2-gts9u --remove --rename \
-			--divert "$divert" "$target"
-		;;
-esac
-EOF
-chown -R root:root "$pkgdir"
-find "$pkgdir" -type d -exec chmod 0755 {} +
-find "$pkgdir" -type f -exec chmod 0644 {} +
-chmod 0755 "$pkgdir/DEBIAN/postinst" "$pkgdir/DEBIAN/prerm" \
-	"$pkgdir/usr/lib/obs-v4l2-gts9u/linux-v4l2.so"
-find "$pkgdir" -exec touch -h -d '@0' {} +
-dpkg-deb --root-owner-group --build "$pkgdir" \
-	"$out/obs-v4l2-gts9u_${obs_v4l2_version}_arm64.deb" >/dev/null
-echo "built obs-v4l2-gts9u_${obs_v4l2_version}_arm64.deb"
 fi

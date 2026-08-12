@@ -107,11 +107,15 @@ El paquete de dispositivo instala además la regla udev de `/dev/udmabuf`,
 necesaria para que el software ISP pueda asignar buffers sin privilegios. El
 kernel incluye un `v4l2loopback` fijado y firmado para crear cuatro nodos de
 captura, y `v4l2-relayd-gts9u` los alimenta bajo demanda desde las fuentes
-PipeWire. La imagen de escritorio incluye GNOME Cámara, `gstreamer1.0-gl`, OBS
-Studio y `obs-v4l2-gts9u`; este último conserva la fuente V4L2 normal de OBS,
-pero oculta sus endpoints CAMSS RAW internos. Una build limpia ofrece así las
-cuatro cámaras nombradas a navegadores, OBS y aplicaciones V4L2 sin escenas ni
-ajustes por usuario.
+PipeWire. La imagen de escritorio incluye GNOME Cámara y `gstreamer1.0-gl`. Una
+build limpia ofrece así las cuatro cámaras nombradas a navegadores y
+aplicaciones V4L2 sin escenas ni ajustes por usuario.
+
+**OBS Studio ya no se distribuye.** Viajaba de prestado como herramienta de
+verificación de las cámaras, junto con `obs-v4l2-gts9u`; cerrado ese trabajo,
+ambos salieron en la v2.23 del paquete de dispositivo y con ellos los 77 MiB de
+VLC que `obs-plugins` arrastraba por `Recommends`. Ver «OBS viajaba de prestado»
+en las notas de desarrollo.
 
 La imagen no crea una cuenta. Desde `ubuntu-gts9u-device 2.18`,
 `ubuntu-gts9u-desktop-user` resuelve en cada arranque la cuenta creada por OOBE,
@@ -323,7 +327,7 @@ en una partición.
 | 0 | `import-kernel-sources.sh` | reimporta DTS, drivers y parches con hash de origen |
 | 1 | `build-mainline-kernel.sh` | `Image.gz`, DTB, config y módulos ath12k + `v4l2loopback` firmado |
 | 1b | `build-camera-packages.sh` | `libcamera-gts9u` y SPA libcamera para PipeWire |
-| 1c | `build-extra-packages.sh` | Fastfetch, relé V4L2 y complemento V4L2 seguro de OBS |
+| 1c | `build-extra-packages.sh` | Fastfetch y relé V4L2 |
 | 2 | `build-ubuntu-rootfs.sh` | rootfs Ubuntu arm64 con `mmdebstrap` |
 | 3 | `build-rootfs-overlay.sh` | overlay de módulos y firmware |
 | 4 | `build-ufs-image.sh` | initramfs Ubuntu e imagen ext4 de la raíz, sin tabla de particiones |
