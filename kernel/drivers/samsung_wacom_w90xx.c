@@ -120,6 +120,12 @@
 
 /* Samsung's garage/docking protocol, verified against the X910 source drop. */
 #define WACOM_CMD_GARAGE_STATUS		0xee
+#define WACOM_CMD_BLE_CHARGE_ENABLE	0xe9
+#define WACOM_CMD_BLE_CHARGE_START	0xeb
+#define WACOM_CMD_BLE_CHARGE_KEEP_ON	0xec
+#define WACOM_CMD_BLE_CHARGE_KEEP_OFF	0xed
+#define WACOM_CHARGE_START_DELAY_MS	1000
+#define WACOM_CHARGE_STATUS_PERIOD_MS	30000
 #define WACOM_PACKET_ID_MASK		GENMASK(3, 0)
 #define WACOM_PACKET_REPLY		0x0e
 #define WACOM_REPLY_GARAGE_CHARGE	0x06
@@ -164,7 +170,7 @@ struct samsung_wacom {
 	struct input_dev *input;
 	struct gpio_desc *pdct;
 	struct power_supply *pen_supply;
-	struct work_struct garage_work;
+	struct delayed_work charge_work;
 	struct mutex command_lock;
 	struct touchscreen_properties props;
 	/* Guards in_range and out_of_range against the proximity timer. */
@@ -173,6 +179,7 @@ struct samsung_wacom {
 	bool in_range;
 	bool docked;
 	u8 garage_direction;
+	u8 charge_stage;
 	int charge_status;
 	unsigned int out_of_range;
 };
@@ -180,6 +187,7 @@ struct samsung_wacom {
 static enum power_supply_property samsung_wacom_pen_properties[] = {
 	POWER_SUPPLY_PROP_STATUS,
 	POWER_SUPPLY_PROP_PRESENT,
+	POWER_SUPPLY_PROP_CAPACITY,
 	POWER_SUPPLY_PROP_SCOPE,
 	POWER_SUPPLY_PROP_MODEL_NAME,
 };
@@ -196,6 +204,11 @@ static int samsung_wacom_pen_get_property(struct power_supply *psy,
 		return 0;
 	case POWER_SUPPLY_PROP_PRESENT:
 		value->intval = wacom->docked;
+		return 0;
+	case POWER_SUPPLY_PROP_CAPACITY:
+		if (wacom->charge_status != POWER_SUPPLY_STATUS_FULL)
+			return -ENODATA;
+		value->intval = 100;
 		return 0;
 	case POWER_SUPPLY_PROP_SCOPE:
 		value->intval = POWER_SUPPLY_SCOPE_DEVICE;
@@ -315,22 +328,78 @@ static void samsung_wacom_notify_garage(struct samsung_wacom *wacom)
 		power_supply_changed(wacom->pen_supply);
 }
 
-static void samsung_wacom_request_garage_status(struct work_struct *work)
+static int samsung_wacom_send_command(struct samsung_wacom *wacom, u8 cmd)
 {
-	struct samsung_wacom *wacom = container_of(work, struct samsung_wacom,
-						    garage_work);
-	static const u8 cmd = WACOM_CMD_GARAGE_STATUS;
 	int ret;
-
-	if (!READ_ONCE(wacom->docked))
-		return;
 
 	mutex_lock(&wacom->command_lock);
 	ret = i2c_master_send(wacom->client, &cmd, sizeof(cmd));
 	mutex_unlock(&wacom->command_lock);
-	if (ret != sizeof(cmd))
+
+	return ret == sizeof(cmd) ? 0 : (ret < 0 ? ret : -EIO);
+}
+
+static void samsung_wacom_charge_work(struct work_struct *work)
+{
+	struct samsung_wacom *wacom = container_of(to_delayed_work(work),
+						    struct samsung_wacom,
+						    charge_work);
+	int ret;
+
+	if (!READ_ONCE(wacom->docked)) {
+		wacom->charge_stage = 0;
+		ret = samsung_wacom_send_command(wacom,
+					       WACOM_CMD_BLE_CHARGE_KEEP_OFF);
+		if (ret)
+			dev_dbg(&wacom->client->dev,
+				"could not stop S Pen charging: %d\n", ret);
+		return;
+	}
+
+	if (wacom->charge_stage == 0) {
+		ret = samsung_wacom_send_command(wacom,
+					       WACOM_CMD_BLE_CHARGE_ENABLE);
+		if (!ret) {
+			usleep_range(20000, 25000);
+			ret = samsung_wacom_send_command(wacom,
+						       WACOM_CMD_BLE_CHARGE_START);
+		}
+		if (ret) {
+			dev_warn(&wacom->client->dev,
+				 "could not start S Pen charging: %d\n", ret);
+			mod_delayed_work(system_wq, &wacom->charge_work,
+					 msecs_to_jiffies(WACOM_CHARGE_START_DELAY_MS));
+			return;
+		}
+
+		wacom->charge_stage = 1;
+		WRITE_ONCE(wacom->charge_status, POWER_SUPPLY_STATUS_CHARGING);
+		samsung_wacom_notify_garage(wacom);
+		dev_info(&wacom->client->dev, "S Pen charging started\n");
+		mod_delayed_work(system_wq, &wacom->charge_work,
+				 msecs_to_jiffies(WACOM_CHARGE_START_DELAY_MS));
+		return;
+	}
+
+	if (wacom->charge_stage == 1) {
+		ret = samsung_wacom_send_command(wacom,
+					       WACOM_CMD_BLE_CHARGE_KEEP_ON);
+		if (ret) {
+			dev_warn(&wacom->client->dev,
+				 "could not keep S Pen charging: %d\n", ret);
+			mod_delayed_work(system_wq, &wacom->charge_work,
+					 msecs_to_jiffies(WACOM_CHARGE_START_DELAY_MS));
+			return;
+		}
+		wacom->charge_stage = 2;
+	}
+
+	ret = samsung_wacom_send_command(wacom, WACOM_CMD_GARAGE_STATUS);
+	if (ret)
 		dev_warn(&wacom->client->dev,
 			 "could not query S Pen orientation/charge: %d\n", ret);
+	mod_delayed_work(system_wq, &wacom->charge_work,
+			 msecs_to_jiffies(WACOM_CHARGE_STATUS_PERIOD_MS));
 }
 
 static bool samsung_wacom_handle_garage_reply(struct samsung_wacom *wacom,
@@ -369,6 +438,7 @@ static irqreturn_t samsung_wacom_pdct_irq(int irq, void *dev_id)
 		return IRQ_HANDLED;
 
 	WRITE_ONCE(wacom->docked, docked);
+	wacom->charge_stage = 0;
 	if (!docked) {
 		WRITE_ONCE(wacom->garage_direction, 0);
 		WRITE_ONCE(wacom->charge_status,
@@ -381,8 +451,7 @@ static irqreturn_t samsung_wacom_pdct_irq(int irq, void *dev_id)
 	dev_info(&wacom->client->dev, "S Pen %s\n",
 		 docked ? "docked" : "undocked");
 
-	if (docked)
-		schedule_work(&wacom->garage_work);
+	mod_delayed_work(system_wq, &wacom->charge_work, 0);
 
 	return IRQ_HANDLED;
 }
@@ -586,11 +655,11 @@ static void samsung_wacom_stop_timer(void *data)
 	timer_shutdown_sync(&wacom->prox_timer);
 }
 
-static void samsung_wacom_cancel_garage_work(void *data)
+static void samsung_wacom_cancel_charge_work(void *data)
 {
 	struct samsung_wacom *wacom = data;
 
-	cancel_work_sync(&wacom->garage_work);
+	cancel_delayed_work_sync(&wacom->charge_work);
 }
 
 static int samsung_wacom_probe(struct i2c_client *client)
@@ -635,9 +704,16 @@ static int samsung_wacom_probe(struct i2c_client *client)
 			break;
 	}
 	if (error)
-		return dev_err_probe(dev, error,
-				     "digitiser did not answer in %d tries\n",
-				     WACOM_QUERY_TRIES);
+		/*
+		 * The panel is another consumer of this rail and can finish its own
+		 * startup after the Wacom I2C device is first enumerated.  A hard
+		 * timeout left the digitiser permanently unbound for that boot.  Put
+		 * it on the deferred-probe list so the core retries once the remaining
+		 * display suppliers have settled.
+		 */
+		return dev_err_probe(dev, -EPROBE_DEFER,
+				     "digitiser is not powered yet (%d after %d tries)\n",
+				     error, WACOM_QUERY_TRIES);
 
 	wacom = devm_kzalloc(dev, sizeof(*wacom), GFP_KERNEL);
 	if (!wacom)
@@ -656,7 +732,7 @@ static int samsung_wacom_probe(struct i2c_client *client)
 	wacom->docked = gpiod_get_value_cansleep(wacom->pdct) > 0;
 	wacom->charge_status = POWER_SUPPLY_STATUS_UNKNOWN;
 	mutex_init(&wacom->command_lock);
-	INIT_WORK(&wacom->garage_work, samsung_wacom_request_garage_status);
+	INIT_DELAYED_WORK(&wacom->charge_work, samsung_wacom_charge_work);
 	spin_lock_init(&wacom->lock);
 	timer_setup(&wacom->prox_timer, samsung_wacom_prox_timeout, 0);
 	i2c_set_clientdata(client, wacom);
@@ -668,7 +744,7 @@ static int samsung_wacom_probe(struct i2c_client *client)
 	error = devm_add_action_or_reset(dev, samsung_wacom_stop_timer, wacom);
 	if (error)
 		return error;
-	error = devm_add_action_or_reset(dev, samsung_wacom_cancel_garage_work,
+	error = devm_add_action_or_reset(dev, samsung_wacom_cancel_charge_work,
 					 wacom);
 	if (error)
 		return error;
@@ -756,7 +832,7 @@ static int samsung_wacom_probe(struct i2c_client *client)
 
 	samsung_wacom_set_max_rate(wacom);
 	if (wacom->docked)
-		schedule_work(&wacom->garage_work);
+		mod_delayed_work(system_wq, &wacom->charge_work, 0);
 
 	dev_info(dev,
 		 "Wacom EMR digitiser: %u x %u, pressure %u, tilt +/-%u/%u, module %u, docked=%u\n",

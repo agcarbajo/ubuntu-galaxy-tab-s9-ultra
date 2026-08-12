@@ -12,8 +12,9 @@ GNOME y no necesita ejecutarse para que el demonio aplique asignaciones.
   `io.github.agcarbajo.TabCompanion.Hardware`.
 - Sólo el backend lee sysfs y los dispositivos de entrada.
 - Las acciones de teclado y botón del lápiz salen por
-  `Tab Companion virtual keyboard` (`uinput`). El teclado físico no se captura
-  en exclusiva: la escritura normal sigue llegando a GNOME.
+  `Tab Companion virtual keyboard` (`uinput`). El backend captura el EF-DX920
+  y retransmite todas las teclas normales; sólo sustituye una tecla especial
+  cuando su acción elegida no es «Conservar la acción predeterminada».
 
 ## S Pen
 
@@ -22,9 +23,12 @@ real: respuesta Samsung `downside` es punta hacia la derecha/USB-C. La app
 distingue acoplado, cercano y no emparejado, aunque hoy sólo está medido el
 primer caso.
 
-El porcentaje muestra «no expuesto» porque el protocolo no lo entrega. Sí se
-lee el estado discreto cargar/completo/no cargar. Un `-1` en la propiedad D-Bus
-`PenBattery` significa desconocido, no cero.
+Al insertar el lápiz, el kernel envía automáticamente la secuencia Samsung
+habilitar/iniciar/mantener y consulta el cargador cada 30 segundos. El
+porcentaje muestra «no expuesto» porque el protocolo del garaje sólo entrega
+cargando/completo/no cargando. Cuando responde carga completa se publica 100 %;
+un `-1` en `PenBattery` significa desconocido, no cero. El nivel intermedio se
+intentará obtener del servicio Battery de BLE.
 
 Las filas de pulsación simple, doble y larga ya usan `BTN_STYLUS`. Los
 deslizamientos y círculos guardan su asignación, pero no se ejecutan mientras
@@ -34,14 +38,19 @@ deslizamientos y círculos guardan su asignación, pero no se ejecutan mientras
 
 Cada fila tiene tres controles:
 
-1. el desplegable elige la acción;
+1. el botón con el nombre de la acción abre una lista estable; sustituye al
+   desplegable GTK que seleccionaba la fila incorrecta después de desplazarlo;
 2. el lápiz abre el destino usado por «Abrir una aplicación» o «Comando
    personalizado»;
-3. el punto inicia aprendizaje: la siguiente tecla física pulsada queda
-   vinculada a esa fila.
+3. el botón «Learn» inicia aprendizaje: la siguiente tecla física pulsada queda
+   vinculada a esa fila. Cambia a «Cancel» y caduca a los ocho segundos para
+   no capturar por accidente una tecla posterior.
 
-Galaxy AI, DeX y Search ya parten de los códigos del fuente Samsung. `Fn+F1` a
-`Fn+F5` se dejan sin código hasta aprenderlos en el EF-DX920 real.
+Los códigos medidos en el EF-DX920 físico son Galaxy AI 760, DeX 701, Finder
+710, Fn+Finder/Ajustes 709 y Fn+F1–F5 757/758/759/705/254. Fn+F6–F11 emiten
+Inicio, brillo−, brillo+, silencio, volumen− y volumen+; quedan en «Conservar la
+acción predeterminada». Fn+F12 aparece en la UI, pero el firmware V37 no emite
+ningún evento ni incrementa el contador bruto al pulsarlo.
 
 Para una aplicación se usa su ID de escritorio, por ejemplo
 `org.gnome.Calculator.desktop`. Un comando personalizado se ejecuta con la
@@ -53,15 +62,14 @@ Estas pruebas necesitan a la propietaria y no están marcadas como superadas:
 
 1. abrir la app en la sesión GNOME real y confirmar aspecto, desplazamiento y
    tamaño táctil de los controles;
-2. retirar el S Pen: comprobar que pasa a desacoplado y que
-   `SW_PEN_INSERTED` baja; reinsertarlo y comprobar el flanco contrario;
-3. colocar el lápiz con punta izquierda si el imán lo admite y verificar que el
-   dibujo se invierte;
-4. con la punta en hover, probar simple, doble y larga del botón con una acción
+2. confirmar que la carga alcanza el estado completo y que la app muestra
+   100 %;
+3. con la punta en hover, probar simple, doble y larga del botón con una acción
    inocua, como volumen;
-5. pulsar Galaxy AI, DeX, Search/Settings y aprender `Fn+F1`–`Fn+F5`, anotando
-   los códigos que muestra `LastSpecialKey`;
-6. sacar el lápiz, ponerlo en modo emparejamiento y capturar con BlueZ nombre,
+4. comprobar escritura normal y el LED de Caps Lock con la retransmisión del
+   teclado activa; las acciones de Galaxy AI, DeX, Finder, Ajustes y Fn+F1–F11
+   ya se validaron físicamente;
+5. sacar el lápiz, ponerlo en modo emparejamiento y capturar con BlueZ nombre,
    UUIDs, características y notificaciones; después producir una muestra de
    cada deslizamiento y círculo.
 

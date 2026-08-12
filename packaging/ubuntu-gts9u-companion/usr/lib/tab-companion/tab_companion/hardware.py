@@ -87,3 +87,14 @@ class HardwareClient(GObject.Object):
                 None,
                 None,
             )
+
+    def cancel_key_capture(self):
+        if self.proxy is not None:
+            self.proxy.call(
+                "CancelKeyCapture",
+                None,
+                Gio.DBusCallFlags.NONE,
+                -1,
+                None,
+                None,
+            )

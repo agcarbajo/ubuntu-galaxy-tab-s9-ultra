@@ -3,7 +3,7 @@
 from gi.repository import Adw, Gio, GLib, Gtk
 
 from . import VERSION
-from .actions import ACTIONS, ACTION_IDS, action_index
+from .actions import ACTIONS, action_label
 from .hardware import HardwareClient
 
 
@@ -22,13 +22,54 @@ GESTURES = (
 KEYS = (
     ("galaxy-ai", "Galaxy AI", "Dedicated AI key"),
     ("dex", "DeX", "Desktop mode key"),
-    ("search-settings", "Search / Settings", "Search and settings key"),
+    ("finder", "Finder", "Finder key without Fn"),
+    ("settings", "Settings", "Fn + Finder"),
     ("fn-f1", "Fn + F1", "Function shortcut 1"),
     ("fn-f2", "Fn + F2", "Function shortcut 2"),
     ("fn-f3", "Fn + F3", "Function shortcut 3"),
     ("fn-f4", "Fn + F4", "Function shortcut 4"),
     ("fn-f5", "Fn + F5", "Function shortcut 5"),
+    ("fn-f6", "Fn + F6", "Home by default"),
+    ("fn-f7", "Fn + F7", "Brightness down by default"),
+    ("fn-f8", "Fn + F8", "Brightness up by default"),
+    ("fn-f9", "Fn + F9", "Mute by default"),
+    ("fn-f10", "Fn + F10", "Volume down by default"),
+    ("fn-f11", "Fn + F11", "Volume up by default"),
+    ("fn-f12", "Fn + F12", "No event from keyboard firmware"),
 )
+
+
+class ActionChooser(Adw.Window):
+    """Non-recycling action list; avoids Gtk.DropDown touch/scroll mis-hits."""
+
+    def __init__(self, parent, title, current, selected):
+        super().__init__(transient_for=parent, modal=True, title=title)
+        self.set_default_size(440, 560)
+        self._selected = selected
+
+        toolbar = Adw.ToolbarView()
+        toolbar.add_top_bar(Adw.HeaderBar())
+        choices = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE, css_classes=["boxed-list"])
+        choices.set_margin_top(12)
+        choices.set_margin_bottom(12)
+        choices.set_margin_start(12)
+        choices.set_margin_end(12)
+        for action in ACTIONS:
+            row = Adw.ActionRow(title=action.label, activatable=True)
+            check = Gtk.Image(icon_name="object-select-symbolic")
+            check.set_visible(action.action_id == current)
+            row.add_suffix(check)
+            row.connect("activated", self._choose, action.action_id)
+            choices.append(row)
+
+        scroll = Gtk.ScrolledWindow(vexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER)
+        scroll.set_child(choices)
+        toolbar.set_content(scroll)
+        self.set_content(toolbar)
+
+    def _choose(self, _row, action_id):
+        self._selected(action_id)
+        self.close()
 
 
 class CompanionWindow(Adw.ApplicationWindow):
@@ -37,6 +78,8 @@ class CompanionWindow(Adw.ApplicationWindow):
         self.set_default_size(960, 760)
         self.settings = Gio.Settings.new("io.github.agcarbajo.TabCompanion")
         self.hardware = HardwareClient()
+        self.action_buttons = {}
+        self.learn_buttons = {}
         self.hardware.connect("state-changed", self._update_hardware)
         self._build()
         self._update_hardware()
@@ -128,10 +171,16 @@ class CompanionWindow(Adw.ApplicationWindow):
         return page
 
     def _action_row(self, setting, title, subtitle, learn=False):
-        model = Gtk.StringList.new([action.label for action in ACTIONS])
-        row = Adw.ComboRow(title=title, subtitle=subtitle, model=model)
-        row.set_selected(action_index(self.settings.get_string(setting)))
-        row.connect("notify::selected", self._action_changed, setting)
+        row = Adw.ActionRow(title=title, subtitle=subtitle)
+        choose = Gtk.Button(
+            label=action_label(self.settings.get_string(setting)),
+            tooltip_text="Choose action",
+            valign=Gtk.Align.CENTER,
+        )
+        choose.connect("clicked", self._choose_action, setting, title)
+        row.add_suffix(choose)
+        self.action_buttons[setting] = choose
+        self.settings.connect("changed::" + setting, self._setting_changed, setting)
         edit = Gtk.Button(
             icon_name="document-edit-symbolic",
             tooltip_text="Set application ID or custom command",
@@ -142,19 +191,28 @@ class CompanionWindow(Adw.ApplicationWindow):
         row.add_suffix(edit)
         if learn:
             capture = Gtk.Button(
-                icon_name="media-record-symbolic",
+                label="Learn",
                 tooltip_text="Learn the next key pressed",
                 valign=Gtk.Align.CENTER,
                 css_classes=["flat"],
             )
             capture.connect("clicked", self._learn_key, setting)
             row.add_suffix(capture)
+            self.learn_buttons[setting] = capture
         return row
 
-    def _action_changed(self, row, _param, setting):
-        selected = row.get_selected()
-        if selected < len(ACTION_IDS):
-            self.settings.set_string(setting, ACTION_IDS[selected])
+    def _choose_action(self, _button, setting, title):
+        ActionChooser(
+            self,
+            f"Action for {title}",
+            self.settings.get_string(setting),
+            lambda action_id: self.settings.set_string(setting, action_id),
+        ).present()
+
+    def _setting_changed(self, _settings, _key, setting):
+        self.action_buttons[setting].set_label(
+            action_label(self.settings.get_string(setting))
+        )
 
     def _edit_target(self, _button, setting, title):
         targets = self.settings.get_value("action-targets").unpack()
@@ -186,7 +244,10 @@ class CompanionWindow(Adw.ApplicationWindow):
             self.settings.set_value("action-targets", GLib.Variant("a{ss}", targets))
 
     def _learn_key(self, _button, setting):
-        self.hardware.begin_key_capture(setting)
+        if self.hardware.state.capturing_key == setting:
+            self.hardware.cancel_key_capture()
+        else:
+            self.hardware.begin_key_capture(setting)
 
     def _update_hardware(self, *_args):
         state = self.hardware.state
@@ -229,7 +290,7 @@ class CompanionWindow(Adw.ApplicationWindow):
             bluetooth = "S Pen is not paired"
         self.ble_row.set_subtitle(bluetooth)
         if state.capturing_key:
-            keyboard = "Press the key to assign it"
+            keyboard = "Press the key to assign it (cancels automatically after 8 seconds)"
         elif state.keyboard_present and state.remapping_available:
             keyboard = "Connected; remapping active"
         elif state.keyboard_present:
@@ -237,6 +298,10 @@ class CompanionWindow(Adw.ApplicationWindow):
         else:
             keyboard = "Waiting for the hardware service"
         self.keyboard_row.set_subtitle(keyboard)
+        for setting, button in self.learn_buttons.items():
+            active = state.capturing_key == setting
+            button.set_label("Cancel" if active else "Learn")
+            button.set_sensitive(not state.capturing_key or active)
 
     def _show_about(self, _button):
         state = self.hardware.state

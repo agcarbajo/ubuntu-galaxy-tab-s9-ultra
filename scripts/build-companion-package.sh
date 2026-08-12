@@ -14,6 +14,8 @@ deb=$out/ubuntu-gts9u-companion_${version}_all.deb
 rm -rf -- "$staging"
 mkdir -p "$staging" "$out"
 cp -a "$src/." "$staging/"
+find "$staging" -type f -name '*.pyc' -delete
+find "$staging" -type d -name '__pycache__' -empty -delete
 
 # Gio resources keep the illustration independent of the current directory.
 resource_dir=$staging/usr/share/tab-companion

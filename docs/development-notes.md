@@ -1931,8 +1931,10 @@ estimado sería inventar telemetría.
 En el modo *bypass* del driver Samsung, cada palabra del STM32 lleva press en
 el bit 15 y el propio keycode Linux en los bits 14:0. El driver mainline del
 port ya hace exactamente esa traducción. El fuente X910 define DeX como
-`KEY_DEX_ON=0x2bd`, la tecla AI como `KEYCODE_AI_HOT=0x2f8`, y Search usa
-`KEY_SEARCH=217`. Son los tres únicos valores precargados por Tab Companion.
+`KEY_DEX_ON=0x2bd` y la tecla AI como `KEYCODE_AI_HOT=0x2f8`. La captura física
+aclaró que Finder no usa `KEY_SEARCH=217`: emite 710, mientras Fn+Finder/Ajustes
+emite 709. Fn+F1–F11 emiten 757, 758, 759, 705, 254, 172, 224, 225, 113, 114
+y 115. Fn+F12 no produce ni siquiera un evento bruto en el firmware V37.
 
 No existe keymap para `Fn+F1`–`Fn+F5` en el DTS: el EF-DX920 es modelo `0xd6`
 y usa el flujo bypass. Sin pulsar las teclas no se puede saber qué código

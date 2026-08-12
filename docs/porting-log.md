@@ -4476,3 +4476,62 @@ No se elevan a «funciona» la extracción/reinserción, punta izquierda,
 pulsaciones físicas, códigos Fn, emparejamiento ni movimientos BLE. El backup
 previo de `boot`, `vendor_boot` y módulos queda fuera de Git en
 `artifacts/backup-pre-spen-phase2/` y también en la tablet para recuperación.
+
+## Sesión 63 — carga automática y keycodes físicos
+
+Fecha: 2026-08-13. La propietaria confirmó que retirada, reinserción y las dos
+orientaciones del S Pen funcionan. Se capturó después el EF-DX920 físico, sin
+inferir la tabla: Finder 710, Fn+Finder/Ajustes 709, DeX 701 y Fn+F1–F11 como
+757, 758, 759, 705, 254, 172, 224, 225, 113, 114 y 115. Fn+F12 no produjo
+evento Linux ni incrementó el contador bruto del STM32. La asociación observada
+de Alt 56 a Fn+F3 era un aprendizaje pendiente: Fn+F3 no se había capturado y
+la siguiente pulsación quedó guardada.
+
+`ubuntu-gts9u-companion` 0.5.0 migra los códigos corruptos, separa Finder y
+Ajustes, muestra Fn+F1–F12 y preserva las acciones predeterminadas de F6–F11.
+El aprendizaje ahora dice «Learn», permite cancelar y caduca a los ocho
+segundos. Los `Adw.ComboRow` se sustituyeron por una ventana con `Gtk.ListBox`:
+no recicla filas y evita que, después de desplazar, se active otra opción. Para
+que un remapeo sustituya en vez de sumarse al evento original, el servicio
+captura el teclado y retransmite por uinput todos los eventos no remapeados,
+incluidos `SW_LID` y el LED de Caps Lock.
+
+El fuente oficial Wacom confirmó los comandos de carga 0xe9/0xeb/0xec
+(enable/start/keep-on). El kernel los envía automáticamente al detectar el
+lápiz y consulta 0xee cada 30 segundos. En un arranque limpio, sin bind manual:
+
+```text
+[    4.542848] S Pen charging started
+[    5.884772] S Pen garage reply: docked=1 direction=1 charge-state=5
+[   36.060489] S Pen garage reply: docked=1 direction=1 charge-state=8
+pen_docked:1
+pen_orientation:upside
+pen_charging:charging
+gts9u-spen/status:Charging
+```
+
+El protocolo del garaje no contiene porcentaje: el driver oficial tampoco lee
+ninguno. `CAPACITY=100` sólo existe cuando devuelve `BLE_C_FULL`; el nivel
+intermedio se deja desconocido hasta leer el servicio Battery por BLE. Un
+primer arranque sufrió `ETIMEDOUT` de Wacom y exigió bind manual; se cambió el
+fallo temprano a `-EPROBE_DEFER`. El arranque final enlazó Wacom a los 4,48 s.
+
+Se intentó primero escribir `/dev/block/by-name/boot`; la ruta no existe bajo
+Ubuntu y `dd` abortó antes de abrir el destino. Después se acreditó
+`/dev/sda21` mediante `PARTLABEL=boot` y tamaño 100663296, se escribió sólo esa
+partición y se releyó completa. El estado arrancado final es:
+
+```text
+boot        ff013634e1bd551cf2adcf0c94865ae5c511aee70cd12bce74c0f227585bd294
+vendor_boot bf312f08a6876194e3ce30d52a81f8da23dd88132c4660698eb5cde17a69e6bc
+```
+
+La regresión final mantuvo cero unidades fallidas, cuatro nodos de cámara y
+ADSP `running`. La funda volvió a conectarse y el servicio publicó
+`KeyboardPresent=true` y `RemappingAvailable=true`. Una captura sobre el
+teclado virtual confirmó que las asignaciones elegidas producen, entre otros,
+`KEY_MUTE` y `KEY_SYSRQ`; el último origen especial registrado fue Galaxy AI
+760. La propietaria confirmó después que Galaxy AI, DeX, Finder, Ajustes y
+Fn+F1–F11 funcionan; la única combinación inoperante es Fn+F12, coherente con
+la ausencia de evento en el controlador. Queda validar visualmente en GNOME el
+selector desplazado antes de dar por cerrada esa corrección de interfaz.

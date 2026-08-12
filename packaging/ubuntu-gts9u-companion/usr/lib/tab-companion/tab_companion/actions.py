@@ -11,7 +11,7 @@ class Action:
 
 
 ACTIONS = (
-    Action("none", "Do nothing"),
+    Action("none", "Keep the default action"),
     Action("app", "Open an application"),
     Action("screenshot", "Take a screenshot"),
     Action("back", "Back"),
@@ -35,3 +35,8 @@ def action_index(action_id):
         return ACTION_IDS.index(action_id)
     except ValueError:
         return 0
+
+
+def action_label(action_id):
+    """Return the display label for a persisted action identifier."""
+    return ACTIONS[action_index(action_id)].label

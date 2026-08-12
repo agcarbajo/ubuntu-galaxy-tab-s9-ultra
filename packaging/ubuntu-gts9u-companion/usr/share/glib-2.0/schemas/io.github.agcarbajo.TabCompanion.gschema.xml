@@ -12,15 +12,24 @@
     <key name="gesture-circle-counterclockwise" type="s"><default>'none'</default></key>
     <key name="key-galaxy-ai" type="s"><default>'none'</default></key>
     <key name="key-dex" type="s"><default>'none'</default></key>
-    <key name="key-search-settings" type="s"><default>'none'</default></key>
+    <key name="key-finder" type="s"><default>'none'</default></key>
+    <key name="key-settings" type="s"><default>'none'</default></key>
     <key name="key-fn-f1" type="s"><default>'none'</default></key>
     <key name="key-fn-f2" type="s"><default>'none'</default></key>
     <key name="key-fn-f3" type="s"><default>'none'</default></key>
     <key name="key-fn-f4" type="s"><default>'none'</default></key>
     <key name="key-fn-f5" type="s"><default>'none'</default></key>
+    <key name="key-fn-f6" type="s"><default>'none'</default></key>
+    <key name="key-fn-f7" type="s"><default>'none'</default></key>
+    <key name="key-fn-f8" type="s"><default>'none'</default></key>
+    <key name="key-fn-f9" type="s"><default>'none'</default></key>
+    <key name="key-fn-f10" type="s"><default>'none'</default></key>
+    <key name="key-fn-f11" type="s"><default>'none'</default></key>
+    <key name="key-fn-f12" type="s"><default>'none'</default></key>
+    <key name="keyboard-mapping-version" type="u"><default>0</default></key>
     <key name="action-targets" type="a{ss}"><default>{}</default></key>
     <key name="keyboard-source-codes" type="a{si}">
-      <default>{'key-galaxy-ai': 760, 'key-dex': 701, 'key-search-settings': 217}</default>
+      <default>{}</default>
       <summary>Linux key codes emitted by the cover keyboard</summary>
     </key>
   </schema>

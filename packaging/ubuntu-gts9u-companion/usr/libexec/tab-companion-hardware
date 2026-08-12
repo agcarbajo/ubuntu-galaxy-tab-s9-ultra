@@ -20,21 +20,51 @@ INTERFACE = BUS_NAME
 KEYBOARD_NAME = "Book Cover Keyboard Slim (EF-DX920)"
 PEN_NAME = "Wacom EMR Digitizer"
 MAPPINGS = {
-    "key-galaxy-ai", "key-dex", "key-search-settings",
+    "key-galaxy-ai", "key-dex", "key-finder", "key-settings",
     "key-fn-f1", "key-fn-f2", "key-fn-f3", "key-fn-f4", "key-fn-f5",
+    "key-fn-f6", "key-fn-f7", "key-fn-f8", "key-fn-f9", "key-fn-f10",
+    "key-fn-f11", "key-fn-f12",
+}
+
+# Measured on the physical EF-DX920 with firmware 0x00370037.  Fn+F12 does
+# not produce a controller event, so it intentionally has no built-in code.
+DEFAULT_SOURCE_CODES = {
+    "key-galaxy-ai": 760,
+    "key-dex": 701,
+    "key-finder": 710,
+    "key-settings": 709,
+    "key-fn-f1": 757,
+    "key-fn-f2": 758,
+    "key-fn-f3": 759,
+    "key-fn-f4": 705,
+    "key-fn-f5": 254,
+    "key-fn-f6": 172,
+    "key-fn-f7": 224,
+    "key-fn-f8": 225,
+    "key-fn-f9": 113,
+    "key-fn-f10": 114,
+    "key-fn-f11": 115,
 }
 
 EV_SYN = 0
 EV_KEY = 1
+EV_SW = 5
+EV_LED = 17
 SYN_REPORT = 0
+SW_LID = 0
+LED_CAPSL = 1
 BTN_STYLUS = 331
 KEY_F24 = 194
+KEY_MAX = 767
 INPUT_EVENT = struct.Struct("llHHi")
 UI_SET_EVBIT = 0x40045564
 UI_SET_KEYBIT = 0x40045565
+UI_SET_LEDBIT = 0x40045569
+UI_SET_SWBIT = 0x4004556D
 UI_DEV_CREATE = 0x5501
 UI_DEV_DESTROY = 0x5502
 UI_DEV_SETUP = 0x405C5503
+EVIOCGRAB = 0x40044590
 
 ACTION_KEYS = {
     "screenshot": 99,       # KEY_SYSRQ
@@ -104,10 +134,14 @@ def read_text(path, fallback=""):
 
 class VirtualKeyboard:
     def __init__(self):
-        self.fd = os.open("/dev/uinput", os.O_WRONLY | os.O_NONBLOCK)
+        self.fd = os.open("/dev/uinput", os.O_RDWR | os.O_NONBLOCK)
         fcntl.ioctl(self.fd, UI_SET_EVBIT, EV_KEY)
-        for code in sorted(set(ACTION_KEYS.values()) | {KEY_F24}):
+        fcntl.ioctl(self.fd, UI_SET_EVBIT, EV_SW)
+        fcntl.ioctl(self.fd, UI_SET_EVBIT, EV_LED)
+        for code in range(1, KEY_MAX + 1):
             fcntl.ioctl(self.fd, UI_SET_KEYBIT, code)
+        fcntl.ioctl(self.fd, UI_SET_SWBIT, SW_LID)
+        fcntl.ioctl(self.fd, UI_SET_LEDBIT, LED_CAPSL)
         name = b"Tab Companion virtual keyboard".ljust(80, b"\0")
         setup = struct.pack("HHHH80sI", 0x03, 0x04E8, 0xA036, 1, name, 0)
         fcntl.ioctl(self.fd, UI_DEV_SETUP, setup)
@@ -121,6 +155,12 @@ class VirtualKeyboard:
         self.emit(EV_SYN, SYN_REPORT, 0)
         self.emit(EV_KEY, code, 0)
         self.emit(EV_SYN, SYN_REPORT, 0)
+
+    def read_output(self):
+        try:
+            return os.read(self.fd, INPUT_EVENT.size * 8)
+        except BlockingIOError:
+            return b""
 
     def close(self):
         if self.fd is not None:
@@ -145,10 +185,24 @@ class HardwareService:
         self.pen_long_timer = None
         self.pen_single_timer = None
         self.capture_mapping = ""
+        self.capture_timer = None
+        self.capture_passthrough = set()
+        self.virtual_watch = None
+        self._migrate_keyboard_codes()
         try:
             self.virtual_keyboard = VirtualKeyboard()
+            self.virtual_watch = GLib.io_add_watch(
+                self.virtual_keyboard.fd, GLib.IO_IN, self._virtual_output
+            )
         except OSError:
             self.virtual_keyboard = None
+
+    def _migrate_keyboard_codes(self):
+        if self.settings.get_uint("keyboard-mapping-version") < 1:
+            self.settings.set_value(
+                "keyboard-source-codes", GLib.Variant("a{si}", DEFAULT_SOURCE_CODES)
+            )
+            self.settings.set_uint("keyboard-mapping-version", 1)
 
     @staticmethod
     def _find_wacom():
@@ -177,13 +231,14 @@ class HardwareService:
         return None
 
     def _ensure_keyboard_reader(self):
-        if self.keyboard_fd is not None:
+        if self.keyboard_fd is not None or self.virtual_keyboard is None:
             return
         path = self._find_keyboard_event()
         if not path:
             return
         try:
-            self.keyboard_fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+            self.keyboard_fd = os.open(path, os.O_RDWR | os.O_NONBLOCK)
+            fcntl.ioctl(self.keyboard_fd, EVIOCGRAB, 1)
         except OSError:
             self.keyboard_fd = None
             return
@@ -195,6 +250,10 @@ class HardwareService:
 
     def _close_keyboard_reader(self):
         if self.keyboard_fd is not None:
+            try:
+                fcntl.ioctl(self.keyboard_fd, EVIOCGRAB, 0)
+            except OSError:
+                pass
             os.close(self.keyboard_fd)
             self.keyboard_fd = None
         self.keyboard_watch = None
@@ -235,25 +294,67 @@ class HardwareService:
             self._close_keyboard_reader()
             return GLib.SOURCE_REMOVE
         for offset in range(0, len(data) - INPUT_EVENT.size + 1, INPUT_EVENT.size):
-            _sec, _usec, event_type, code, value = INPUT_EVENT.unpack_from(data, offset)
-            if event_type == EV_KEY and value == 1:
-                self._handle_key_press(code)
+            event = INPUT_EVENT.unpack_from(data, offset)
+            _sec, _usec, event_type, code, value = event
+            suppress = False
+            if event_type == EV_KEY:
+                if code in self.capture_passthrough:
+                    if value == 0:
+                        self.capture_passthrough.discard(code)
+                elif value == 1 and self.capture_mapping:
+                    self.capture_passthrough.add(code)
+                    self._capture_key(code)
+                else:
+                    mapping = self._mapping_for_code(code)
+                    if mapping and self.settings.get_string(mapping) != "none":
+                        suppress = True
+                        if value == 1:
+                            self._replace_dynamic(LastSpecialKey=f"{mapping}:{code}")
+                            self.execute_mapping(mapping)
+                    elif mapping and value == 1:
+                        self._replace_dynamic(LastSpecialKey=f"{mapping}:{code}")
+            if not suppress and self.virtual_keyboard is not None:
+                self.virtual_keyboard.emit(event_type, code, value)
         return GLib.SOURCE_CONTINUE
 
-    def _handle_key_press(self, code):
-        if self.capture_mapping:
-            sources = self.settings.get_value("keyboard-source-codes").unpack()
-            sources[self.capture_mapping] = code
-            self.settings.set_value("keyboard-source-codes", GLib.Variant("a{si}", sources))
-            captured = self.capture_mapping
-            self.capture_mapping = ""
-            self._replace_dynamic(CapturingKey="", LastSpecialKey=f"{captured}:{code}")
-            return
+    def _mapping_for_code(self, code):
         sources = self.settings.get_value("keyboard-source-codes").unpack()
-        mapping = next((name for name, source in sources.items() if source == code), None)
-        if mapping:
-            self._replace_dynamic(LastSpecialKey=f"{mapping}:{code}")
-            self.execute_mapping(mapping)
+        return next((name for name, source in sources.items() if source == code), None)
+
+    def _capture_key(self, code):
+        sources = self.settings.get_value("keyboard-source-codes").unpack()
+        for mapping, source in list(sources.items()):
+            if source == code and mapping != self.capture_mapping:
+                sources.pop(mapping)
+        sources[self.capture_mapping] = code
+        self.settings.set_value("keyboard-source-codes", GLib.Variant("a{si}", sources))
+        captured = self.capture_mapping
+        self._cancel_capture()
+        self._replace_dynamic(CapturingKey="", LastSpecialKey=f"{captured}:{code}")
+
+    def _cancel_capture(self):
+        self.capture_mapping = ""
+        if self.capture_timer is not None:
+            GLib.source_remove(self.capture_timer)
+            self.capture_timer = None
+
+    def _capture_timeout(self):
+        mapping = self.capture_mapping
+        self.capture_timer = None
+        self.capture_mapping = ""
+        self._replace_dynamic(CapturingKey="", LastSpecialKey=f"capture-timeout:{mapping}")
+        return GLib.SOURCE_REMOVE
+
+    def _virtual_output(self, _source, _condition):
+        if self.virtual_keyboard is None:
+            return GLib.SOURCE_REMOVE
+        data = self.virtual_keyboard.read_output()
+        if self.keyboard_fd is not None and data:
+            try:
+                os.write(self.keyboard_fd, data)
+            except OSError:
+                pass
+        return GLib.SOURCE_CONTINUE
 
     def _pen_event(self, _source, condition):
         if condition & (GLib.IO_HUP | GLib.IO_ERR):
@@ -385,11 +486,13 @@ class HardwareService:
             mapping = params.unpack()[0]
             accepted = mapping in MAPPINGS and self.keyboard_fd is not None
             if accepted:
+                self._cancel_capture()
                 self.capture_mapping = mapping
+                self.capture_timer = GLib.timeout_add_seconds(8, self._capture_timeout)
                 self._replace_dynamic(CapturingKey=mapping)
             invocation.return_value(GLib.Variant("(b)", (accepted,)))
         elif method == "CancelKeyCapture":
-            self.capture_mapping = ""
+            self._cancel_capture()
             self._replace_dynamic(CapturingKey="")
             invocation.return_value(None)
         elif method == "TriggerMapping":
@@ -414,6 +517,10 @@ class HardwareService:
         for timer in (self.pen_long_timer, self.pen_single_timer):
             if timer is not None:
                 GLib.source_remove(timer)
+        self._cancel_capture()
+        if self.virtual_watch is not None:
+            GLib.source_remove(self.virtual_watch)
+            self.virtual_watch = None
         if self.virtual_keyboard is not None:
             self.virtual_keyboard.close()
 
