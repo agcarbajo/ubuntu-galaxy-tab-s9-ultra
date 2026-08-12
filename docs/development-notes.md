@@ -415,6 +415,57 @@ Este árbol no contiene además ningún `stk31610_light.c`: el X910 usa el
 `light_factory.c` genérico. No hay, por tanto, ninguna pieza del lado AP que
 este port esté omitiendo.
 
+Comprobado símbolo a símbolo en los cuatro defconfig de Samsung
+(`kalama-gki_defconfig`, `kalama_sec_defconfig`, `kalama_sec_userdebug_defconfig`
+y `kalama_GKI.config`): `SUPPORT_BRIGHTNESS_NOTIFY_FOR_LIGHT_SENSOR`,
+`SUPPORT_PANEL_STATE_NOTIFY_FOR_LIGHT_SENSOR` y
+`SUPPORT_DDI_COPR_FOR_LIGHT_SENSOR` **no están activados en ninguno**. Android
+tampoco alimenta al ALS con estado de panel ni brillo, así que el DSP tiene que
+emitir sin eso. Esto explica y confirma la prueba negativa de avisos de panel de
+pmOS: no le faltaba nada, es que esa vía no se usa en este producto.
+
+### No es el cliente: el DSP no transmite nada
+
+Medido con `ssccli -v` contando mensajes QMI recibidos **después** de la
+habilitación, en la misma ventana de tiempo:
+
+| sensor | `rx` total | `rx` tras el enable |
+|---|---|---|
+| acelerómetro | 180 | **171** |
+| luz | 8 | **0** |
+
+`libssc` maneja bien el caso *on-change* (msg 514 sin payload, correcto para
+`ambient_light`) y su parser sólo descartaría indicaciones con otro `msg_id` —
+pero es que no llega ninguna. Queda descartado que el fallo esté en libssc, en
+`iio-sensor-proxy` o en el parseo.
+
+### Base para la ingeniería inversa del blob
+
+Lo único que queda es desensamblar `sns_stk31610` dentro del firmware ADSP. Punto
+de partida ya establecido, para no repetirlo:
+
+- el segmento con el driver es **`adsp.b18`**, que `adsp.mdt` carga en
+  **`vaddr = 0xb3200000`** (ELF32, 52 program headers, `filesz = 1935448`, R+X);
+- dirección virtual de una cadena = `0xb3200000 + offset_en_el_fichero`;
+- cadenas clave y sus offsets: `[TOP-ALGO] all data was skipped` en 1867920
+  (`0xb33c8dd0`), `skip update bl = %d %d` en 1867616 (`0xb33c8ca0`),
+  `STK3A6X HW absent` en 1751368 (`0xb33ab5c8`);
+- herramienta: `rasm2 -a hexagon -b 32` (radare2 trae el backend Hexagon).
+  `llvm-objdump` **sí** lista `hexagon` como target pero su modo binario crudo
+  no acepta `-b binary`/`--binary-architecture`; hay que envolver el segmento en
+  un ELF32 con `e_machine = 164` (EM_HEXAGON) antes de usarlo.
+
+Aviso de alcance: el firmware está **firmado** y el arranque seguro de Samsung
+lo verifica, así que aunque se encuentre el fallo **no se puede parchear el
+blob**. Los únicos desenlaces accionables son descubrir (a) una clave de
+registro no evidente que cambie el comportamiento, o (b) un mensaje que el AP
+deba enviar y que no estemos enviando. El candidato vivo para (b) es
+`MSG_TYPE_OPTION_DEFINE`, que por la correspondencia ya verificada
+(`GET_DUMP_REGISTER`=9→SSC 609, `GET_DHR_INFO`=12→SSC 612, es decir
+SSC = 600 + `MSG_TYPE`) corresponde al **mensaje SSC 615**, con
+`OPTION_TYPE_LCD_ONOFF` = 2 como primer entero del payload. Falta deducir la
+codificación protobuf exacta que usa `factory.ssc` para ese array de `int32`.
+
 Una diferencia concreta frente a pmOS, por si se retoma: pmOS deja `i2c_hub_4`
 **deshabilitado** en el AP y le da ese pinctrl al DSP con
 `pinctrl-0 = <&hub_i2c4_data_clk>` en `&remoteproc_adsp`, mientras que esta rama

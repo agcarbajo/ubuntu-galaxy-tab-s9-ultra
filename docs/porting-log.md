@@ -4010,3 +4010,64 @@ fallidas, 21 nodos de vídeo, ADSP `running`, brújula `HasCompass=true`.
 Lo que queda para un ALS funcional es una sola cosa, y es trabajo de ingeniería
 inversa: desensamblar la ruta `sns_stk31610` del blob ADSP para ver por qué,
 tras un enable aceptado, nunca programa el chip para muestrear.
+
+## Sesión 52 — el cliente queda descartado; base para desensamblar el blob
+
+Fecha: 2026-08-12, continuación. Antes de entrar al blob quedaban dos suspects
+del lado de casa. Los dos caen.
+
+### libssc no pierde nada: el DSP no transmite
+
+`ambient_light` es un sensor *on-change*, y en SEE eso exige el mensaje 514 sin
+payload en vez del 513 con `sample_rate`. Se revisó `libssc` 0.4.4 y lo hace
+bien (`libssc-sensor.c:230`). Su manejador de luz sólo acepta indicaciones con
+`msg_id == 1025`, así que podría estar descartando en silencio... pero no es el
+caso. Contando mensajes QMI recibidos **después** del enable con `ssccli -v`:
+
+| sensor | `rx` total | `rx` tras el enable |
+|---|---|---|
+| acelerómetro | 180 | **171** |
+| luz | 8 | **0** |
+
+Cero. El DSP acepta la habilitación y no manda absolutamente nada. Ni cliente,
+ni parser, ni `iio-sensor-proxy`.
+
+### El fuente de Samsung: la vía del panel no se usa en este producto
+
+Revisados uno a uno los cuatro defconfig (`kalama-gki_defconfig`,
+`kalama_sec_defconfig`, `kalama_sec_userdebug_defconfig`, `kalama_GKI.config`):
+`SUPPORT_BRIGHTNESS_NOTIFY_FOR_LIGHT_SENSOR`,
+`SUPPORT_PANEL_STATE_NOTIFY_FOR_LIGHT_SENSOR` y
+`SUPPORT_DDI_COPR_FOR_LIGHT_SENSOR` **no están activados en ninguno**. Android
+tampoco envía estado de panel ni brillo al ALS. Eso explica por qué la prueba de
+avisos de panel de pmOS salió negativa, y cierra esa hipótesis por la razón
+correcta.
+
+Sí aparecen, en cambio, cadenas del driver que delatan un ALS bajo pantalla:
+`skip update bl = %d %d`, `stk3a6x_inst_notify_event: lcd %d->%d`,
+`[TOP-ALGO] AC mode 0 ~ 73 code` y, muy en particular,
+`[TOP-ALGO] all data was skipped`. También el ID del chip en la tabla de
+`light_factory.c`: `{0x66, "SensorTek", "STK31610"}`.
+
+### Base establecida para la ingeniería inversa
+
+- Driver en **`adsp.b18`**, cargado por `adsp.mdt` en **`0xb3200000`** (ELF32,
+  52 program headers, 1 935 448 B, R+X).
+- vaddr de una cadena = `0xb3200000 + offset`. `[TOP-ALGO] all data was skipped`
+  → `0xb33c8dd0`; `skip update bl` → `0xb33c8ca0`; `STK3A6X HW absent` →
+  `0xb33ab5c8`.
+- Herramienta: `rasm2 -a hexagon -b 32`. `llvm-objdump` lista `hexagon` como
+  target pero **no** acepta `-b binary` ni `--binary-architecture`; hay que
+  envolver el segmento en un ELF32 con `e_machine = 164`.
+
+Y el aviso que hay que tener presente: **el firmware está firmado**. Aunque se
+encuentre el fallo, el blob no se puede parchear. Sólo sirve encontrar una clave
+de registro no evidente o un mensaje que el AP deba mandar. El candidato vivo es
+`MSG_TYPE_OPTION_DEFINE` → **mensaje SSC 615** (la correspondencia
+SSC = 600 + `MSG_TYPE` está verificada con 9→609 y 12→612), con
+`OPTION_TYPE_LCD_ONOFF` = 2. Falta la codificación protobuf exacta del array de
+`int32` que usa `factory.ssc`.
+
+Estado: sin cambios en el dispositivo. Registro original, `boot` `0cf7c7c0…`,
+`vendor_boot` `e77aca73…`, proxy `4c2a2a9c…`, cero unidades fallidas, ADSP
+`running`, brújula viva. Sigue sin haber brillo automático.
