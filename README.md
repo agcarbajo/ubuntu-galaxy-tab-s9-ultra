@@ -132,6 +132,7 @@ it stays possible.
 | [docs/hardware-status.md](docs/hardware-status.md) | Current hardware matrix and evidence level per component |
 | [docs/ubuntu-userspace.md](docs/ubuntu-userspace.md) | Rootfs construction and Ubuntu-specific decisions |
 | [docs/boot-strategy.md](docs/boot-strategy.md) | Boot chain, partitions, installation and recovery |
+| [docs/tab-companion.md](docs/tab-companion.md) | Tab Companion architecture, usage and the remaining hands-on validation checklist |
 | [docs/development-notes.md](docs/development-notes.md) | Durable conclusions and the "do not retry" inventory |
 | [docs/porting-log.md](docs/porting-log.md) | Chronological engineering log, including failures |
 

@@ -4444,3 +4444,35 @@ También quedan sin implementar/validar deslizamientos arriba, abajo, izquierda
 y derecha, y círculos horario/antihorario. Su siguiente paso exige a la
 propietaria: desacoplar, activar pairing, inventariar el GATT y producir un
 evento de cada gesto; cualquier código anterior a esa captura sería supuesto.
+
+## Sesión 62 — Tab Companion, fase 5: cierre documental
+
+Fecha: 2026-08-12. Se añadió `docs/tab-companion.md` con arquitectura, uso de
+los controles, significado del nivel desconocido y un guion físico concreto
+para desacoplamiento, orientación opuesta, botón, teclas especiales y GATT.
+
+El estado final instalado es `ubuntu-gts9u-companion` 0.4.0. La última lectura
+del servicio fue:
+
+```text
+PenState='docked'
+PenOrientation='tip-right'
+KeyboardPresent=true
+RemappingAvailable=true
+ButtonActionsAvailable=true
+GestureAvailable=false
+```
+
+La comprobación final mantuvo cero unidades fallidas, `/dev/video20`–`23`,
+ADSP `running`, `iio-sensor-proxy` activo, sink/entrada PipeWire y EF-DX920
+`attached=1 connected=1`. Las particiones que siguen arrancadas son:
+
+```text
+boot        417d279d472665f0f51b591b0a29c3050de2c29a39ea25c32037510dcca3fba3
+vendor_boot bf312f08a6876194e3ce30d52a81f8da23dd88132c4660698eb5cde17a69e6bc
+```
+
+No se elevan a «funciona» la extracción/reinserción, punta izquierda,
+pulsaciones físicas, códigos Fn, emparejamiento ni movimientos BLE. El backup
+previo de `boot`, `vendor_boot` y módulos queda fuera de Git en
+`artifacts/backup-pre-spen-phase2/` y también en la tablet para recuperación.
