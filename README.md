@@ -30,7 +30,7 @@ postmarketOS v1.71 baseline is kept outside Git.
 |---|---|---|
 | **Display** | ✅ | 2960×1848 at 120 Hz, DSI + DSC + TE, native panel |
 | **Desktop** | ✅ | GNOME 46 on Wayland with GDM3, stock Ubuntu packages |
-| **Tab Companion** | 🟡 | Native GTK4/libadwaita settings app, packaged and preinstalled. Its user D-Bus service now reports the measured S Pen dock/orientation/charge state and EF-DX920 presence; action execution is not active yet |
+| **Tab Companion** | 🟡 | Native GTK4/libadwaita settings app, packaged and preinstalled. Its D-Bus service reports S Pen and EF-DX920 state and its tested `uinput` engine executes keyboard mappings. Galaxy AI, DeX and Search have stock-source codes; `Fn+F1–F5` must still be learned from real presses |
 | **GPU** | ✅ | Adreno 740 through Mesa (Freedreno/Turnip); no Android graphics stack |
 | **Touchscreen** | ✅ | Goodix Berlin / GT9916, Samsung 16-byte event layout |
 | **Buttons** | ✅ | Power and volume; a short press on power suspends |

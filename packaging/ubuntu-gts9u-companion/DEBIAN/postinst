@@ -5,4 +5,9 @@ if command -v glib-compile-schemas >/dev/null 2>&1; then
 	glib-compile-schemas /usr/share/glib-2.0/schemas
 fi
 
+if command -v udevadm >/dev/null 2>&1 && [ -e /dev/uinput ]; then
+	udevadm trigger --action=change --name-match=uinput || true
+	udevadm settle || true
+fi
+
 exit 0

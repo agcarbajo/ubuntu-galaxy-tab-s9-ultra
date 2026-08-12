@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 
-from gi.repository import Adw, Gio, Gtk
+from gi.repository import Adw, Gio, GLib, Gtk
 
 from . import VERSION
 from .actions import ACTIONS, ACTION_IDS, action_index
@@ -123,21 +123,70 @@ class CompanionWindow(Adw.ApplicationWindow):
             description="Choose what each dedicated or Fn shortcut should do.",
         )
         for key, title, subtitle in KEYS:
-            mappings.add(self._action_row("key-" + key, title, subtitle))
+            mappings.add(self._action_row("key-" + key, title, subtitle, learn=True))
         page.add(mappings)
         return page
 
-    def _action_row(self, setting, title, subtitle):
+    def _action_row(self, setting, title, subtitle, learn=False):
         model = Gtk.StringList.new([action.label for action in ACTIONS])
         row = Adw.ComboRow(title=title, subtitle=subtitle, model=model)
         row.set_selected(action_index(self.settings.get_string(setting)))
         row.connect("notify::selected", self._action_changed, setting)
+        edit = Gtk.Button(
+            icon_name="document-edit-symbolic",
+            tooltip_text="Set application ID or custom command",
+            valign=Gtk.Align.CENTER,
+            css_classes=["flat"],
+        )
+        edit.connect("clicked", self._edit_target, setting, title)
+        row.add_suffix(edit)
+        if learn:
+            capture = Gtk.Button(
+                icon_name="media-record-symbolic",
+                tooltip_text="Learn the next key pressed",
+                valign=Gtk.Align.CENTER,
+                css_classes=["flat"],
+            )
+            capture.connect("clicked", self._learn_key, setting)
+            row.add_suffix(capture)
         return row
 
     def _action_changed(self, row, _param, setting):
         selected = row.get_selected()
         if selected < len(ACTION_IDS):
             self.settings.set_string(setting, ACTION_IDS[selected])
+
+    def _edit_target(self, _button, setting, title):
+        targets = self.settings.get_value("action-targets").unpack()
+        entry = Gtk.Entry(
+            text=targets.get(setting, ""),
+            placeholder_text="Application desktop ID or shell command",
+            hexpand=True,
+        )
+        dialog = Adw.MessageDialog(
+            transient_for=self,
+            heading=f"Target for {title}",
+            body="Used when the selected action is Open an application or Custom command.",
+            extra_child=entry,
+        )
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("save", "Save")
+        dialog.set_response_appearance("save", Adw.ResponseAppearance.SUGGESTED)
+        dialog.connect("response", self._target_response, setting, entry)
+        dialog.present()
+
+    def _target_response(self, _dialog, response, setting, entry):
+        if response == "save":
+            targets = self.settings.get_value("action-targets").unpack()
+            target = entry.get_text().strip()
+            if target:
+                targets[setting] = target
+            else:
+                targets.pop(setting, None)
+            self.settings.set_value("action-targets", GLib.Variant("a{ss}", targets))
+
+    def _learn_key(self, _button, setting):
+        self.hardware.begin_key_capture(setting)
 
     def _update_hardware(self, *_args):
         state = self.hardware.state
@@ -175,9 +224,15 @@ class CompanionWindow(Adw.ApplicationWindow):
         self.ble_row.set_subtitle(
             "Bluetooth controller available" if state.bluetooth_available else "S Pen is not paired"
         )
-        self.keyboard_row.set_subtitle(
-            "Connected" if state.keyboard_present else "Waiting for the hardware service"
-        )
+        if state.capturing_key:
+            keyboard = "Press the key to assign it"
+        elif state.keyboard_present and state.remapping_available:
+            keyboard = "Connected; remapping active"
+        elif state.keyboard_present:
+            keyboard = "Connected; remapping unavailable"
+        else:
+            keyboard = "Waiting for the hardware service"
+        self.keyboard_row.set_subtitle(keyboard)
 
     def _show_about(self, _button):
         state = self.hardware.state
@@ -185,7 +240,9 @@ class CompanionWindow(Adw.ApplicationWindow):
             f"S Pen: {state.pen_state}\n"
             f"Orientation: {state.pen_orientation}\n"
             f"Battery: {state.pen_battery}\n"
-            f"Cover keyboard: {'present' if state.keyboard_present else 'not reported'}"
+            f"Cover keyboard: {'present' if state.keyboard_present else 'not reported'}\n"
+            f"Remapping: {'available' if state.remapping_available else 'unavailable'}\n"
+            f"Last special key: {state.last_special_key or 'none'}"
         )
         about = Adw.AboutWindow(
             transient_for=self,

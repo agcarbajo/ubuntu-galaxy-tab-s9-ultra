@@ -4371,3 +4371,45 @@ PipeWire presentes; `paplay` terminó con 0; Wacom y EF-DX920 enumerados, y el
 diagnóstico pogo conservó `attached=1 connected=1`. La escritura real del S Pen
 después de este reinicio no pudo repetirse sin alguien que moviese el lápiz;
 se comprobó la misma ABI de entrada, pero no se eleva eso a prueba física.
+
+## Sesión 60 — Tab Companion, fase 3: remapeo del EF-DX920
+
+Fecha: 2026-08-12. El fuente abierto del X910 aclaró que el modelo `0xd6` usa
+el camino bypass: el STM32 entrega directamente códigos Linux. Se precargaron
+sólo los valores acreditados: Galaxy AI 760 (`0x2f8`), DeX 701 (`0x2bd`) y
+Search 217. No hay tabla para `Fn+F1`–`Fn+F5`; quedan sin valor hasta que la
+propietaria pueda pulsarlos.
+
+`ubuntu-gts9u-companion` 0.3.0 amplía el servicio con lector no exclusivo del
+EF-DX920, aprendizaje de la siguiente tecla, destinos por asignación y un
+teclado virtual `uinput`. La regla `70-tab-companion-uinput.rules` concede el
+nodo al grupo `input`. La aplicación añade a cada fila botón de aprendizaje y
+editor del ID de aplicación o comando.
+
+La ruta de salida se validó por software sin atribuir eventos al teclado real.
+Se guardó temporalmente `key-galaxy-ai='volume-up'`, se invocó la misma ruta
+D-Bus que usa el motor y se observó el dispositivo virtual:
+
+```text
+(true,)
+Input device name: "Tab Companion virtual keyboard"
+Event: type 1 (EV_KEY), code 115 (KEY_VOLUMEUP), value 1
+Event: -------------- SYN_REPORT ------------
+Event: type 1 (EV_KEY), code 115 (KEY_VOLUMEUP), value 0
+Event: -------------- SYN_REPORT ------------
+```
+
+La asignación se restauró a `none`. `BeginKeyCapture key-fn-f1` devolvió
+`true` y publicó `CapturingKey='key-fn-f1'`; después se canceló sin cambiar el
+diccionario, que quedó:
+
+```text
+{'key-galaxy-ai': 760, 'key-dex': 701, 'key-search-settings': 217}
+```
+
+La sección Cover keyboard se capturó bajo Xvfb en la tablet con
+`Connected; remapping active`, las ocho filas y sus controles. También se abrió
+el diálogo `Target for Galaxy AI` sin traceback. Quedan sin prueba física el
+evento de cada tecla especial y el aprendizaje de Fn: no había nadie para
+pulsarlas, y una inyección `uinput` sólo valida la salida, no lo que emite el
+STM32.

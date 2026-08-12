@@ -18,5 +18,10 @@
     <key name="key-fn-f3" type="s"><default>'none'</default></key>
     <key name="key-fn-f4" type="s"><default>'none'</default></key>
     <key name="key-fn-f5" type="s"><default>'none'</default></key>
+    <key name="action-targets" type="a{ss}"><default>{}</default></key>
+    <key name="keyboard-source-codes" type="a{si}">
+      <default>{'key-galaxy-ai': 760, 'key-dex': 701, 'key-search-settings': 217}</default>
+      <summary>Linux key codes emitted by the cover keyboard</summary>
+    </key>
   </schema>
 </schemalist>

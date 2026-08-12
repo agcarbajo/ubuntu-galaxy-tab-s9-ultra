@@ -1,10 +1,15 @@
 #!/usr/bin/python3
 # SPDX-License-Identifier: MIT
-"""Session D-Bus boundary for Tab Companion hardware state."""
+"""Session D-Bus boundary and action engine for Tab Companion hardware."""
 
+import argparse
 from dataclasses import dataclass, fields
+import fcntl
 from glob import glob
+import os
 from pathlib import Path
+import struct
+import subprocess
 
 from gi.repository import Gio, GLib
 
@@ -12,15 +17,50 @@ from gi.repository import Gio, GLib
 BUS_NAME = "io.github.agcarbajo.TabCompanion.Hardware"
 OBJECT_PATH = "/io/github/agcarbajo/TabCompanion/Hardware"
 INTERFACE = BUS_NAME
+KEYBOARD_NAME = "Book Cover Keyboard Slim (EF-DX920)"
+MAPPINGS = {
+    "key-galaxy-ai", "key-dex", "key-search-settings",
+    "key-fn-f1", "key-fn-f2", "key-fn-f3", "key-fn-f4", "key-fn-f5",
+}
+
+EV_SYN = 0
+EV_KEY = 1
+SYN_REPORT = 0
+KEY_F24 = 194
+INPUT_EVENT = struct.Struct("llHHi")
+UI_SET_EVBIT = 0x40045564
+UI_SET_KEYBIT = 0x40045565
+UI_DEV_CREATE = 0x5501
+UI_DEV_DESTROY = 0x5502
+UI_DEV_SETUP = 0x405C5503
+
+ACTION_KEYS = {
+    "screenshot": 99,       # KEY_SYSRQ
+    "back": 158,            # KEY_BACK
+    "home": 172,            # KEY_HOMEPAGE
+    "overview": 125,        # KEY_LEFTMETA
+    "play-pause": 164,
+    "previous": 165,
+    "next": 163,
+    "volume-up": 115,
+    "volume-down": 114,
+    "mute": 113,
+}
 
 INTROSPECTION = """
 <node>
   <interface name="io.github.agcarbajo.TabCompanion.Hardware">
+    <method name="BeginKeyCapture"><arg name="mapping" type="s" direction="in"/><arg name="accepted" type="b" direction="out"/></method>
+    <method name="CancelKeyCapture"/>
+    <method name="TriggerMapping"><arg name="mapping" type="s" direction="in"/><arg name="accepted" type="b" direction="out"/></method>
     <property name="PenState" type="s" access="read"/>
     <property name="PenOrientation" type="s" access="read"/>
     <property name="PenBattery" type="i" access="read"/>
     <property name="PenCharging" type="b" access="read"/>
     <property name="KeyboardPresent" type="b" access="read"/>
+    <property name="RemappingAvailable" type="b" access="read"/>
+    <property name="CapturingKey" type="s" access="read"/>
+    <property name="LastSpecialKey" type="s" access="read"/>
     <property name="BluetoothAvailable" type="b" access="read"/>
     <property name="GestureAvailable" type="b" access="read"/>
   </interface>
@@ -35,17 +75,17 @@ class State:
     PenBattery: int = -1
     PenCharging: bool = False
     KeyboardPresent: bool = False
+    RemappingAvailable: bool = False
+    CapturingKey: str = ""
+    LastSpecialKey: str = ""
     BluetoothAvailable: bool = False
     GestureAvailable: bool = False
 
 
 SIGNATURES = {
-    "PenState": "s",
-    "PenOrientation": "s",
-    "PenBattery": "i",
-    "PenCharging": "b",
-    "KeyboardPresent": "b",
-    "BluetoothAvailable": "b",
+    "PenState": "s", "PenOrientation": "s", "PenBattery": "i",
+    "PenCharging": "b", "KeyboardPresent": "b", "RemappingAvailable": "b",
+    "CapturingKey": "s", "LastSpecialKey": "s", "BluetoothAvailable": "b",
     "GestureAvailable": "b",
 }
 
@@ -57,12 +97,47 @@ def read_text(path, fallback=""):
         return fallback
 
 
+class VirtualKeyboard:
+    def __init__(self):
+        self.fd = os.open("/dev/uinput", os.O_WRONLY | os.O_NONBLOCK)
+        fcntl.ioctl(self.fd, UI_SET_EVBIT, EV_KEY)
+        for code in sorted(set(ACTION_KEYS.values()) | {KEY_F24}):
+            fcntl.ioctl(self.fd, UI_SET_KEYBIT, code)
+        name = b"Tab Companion virtual keyboard".ljust(80, b"\0")
+        setup = struct.pack("HHHH80sI", 0x03, 0x04E8, 0xA036, 1, name, 0)
+        fcntl.ioctl(self.fd, UI_DEV_SETUP, setup)
+        fcntl.ioctl(self.fd, UI_DEV_CREATE)
+
+    def emit(self, event_type, code, value):
+        os.write(self.fd, INPUT_EVENT.pack(0, 0, event_type, code, value))
+
+    def tap(self, code):
+        self.emit(EV_KEY, code, 1)
+        self.emit(EV_SYN, SYN_REPORT, 0)
+        self.emit(EV_KEY, code, 0)
+        self.emit(EV_SYN, SYN_REPORT, 0)
+
+    def close(self):
+        if self.fd is not None:
+            fcntl.ioctl(self.fd, UI_DEV_DESTROY)
+            os.close(self.fd)
+            self.fd = None
+
+
 class HardwareService:
     def __init__(self):
         self.connection = None
         self.registration = None
         self.state = State()
         self.wacom = self._find_wacom()
+        self.settings = Gio.Settings.new("io.github.agcarbajo.TabCompanion")
+        self.keyboard_fd = None
+        self.keyboard_watch = None
+        self.capture_mapping = ""
+        try:
+            self.virtual_keyboard = VirtualKeyboard()
+        except OSError:
+            self.virtual_keyboard = None
 
     @staticmethod
     def _find_wacom():
@@ -71,41 +146,126 @@ class HardwareService:
 
     @staticmethod
     def _keyboard_present():
-        for path in glob("/sys/bus/i2c/devices/*/diagnostics"):
-            diagnostics = read_text(path)
-            if "attached=1" in diagnostics and "connected=1" in diagnostics:
-                return True
+        return any(
+            "attached=1" in read_text(path) and "connected=1" in read_text(path)
+            for path in glob("/sys/bus/i2c/devices/*/diagnostics")
+        )
+
+    @staticmethod
+    def _find_keyboard_event():
+        for path in glob("/sys/class/input/event*"):
+            if read_text(Path(path) / "device/name") == KEYBOARD_NAME:
+                return "/dev/input/" + Path(path).name
+        return None
+
+    def _ensure_keyboard_reader(self):
+        if self.keyboard_fd is not None:
+            return
+        path = self._find_keyboard_event()
+        if not path:
+            return
+        try:
+            self.keyboard_fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+        except OSError:
+            self.keyboard_fd = None
+            return
+        self.keyboard_watch = GLib.io_add_watch(
+            self.keyboard_fd,
+            GLib.IO_IN | GLib.IO_HUP | GLib.IO_ERR,
+            self._keyboard_event,
+        )
+
+    def _close_keyboard_reader(self):
+        if self.keyboard_fd is not None:
+            os.close(self.keyboard_fd)
+            self.keyboard_fd = None
+        self.keyboard_watch = None
+
+    def _keyboard_event(self, _source, condition):
+        if condition & (GLib.IO_HUP | GLib.IO_ERR):
+            self._close_keyboard_reader()
+            return GLib.SOURCE_REMOVE
+        try:
+            data = os.read(self.keyboard_fd, INPUT_EVENT.size * 32)
+        except BlockingIOError:
+            return GLib.SOURCE_CONTINUE
+        except OSError:
+            self._close_keyboard_reader()
+            return GLib.SOURCE_REMOVE
+        if not data:
+            self._close_keyboard_reader()
+            return GLib.SOURCE_REMOVE
+        for offset in range(0, len(data) - INPUT_EVENT.size + 1, INPUT_EVENT.size):
+            _sec, _usec, event_type, code, value = INPUT_EVENT.unpack_from(data, offset)
+            if event_type == EV_KEY and value == 1:
+                self._handle_key_press(code)
+        return GLib.SOURCE_CONTINUE
+
+    def _handle_key_press(self, code):
+        if self.capture_mapping:
+            sources = self.settings.get_value("keyboard-source-codes").unpack()
+            sources[self.capture_mapping] = code
+            self.settings.set_value("keyboard-source-codes", GLib.Variant("a{si}", sources))
+            captured = self.capture_mapping
+            self.capture_mapping = ""
+            self._replace_dynamic(CapturingKey="", LastSpecialKey=f"{captured}:{code}")
+            return
+        sources = self.settings.get_value("keyboard-source-codes").unpack()
+        mapping = next((name for name, source in sources.items() if source == code), None)
+        if mapping:
+            self._replace_dynamic(LastSpecialKey=f"{mapping}:{code}")
+            self.execute_mapping(mapping)
+
+    def execute_mapping(self, mapping):
+        if mapping not in MAPPINGS and not mapping.startswith("gesture-"):
+            return False
+        action = self.settings.get_string(mapping)
+        if action == "none":
+            return True
+        if action in ACTION_KEYS:
+            if self.virtual_keyboard is None:
+                return False
+            self.virtual_keyboard.tap(ACTION_KEYS[action])
+            return True
+        targets = self.settings.get_value("action-targets").unpack()
+        target = targets.get(mapping, "").strip()
+        if action == "app" and target:
+            subprocess.Popen(["gtk-launch", target], start_new_session=True)
+            return True
+        if action == "command" and target:
+            subprocess.Popen(["sh", "-lc", target], start_new_session=True)
+            return True
         return False
+
+    def _replace_dynamic(self, **changes):
+        values = {field.name: getattr(self.state, field.name) for field in fields(State)}
+        values.update(changes)
+        self._publish(State(**values))
 
     def sample(self):
         if self.wacom is None:
             self.wacom = self._find_wacom()
-
+        self._ensure_keyboard_reader()
         docked = self.wacom is not None and read_text(self.wacom / "pen_docked") == "1"
         raw_orientation = read_text(self.wacom / "pen_orientation") if self.wacom else ""
-        # X910 calibration, measured 2026-08-12 with the docked tip pointing
-        # towards the USB-C port: Samsung direction 2 (downside) is tip-right.
         orientation = {"downside": "tip-right", "upside": "tip-left"}.get(
             raw_orientation, "unknown"
         )
         charge = read_text(self.wacom / "pen_charging") if self.wacom else "unknown"
-        battery = -1
         capacity = read_text("/sys/class/power_supply/gts9u-spen/capacity")
-        if capacity.isdigit():
-            battery = min(100, max(0, int(capacity)))
-
-        new_state = State(
+        battery = min(100, max(0, int(capacity))) if capacity.isdigit() else -1
+        self._publish(State(
             PenState="docked" if docked else ("unpaired" if self.wacom else "unavailable"),
             PenOrientation=orientation if docked else "unknown",
             PenBattery=battery,
             PenCharging=docked and charge in {"charging", "full"},
             KeyboardPresent=self._keyboard_present(),
+            RemappingAvailable=self.virtual_keyboard is not None and self.keyboard_fd is not None,
+            CapturingKey=self.capture_mapping,
+            LastSpecialKey=self.state.LastSpecialKey,
             BluetoothAvailable=Path("/sys/class/bluetooth/hci0").exists(),
-            # Only the controller is present today; no Samsung S Pen GATT
-            # transport has been paired or characterised yet.
             GestureAvailable=False,
-        )
-        self._publish(new_state)
+        ))
         return GLib.SOURCE_CONTINUE
 
     def _publish(self, new_state):
@@ -113,20 +273,32 @@ class HardwareService:
         self.state = new_state
         if self.connection is None:
             return
-        changed = {}
-        for field in fields(State):
-            name = field.name
-            value = getattr(new_state, name)
-            if value != getattr(old_state, name):
-                changed[name] = GLib.Variant(SIGNATURES[name], value)
+        changed = {
+            field.name: GLib.Variant(SIGNATURES[field.name], getattr(new_state, field.name))
+            for field in fields(State)
+            if getattr(new_state, field.name) != getattr(old_state, field.name)
+        }
         if changed:
             self.connection.emit_signal(
-                None,
-                OBJECT_PATH,
-                "org.freedesktop.DBus.Properties",
-                "PropertiesChanged",
+                None, OBJECT_PATH, "org.freedesktop.DBus.Properties", "PropertiesChanged",
                 GLib.Variant("(sa{sv}as)", (INTERFACE, changed, [])),
             )
+
+    def method_call(self, _connection, _sender, _path, _interface, method, params, invocation):
+        if method == "BeginKeyCapture":
+            mapping = params.unpack()[0]
+            accepted = mapping in MAPPINGS and self.keyboard_fd is not None
+            if accepted:
+                self.capture_mapping = mapping
+                self._replace_dynamic(CapturingKey=mapping)
+            invocation.return_value(GLib.Variant("(b)", (accepted,)))
+        elif method == "CancelKeyCapture":
+            self.capture_mapping = ""
+            self._replace_dynamic(CapturingKey="")
+            invocation.return_value(None)
+        elif method == "TriggerMapping":
+            mapping = params.unpack()[0]
+            invocation.return_value(GLib.Variant("(b)", (self.execute_mapping(mapping),)))
 
     def get_property(self, _connection, _sender, _path, _interface, name):
         return GLib.Variant(SIGNATURES[name], getattr(self.state, name))
@@ -135,26 +307,38 @@ class HardwareService:
         self.connection = connection
         node = Gio.DBusNodeInfo.new_for_xml(INTROSPECTION)
         self.registration = connection.register_object(
-            OBJECT_PATH, node.interfaces[0], None, self.get_property, None
+            OBJECT_PATH, node.interfaces[0], self.method_call, self.get_property, None
         )
         self.sample()
         GLib.timeout_add_seconds(1, self.sample)
 
+    def close(self):
+        self._close_keyboard_reader()
+        if self.virtual_keyboard is not None:
+            self.virtual_keyboard.close()
+
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--self-test-uinput", action="store_true")
+    args = parser.parse_args()
+    if args.self_test_uinput:
+        keyboard = VirtualKeyboard()
+        keyboard.tap(KEY_F24)
+        print("emitted KEY_F24 through Tab Companion virtual keyboard")
+        GLib.usleep(200000)
+        keyboard.close()
+        return
+
     service = HardwareService()
     owner = Gio.bus_own_name(
-        Gio.BusType.SESSION,
-        BUS_NAME,
-        Gio.BusNameOwnerFlags.NONE,
-        service.acquired,
-        None,
-        None,
+        Gio.BusType.SESSION, BUS_NAME, Gio.BusNameOwnerFlags.NONE,
+        service.acquired, None, None,
     )
-    loop = GLib.MainLoop()
     try:
-        loop.run()
+        GLib.MainLoop().run()
     finally:
+        service.close()
         Gio.bus_unown_name(owner)
 
 

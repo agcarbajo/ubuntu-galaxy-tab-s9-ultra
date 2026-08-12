@@ -1925,3 +1925,24 @@ como carga, mantenimiento, carga completa o no carga. El kernel registra
 `MODEL_NAME`, sin `CAPACITY`. UPower ignora correctamente esa fuente como
 batería con nivel. La API D-Bus usa `PenBattery=-1`; añadir un porcentaje
 estimado sería inventar telemetría.
+
+## El EF-DX920 ya entrega keycodes Linux; no necesita otra tabla en kernel
+
+En el modo *bypass* del driver Samsung, cada palabra del STM32 lleva press en
+el bit 15 y el propio keycode Linux en los bits 14:0. El driver mainline del
+port ya hace exactamente esa traducción. El fuente X910 define DeX como
+`KEY_DEX_ON=0x2bd`, la tecla AI como `KEYCODE_AI_HOT=0x2f8`, y Search usa
+`KEY_SEARCH=217`. Son los tres únicos valores precargados por Tab Companion.
+
+No existe keymap para `Fn+F1`–`Fn+F5` en el DTS: el EF-DX920 es modelo `0xd6`
+y usa el flujo bypass. Sin pulsar las teclas no se puede saber qué código
+produce su firmware. El backend tiene por eso `BeginKeyCapture`: guarda en
+GSettings el siguiente `EV_KEY` real. No asignar F1–F5 estándar por intuición,
+porque secuestraría teclas normales y seguiría sin demostrar qué envía Fn.
+
+El demonio no hace `EVIOCGRAB`: el teclado normal sigue llegando a GNOME y
+sólo las fuentes configuradas disparan una segunda acción. La salida se crea
+en `/dev/uinput` como `Tab Companion virtual keyboard`; la regla udev limita
+el nodo al grupo `input`. Aplicaciones y comandos usan destinos explícitos por
+asignación, mientras medios, volumen, atrás, inicio, overview y captura se
+emiten como teclas Linux.
