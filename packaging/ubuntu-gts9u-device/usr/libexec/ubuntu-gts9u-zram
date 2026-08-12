@@ -1,0 +1,86 @@
+#!/bin/sh
+# Compressed RAM swap for the SM-X910.
+#
+# This tablet has 14.2 GiB of usable RAM and, until now, no swap at all: the
+# OOM killer was the only backstop under a Proton game plus a browser.  zram is
+# the first tier because it costs no UFS writes at all.
+#
+# zstd rather than the kernel default lzo-rle.  CONFIG_CRYPTO_ZSTD is only a
+# module here and this port does not install the generic module tree, but that
+# does not matter: modern zram carries its own zstd backend, and the device
+# advertises it in comp_algorithm.  Measured on this board, zstd holds desktop
+# anonymous pages at roughly 3:1, so the 8 GiB below occupies well under 3 GiB
+# of real memory when completely full.
+#
+# 8 GiB is half of RAM, which is the usual ceiling: sized larger, a worst-case
+# run of incompressible pages could claim more memory than it saves.
+set -eu
+
+size_bytes=$((8 * 1024 * 1024 * 1024))
+algorithm=zstd
+priority=100
+
+log() { echo "ubuntu-gts9u-zram: $*" >&2; }
+
+find_device() {
+	# Reuse ours if it is already there, otherwise ask the driver for one.
+	# hot_add prints the index it allocated.
+	if [ -n "${zram_index:-}" ] && [ -e "/sys/block/zram$zram_index" ]; then
+		return 0
+	fi
+	if [ -e /sys/block/zram0 ] && [ "$(cat /sys/block/zram0/disksize)" = "0" ]; then
+		zram_index=0
+		return 0
+	fi
+	if [ -w /sys/class/zram-control/hot_add ]; then
+		zram_index=$(cat /sys/class/zram-control/hot_add)
+		return 0
+	fi
+	return 1
+}
+
+start() {
+	[ -d /sys/class/zram-control ] || { log 'no zram support in this kernel'; return 0; }
+
+	zram_index=''
+	if ! find_device; then
+		log 'could not obtain a zram device'
+		return 1
+	fi
+	dev=/dev/zram$zram_index
+	sys=/sys/block/zram$zram_index
+
+	# comp_algorithm only accepts a write while disksize is still unset, so the
+	# order here matters and cannot be swapped.
+	if grep -qw "$algorithm" "$sys/comp_algorithm"; then
+		echo "$algorithm" > "$sys/comp_algorithm"
+	else
+		log "$algorithm unavailable; keeping the kernel default"
+	fi
+	echo "$size_bytes" > "$sys/disksize"
+
+	# -U clear: a zram device is recreated from scratch on every boot, so a
+	# stable UUID would be a lie and would confuse anything caching by UUID.
+	mkswap -U clear "$dev" >/dev/null
+	swapon --priority "$priority" "$dev"
+	log "enabled $dev, $((size_bytes / 1024 / 1024 / 1024)) GiB, $(cat "$sys/comp_algorithm" | sed 's/.*\[\([^]]*\)\].*/\1/')"
+}
+
+stop() {
+	for sys in /sys/block/zram*; do
+		[ -e "$sys" ] || continue
+		index=${sys#/sys/block/zram}
+		dev=/dev/zram$index
+		swapon --show=NAME --noheadings 2>/dev/null | grep -qx "$dev" || continue
+		swapoff "$dev" || true
+		echo 1 > "$sys/reset" 2>/dev/null || true
+		[ -w /sys/class/zram-control/hot_remove ] &&
+			echo "$index" > /sys/class/zram-control/hot_remove 2>/dev/null || true
+	done
+}
+
+case "${1:-start}" in
+	start) start ;;
+	stop)  stop ;;
+	*)     log "usage: $0 start|stop"; exit 2 ;;
+esac

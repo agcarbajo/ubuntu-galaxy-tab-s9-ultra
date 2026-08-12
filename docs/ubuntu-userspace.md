@@ -187,6 +187,50 @@ eso significa **solo `resize2fs`**: la partición ya ocupa las 939 GiB y ninguna
 herramienta de particionado la toca. En una microSD sí hay que extender antes la
 partición, y el script distingue los dos casos por el dispositivo y la etiqueta.
 
+## Swap en dos niveles
+
+La imagen no traía **ninguna** swap: con 14,2 GiB de RAM utilizable y una carga
+de escritorio real (Steam más navegador), el único respaldo ante un pico era el
+OOM killer. Desde la v2.22 del paquete de dispositivo hay dos niveles, 23 GiB
+en total:
+
+| nivel | tamaño | prioridad | unidad |
+|---|---|---|---|
+| zram (zstd) | 8 GiB | 100 | `ubuntu-gts9u-zram.service` |
+| swapfile en la UFS | 16 GiB | 10 | `ubuntu-gts9u-swapfile.service` |
+
+Las decisiones y por qué:
+
+- **zram primero, y con `zstd`.** No cuesta ni una escritura a la UFS. El
+  algoritmo por defecto del kernel aquí es `lzo-rle`, pero `zstd` está
+  disponible: `CONFIG_CRYPTO_ZSTD` es sólo módulo y este port no instala el
+  árbol genérico, pero zram moderno lleva su propio backend zstd y lo anuncia en
+  `comp_algorithm`. Medido en la tablet, **4,53×** — 0,65 GiB de páginas
+  ocupando 0,16 GiB de RAM.
+- **8 GiB de zram, la mitad de la RAM.** Es el techo razonable: más grande, una
+  racha de páginas incompresibles podría reclamar más memoria de la que ahorra.
+  `comp_algorithm` sólo admite escritura mientras `disksize` siga sin fijar, así
+  que ese orden en el script no es intercambiable.
+- **El swapfile no viaja en la imagen.** 16 GiB de ceros empequeñecerían el ZIP
+  flasheable; se crea en el dispositivo, y por eso la unidad va `After=` la
+  expansión del rootfs: antes de eso el sistema de ficheros todavía es el
+  pequeño que se envía.
+- **`fallocate`, no `dd`.** ext4 con este kernel acepta un swapfile de extents
+  no escritos —`mkswap` y `swapon` lo aceptan, verificado en la tablet—, así que
+  la creación es instantánea y no añade nada al arranque. El `dd` se conserva
+  sólo como respaldo por si `swapon` rechazase el fichero.
+- **16 GiB, mayor que la RAM, a propósito.** Es el 2 % del espacio libre y deja
+  la suspensión a disco aritméticamente posible para quien quiera cablear
+  `resume=`; no se promete que funcione.
+- **`vm.swappiness = 100` y `vm.page-cluster = 0`** (`90-gts9u-swap.conf`). Con
+  un nivel comprimido delante, expulsar una página anónima sale barato y
+  conviene preferirlo a tirar caché. No se usa el 180 de una máquina sólo-zram
+  porque aquí hay un swapfile detrás. `page-cluster = 0` porque zram no tiene
+  penalización de búsqueda y leer racimos de páginas sólo malgasta descompresión.
+
+Validado tras reinicio sin intervención: las dos unidades activas, el swapfile
+reutilizado y no recreado, y una prueba que reserva 11 GiB sin un solo OOM kill.
+
 ## initramfs propio de Ubuntu
 
 **No se reutiliza el initramfs de postmarketOS.** Ubuntu genera el suyo con

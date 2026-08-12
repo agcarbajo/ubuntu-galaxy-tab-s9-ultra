@@ -7,6 +7,8 @@ set -e
 # which is what the verification below checks.
 UNITS='
 ubuntu-gts9u-grow-rootfs.service:basic.target
+ubuntu-gts9u-zram.service:basic.target
+ubuntu-gts9u-swapfile.service:multi-user.target
 ubuntu-gts9u-panel-coldboot-recover.service:multi-user.target
 ubuntu-gts9u-adsp-boot.service:multi-user.target
 ubuntu-gts9u-sensor-registry.service:multi-user.target

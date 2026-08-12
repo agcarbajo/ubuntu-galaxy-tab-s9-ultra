@@ -4153,3 +4153,40 @@ manda `OPTION_DEFINE` al ALS—, no queda ninguna petición conocida que el AP d
 enviar y no estemos enviando.
 
 Estado: sin cambios en el dispositivo (esta sesión fue sólo análisis estático).
+
+## Sesión 55 — swap: dos niveles, 23 GiB, y el ALS cerrado
+
+Fecha: 2026-08-12. Cerrado el brillo automático (ver sesiones 47–54), la
+petición fue habilitar swap ahora que la raíz vive en la UFS.
+
+El punto de partida era **cero swap**, con 14,2 GiB de RAM utilizable y Steam y
+Chrome en marcha: el OOM killer era el único respaldo. Espacio libre, 772 GiB.
+
+Lo instalado, en el paquete de dispositivo v2.22:
+
+| nivel | tamaño | prioridad |
+|---|---|---|
+| zram `zstd` | 8 GiB | 100 |
+| swapfile UFS | 16 GiB | 10 |
+
+Tres cosas que había que comprobar antes de decidir, y no suponer:
+
+- **`zstd` sí está disponible para zram** aunque `CONFIG_CRYPTO_ZSTD` sea sólo
+  módulo y este port no instale el árbol genérico: zram moderno trae su propio
+  backend y `comp_algorithm` lo lista. Se corrigió sobre la marcha la conclusión
+  contraria, sacada de leer únicamente el `.config`.
+- **ext4 acepta un swapfile hecho con `fallocate`** en este kernel: `mkswap` y
+  `swapon` lo toman sin protestar. Eso evita el `dd` de 16 GiB y deja la
+  creación instantánea, así que no añade tiempo al primer arranque.
+- La regla `90-gts9u-cs35l45-no-hibernate.rules` **no** tiene nada que ver con
+  la hibernación del sistema: es el *runtime suspend* del códec.
+
+Medidas en la tablet, no estimaciones: compresión **4,53×** (0,65 GiB de páginas
+en 0,16 GiB de RAM), 11 GiB reservados de golpe **sin un solo OOM kill**, y el
+swapfile intacto a 0 B durante toda la prueba — que es exactamente lo que deben
+hacer las prioridades: zram absorbe, la UFS sólo desborda.
+
+Tras reinicio sin intervención: las dos unidades activas, `swappiness=100`,
+`page-cluster=0`, cero unidades fallidas, GDM y ADSP correctos, y el swapfile
+reutilizado en vez de recreado (`enabled the existing swapfile`, mtime
+conservado).

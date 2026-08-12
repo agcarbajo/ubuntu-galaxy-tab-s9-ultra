@@ -49,6 +49,7 @@ postmarketOS v1.71 baseline is kept outside Git.
 | **Package management** | ✅ | A stock Ubuntu userspace: `apt`, PPAs and snaps all work |
 | **SSH over Wi-Fi** | ✅ | Used for development throughout |
 | **Storage** | ✅ | Root filesystem on the internal UFS, in the partition Android used for user data: no microSD needed and no partition table change. Flashed and booted from there |
+| **Swap** | ✅ | Two tiers, 23 GiB total: 8 GiB of zstd-compressed zram in front of a 16 GiB swapfile on the UFS. Measured 4.5× compression, and 11 GiB allocated with no OOM kill |
 | **Backlight** | ❔ | Inherited from postmarketOS, not re-validated here. Automatic brightness works on no distribution |
 | **USB gadget / RNDIS** | ❔ | Inherited, not re-validated |
 | **Ethernet (RTL8153)** | ❔ | Enumerates and loads firmware; real link and traffic untested |

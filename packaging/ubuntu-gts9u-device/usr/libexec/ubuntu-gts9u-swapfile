@@ -1,0 +1,97 @@
+#!/bin/sh
+# Second-tier swap on the internal UFS for the SM-X910.
+#
+# zram takes the traffic; this file is the overflow that stops a Proton game or
+# a big build from reaching the OOM killer.  It is deliberately lower priority,
+# so it is only touched once zram is full.
+#
+# The file is created on the device, never shipped in the image: 16 GiB of
+# zeroes would dwarf the flashable ZIP.  It is made after the first-boot
+# resize2fs, because before that the filesystem is still the small shipped one.
+#
+# fallocate, not dd.  ext4 on this kernel accepts a swapfile made of unwritten
+# extents (verified on the tablet: mkswap and swapon both succeed), so creation
+# is instant and adds nothing to boot time.  dd remains as the fallback for the
+# case where swapon refuses the fallocated file, which is what happens on
+# filesystems that cannot map it.
+#
+# 16 GiB is larger than the 14.2 GiB of RAM on purpose: it keeps suspend-to-disk
+# arithmetically possible for whoever wires up resume=, without promising it
+# works.  It is 2% of the free space on this partition.
+set -eu
+
+swapfile=/swapfile
+size_gib=16
+priority=10
+# Refuse to create it if that would leave the root filesystem tight.
+headroom_gib=20
+
+log() { echo "ubuntu-gts9u-swapfile: $*" >&2; }
+
+already_on() {
+	swapon --show=NAME --noheadings 2>/dev/null | grep -qx "$swapfile"
+}
+
+create() {
+	avail_gib=$(df -BG --output=avail / | tail -1 | tr -dc '0-9')
+	if [ "${avail_gib:-0}" -lt $((size_gib + headroom_gib)) ]; then
+		log "only ${avail_gib} GiB free; not creating a ${size_gib} GiB swapfile"
+		return 1
+	fi
+
+	rm -f "$swapfile"
+	if ! fallocate -l "${size_gib}G" "$swapfile" 2>/dev/null; then
+		log 'fallocate unavailable; falling back to dd'
+		dd if=/dev/zero of="$swapfile" bs=1M count=$((size_gib * 1024)) \
+			status=none conv=fsync
+	fi
+	chmod 0600 "$swapfile"
+	mkswap "$swapfile" >/dev/null
+
+	if swapon --priority "$priority" "$swapfile" 2>/dev/null; then
+		return 0
+	fi
+
+	# The filesystem would not map the sparse file.  Rewrite it densely once
+	# and try again; if that also fails, leave nothing behind.
+	log 'swapon refused the fallocated file; rewriting it with dd'
+	rm -f "$swapfile"
+	dd if=/dev/zero of="$swapfile" bs=1M count=$((size_gib * 1024)) \
+		status=none conv=fsync
+	chmod 0600 "$swapfile"
+	mkswap "$swapfile" >/dev/null
+	if ! swapon --priority "$priority" "$swapfile"; then
+		log 'swapon failed; removing the file'
+		rm -f "$swapfile"
+		return 1
+	fi
+}
+
+start() {
+	already_on && { log 'already active'; return 0; }
+
+	if [ -f "$swapfile" ]; then
+		# Present from an earlier boot: just turn it back on.  Re-make the
+		# signature only if it is missing, which is what a half-finished
+		# creation would leave behind.
+		chmod 0600 "$swapfile"
+		if swapon --priority "$priority" "$swapfile" 2>/dev/null; then
+			log 'enabled the existing swapfile'
+			return 0
+		fi
+		log 'existing swapfile is unusable; rebuilding it'
+	fi
+
+	create || return 0
+	log "enabled $swapfile, ${size_gib} GiB, priority $priority"
+}
+
+stop() {
+	already_on && swapoff "$swapfile" || true
+}
+
+case "${1:-start}" in
+	start) start ;;
+	stop)  stop ;;
+	*)     log "usage: $0 start|stop"; exit 2 ;;
+esac

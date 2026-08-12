@@ -1,0 +1,16 @@
+[Unit]
+Description=Compressed RAM swap (zram, zstd) for the SM-X910
+Documentation=file:/usr/libexec/ubuntu-gts9u-zram
+DefaultDependencies=no
+After=systemd-remount-fs.service
+Before=basic.target swap.target
+ConditionPathExists=/sys/class/zram-control/hot_add
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/ubuntu-gts9u-zram start
+ExecStop=/usr/libexec/ubuntu-gts9u-zram stop
+
+[Install]
+WantedBy=basic.target

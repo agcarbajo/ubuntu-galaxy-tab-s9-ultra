@@ -1,0 +1,17 @@
+[Unit]
+Description=Overflow swap on the internal UFS for the SM-X910
+Documentation=file:/usr/libexec/ubuntu-gts9u-swapfile
+# The shipped filesystem is small and grown on first boot; making the swapfile
+# before that would either fail for space or consume what the resize needs.
+After=ubuntu-gts9u-grow-rootfs.service local-fs.target
+Requires=local-fs.target
+ConditionPathIsMountPoint=/
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/ubuntu-gts9u-swapfile start
+ExecStop=/usr/libexec/ubuntu-gts9u-swapfile stop
+
+[Install]
+WantedBy=multi-user.target
