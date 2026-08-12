@@ -3951,3 +3951,62 @@ Estado final: registro restaurado a su copia (`dummy_vdd`, `dri_irq_num=0`,
 `is_dri=1`), proxy con el SHA de release `4c2a2a9c…`, `boot` `0cf7c7c0…`,
 `vendor_boot` `e77aca73…`, cero unidades fallidas y acelerómetro dando muestras.
 Sigue sin haber brillo automático, y sigue sin publicarse una solución falsa.
+
+## Sesión 51 — el sensor está, y la frontera es el *streaming* del blob
+
+Fecha: 2026-08-12, continuación. La usuaria insistió, con razón: el hardware
+existe y en Android funciona. Se revisó el código fuente oficial de Samsung y se
+hizo la prueba que faltaba.
+
+### Prueba de presencia: mover el bus da otra respuesta
+
+Hasta ahora se sabía que en los buses 3 y 4 el DSP acepta el enable y no manda
+nada. Faltaba el contraste. Apuntando las dos instancias STK31610 al
+`bus_instance` 2 —el de la brújula, donde el ALS no está— y reiniciando:
+
+```
+Unable to initialize light sensor: UNKNOWN
+```
+
+El DSP **no publica el SUID**. Con la configuración original vuelve a
+publicarlo, `HasAmbientLight=true`, y la habilitación se acepta con
+`Result = SUCCESS`.
+
+Esa diferencia es la prueba que faltaba: **publicar implica que la rutina de
+arranque identificó el chip**. Por tanto el STK31610 está presente, alimentado y
+reconocido por el DSP en los buses SSC 3 y 4 a 0x48. Queda descartado de forma
+definitiva que falte, que esté sin alimentar o que el bus sea otro — y queda
+corregida la sugerencia contraria de la sesión 48. Lo único que falla es la
+entrega de muestras dentro del blob.
+
+### El fuente de Samsung: no falta nada del lado AP
+
+`kalama-gki_defconfig` del `Kernel.tar.gz` oficial compila
+`CONFIG_LIGHT_FACTORY=y`, `CONFIG_LIGHT_SUB_FACTORY=y`,
+`CONFIG_SUPPORT_DUAL_OPTIC=y`, `CONFIG_SUPPORT_VIRTUAL_OPTIC=y`,
+`CONFIG_TABLET_MODEL_CONCEPT=y` y `CONFIG_SUPPORT_LIGHT_SEAMLESS=y`. Esto
+**corrige** la sesión 108 de pmOS, que daba `TABLET_MODEL_CONCEPT` por ausente.
+
+Pero ninguna de esas opciones es condición para que el sensor emita:
+
+- `drivers/adsp_factory/` es el driver de pruebas de fábrica. El HAL de Android
+  lee sensores sin él, y este árbol ni siquiera trae `stk31610_light.c`: el X910
+  usa el `light_factory.c` genérico.
+- `SUPPORT_LIGHT_SEAMLESS` sólo envía `OPTION_TYPE_SSC_LIGHT_SEAMLESS` con
+  cuatro umbrales de lux para conmutar principal/secundario, y únicamente si
+  alguno no es cero.
+- `SUPPORT_PANEL_STATE_NOTIFY_FOR_LIGHT_SENSOR` **no** está activado, lo que
+  concuerda con la prueba negativa de avisos de panel de pmOS.
+
+No hay ninguna pieza del lado AP que este port esté omitiendo.
+
+### Estado
+
+Registro restaurado a su forma original (`bus_instance` 3 y 4, `dummy_vdd`,
+`dri_irq_num=0`, `is_dri=1`), sin copias ni ficheros de diagnóstico. `boot`
+`0cf7c7c0…`, `vendor_boot` `e77aca73…`, proxy `4c2a2a9c…`, cero unidades
+fallidas, 21 nodos de vídeo, ADSP `running`, brújula `HasCompass=true`.
+
+Lo que queda para un ALS funcional es una sola cosa, y es trabajo de ingeniería
+inversa: desensamblar la ruta `sns_stk31610` del blob ADSP para ver por qué,
+tras un enable aceptado, nunca programa el chip para muestrear.

@@ -367,6 +367,54 @@ porque el arranque seguro de Samsung lo rechaza (ver la nota de
 `&remoteproc_adsp` en el DTS). **No volver a intentar arreglar el ALS mediante
 el registro ni copiando configuración de otro dispositivo.**
 
+### El sensor SÍ está, y esto lo demuestra
+
+Mover `bus_instance` a un bus donde el chip no está da una respuesta
+**distinta**, y esa diferencia es la prueba. Apuntando las dos instancias al
+`bus_instance` 2 (el de la brújula) y reiniciando, `ssccli --sensor light`
+contesta:
+
+```
+Unable to initialize light sensor: UNKNOWN
+```
+
+es decir, el DSP **no publica el SUID**: su rutina de arranque no encontró nada
+y se abstuvo. Con la configuración original (buses 3 y 4) el SUID **sí** se
+publica, `HasAmbientLight` pasa a `true` y la habilitación se acepta con
+`Result = SUCCESS`.
+
+Publicar implica por tanto que la identificación del chip funcionó. Conclusión
+firme, y corrige definitivamente lo que se sugirió antes: **el STK31610 está
+presente, alimentado y correctamente identificado por el DSP en los buses SSC 3
+y 4 a 0x48.** No es un problema de presencia, de raíl ni de bus. Lo único que
+falla es la entrega de muestras dentro del blob: prueba bien, acepta el enable
+y no emite ni una indicación.
+
+### Revisión del código fuente de Samsung: no falta nada del lado AP
+
+El `Kernel.tar.gz` oficial del X910 confirma qué compila Samsung para esta
+tablet (`arch/arm64/configs/vendor/kalama-gki_defconfig`):
+`CONFIG_LIGHT_FACTORY=y`, `CONFIG_LIGHT_SUB_FACTORY=y`,
+`CONFIG_SUPPORT_DUAL_OPTIC=y`, `CONFIG_SUPPORT_VIRTUAL_OPTIC=y`,
+`CONFIG_TABLET_MODEL_CONCEPT=y` y `CONFIG_SUPPORT_LIGHT_SEAMLESS=y`. Esto
+**corrige** la nota de la sesión 108 de pmOS, que daba `TABLET_MODEL_CONCEPT`
+por ausente basándose en la config extraída del `boot.img`.
+
+Aun así, nada de eso es un requisito para que el sensor emita:
+
+- `drivers/adsp_factory/` es el driver de **pruebas de fábrica**; expone sysfs y
+  pide autotests. El HAL de sensores de Android funciona sin él.
+- `CONFIG_SUPPORT_LIGHT_SEAMLESS` sólo manda `OPTION_TYPE_SSC_LIGHT_SEAMLESS` a
+  `MSG_SSC_CORE` con cuatro umbrales de lux para conmutar entre sensor principal
+  y secundario, y **sólo si alguno es distinto de cero**. No es un *handshake*
+  de arranque.
+- `CONFIG_SUPPORT_PANEL_STATE_NOTIFY_FOR_LIGHT_SENSOR` **no** está activado, lo
+  que concuerda con la prueba negativa de pmOS al enviar avisos de panel.
+
+Este árbol no contiene además ningún `stk31610_light.c`: el X910 usa el
+`light_factory.c` genérico. No hay, por tanto, ninguna pieza del lado AP que
+este port esté omitiendo.
+
 Una diferencia concreta frente a pmOS, por si se retoma: pmOS deja `i2c_hub_4`
 **deshabilitado** en el AP y le da ese pinctrl al DSP con
 `pinctrl-0 = <&hub_i2c4_data_clk>` en `&remoteproc_adsp`, mientras que esta rama
