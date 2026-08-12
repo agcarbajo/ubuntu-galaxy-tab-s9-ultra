@@ -455,6 +455,41 @@ de partida ya establecido, para no repetirlo:
   no acepta `-b binary`/`--binary-architecture`; hay que envolver el segmento en
   un ELF32 con `e_machine = 164` (EM_HEXAGON) antes de usarlo.
 
+### `factory.ssc` desensamblado: no hay modo de fábrica privilegiado
+
+`factory.ssc` se extrae de `vendor.img` con `fsck.erofs --extract` (la imagen es
+EROFS) y queda en `bin/factory.ssc`: un ELF aarch64 de 55 KB, *stripped*. Es RE
+de ARM64 corriente, no Hexagon.
+
+**No existe ningún `data_type` para SSC_CORE.** El binario sólo contiene seis
+cadenas de tipo de dato: `ambient_light`, `ambient_light_sub`, `proximity`,
+`proximity_sub`, `pressure` y `sensor_temperature`. `MSG_SSC_CORE` no es un
+sensor SEE con SUID propio, así que la idea de «habilitar modo fábrica
+enviándole el mensaje 613» no tiene destinatario.
+
+Y el desensamblado da algo mejor: la traducción exacta de `MSG_TYPE` a mensaje
+SSC, idéntica en los dos puntos donde se construye (`0x9850` y `0xa330`):
+
+| `MSG_TYPE` | mensaje SSC |
+|---|---|
+| 11 `SET_CAL_DATA` | 512 |
+| 13 `FACTORY_ENABLE` | **514** |
+| 14 `FACTORY_DISABLE` | 10 |
+| resto | **600 + `MSG_TYPE`** (de ahí 609, 612 y 615) |
+
+```
+9850: cmp  w22, #0xd        // FACTORY_ENABLE
+9858: mov  w4,  #0x202      // -> 514
+9860: add  w8,  w22, #0x258 // resto -> 600 + msg_type
+9868: cmp  w22, #0xe        // FACTORY_DISABLE -> 10
+```
+
+Lo importante: **`FACTORY_ENABLE` es el mensaje 514, que es exactamente el
+`ENABLE_REPORT_ON_CHANGE` estándar que `libssc` ya envía.** El demonio de
+fábrica de Samsung arranca el ALS igual que nosotros; no hay un modo privilegiado
+que active el sensor de otra manera. Queda descartado el último candidato
+accionable que quedaba.
+
 Aviso de alcance: el firmware está **firmado** y el arranque seguro de Samsung
 lo verifica, así que aunque se encuentre el fallo **no se puede parchear el
 blob**. Los únicos desenlaces accionables son descubrir (a) una clave de

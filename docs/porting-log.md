@@ -4105,3 +4105,51 @@ sensor SSC_CORE de Samsung, que no aparece entre las cadenas del segmento.
 Estado: sin cambios en el dispositivo. Binarios de prueba borrados, `boot`
 `0cf7c7c0…`, `vendor_boot` `e77aca73…`, proxy `4c2a2a9c…`, cero unidades
 fallidas, ADSP `running`, acelerómetro dando muestras.
+
+## Sesión 54 — `factory.ssc`: el «modo fábrica» es nuestro propio mensaje
+
+Fecha: 2026-08-12, continuación. Quedaba un solo candidato accionable: mandar
+`MSG_TYPE_FACTORY_ENABLE` al sensor SSC_CORE. Para eso hacía falta su
+`data_type`, y para eso desensamblar `factory.ssc`.
+
+`vendor.img` es EROFS; `fsck.erofs --extract` la abre sin más y deja
+`bin/factory.ssc`, un ELF **aarch64** de 55 KB *stripped*. Es ingeniería inversa
+de ARM64 corriente, mucho más barata que la de Hexagon.
+
+**Primera respuesta: no existe `data_type` para SSC_CORE.** El binario sólo
+contiene seis: `ambient_light`, `ambient_light_sub`, `proximity`,
+`proximity_sub`, `pressure` y `sensor_temperature`. `MSG_SSC_CORE` no es un
+sensor SEE con SUID, de modo que el mensaje de habilitación de fábrica no tiene
+a quién dirigirse.
+
+**Segunda respuesta, la que cierra el asunto:** el desensamblado da la
+traducción exacta de `MSG_TYPE` a mensaje SSC, idéntica en los dos sitios donde
+se construye (`0x9850` y `0xa330`):
+
+```
+9850: cmp  w22, #0xd        // FACTORY_ENABLE
+9858: mov  w4,  #0x202      // -> 514
+9860: add  w8,  w22, #0x258 // resto -> 600 + msg_type
+9868: cmp  w22, #0xe        // FACTORY_DISABLE -> 10
+```
+
+| `MSG_TYPE` | mensaje SSC |
+|---|---|
+| 11 `SET_CAL_DATA` | 512 |
+| 13 `FACTORY_ENABLE` | **514** |
+| 14 `FACTORY_DISABLE` | 10 |
+| resto | **600 + `MSG_TYPE`** |
+
+Queda confirmada de paso la regla 600+N que pmOS había deducido (609 y 612), y
+por tanto `OPTION_DEFINE` = **615**. Pero lo decisivo es que **`FACTORY_ENABLE`
+es el mensaje 514, que es exactamente el `ENABLE_REPORT_ON_CHANGE` estándar que
+`libssc` ya manda**. El demonio de fábrica de Samsung arranca el ALS con la
+misma petición que nosotros: no hay modo privilegiado, ni secuencia distinta, ni
+nada que estemos omitiendo al habilitarlo.
+
+Con eso cae el último candidato accionable. Sumado a que los cuatro defconfig de
+Samsung no activan los notificadores de panel/brillo —así que Android tampoco
+manda `OPTION_DEFINE` al ALS—, no queda ninguna petición conocida que el AP deba
+enviar y no estemos enviando.
+
+Estado: sin cambios en el dispositivo (esta sesión fue sólo análisis estático).
