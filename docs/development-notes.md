@@ -1569,3 +1569,31 @@ forma continua. Se le da margen para encender, no permiso para consumir.
 
 Orden de las pruebas, que costó aprenderlo: **el límite hay que subirlo antes
 de enchufar**. Igual que el Rp, esto se decide al conectar.
+
+## Artefactos gráficos menores: investigación descartada
+
+En Adreno 740 se pudieron reproducir dos defectos de baja gravedad: bandas y
+mosaicos en el gradiente de Discord bajo Chromium/Wayland, y corrupción tardía
+de algunos `GtkSwitch`. Una captura lineal del framebuffer KMS primario
+(2960×1848, XR30) contenía los mismos defectos, por lo que no procedían del
+panel OLED, DSC ni de la fotografía.
+
+La ruta 3D general no está rota: los juegos funcionan correctamente. Chromium
+quedó limpio con ANGLE/Vulkan explícito y también bajo Xwayland. En la ruta
+OpenGL Wayland de Freedreno sólo `FD_MESA_DEBUG=flush` eliminó todos los
+defectos, pero fuerza un envío tras cada dibujo y no es aceptable como ajuste
+global. No ayudaron `noubwc`, `sysmem`, `notile`, `inorder`, `gmem`, `nobin`,
+`ddraw`, `dclear`, `direct`, `noscis`, `serialc`, `nolrzfc`, `noindirect`,
+`noblit`, `nolrz`, `nosbin`, `nofp16` ni desactivar `MESA_GLTHREAD`.
+
+También se descartó Zink: un override global llegó a impedir que Mutter/GDM
+encontrase salidas después de reiniciar, dejando un `_` parpadeante; una
+variante limitada a clientes sobrevivía al arranque pero convertía iconos de
+Discord en bloques. `ANGLE_DEFAULT_PLATFORM=vulkan` tampoco sustituye al flag
+en Chromium, porque el navegador solicita un backend explícito.
+
+No se distribuye ningún workaround de esta sesión: no hay variables en
+`environment.d`, override de Mesa, paquete Mesa alternativo, lanzador de
+navegador ni cambio de Mutter. Si se retoma, el punto de partida útil es la
+entrega implícita de buffers dma-buf en Ozone/Wayland; el compositor no anuncia
+los protocolos de sincronización explícita y Chrome usa `wl_buffer.release`.

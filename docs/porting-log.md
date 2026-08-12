@@ -3729,3 +3729,40 @@ fallidas, `/dev/video20–23`, el sink de altavoces y el micrófono digital. No 
 publica una falsa solución ni se abre una cámara periódicamente como ALS: eso
 sería un sustituto con implicaciones de batería, privacidad y concurrencia que
 requiere una decisión separada.
+
+## Sesión 48 — artefactos gráficos: investigación descartada
+
+Fecha: 2026-08-12. Chromium mostraba el fondo de Discord dividido en bandas y
+mosaicos verticales, y Configuración de GNOME deformaba el fondo de switches
+desactivados después de scroll o de unos minutos. Los juegos seguían correctos.
+Una herramienta temporal leyó por PRIME el framebuffer KMS primario:
+2960×1848, `XR30`, pitch 11904, modificador lineal. La captura contenía los
+mismos defectos, descartando el panel, DSC y la fotografía del OLED.
+
+Chrome con toda la GPU deshabilitada quedó limpio, pero no
+`--disable-gpu-rasterization`, `FD_MESA_DEBUG=noubwc`, `notile`, `nofp16` ni el
+workaround de vendor de ANGLE. `--use-angle=vulkan` sí corrigió la página sin
+perder el proceso GPU. En GTK4, Vulkan y NGL podían parecer correctos al abrir,
+pero el fallo reaparecía con retraso; un dispositivo uinput temporal automatizó
+scroll y cambios de panel. El renderer GL clásico se mantuvo correcto.
+
+Se exploró Zink como arreglo común. Un prototipo global arregló inicialmente
+el gradiente, pero tras reiniciar Mutter no encontró salidas y quedó un `_`
+parpadeante. Se recuperó por SSH. Después se parcheó Mesa para limitar Zink a
+clientes Wayland y nodos GBM de render: GDM sobrevivió, pero Discord empezó a
+convertir iconos `#` y de voz en bloques. También se descartó; el paquete Mesa
+de prueba se desinstaló y sus diversiones restauraron los ficheros de Ubuntu.
+
+Una segunda ronda acotó el defecto de Chromium a Ozone/Wayland: Xwayland y
+ANGLE/Vulkan eran limpios, mientras que `FD_MESA_DEBUG=flush` era el único
+control de Freedreno que corregía la ruta OpenGL Wayland. Ese modo vacía la GPU
+después de cada dibujo y se rechazó por su coste potencial. El compositor no
+anunciaba sincronización explícita; Chrome entregaba dma-buf y recibía
+`wl_buffer.release`, lo que deja como pista una sincronización implícita tardía.
+
+La gravedad no justificaba seguir añadiendo complejidad ni arriesgar el buen
+rendimiento 3D. A petición del usuario se canceló el trabajo y se restauró el
+estado anterior: sin paquete Mesa alternativo, diversiones, variables
+`GSK_RENDERER`/`ANGLE_DEFAULT_PLATFORM`, flags de Chromium ni cambios de
+Mutter. Los artefactos quedan documentados como limitación menor, no como una
+función reparada.

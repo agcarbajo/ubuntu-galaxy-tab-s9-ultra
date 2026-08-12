@@ -1,7 +1,7 @@
 # Estado de hardware del SM-X910 bajo Ubuntu 24.04
 
-Última actualización: 2026-08-10, al mover la raíz a la UFS interna y acotar
-qué parte de las cámaras funciona y cuál no.
+Última actualización: 2026-08-12, tras caracterizar unos artefactos gráficos
+menores y decidir no distribuir un workaround que alterase la ruta 3D estable.
 
 Ubuntu **ya arranca** en la tablet. Esta matriz distingue explícitamente lo
 heredado de lo comprobado, y ningún componente pasa a ✅ sin observación real.
@@ -44,7 +44,7 @@ sondea» como prueba de funcionamiento.
 | Arranque Android v4 + rootfs microSD | ✅ | ✅ | confirmado | Arranca desde microSD con `root=LABEL=UBTS9U_ROOT`. Initramfs propio en LZ4 legacy dentro de `init_boot`. Es la cadena de hasta v0.17 |
 | Arranque con rootfs en UFS | — | ✅ | confirmado | v0.18 escribe la raíz en `userdata` y arranca con `root=LABEL=UBTS9U_UFS`. Flasheada por sideload y arrancada en el dispositivo el 2026-08-10. Solo cambia dónde busca la raíz el initramfs; el resto de la cadena es la misma |
 | Pantalla interna 2960×1848@120 | ✅ | ✅ | medido | La recuperación cold-boot está validada bajo Ubuntu: el journal registra `panel id 00 00 00` → ciclo `pm_test=platform` → `80 00 04` |
-| GPU Adreno 740 | ✅ | ✅ | confirmado | Confirmado por la usuaria en el primer arranque. Falta medir `vulkaninfo`/`glmark2` |
+| GPU Adreno 740 | ✅ | ✅ | medido | Freedreno/Turnip funciona correctamente en juegos. Se observan artefactos menores y esporádicos en algunos clientes Wayland (un gradiente de Discord/Chromium y ciertos controles GTK tras repintados). La investigación de la sesión 48 no produjo un arreglo genérico sin regresiones, por lo que no se instala ningún override de Mesa, ANGLE, GTK ni lanzadores de aplicaciones |
 | Escritorio GNOME/Wayland | ✅ | ✅ | confirmado | GDM3 y GNOME 46 nativos, sin el workaround de cuentas greeter de Alpine |
 | Brillo / blanking | ✅ | ⏳ | medido | Backlight DCS y control manual nativo. GNOME tiene `ambient-enabled=true`, pero no puede hacer brillo automático porque ninguna de las dos rutas STK31610 entrega lux |
 | Táctil Goodix GT9916 | ✅ | ✅ | confirmado | Layout Samsung de eventos de 16 bytes |
