@@ -3816,14 +3816,32 @@ igual que SE4, lo que podría indicar aliasing del canal GPI; el resultado
 negativo de SE2/SE5 es por eso más débil que el de SE3/SE4, que se midieron en
 la configuración de producción ya probada.)
 
-### El hallazgo que reencuadra el problema
+### Un error propio, y el control que lo corrige
 
-`gdbus introspect` sobre `net.hadess.SensorProxy` no lista la interfaz
-`.Compass`. Bajo Ubuntu **no funciona ningún sensor I²C del SSC**: sólo el
-LSM6DSO, que va por SPI (`bus_type=3`, `bus_instance=1`). En pmOS la brújula
-daba rumbo real. El ALS deja pues de ser una anomalía aislada y pasa a ser un
-caso particular de un fallo más amplio de la ruta I²C del SSC — que es la pista
-que queda viva para la próxima sesión.
+Se afirmó primero que bajo Ubuntu no funcionaba ningún sensor I²C del SSC,
+porque `gdbus introspect` sobre `net.hadess.SensorProxy` no listaba `.Compass`.
+**Era un error de método**: esa interfaz vive en el objeto hijo
+`/net/hadess/SensorProxy/Compass`. Consultado el objeto correcto,
+`HasCompass=true`, y tras añadir una regla polkit temporal —reclamar sensores
+por SSH da `Not Authorized` porque la sesión no es «activa»— `monitor-sensor`
+entrega rumbo vivo entre 127° y 134°. La brújula funciona.
+
+Eso convierte el fallo en algo más informativo, no menos. El AK0991x está en
+I²C del SSC (`bus_instance=2`, 0x0c) y, aun funcionando, **tampoco aparece por
+ninguna parte al escanear desde el AP**. Un sensor SSC sano es tan invisible
+para el AP como el ALS. Por tanto el NAK de 0x48 cierra la vía AP pero no
+autoriza a concluir que el chip falte o esté sin alimentar, como se había
+sugerido; la conclusión anterior queda corregida en
+`docs/development-notes.md` y en el README.
+
+Con la brújula como control se puede comparar campo a campo lo que sí va contra
+lo que no, mismo transporte y mismo registro: el ALS es el único que declara
+`num_rail=2` con `vdd_rail`/`vddio_rail` a `/pmic/client/dummy_vdd` y
+`dri_irq_num=0` con `irq_pull_type=0`, mientras que la brújula usa el raíl real
+`/pmic/client/sensor_vddio` y DRI 89 con pull 3. El firmware ADSP contiene la
+cadena `i2c_power_on failure`. La hipótesis viva pasa a ser que la entrada de
+registro del STK31610 es una plantilla de placa de referencia que no describe
+esta placa, no que falte el sensor.
 
 Asimetría medida entre ramas: pmOS deja `i2c_hub_4` deshabilitado en el AP y da
 ese pinctrl al DSP (`pinctrl-0 = <&hub_i2c4_data_clk>`); esta rama lo habilita

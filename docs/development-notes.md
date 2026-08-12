@@ -290,28 +290,46 @@ maestros**. No volver a plantear un driver IIO mainline para el STK31610: no
 tiene a qué enlazarse. Tampoco buscar el mapa de registros del STK31610/STK3A6X:
 la falta de datasheet nunca fue el bloqueo.
 
-**Ojo con la numeración de buses del SSC.** No es transferible entre dominios:
-el LSM6DSO va por SPI (`bus_type=3`, `bus_instance=1`) y el AK0991x por I²C
-(`bus_instance=2`, 0x0c). Al habilitar `i2c_hub_2` en el AP no apareció 0x0c,
-así que `bus_instance` 2 **no** es el SE2 del hub. La coincidencia para 3/4 se
-apoya en el DTS stock, no en la aritmética de índices; comprobar siempre contra
-el árbol Samsung antes de asumir que `bus_instance N` es el SE N.
+**La invisibilidad desde el AP no prueba ausencia, y el control lo demuestra.**
+La brújula AK0991x funciona (rumbo vivo 127–134°) y está en I²C del SSC
+(`bus_instance=2`, 0x0c); sin embargo, al habilitar `i2c_hub_2` en el AP no
+aparece 0x0c por ninguna parte. O sea: un sensor SSC perfectamente funcional es
+igual de invisible para el AP que el ALS. Los sensores del SSC cuelgan del I²C
+propio del DSP y `bus_instance` **no** es el índice de SE del hub. Corolario: el
+NAK de 0x48 cierra la vía AP, pero no autoriza a concluir que el chip no esté
+poblado ni sin alimentar. El fallo del ALS es del lado SSC.
 
-**Bajo Ubuntu no funciona ningún sensor I²C del SSC, sólo el de SPI.**
-`gdbus introspect` sobre `net.hadess.SensorProxy` no lista la interfaz
-`.Compass`: la brújula no está expuesta, aunque en pmOS daba rumbo real. El
-acelerómetro y el giroscopio, que son los que cuelgan de SPI, sí funcionan. Esto
-convierte «el ALS no da lux» en un caso particular de un fallo más amplio, y es
-la pista viva que queda: no tratar el ALS como una anomalía aislada.
+**Cómo comprobar la brújula sin equivocarse** (se falló una vez): la interfaz
+vive en el objeto `/net/hadess/SensorProxy/Compass`, no en
+`/net/hadess/SensorProxy`; introspeccionar el objeto padre no la lista y hace
+parecer que no existe. Además, reclamar sensores desde SSH devuelve
+`Not Authorized` porque la sesión no es «activa» para polkit: hace falta una
+regla temporal en `/etc/polkit-1/rules.d/` para
+`net.hadess.SensorProxy.claim-sensor`, y quitarla al terminar.
+
+**La comparación útil es brújula (va) contra ALS (no va)**, porque comparten
+transporte, registro y DRI:
+
+| campo | `ak0991x_0` (funciona) | `stk31610_0/1` (no) |
+|---|---|---|
+| `num_rail` | 1 | 2 |
+| `vddio_rail` | `/pmic/client/sensor_vddio` | `/pmic/client/dummy_vdd` |
+| `vdd_rail` | ausente | `/pmic/client/dummy_vdd` |
+| `dri_irq_num` | 89 | **0** |
+| `irq_pull_type` | 3 | **0** |
+
+El ALS es el único que pide raíles `dummy_vdd` y un DRI 0 con pull 0, que tiene
+toda la pinta de plantilla de placa de referencia sin rellenar — y el firmware
+ADSP contiene justamente la cadena de error `i2c_power_on failure`. Esa es la
+hipótesis viva: no que falte el chip, sino que su entrada de registro no
+describe esta placa.
 
 Una diferencia concreta frente a pmOS, por si se retoma: pmOS deja `i2c_hub_4`
 **deshabilitado** en el AP y le da ese pinctrl al DSP con
 `pinctrl-0 = <&hub_i2c4_data_clk>` en `&remoteproc_adsp`, mientras que esta rama
 habilita `i2c_hub_4` para el MAX77816 del teclado y borra el pinctrl del ADSP
-entero. `stk31610_1` está configurado justo en ese `bus_instance` 4. Aun así, el
-ALS tampoco daba lux en pmOS con el SE4 en manos del SSC, así que devolvérselo
-no es por sí solo la solución — pero es la única asimetría de propiedad medida
-entre las dos ramas.
+entero. Aun así, el ALS tampoco daba lux en pmOS, así que devolver el SE4 no es
+por sí solo la solución.
 
 Dos lecciones más allá de este fallo:
 
