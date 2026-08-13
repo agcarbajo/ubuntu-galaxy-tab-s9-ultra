@@ -410,9 +410,25 @@ class PairingService(dbus.service.Object):
                 self.connect_failures.pop(path, None)
                 if self.pairing:
                     self.repairing_bond = False
-            dbus.Interface(
-                self.bus.get_object(BLUEZ, path), PROPERTIES_IFACE
-            ).Set(DEVICE_IFACE, "Trusted", dbus.Boolean(True))
+            try:
+                dbus.Interface(
+                    self.bus.get_object(BLUEZ, path), PROPERTIES_IFACE
+                ).Set(DEVICE_IFACE, "Trusted", dbus.Boolean(True))
+            except dbus.DBusException as error:
+                # RemoveDevice can invalidate the object between the managed
+                # object snapshot above and this write.  The next tick will
+                # consider BlueZ's replacement object; do not let the stale
+                # path escape through the GLib callback as a traceback.
+                if error.get_dbus_name() in {
+                    "org.bluez.Error.DoesNotExist",
+                    "org.freedesktop.DBus.Error.UnknownObject",
+                }:
+                    return
+                print(
+                    f"Could not trust S Pen: {error.get_dbus_name()}",
+                    flush=True,
+                )
+                return
             self.finish_pairing()
             # The pen only advertises reliably after the garage wakes it.  A
             # disconnected, undocked bond is the normal sleeping state; do

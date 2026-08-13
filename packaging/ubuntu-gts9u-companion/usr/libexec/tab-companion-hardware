@@ -25,6 +25,7 @@ INTERFACE = BUS_NAME
 KEYBOARD_PREFIX = "Book Cover Keyboard"
 PEN_NAME = "Wacom EMR Digitizer"
 BLUEZ = "org.bluez"
+BLUEZ_ADAPTER = "org.bluez.Adapter1"
 BLUEZ_DEVICE = "org.bluez.Device1"
 BLUEZ_GATT = "org.bluez.GattCharacteristic1"
 DBUS_PROPERTIES = "org.freedesktop.DBus.Properties"
@@ -399,6 +400,7 @@ class HardwareService:
         self.ble_gatt_failures = 0
         self.ble_next_recovery = 0.0
         self.ble_next_battery_read = 0.0
+        self.bluetooth_powered = False
         self.remote_synced = None
         self._init_spen_ble()
         self.settings.connect(
@@ -517,9 +519,45 @@ class HardwareService:
                 signal_name="PropertiesChanged",
                 path_keyword="path",
             )
+            self._refresh_bluetooth_powered()
         except dbus.DBusException:
             self.system_bus = None
             self.bluez_manager = None
+            self.bluetooth_powered = False
+
+    def _remote_effective(self):
+        return (
+            self.bluetooth_powered
+            and self.settings.get_boolean("spen-remote-enabled")
+        )
+
+    def _set_bluetooth_powered(self, powered):
+        powered = bool(powered)
+        if powered == self.bluetooth_powered:
+            return
+        self.bluetooth_powered = powered
+        self.remote_synced = None
+        if not powered:
+            self._ble_disconnected()
+            if self.virtual_pointer is not None and self.pen_pressed:
+                self.virtual_pointer.button(False)
+            self.pen_pressed = False
+        self._sync_remote_control()
+
+    def _refresh_bluetooth_powered(self):
+        if self.bluez_manager is None:
+            self._set_bluetooth_powered(False)
+            return
+        try:
+            objects = self.bluez_manager.GetManagedObjects()
+        except dbus.DBusException:
+            self._set_bluetooth_powered(False)
+            return
+        self._set_bluetooth_powered(any(
+            BLUEZ_ADAPTER in interfaces
+            and bool(interfaces[BLUEZ_ADAPTER].get("Powered", False))
+            for interfaces in objects.values()
+        ))
 
     def _remote_enabled_changed(self, *_args):
         self.remote_synced = None
@@ -548,7 +586,7 @@ class HardwareService:
         self._refresh_spen_ble()
 
     def _sync_remote_control(self):
-        enabled = self.settings.get_boolean("spen-remote-enabled")
+        enabled = self._remote_effective()
         if self.remote_synced == enabled or self.system_bus is None:
             return
         try:
@@ -605,7 +643,7 @@ class HardwareService:
         return name.startswith("SPEN") and SPEN_SERVICES <= services
 
     def _refresh_spen_ble(self):
-        if not self.settings.get_boolean("spen-remote-enabled"):
+        if not self._remote_effective():
             return
         if self.bluez_manager is None:
             return
@@ -734,6 +772,10 @@ class HardwareService:
         self.ble_next_battery_read = 0.0
 
     def _bluez_properties_changed(self, interface, changed, _invalidated, path=None):
+        if interface == BLUEZ_ADAPTER and "Powered" in changed:
+            self._set_bluetooth_powered(changed["Powered"])
+            GLib.idle_add(self.sample)
+            return
         if interface == BLUEZ_DEVICE and path == self.ble_device_path:
             if changed.get("Connected") is not None and not changed["Connected"]:
                 self._ble_disconnected(path)
@@ -756,7 +798,8 @@ class HardwareService:
 
     def _spen_ble_raw_sensor_data(self, value):
         if (
-            self.settings.get_string("spen-remote-mode") != "pointer"
+            not self._remote_effective()
+            or self.settings.get_string("spen-remote-mode") != "pointer"
             or (
                 self.wacom is not None
                 and read_text(self.wacom / "pen_docked") == "1"
@@ -813,7 +856,7 @@ class HardwareService:
         self._pointer_move(yaw, pitch)
 
     def _spen_ble_button_data(self, value):
-        if not self.settings.get_boolean("spen-remote-enabled"):
+        if not self._remote_effective():
             return
         pointer_mode = self.settings.get_string("spen-remote-mode") == "pointer"
         offset = 0
@@ -1087,6 +1130,8 @@ class HardwareService:
         return GLib.SOURCE_CONTINUE
 
     def _pen_button(self, pressed):
+        if not self._remote_effective():
+            return
         if self.settings.get_string("spen-remote-mode") == "pointer":
             if self.virtual_pointer is None or pressed == self.pen_pressed:
                 return
@@ -1203,6 +1248,7 @@ class HardwareService:
         if self.wacom is None:
             self.wacom = self._find_wacom()
         self._apply_pen_options()
+        self._refresh_bluetooth_powered()
         self._sync_remote_control()
         self._ensure_keyboard_reader()
         self._ensure_pen_reader()
@@ -1238,9 +1284,9 @@ class HardwareService:
             RemappingAvailable=self.virtual_keyboard is not None and self.keyboard_fd is not None,
             LastSpecialKey=self.state.LastSpecialKey,
             ButtonActionsAvailable=self.pen_fd is not None or self.ble_connected,
-            BluetoothAvailable=Path("/sys/class/bluetooth/hci0").exists(),
+            BluetoothAvailable=self.bluetooth_powered,
             GestureAvailable=(
-                self.settings.get_boolean("spen-remote-enabled")
+                self._remote_effective()
                 and
                 self.ble_connected
                 and self.ble_gatt_ready

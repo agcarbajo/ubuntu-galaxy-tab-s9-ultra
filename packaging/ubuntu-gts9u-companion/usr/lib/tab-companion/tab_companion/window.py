@@ -162,6 +162,7 @@ class CompanionWindow(Adw.ApplicationWindow):
         self.hardware = HardwareClient()
         self.action_buttons = {}
         self.key_rows = {}
+        self._updating_remote_switch = False
         self.hardware.connect("state-changed", self._update_hardware)
         self.settings.connect("changed::known-keyboard-model", self._known_keyboard_changed)
         self.settings.connect("changed::known-keyboard-name", self._known_keyboard_changed)
@@ -224,10 +225,17 @@ class CompanionWindow(Adw.ApplicationWindow):
             subtitle=_("When disabled, Bluetooth disconnects and the S Pen remains available for writing."),
         )
         self.remote_switch.add_prefix(Gtk.Image(icon_name="bluetooth-active-symbolic"))
-        self.settings.bind(
-            "spen-remote-enabled", self.remote_switch, "active",
-            Gio.SettingsBindFlags.DEFAULT,
+        self.remote_switch.connect(
+            "notify::active", self._remote_switch_changed
         )
+        self.bluetooth_warning = Adw.ActionRow(
+            title=_("Bluetooth is turned off"),
+            subtitle=_("Turn on Bluetooth to use S Pen remote features."),
+        )
+        self.bluetooth_warning.add_prefix(
+            Gtk.Image(icon_name="bluetooth-disabled-symbolic")
+        )
+        remote.add(self.bluetooth_warning)
         remote.add(self.remote_switch)
         self.remote_mode_row = Adw.ComboRow(
             title=_("Remote mode"),
@@ -341,6 +349,11 @@ class CompanionWindow(Adw.ApplicationWindow):
             "spen-remote-mode", "pointer" if row.get_selected() == 1 else "gestures"
         )
 
+    def _remote_switch_changed(self, row, _param):
+        if self._updating_remote_switch or not self.hardware.state.bluetooth_available:
+            return
+        self.settings.set_boolean("spen-remote-enabled", row.get_active())
+
     def _remote_settings_changed(self, *_args):
         if hasattr(self, "remote_mode_row"):
             expected = 1 if self.settings.get_string("spen-remote-mode") == "pointer" else 0
@@ -350,8 +363,15 @@ class CompanionWindow(Adw.ApplicationWindow):
             self._update_hardware()
 
     def _update_remote_sections(self):
-        enabled = self.settings.get_boolean("spen-remote-enabled")
+        bluetooth = self.hardware.state.bluetooth_available
+        requested = self.settings.get_boolean("spen-remote-enabled")
+        enabled = bluetooth and requested
         pointer = self.settings.get_string("spen-remote-mode") == "pointer"
+        self._updating_remote_switch = True
+        self.remote_switch.set_active(enabled)
+        self._updating_remote_switch = False
+        self.remote_switch.set_sensitive(bluetooth)
+        self.bluetooth_warning.set_visible(not bluetooth)
         self.remote_mode_row.set_sensitive(enabled)
         self.battery_group.set_visible(enabled)
         self.gesture_group.set_visible(enabled and not pointer)
@@ -645,7 +665,11 @@ class CompanionWindow(Adw.ApplicationWindow):
 
     def _update_hardware(self, *_args):
         state = self.hardware.state
-        remote_enabled = self.settings.get_boolean("spen-remote-enabled")
+        self._update_remote_sections()
+        remote_enabled = (
+            state.bluetooth_available
+            and self.settings.get_boolean("spen-remote-enabled")
+        )
         if not remote_enabled:
             status = _("Inserted") if state.pen_state == "docked" else _("Not inserted")
         else:
@@ -677,7 +701,8 @@ class CompanionWindow(Adw.ApplicationWindow):
             self.battery_bar.set_text(_("Unknown"))
             self.battery_row.set_subtitle(_("Insert the S Pen to read its battery"))
         self.haptics_test.set_subtitle(
-            _("Motor ready") if state.haptics_available
+            _("Reproduces exactly one on-screen keyboard key press.")
+            if state.haptics_available
             else _("The updated kernel is required")
         )
         self.haptics_test.set_sensitive(state.haptics_available)

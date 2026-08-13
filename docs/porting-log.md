@@ -5088,3 +5088,35 @@ portugués; la lógica 24/42/66 ms de la 0.10.6 no cambia.
 ubuntu-gts9u-companion_0.10.7_all.deb
 dabd01e77dfca45e1d59e1699a17602352389551588787eca1927c5bf4e86c91
 ```
+
+## Sesión 78 — funciones remotas condicionadas por Bluetooth
+
+Fecha: 2026-08-13. `BluetoothAvailable` comprobaba únicamente la existencia de
+`/sys/class/bluetooth/hci0`, que permanece aunque el usuario apague el adaptador.
+El backend consulta ahora `org.bluez.Adapter1.Powered` y escucha su cambio por
+D-Bus. La disponibilidad efectiva es la conjunción de ese estado y la
+preferencia `spen-remote-enabled`.
+
+Al apagar Bluetooth se limpian GATT y el puntero, el servicio privilegiado deja
+de conectar y la UI muestra el mismo estado reducido que con las funciones
+remotas desactivadas. El interruptor aparece apagado y no se puede accionar; una
+fila explica que es necesario activar Bluetooth. El valor GSettings no se
+sobrescribe. Al recibir `Powered=true`, backend y ventana restauran de inmediato
+ese valor guardado: desactivado permanece desactivado y activado vuelve a
+habilitar modos, batería y acciones. También se bloquean los eventos tardíos de
+botón o sensor raw mientras el estado efectivo es falso.
+
+La prueba física midió 0,23 s desde la orden de apagado hasta la propiedad D-Bus
+falsa. El encendido completo del controlador tardó 1,8 s; la restauración se
+produjo en la misma señal `Powered=true`. Se verificaron ambos valores guardados
+y el S Pen regresó a `Connected`, Battery Level 70 % y gestos disponibles. Un
+`UnknownObject` observado cuando `RemoveDevice` invalidaba el vínculo entre la
+lectura y la escritura de `Trusted` queda tratado como la carrera esperada, sin
+traza ni interrupción del bucle GLib. Un segundo ciclo físico con esa corrección
+terminó sin traceback, conservó la preferencia activa y volvió a publicar
+Bluetooth disponible, Battery Level 90 % y gestos disponibles.
+
+```text
+ubuntu-gts9u-companion_0.10.8_all.deb
+bf9e04819278947039d29d26710bce277ea8f8287aa0868722530637bc78781b
+```

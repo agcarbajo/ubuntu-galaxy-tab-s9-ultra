@@ -41,8 +41,8 @@ El servicio sólo la acepta cuando coinciden el acoplamiento físico, el nombre
 SPEN y los UUID FD6C/FEF5. El resultado se guarda como enlazado y confiable sin
 PIN ni interacción, como en One UI.
 
-Si BlueZ conserva un enlace que el lápiz ya no reconoce, cuatro intentos de
-conexión fallidos con el S Pen físicamente insertado activan una recuperación
+Si BlueZ conserva un enlace que el lápiz ya no reconoce, dos intentos de
+conexión fallidos y acotados con el S Pen físicamente insertado activan una recuperación
 limitada a ese dispositivo: se descarta el enlace obsoleto y se repite el flujo
 del garaje. El servicio también espera al adaptador durante el arranque.
 
@@ -54,6 +54,15 @@ siguen funcionando. La preferencia se guarda también bajo `/var/lib` para que
 se respete antes de iniciar sesión. Al reactivarla puede ser necesario insertar
 el lápiz: el garaje es el único mecanismo fiable para despertarlo y hacer que
 vuelva a anunciarse.
+
+El estado de Bluetooth es una condición aparte de esa preferencia. Al apagar el
+adaptador, el backend desconecta las funciones remotas, libera cualquier clic
+del puntero y la app oculta Batería, Acciones aéreas y Puntero como si estuvieran
+desactivadas. El interruptor queda apagado y bloqueado junto a un aviso para
+encender Bluetooth, pero no se modifica `spen-remote-enabled`. La señal
+`Powered` de BlueZ se procesa directamente: al volver a encender el adaptador,
+la interfaz y el servicio recuperan de inmediato el valor guardado. Si estaba
+desactivado continúa desactivado; si estaba activo vuelve a activarse.
 
 «Ignorar los toques con el dedo durante el hover» comparte la proximidad Wacom
 con el controlador Goodix. En cuanto entra `BTN_TOOL_PEN`, el touchscreen
@@ -106,8 +115,8 @@ GNOME Shell 46 no ofrece una preferencia genérica de hápticos para su teclado 
 pantalla. La extensión incluida observa únicamente pulsaciones táctiles sobre
 actores `keyboard-key` y solicita un pulso al backend. Como el GPIO sólo permite
 encendido/apagado, Suave/Media/Fuerte ajustan la duración (24/42/66 ms), no la
-amplitud eléctrica. La página Vibración permite apagarlo y contiene un botón
-temporal de prueba.
+amplitud eléctrica. La página Vibración permite apagarlo y su botón de prueba
+reproduce el nivel seleccionado con exactamente el mismo pulso que una tecla.
 
 La vibración de notificaciones es independiente de la extensión de Shell. El
 servicio de sesión observa las llamadas estándar `Notify`, agrupa duplicados o
