@@ -15,3 +15,9 @@
 *.dtb binary
 *.dtbo binary
 *.bin binary
+
+# Unified diffs legitimately prefix blank context lines with one space and
+# preserve context indentation after their marker. Validate the carried code
+# with checkpatch instead of treating those markers as defects in the patch
+# container itself.
+*.patch whitespace=-blank-at-eol,-space-before-tab
