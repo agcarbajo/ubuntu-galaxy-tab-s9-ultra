@@ -375,6 +375,7 @@ class CompanionWindow(Adw.ApplicationWindow):
         group.add(enabled)
         self.haptics_strength = Adw.ComboRow(
             title=_("Strength"),
+            subtitle=_("Used by the on-screen keyboard and the test button."),
             model=Gtk.StringList.new([_("Light"), _("Medium"), _("Strong")]),
         )
         strength = min(3, max(1, self.settings.get_int("keyboard-haptics-strength")))
@@ -382,8 +383,8 @@ class CompanionWindow(Adw.ApplicationWindow):
         self.haptics_strength.connect("notify::selected", self._haptics_strength_selected)
         group.add(self.haptics_strength)
         self.haptics_test = Adw.ActionRow(
-            title=_("Test vibration"),
-            subtitle=_("Uses the selected keyboard vibration strength."),
+            title=_("Test selected strength"),
+            subtitle=_("Reproduces exactly one on-screen keyboard key press."),
         )
         test = Gtk.Button(label=_("Test"), valign=Gtk.Align.CENTER, css_classes=["suggested-action"])
         test.connect("clicked", self._test_haptics)

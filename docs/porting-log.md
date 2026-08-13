@@ -5074,3 +5074,17 @@ la intensidad elegida para el teclado.
 ubuntu-gts9u-companion_0.10.6_all.deb
 0dc708f72abc8fa95d77a7ac5a3a21ea6f56109d2940e98d8d81f8c3851a945c
 ```
+
+## Sesión 77 — texto explícito para la prueba de intensidad
+
+Fecha: 2026-08-13. El selector Intensidad indica ahora que su valor se aplica
+al teclado en pantalla y al botón de prueba. La fila se titula «Probar intensidad
+seleccionada» y explica que reproduce exactamente la vibración de una pulsación
+del teclado en pantalla. El botón conserva la etiqueta breve «Probar». Los
+textos equivalentes se actualizaron en español, francés, alemán, italiano y
+portugués; la lógica 24/42/66 ms de la 0.10.6 no cambia.
+
+```text
+ubuntu-gts9u-companion_0.10.7_all.deb
+dabd01e77dfca45e1d59e1699a17602352389551588787eca1927c5bf4e86c91
+```
