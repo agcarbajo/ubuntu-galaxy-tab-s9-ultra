@@ -238,7 +238,6 @@ class CompanionWindow(Adw.ApplicationWindow):
         )
         self.remote_mode_row.connect("notify::selected", self._remote_mode_selected)
         remote.add(self.remote_mode_row)
-        page.add(remote)
 
         status = Adw.PreferencesGroup(title=_("Battery"))
         self.battery_group = status
@@ -275,6 +274,7 @@ class CompanionWindow(Adw.ApplicationWindow):
         )
         behaviour.add(dock_disable)
         page.add(behaviour)
+        page.add(remote)
 
         gestures = Adw.PreferencesGroup(
             title=_("Air actions"),
@@ -358,16 +358,6 @@ class CompanionWindow(Adw.ApplicationWindow):
 
     def _haptics_page(self):
         page = self._page()
-        hero = Adw.StatusPage(
-            icon_name="phone-symbolic",
-            title=_("Vibration"),
-            description=_("Configure tactile feedback for the on-screen keyboard and notifications."),
-        )
-        hero.set_vexpand(False)
-        hero_group = Adw.PreferencesGroup()
-        hero_group.add(hero)
-        page.add(hero_group)
-
         group = Adw.PreferencesGroup(
             title=_("On-screen keyboard"),
             description=_("The vibration motor has a fixed intensity; strength changes the pulse duration."),

@@ -5041,3 +5041,21 @@ devolvieron Battery Level `[100, 0]`, Mode `[16]` y Tab Companion publicó
 ubuntu-gts9u-companion_0.10.4_all.deb
 70e3d50715782081c1e0641178bced1505def8437487bed8cd6955b44619f5d9
 ```
+
+## Sesión 75 — orden de controles del S Pen y página de vibración compacta
+
+Fecha: 2026-08-13. La página S Pen presenta ahora Batería y Comportamiento antes
+de Funciones remotas. Así, los dos ajustes independientes del digitalizador se
+leen antes de elegir si Bluetooth se usa para Gestos o Puntero. No cambia la
+lógica, los valores guardados ni la disponibilidad dinámica de cada grupo.
+
+La página Vibración elimina la cabecera `Adw.StatusPage` con el icono de
+teléfono. Teclado en pantalla y Notificaciones pasan a ser el contenido inicial,
+evitando la altura vacía y el desplazamiento vertical innecesario observado a
+960 × 760. El paquete mantuvo las validaciones estrictas de GSettings, Desktop
+Entry y AppStream.
+
+```text
+ubuntu-gts9u-companion_0.10.5_all.deb
+1b8455b62ce72db71d18300c5d1ff0313b4ef7366c2855f41c5bc8f28d81c0d9
+```
