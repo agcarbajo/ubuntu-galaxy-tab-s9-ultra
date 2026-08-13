@@ -4982,3 +4982,31 @@ Puntero, Raw Sensor Data quedó suscrito y entregó una muestra nueva.
 ubuntu-gts9u-companion_0.10.2_all.deb
 215450fcdff6a6ccf0f90da6dee95ac07064e5e62545122a09923dcf9ead7c7b
 ```
+
+## Sesión 73 — clic izquierdo mantenido en modo puntero
+
+Fecha: 2026-08-13. Raw Sensor Data entregó 1094 paquetes de 13 bytes durante
+45 segundos: marcador y seis enteros de acelerómetro/giroscopio, sin campo de
+botón. Button State no notificó durante esa captura en `SENSOR_ON`. El código
+de PenMouse S confirma asimismo que su SDK registra movimiento y botón como
+unidades independientes y conserva los eventos `ACTION_DOWN`/`ACTION_UP` para
+construir el gesto pulsado.
+
+Linux ya entrega el botón lateral por el digitalizador como `BTN_STYLUS`, pero
+`_pen_button` lo enviaba siempre al temporizador simple/doble/larga de Gestos.
+En Puntero se enruta ahora directamente al ratón virtual: down produce
+`BTN_LEFT=1`, el movimiento raw continúa sin soltarlo y up produce
+`BTN_LEFT=0`. Esto permite clic normal y arrastre continuo. Cambiar de modo,
+desactivar las funciones remotas o perder el lector fuerza una liberación para
+evitar que el botón quede atascado.
+
+Una prueba aislada del backend confirmó la secuencia exacta
+`[('BTN_LEFT', 1), ('BTN_LEFT', 0)]` y que eventos duplicados no generan bordes
+adicionales. La 0.10.3 quedó instalada con Puntero activo, vínculo GATT sano y
+una nueva lectura real de batería del 40 %. La validación física del arrastre
+queda pendiente de la prueba interactiva de la usuaria.
+
+```text
+ubuntu-gts9u-companion_0.10.3_all.deb
+7a7c8398382eccbeda82af20d0a4f3e6c73f8a63291bab704d684b0b12fbeb6f
+```

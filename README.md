@@ -46,7 +46,7 @@ The evidence and technical limitations for every component are documented in
 
 ## Tab Companion
 
-Tab Companion 0.10.2 is preinstalled and provides:
+Tab Companion 0.10.3 is preinstalled and provides:
 
 - S Pen battery, charging and dock status;
 - automatic dock-initiated BLE pairing, air gestures and an air-pointer mode;

@@ -1005,6 +1005,13 @@ class HardwareService:
         )
 
     def _close_pen_reader(self):
+        if (
+            self.pen_pressed
+            and self.settings.get_string("spen-remote-mode") == "pointer"
+            and self.virtual_pointer is not None
+        ):
+            self.virtual_pointer.button(False)
+            self.pen_pressed = False
         if self.pen_fd is not None:
             os.close(self.pen_fd)
             self.pen_fd = None
@@ -1080,6 +1087,12 @@ class HardwareService:
         return GLib.SOURCE_CONTINUE
 
     def _pen_button(self, pressed):
+        if self.settings.get_string("spen-remote-mode") == "pointer":
+            if self.virtual_pointer is None or pressed == self.pen_pressed:
+                return
+            self.pen_pressed = pressed
+            self.virtual_pointer.button(pressed)
+            return
         if pressed:
             if self.pen_pressed:
                 return

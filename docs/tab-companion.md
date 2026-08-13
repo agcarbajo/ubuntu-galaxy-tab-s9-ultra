@@ -81,7 +81,11 @@ proyección sobre la gravedad produce el eje horizontal y la perpendicular el
 vertical. Esto compensa cualquier giro axial del lápiz; una zona muerta elimina
 el sesgo en reposo. El resultado se convierte en un
 ratón relativo nativo mediante `uinput`, sin overlay ni servicio de
-accesibilidad. El botón es el clic principal y permite arrastrar. La app expone
+accesibilidad. En modo Puntero, `BTN_STYLUS` del digitalizador se convierte en
+`BTN_LEFT`: pulsar y soltar produce un clic, mientras que mantenerlo conserva
+el botón izquierdo pulsado durante el movimiento para arrastrar ventanas u
+otros elementos. Si el lector desaparece o se cambia de modo, fuerza la
+liberación para evitar un clic atascado. La app expone
 sensibilidad, suavizado y aceleración. La dirección de ambos ejes se calibra
 físicamente y el horizontal recibe una ganancia adicional de 1,6× para cubrir
 la relación de aspecto de la pantalla; al volver a gestos detiene el canal raw
