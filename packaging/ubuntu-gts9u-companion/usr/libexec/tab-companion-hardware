@@ -8,6 +8,7 @@ import fcntl
 from glob import glob
 import os
 from pathlib import Path
+import re
 import struct
 import subprocess
 import time
@@ -20,7 +21,7 @@ from gi.repository import Gio, GLib
 BUS_NAME = "io.github.agcarbajo.TabCompanion.Hardware"
 OBJECT_PATH = "/io/github/agcarbajo/TabCompanion/Hardware"
 INTERFACE = BUS_NAME
-KEYBOARD_NAME = "Book Cover Keyboard Slim (EF-DX920)"
+KEYBOARD_PREFIX = "Book Cover Keyboard"
 PEN_NAME = "Wacom EMR Digitizer"
 BLUEZ = "org.bluez"
 BLUEZ_DEVICE = "org.bluez.Device1"
@@ -33,6 +34,19 @@ SPEN_SERVICES = {
 SPEN_BATTERY_UUID = "5a87b4ef-3bfa-76a8-e642-92933c31434f"
 SPEN_BUTTON_UUID = "6c290d2e-1c03-aca1-ab48-a9b908bae79e"
 SPEN_MODE_UUID = "aca1ab48-08ba-e79e-ab48-a9b9e6429293"
+KEYBOARD_MODELS = {
+    "EF-DX900": "Galaxy Tab S8 Ultra Book Cover Keyboard",
+    "EF-DX910": "Galaxy Tab S9 Ultra Book Cover Keyboard Slim",
+    "EF-DX915": "Galaxy Tab S9 Ultra Book Cover Keyboard",
+    "EF-DX920": "Galaxy Tab S10 Ultra | S9 Ultra Book Cover Keyboard Slim (AI Key)",
+    "EF-DX925": "Galaxy Tab S10 Ultra | S9 Ultra Book Cover Keyboard (AI Key)",
+}
+KEYBOARD_PROTOCOL_MODELS = {
+    0xFE: "EF-DX900",
+    0xF9: "EF-DX915",
+    0xD3: "EF-DX925",
+    0xD6: "EF-DX920",
+}
 MAPPINGS = {
     "key-galaxy-ai", "key-dex", "key-finder", "key-settings",
     "key-fn-f1", "key-fn-f2", "key-fn-f3", "key-fn-f4", "key-fn-f5",
@@ -96,16 +110,15 @@ ACTION_KEYS = {
 INTROSPECTION = """
 <node>
   <interface name="io.github.agcarbajo.TabCompanion.Hardware">
-    <method name="BeginKeyCapture"><arg name="mapping" type="s" direction="in"/><arg name="accepted" type="b" direction="out"/></method>
-    <method name="CancelKeyCapture"/>
     <method name="TriggerMapping"><arg name="mapping" type="s" direction="in"/><arg name="accepted" type="b" direction="out"/></method>
     <property name="PenState" type="s" access="read"/>
     <property name="PenOrientation" type="s" access="read"/>
     <property name="PenBattery" type="i" access="read"/>
     <property name="PenCharging" type="b" access="read"/>
     <property name="KeyboardPresent" type="b" access="read"/>
+    <property name="KeyboardModel" type="s" access="read"/>
+    <property name="KeyboardName" type="s" access="read"/>
     <property name="RemappingAvailable" type="b" access="read"/>
-    <property name="CapturingKey" type="s" access="read"/>
     <property name="LastSpecialKey" type="s" access="read"/>
     <property name="ButtonActionsAvailable" type="b" access="read"/>
     <property name="BluetoothAvailable" type="b" access="read"/>
@@ -122,8 +135,9 @@ class State:
     PenBattery: int = -1
     PenCharging: bool = False
     KeyboardPresent: bool = False
+    KeyboardModel: str = ""
+    KeyboardName: str = ""
     RemappingAvailable: bool = False
-    CapturingKey: str = ""
     LastSpecialKey: str = ""
     ButtonActionsAvailable: bool = False
     BluetoothAvailable: bool = False
@@ -132,8 +146,9 @@ class State:
 
 SIGNATURES = {
     "PenState": "s", "PenOrientation": "s", "PenBattery": "i",
-    "PenCharging": "b", "KeyboardPresent": "b", "RemappingAvailable": "b",
-    "CapturingKey": "s", "LastSpecialKey": "s", "ButtonActionsAvailable": "b",
+    "PenCharging": "b", "KeyboardPresent": "b", "KeyboardModel": "s",
+    "KeyboardName": "s", "RemappingAvailable": "b",
+    "LastSpecialKey": "s", "ButtonActionsAvailable": "b",
     "BluetoothAvailable": "b",
     "GestureAvailable": "b",
 }
@@ -238,9 +253,6 @@ class HardwareService:
         self.pen_motion = []
         self.pen_motion_energy = 0
         self.pen_motion_active = False
-        self.capture_mapping = ""
-        self.capture_timer = None
-        self.capture_passthrough = set()
         self.virtual_watch = None
         self.system_bus = None
         self.bluez_manager = None
@@ -424,16 +436,29 @@ class HardwareService:
         return Path(matches[0]).parent if matches else None
 
     @staticmethod
-    def _keyboard_present():
-        return any(
-            "attached=1" in read_text(path) and "connected=1" in read_text(path)
-            for path in glob("/sys/bus/i2c/devices/*/diagnostics")
-        )
+    def _keyboard_info():
+        for path in glob("/sys/bus/i2c/devices/*/diagnostics"):
+            diagnostic = read_text(path)
+            if "attached=1" not in diagnostic or "connected=1" not in diagnostic:
+                continue
+            match = re.search(r"\bmodel=0x([0-9a-fA-F]+)\b", diagnostic)
+            protocol = int(match.group(1), 16) if match else -1
+            model = KEYBOARD_PROTOCOL_MODELS.get(protocol, "")
+            if not model:
+                for event in glob("/sys/class/input/event*"):
+                    input_name = read_text(Path(event) / "device/name")
+                    model_match = re.search(r"\((EF-DX\d+)\)", input_name)
+                    if input_name.startswith(KEYBOARD_PREFIX) and model_match:
+                        model = model_match.group(1)
+                        break
+            name = KEYBOARD_MODELS.get(model, "Samsung Book Cover Keyboard")
+            return True, model, name
+        return False, "", ""
 
     @staticmethod
     def _find_keyboard_event():
         for path in glob("/sys/class/input/event*"):
-            if read_text(Path(path) / "device/name") == KEYBOARD_NAME:
+            if read_text(Path(path) / "device/name").startswith(KEYBOARD_PREFIX):
                 return "/dev/input/" + Path(path).name
         return None
 
@@ -512,21 +537,14 @@ class HardwareService:
             _sec, _usec, event_type, code, value = event
             suppress = False
             if event_type == EV_KEY:
-                if code in self.capture_passthrough:
-                    if value == 0:
-                        self.capture_passthrough.discard(code)
-                elif value == 1 and self.capture_mapping:
-                    self.capture_passthrough.add(code)
-                    self._capture_key(code)
-                else:
-                    mapping = self._mapping_for_code(code)
-                    if mapping and self.settings.get_string(mapping) != "none":
-                        suppress = True
-                        if value == 1:
-                            self._replace_dynamic(LastSpecialKey=f"{mapping}:{code}")
-                            self.execute_mapping(mapping)
-                    elif mapping and value == 1:
+                mapping = self._mapping_for_code(code)
+                if mapping and self.settings.get_string(mapping) != "none":
+                    suppress = True
+                    if value == 1:
                         self._replace_dynamic(LastSpecialKey=f"{mapping}:{code}")
+                        self.execute_mapping(mapping)
+                elif mapping and value == 1:
+                    self._replace_dynamic(LastSpecialKey=f"{mapping}:{code}")
             if not suppress and self.virtual_keyboard is not None:
                 self.virtual_keyboard.emit(event_type, code, value)
         return GLib.SOURCE_CONTINUE
@@ -534,30 +552,6 @@ class HardwareService:
     def _mapping_for_code(self, code):
         sources = self.settings.get_value("keyboard-source-codes").unpack()
         return next((name for name, source in sources.items() if source == code), None)
-
-    def _capture_key(self, code):
-        sources = self.settings.get_value("keyboard-source-codes").unpack()
-        for mapping, source in list(sources.items()):
-            if source == code and mapping != self.capture_mapping:
-                sources.pop(mapping)
-        sources[self.capture_mapping] = code
-        self.settings.set_value("keyboard-source-codes", GLib.Variant("a{si}", sources))
-        captured = self.capture_mapping
-        self._cancel_capture()
-        self._replace_dynamic(CapturingKey="", LastSpecialKey=f"{captured}:{code}")
-
-    def _cancel_capture(self):
-        self.capture_mapping = ""
-        if self.capture_timer is not None:
-            GLib.source_remove(self.capture_timer)
-            self.capture_timer = None
-
-    def _capture_timeout(self):
-        mapping = self.capture_mapping
-        self.capture_timer = None
-        self.capture_mapping = ""
-        self._replace_dynamic(CapturingKey="", LastSpecialKey=f"capture-timeout:{mapping}")
-        return GLib.SOURCE_REMOVE
 
     def _virtual_output(self, _source, _condition):
         if self.virtual_keyboard is None:
@@ -651,8 +645,15 @@ class HardwareService:
         targets = self.settings.get_value("action-targets").unpack()
         target = targets.get(mapping, "").strip()
         if action == "app" and target:
-            subprocess.Popen(["gtk-launch", target], start_new_session=True)
-            return True
+            app = Gio.DesktopAppInfo.new(target)
+            if app is None:
+                return False
+            try:
+                app.launch([], None)
+                return True
+            except GLib.Error as error:
+                print(f"Cannot launch {target}: {error.message}", flush=True)
+                return False
         if action == "command" and target:
             subprocess.Popen(["sh", "-lc", target], start_new_session=True)
             return True
@@ -679,14 +680,23 @@ class HardwareService:
         battery = self.ble_battery
         if battery < 0 and capacity.isdigit():
             battery = min(100, max(0, int(capacity)))
+        if battery >= 0:
+            self.settings.set_int("last-pen-battery", battery)
+        else:
+            battery = self.settings.get_int("last-pen-battery")
+        keyboard_present, keyboard_model, keyboard_name = self._keyboard_info()
+        if keyboard_present and keyboard_model:
+            self.settings.set_string("known-keyboard-model", keyboard_model)
+            self.settings.set_string("known-keyboard-name", keyboard_name)
         self._publish(State(
             PenState="docked" if docked else ("nearby" if self.ble_connected else ("paired" if self.ble_paired else ("unpaired" if self.wacom else "unavailable"))),
             PenOrientation=orientation if docked else "unknown",
             PenBattery=battery,
             PenCharging=docked and charge in {"charging", "full"},
-            KeyboardPresent=self._keyboard_present(),
+            KeyboardPresent=keyboard_present,
+            KeyboardModel=keyboard_model,
+            KeyboardName=keyboard_name,
             RemappingAvailable=self.virtual_keyboard is not None and self.keyboard_fd is not None,
-            CapturingKey=self.capture_mapping,
             LastSpecialKey=self.state.LastSpecialKey,
             ButtonActionsAvailable=self.pen_fd is not None or self.ble_connected,
             BluetoothAvailable=Path("/sys/class/bluetooth/hci0").exists(),
@@ -714,20 +724,7 @@ class HardwareService:
             )
 
     def method_call(self, _connection, _sender, _path, _interface, method, params, invocation):
-        if method == "BeginKeyCapture":
-            mapping = params.unpack()[0]
-            accepted = mapping in MAPPINGS and self.keyboard_fd is not None
-            if accepted:
-                self._cancel_capture()
-                self.capture_mapping = mapping
-                self.capture_timer = GLib.timeout_add_seconds(8, self._capture_timeout)
-                self._replace_dynamic(CapturingKey=mapping)
-            invocation.return_value(GLib.Variant("(b)", (accepted,)))
-        elif method == "CancelKeyCapture":
-            self._cancel_capture()
-            self._replace_dynamic(CapturingKey="")
-            invocation.return_value(None)
-        elif method == "TriggerMapping":
+        if method == "TriggerMapping":
             mapping = params.unpack()[0]
             invocation.return_value(GLib.Variant("(b)", (self.execute_mapping(mapping),)))
 
@@ -749,7 +746,6 @@ class HardwareService:
         for timer in (self.pen_long_timer, self.pen_single_timer):
             if timer is not None:
                 GLib.source_remove(timer)
-        self._cancel_capture()
         if self.virtual_watch is not None:
             GLib.source_remove(self.virtual_watch)
             self.virtual_watch = None

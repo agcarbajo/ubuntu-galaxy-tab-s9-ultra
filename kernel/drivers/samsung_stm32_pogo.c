@@ -35,6 +35,7 @@
 #define POGO_EVENT_ACCESSORY	5
 
 #define POGO_MAX_PAYLOAD	100
+#define POGO_MODEL_EF_DX925	0xd3
 #define POGO_MODEL_EF_DX920	0xd6
 #define POGO_HALL_LID_OPEN	2
 
@@ -104,6 +105,30 @@ static int samsung_pogo_input_event(struct input_dev *input,
 				    unsigned int type, unsigned int code, int value);
 static void samsung_pogo_set_data_irq(struct samsung_pogo *pogo, bool enable);
 static void samsung_pogo_release_keys(struct samsung_pogo *pogo);
+
+static const char *samsung_pogo_model_name(u8 protocol_model,
+					   const u8 version[4])
+{
+	/* Mirror stm32_read_version() from Samsung's X910 source. */
+	if (protocol_model == 0xd1 || protocol_model == 0xd2)
+		return "Book Cover Keyboard (EF-DX900)";
+	if (protocol_model == 0x03 || protocol_model == POGO_MODEL_EF_DX925 ||
+	    protocol_model == 0xd5)
+		return "Book Cover Keyboard with AI Key (EF-DX925)";
+	if (protocol_model == POGO_MODEL_EF_DX920)
+		return "Book Cover Keyboard Slim with AI Key (EF-DX920)";
+
+	switch (version[1]) {
+	case 0:
+		return "Book Cover Keyboard (EF-DX915)";
+	case 1:
+		return "Book Cover Keyboard Slim (EF-DX910)";
+	case 2:
+		return "Book Cover Keyboard (EF-DX900)";
+	default:
+		return NULL;
+	}
+}
 
 static void samsung_pogo_power_off_locked(struct samsung_pogo *pogo)
 {
@@ -729,7 +754,8 @@ static void samsung_pogo_release_keys(struct samsung_pogo *pogo)
 		input_sync(pogo->input);
 }
 
-static int samsung_pogo_register_input(struct samsung_pogo *pogo)
+static int samsung_pogo_register_input(struct samsung_pogo *pogo,
+				       const char *model_name)
 {
 	struct device *dev = &pogo->client->dev;
 	struct input_dev *input;
@@ -743,7 +769,7 @@ static int samsung_pogo_register_input(struct samsung_pogo *pogo)
 	if (!input)
 		return -ENOMEM;
 
-	input->name = "Book Cover Keyboard Slim (EF-DX920)";
+	input->name = model_name;
 	input->phys = "samsung-pogo/input0";
 	input->dev.parent = dev;
 	input->id.bustype = BUS_I2C;
@@ -853,37 +879,44 @@ static int samsung_pogo_read_event(struct samsung_pogo *pogo)
 	if (total <= sizeof(header) || total - sizeof(header) > sizeof(payload)) {
 		/* Samsung uses this otherwise-invalid header as the attach/model event. */
 		if (header[2] && header[2] != 0xff) {
+			const char *model_name;
+
 			pogo->model = header[2];
+			/*
+			 * Samsung reads VERSION synchronously in this IRQ, then
+			 * releases it and schedules check_ic_work 10 ms later.  The
+			 * version's model id disambiguates the older DX900/910/915;
+			 * newer AI covers use explicit protocol ids.
+			 */
+			ret = samsung_pogo_app_read_reg(pogo, POGO_APP_ID_MCU,
+					POGO_APP_CMD_VERSION, pogo->app_version,
+					sizeof(pogo->app_version));
+			if (ret) {
+				dev_warn(&pogo->client->dev,
+					 "immediate version read failed: %d\n", ret);
+				return 0;
+			}
+			model_name = samsung_pogo_model_name(pogo->model,
+							    pogo->app_version);
+			if (!model_name) {
+				dev_warn(&pogo->client->dev,
+					 "unsupported keyboard model %#02x, version %*ph\n",
+					 pogo->model, (int)sizeof(pogo->app_version),
+					 pogo->app_version);
+				return 0;
+			}
 			dev_info(&pogo->client->dev,
-				 "keyboard attached, model %#02x%s\n", pogo->model,
-				 pogo->model == POGO_MODEL_EF_DX920 ? " (EF-DX920)" : "");
-			if (pogo->model == POGO_MODEL_EF_DX920) {
-				/*
-				 * Samsung reads VERSION synchronously in this IRQ, then
-				 * releases it and schedules check_ic_work 10 ms later.
-				 * Keeping the IRQ masked through the 200 ms mode delay
-				 * leaves the MCU's active-low data line asserted.
-				 */
-				ret = samsung_pogo_app_read_reg(pogo, POGO_APP_ID_MCU,
-						POGO_APP_CMD_VERSION,
-						pogo->app_version,
-						sizeof(pogo->app_version));
-				if (ret) {
-					dev_warn(&pogo->client->dev,
-						 "immediate version read failed: %d\n",
-						 ret);
-				} else {
-					mod_delayed_work(system_dfl_wq,
-							 &pogo->application_work,
-							 msecs_to_jiffies(10));
-				}
-				if (!pogo->input) {
-					ret = samsung_pogo_register_input(pogo);
-					if (ret)
-						return ret;
-					dev_info(&pogo->client->dev,
-						 "EF-DX920 protocol confirmed; input enabled\n");
-				}
+				 "keyboard attached, model %#02x (%s)\n",
+				 pogo->model, model_name);
+			mod_delayed_work(system_dfl_wq, &pogo->application_work,
+					 msecs_to_jiffies(10));
+			if (!pogo->input) {
+				ret = samsung_pogo_register_input(pogo, model_name);
+				if (ret)
+					return ret;
+				dev_info(&pogo->client->dev,
+					 "%s protocol confirmed; input enabled\n",
+					 model_name);
 			}
 		}
 		return 0;

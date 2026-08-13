@@ -30,11 +30,11 @@ postmarketOS v1.71 baseline is kept outside Git.
 |---|---|---|
 | **Display** | ✅ | 2960×1848 at 120 Hz, DSI + DSC + TE, native panel |
 | **Desktop** | ✅ | GNOME 46 on Wayland with GDM3, stock Ubuntu packages |
-| **Tab Companion** | 🟡 | Native GTK4/libadwaita settings app, packaged and preinstalled. Its D-Bus service reports S Pen and EF-DX920 state and its tested `uinput` engine executes keyboard mappings. Galaxy AI, DeX, Finder, Settings and `Fn+F1–F11` are physically validated; `Fn+F12` emits no controller event |
+| **Tab Companion** | 🟡 | Native GTK4/libadwaita settings app, packaged and preinstalled. Version 0.7 adds a graphical action/app/command chooser, reset-to-default, remembered disconnected keyboards, a battery bar and complete English, Spanish, French, German, Italian and Portuguese UI. Its tested `uinput` engine preserves ordinary keys and replaces only configured mappings |
 | **GPU** | ✅ | Adreno 740 through Mesa (Freedreno/Turnip); no Android graphics stack |
 | **Touchscreen** | ✅ | Goodix Berlin / GT9916, Samsung 16-byte event layout |
 | **Buttons** | ✅ | Power and volume; a short press on power suspends |
-| **Keyboard cover** | ✅ | Samsung EF-DX920 pogo keyboard; the tablet's STM32 controller is repaired automatically if another OS has downgraded it ([details](packaging/ubuntu-gts9u-device/usr/share/doc/ubuntu-gts9u-device/pogo-keyboard.md)) |
+| **Keyboard cover** | ✅ | Samsung EF-DX920 pogo keyboard physically validated; EF-DX900, EF-DX910, EF-DX915 and EF-DX925 identification is integrated from Samsung's X910 model table but awaits each physical cover. The tablet's STM32 is repaired automatically if another OS downgrades it ([details](packaging/ubuntu-gts9u-device/usr/share/doc/ubuntu-gts9u-device/pogo-keyboard.md)) |
 | **Cover / lid switch** | ✅ | Closing the cover blanks the screen |
 | **S Pen (writing)** | ✅ | Wacom EMR digitiser: hover, pressure, tilt and the side button, with this port's own driver |
 | **Wi-Fi** | ✅ | WCN7850 / ath12k, official firmware and the QRD board data |
@@ -57,7 +57,7 @@ postmarketOS v1.71 baseline is kept outside Git.
 | **Waydroid** | ❔ | Never tried |
 | **S Pen docking** | ✅ | GPIO137 and `SW_PEN_INSERTED` report removal/reinsertion; both physical orientations are confirmed and exposed by Tab Companion |
 | **S Pen battery / charging** | 🟡 | Automatic dock charging and discrete state work. The identified Samsung BLE Battery characteristic returned the real 100 % level while connected; an intermediate physical level is still pending |
-| **S Pen pairing (BLE)** | 🟡 | The bundled pen is bonded and trusted. A restricted system service reproduces One UI's dock-initiated authorization flow and never accepts an arbitrary Bluetooth device; clean-boot/reconnection validation remains open |
+| **S Pen pairing (BLE)** | 🟡 | The bundled pen is bonded and trusted. A restricted system service reproduces One UI's dock-initiated authorization flow and never accepts an arbitrary Bluetooth device. A clean boot preserves the bond. Forced docked disconnection was physically rejected: the removed pen does not advertise, so insertion remains the reliable wake/reconnect trigger |
 | **S Pen gestures** | 🟡 | Single, double and long side-button presses work through EMR. Over BLE, all six air gestures were captured and classified on the physical pen: up, down, left, right, clockwise and counterclockwise. Each runs its Tab Companion mapping; visible per-action UI checks remain open |
 | **Ambient light / automatic brightness** | ❌ | 0x48 answers on no AP-reachable bus, so a mainline IIO driver has nothing to bind to. That is a limit on the AP route only: the working compass is equally invisible to the AP, because SSC sensors hang off the DSP's own I²C. The ALS remains an SSC-side failure — it enumerates and accepts its enable but never emits lux. GNOME's support is ready and the unusable ALS is deliberately not exposed |
 | **Speaker protection** | ❌ | Cirrus protection firmware not loaded; hardware volume kept conservative |

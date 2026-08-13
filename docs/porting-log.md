@@ -4589,3 +4589,66 @@ firmada; los círculos exigen recorrido amplio en ambos ejes y área orientada.
 El inicio de movimiento cancela la pulsación larga para no duplicar acciones.
 Quedan abiertas la prueba visual con destinos distintos y la reconexión tras
 un arranque completo de la tablet.
+
+## Sesión 65 — Tab Companion 0.7 y familias de fundas
+
+Fecha: 2026-08-13. Se retiró «Learn»: los códigos del DX920 ya estaban medidos
+y mantener aprendizaje en producción permitía corromper una tabla correcta con
+la siguiente tecla casual. La nueva restauración global restablece acciones,
+destinos y códigos físicos. El selector de acciones pasó a filas con iconos;
+«Abrir una aplicación» enumera los escritorios visibles con sus iconos y
+búsqueda, y «Ejecutar un comando» abre un campo explícito. La prueba táctil en
+la tablet desplazó la lista antes de abrir ambas rutas sin reproducir la
+selección de la fila equivocada. Una pulsación real de Galaxy AI reveló que
+`gtk-launch` no está instalado en la imagen; se sustituyó por
+`Gio.DesktopAppInfo.launch()` y la asignación existente a Configuración devolvió
+después `TriggerMapping=true` sin error. Los métodos D-Bus de aprendizaje y su
+estado de captura también se eliminaron, no sólo sus controles visuales.
+
+La página de teclado tiene ahora tres estados. Sin historial muestra una
+bienvenida que no permite configurar; conectado enseña modelo y nombre;
+desconectado mantiene las asignaciones editables y ofrece una X para olvidar el
+dispositivo. La lista de compatibles procede de la propiedad
+`stm32,model_name` del DTS X910 y de los nombres comerciales publicados por
+Samsung: EF-DX900, DX910, DX915, DX920 y DX925. El controlador usa el modelo de
+protocolo y VERSION para diferenciarlos. Sólo el DX920 disponible se considera
+validado; no se infiere funcionamiento de teclas ni touchpad para los otros.
+
+La página del S Pen eliminó orientación textual y datos Bluetooth redundantes.
+Conserva el dibujo orientado y presenta una barra de batería. El porcentaje BLE
+se guarda para no convertir 100 % en «desconocido» cuando GATT duerme. El flujo
+stock de Air Command contiene una política KeepConnected y una ruta de
+desconexión GATT. Se probó la interpretación más agresiva: desconectar al estar
+acoplado y conectar al retirarlo. La transición física demostró que no sirve:
+fuera no apareció ningún anuncio, tampoco durante una búsqueda activa, y BlueZ
+devolvió `org.bluez.Error.Failed`. Se retiró la desconexión forzada; insertarlo
+sigue siendo el mecanismo fiable para despertar y reconectar un lápiz dormido.
+
+La interfaz completa, incluido «Acerca de», quedó traducida al inglés, español,
+francés, alemán, italiano y portugués. Una auditoría AST comparó las 97 cadenas
+traducibles con las seis tablas y no encontró ausencias. El paquete 0.7.0 pasó
+la validación pedante de esquema, escritorio y AppStream; su SHA-256 es:
+
+```text
+ubuntu-gts9u-companion_0.7.0_all.deb
+313a71fb6ee8dc860ec6a08edf87d846f795b2b8ccda97a26b6581492c2e1b2c
+```
+
+El kernel construido registró el DX920 real como
+`Book Cover Keyboard Slim with AI Key (EF-DX920)`, modelo de protocolo `0xd6`,
+V37, remapeo disponible y cero recuperaciones. Se validó el bundle Android v4,
+se acreditó `sda21` por `PARTLABEL=boot` y 100663296 bytes, se respaldó la
+imagen anterior y sólo se escribió esa partición. Los hashes arrancados son:
+
+```text
+boot        8d102343c34288e38c4322a5d7503dfc52274c2267abf0cc3db727e6b11ee6cd
+vendor_boot bf312f08a6876194e3ce30d52a81f8da23dd88132c4660698eb5cde17a69e6bc
+```
+
+La regresión posterior mantuvo cero unidades fallidas, ADSP `running`, salida
+de cuatro altavoces y entrada DMIC en PipeWire, cuatro cámaras V4L2 y los cuatro
+relés libcamera. Los `oneshot` de sensores y firmware pogo terminaron con
+`Result=success`; el servicio de Companion publicó DX920 conectado y conservó
+la batería real del S Pen al 100 %. La extracción produjo `PenState=paired` y
+la ausencia de anuncio descrita arriba; la reinserción se usó para recuperar el
+enlace con la política definitiva.

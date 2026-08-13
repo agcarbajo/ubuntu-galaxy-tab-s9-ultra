@@ -3,27 +3,30 @@
 
 from dataclasses import dataclass
 
+from .i18n import _, N_
+
 
 @dataclass(frozen=True)
 class Action:
     action_id: str
     label: str
+    icon_name: str
 
 
 ACTIONS = (
-    Action("none", "Keep the default action"),
-    Action("app", "Open an application"),
-    Action("screenshot", "Take a screenshot"),
-    Action("back", "Back"),
-    Action("home", "Home"),
-    Action("overview", "Overview"),
-    Action("play-pause", "Play / pause"),
-    Action("previous", "Previous track"),
-    Action("next", "Next track"),
-    Action("volume-up", "Volume up"),
-    Action("volume-down", "Volume down"),
-    Action("mute", "Mute"),
-    Action("command", "Custom command"),
+    Action("none", N_("Keep the default action"), "edit-clear-all-symbolic"),
+    Action("app", N_("Open an application"), "application-x-executable-symbolic"),
+    Action("screenshot", N_("Take a screenshot"), "camera-photo-symbolic"),
+    Action("back", N_("Back"), "go-previous-symbolic"),
+    Action("home", N_("Home"), "go-home-symbolic"),
+    Action("overview", N_("Overview"), "view-grid-symbolic"),
+    Action("play-pause", N_("Play / pause"), "media-playback-start-symbolic"),
+    Action("previous", N_("Previous track"), "media-skip-backward-symbolic"),
+    Action("next", N_("Next track"), "media-skip-forward-symbolic"),
+    Action("volume-up", N_("Volume up"), "audio-volume-high-symbolic"),
+    Action("volume-down", N_("Volume down"), "audio-volume-low-symbolic"),
+    Action("mute", N_("Mute"), "audio-volume-muted-symbolic"),
+    Action("command", N_("Run a command"), "utilities-terminal-symbolic"),
 )
 
 ACTION_IDS = tuple(action.action_id for action in ACTIONS)
@@ -39,4 +42,4 @@ def action_index(action_id):
 
 def action_label(action_id):
     """Return the display label for a persisted action identifier."""
-    return ACTIONS[action_index(action_id)].label
+    return _(ACTIONS[action_index(action_id)].label)

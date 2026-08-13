@@ -18,8 +18,9 @@ class HardwareState:
     pen_battery: int = -1
     pen_charging: bool = False
     keyboard_present: bool = False
+    keyboard_model: str = ""
+    keyboard_name: str = ""
     remapping_available: bool = False
-    capturing_key: str = ""
     last_special_key: str = ""
     button_actions_available: bool = False
     bluetooth_available: bool = False
@@ -68,33 +69,12 @@ class HardwareClient(GObject.Object):
             pen_battery=self._value("PenBattery", -1),
             pen_charging=self._value("PenCharging", False),
             keyboard_present=self._value("KeyboardPresent", False),
+            keyboard_model=self._value("KeyboardModel", ""),
+            keyboard_name=self._value("KeyboardName", ""),
             remapping_available=self._value("RemappingAvailable", False),
-            capturing_key=self._value("CapturingKey", ""),
             last_special_key=self._value("LastSpecialKey", ""),
             button_actions_available=self._value("ButtonActionsAvailable", False),
             bluetooth_available=self._value("BluetoothAvailable", False),
             gesture_available=self._value("GestureAvailable", False),
         )
         self.emit("state-changed")
-
-    def begin_key_capture(self, mapping):
-        if self.proxy is not None:
-            self.proxy.call(
-                "BeginKeyCapture",
-                GLib.Variant("(s)", (mapping,)),
-                Gio.DBusCallFlags.NONE,
-                -1,
-                None,
-                None,
-            )
-
-    def cancel_key_capture(self):
-        if self.proxy is not None:
-            self.proxy.call(
-                "CancelKeyCapture",
-                None,
-                Gio.DBusCallFlags.NONE,
-                -1,
-                None,
-                None,
-            )

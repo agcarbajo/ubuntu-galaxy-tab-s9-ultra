@@ -1981,3 +1981,37 @@ antihorario y horario; una prueba adicional del horario confirmó el signo. Al
 superar el umbral de movimiento se cancela el temporizador de pulsación larga,
 evitando que el mismo trazo ejecute dos asignaciones. El volcado muestra a
 muestra queda sólo en el script de diagnóstico, no en el servicio permanente.
+
+## Identificación de toda la familia Book Cover Keyboard del X910
+
+La cadena `stm32,model_name` del DTS no es decorativa: enumera EF-DX915,
+EF-DX910, EF-DX900, EF-DX925 y EF-DX920. El evento attach aporta un byte de
+modelo, pero las revisiones antiguas necesitan además la segunda posición de la
+respuesta VERSION. La correspondencia observada en el fuente stock es:
+
+- protocolo `0xd1`/`0xd2`: EF-DX900;
+- protocolo `0x03`/`0xd3`/`0xd5`: EF-DX925;
+- protocolo `0xd6`: EF-DX920;
+- para el resto, `version[1]` 0/1/2: EF-DX915/DX910/DX900.
+
+Por eso el driver debe pedir VERSION antes de registrar cualquier candidato y
+rechazar un modelo que no pueda resolver. El nombre del `input` es también la
+ABI de descubrimiento del servicio de usuario: debe conservar el prefijo
+`Book Cover Keyboard` y terminar con el número EF-DX. La ampliación sólo prueba
+identificación; no acredita teclas ni touchpad de un modelo no conectado.
+
+## El S Pen retirado no anuncia después de una desconexión forzada
+
+`AirCommand.apk` contiene la preferencia `KeepConnectedEnabled`, la reacción al
+evento de inserción y una ruta explícita de desconexión GATT, pero eso no prueba
+que el X910 pueda despertar el lápiz sólo al retirarlo. La prueba física sí lo
+resolvió: tras `Disconnect` acoplado, quitarlo no produjo anuncio BLE; una
+búsqueda activa tampoco lo vio y todos los `Connect` de BlueZ fallaron. Sin un
+canal para avisar al lápiz después de perder los contactos del garaje, la
+política rompe los gestos. No forzar esa desconexión.
+
+El porcentaje sí debe persistirse cuando la conexión duerme por sí sola. El
+garaje Wacom no puede volver a leerlo y publicar `-1` haría parecer que se perdió
+la batería. La UI distingue, por tanto, nivel medido guardado de una estimación:
+no inventa valores y sólo cambia la barra tras una lectura Battery Level real o
+el estado discreto de carga completa.

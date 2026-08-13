@@ -3,6 +3,11 @@
   <id>io.github.agcarbajo.TabCompanion</id>
   <name>Tab Companion</name>
   <summary>Configure the S Pen and cover keyboard</summary>
+  <summary xml:lang="es">Configura el S Pen y la funda con teclado</summary>
+  <summary xml:lang="fr">Configurer le S Pen et le clavier de couverture</summary>
+  <summary xml:lang="de">S Pen und Tastatur-Cover einrichten</summary>
+  <summary xml:lang="it">Configura la S Pen e la cover con tastiera</summary>
+  <summary xml:lang="pt">Configurar a S Pen e a capa com teclado</summary>
   <metadata_license>MIT</metadata_license>
   <project_license>MIT</project_license>
   <description>
@@ -13,6 +18,9 @@
   <launchable type="desktop-id">io.github.agcarbajo.TabCompanion.desktop</launchable>
   <url type="homepage">https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra</url>
   <releases>
+    <release version="0.7.0" date="2026-08-13">
+      <description><p>Redesign keyboard discovery and action selection, add application and command pickers, improve S Pen status and add translations.</p></description>
+    </release>
     <release version="0.6.0" date="2026-08-13">
       <description><p>Pair the docked S Pen automatically, report its BLE battery level and map all six physical air gestures.</p></description>
     </release>

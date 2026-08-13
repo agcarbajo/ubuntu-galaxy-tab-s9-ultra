@@ -1,11 +1,21 @@
 [Desktop Entry]
 Name=Tab Companion
 Comment=Configure the S Pen and cover keyboard
+Comment[es]=Configura el S Pen y la funda con teclado
+Comment[fr]=Configurer le S Pen et le clavier de couverture
+Comment[de]=S Pen und Tastatur-Cover einrichten
+Comment[it]=Configura la S Pen e la cover con tastiera
+Comment[pt]=Configurar a S Pen e a capa com teclado
 Exec=tab-companion
 Icon=io.github.agcarbajo.TabCompanion
 Terminal=false
 Type=Application
 Categories=Settings;HardwareSettings;
 Keywords=S Pen;Stylus;Keyboard;Samsung;
+Keywords[es]=S Pen;Lápiz;Teclado;Samsung;
+Keywords[fr]=S Pen;Stylet;Clavier;Samsung;
+Keywords[de]=S Pen;Stift;Tastatur;Samsung;
+Keywords[it]=S Pen;Stilo;Tastiera;Samsung;
+Keywords[pt]=S Pen;Caneta;Teclado;Samsung;
 StartupNotify=true
 DBusActivatable=false

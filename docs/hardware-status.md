@@ -1,7 +1,7 @@
 # Estado de hardware del SM-X910 bajo Ubuntu 24.04
 
-Última actualización: 2026-08-13, tras integrar y medir el emparejamiento,
-porcentaje de batería y los seis gestos BLE del S Pen con Tab Companion 0.6.0.
+Última actualización: 2026-08-13, tras instalar Tab Companion 0.7.0, ampliar
+las fundas reconocidas y validar su rediseño en la tablet.
 
 Ubuntu **ya arranca** en la tablet. Esta matriz distingue explícitamente lo
 heredado de lo comprobado, y ningún componente pasa a ✅ sin observación real.
@@ -46,7 +46,7 @@ sondea» como prueba de funcionamiento.
 | Pantalla interna 2960×1848@120 | ✅ | ✅ | medido | La recuperación cold-boot está validada bajo Ubuntu: el journal registra `panel id 00 00 00` → ciclo `pm_test=platform` → `80 00 04` |
 | GPU Adreno 740 | ✅ | ✅ | medido | Freedreno/Turnip funciona correctamente en juegos. Se observan artefactos menores y esporádicos en algunos clientes Wayland (un gradiente de Discord/Chromium y ciertos controles GTK tras repintados). La investigación de la sesión 48 no produjo un arreglo genérico sin regresiones, por lo que no se instala ningún override de Mesa, ANGLE, GTK ni lanzadores de aplicaciones |
 | Escritorio GNOME/Wayland | ✅ | ✅ | confirmado | GDM3 y GNOME 46 nativos, sin el workaround de cuentas greeter de Alpine |
-| Tab Companion | — | 🟡 | medido | Paquete `ubuntu-gts9u-companion` 0.6.0 instalado. Corrige el selector desplazado, conserva las acciones predeterminadas, contiene las 12 teclas Fn e integra emparejamiento, batería y los seis gestos BLE. Falta la comprobación visual final de las acciones elegidas en la interfaz |
+| Tab Companion | — | 🟡 | observado | Paquete 0.7.0 instalado. Selector visual desplazable sin activación errónea, aplicaciones con iconos y búsqueda, comandos, restauración global, teclado recordado, lista de cinco modelos, batería gráfica y seis idiomas. Se validó en la sesión GNOME real; quedan hardware ajeno al DX920, porcentaje intermedio y ciclo BLE final |
 | Brillo / blanking | ✅ | ⏳ | medido | Backlight DCS y control manual nativo. GNOME tiene `ambient-enabled=true`, pero no puede hacer brillo automático porque ninguna de las dos rutas STK31610 entrega lux |
 | Táctil Goodix GT9916 | ✅ | ✅ | confirmado | Layout Samsung de eventos de 16 bytes |
 | Botones power y volumen | ✅ | ✅ | confirmado | |
@@ -73,10 +73,11 @@ sondea» como prueba de funcionamiento.
 | S Pen: escritura (Wacom I²C 0x56) | ❌ | ✅ | confirmado | Driver propio: hover con distancia, presión 0–4095, inclinación ±63 y botón lateral. Enganche automático, ~440 Hz y rotación correcta en las cuatro orientaciones. La salida de rango se sintetiza también por silencio (timer de 250 ms): sin eso el controlador enmudecía al apartar el lápiz y `BTN_TOOL_PEN` se quedaba a 1 hasta el reinicio |
 | S Pen: acoplamiento y orientación | ❌ | ✅ | confirmado | El driver reclama TLMM GPIO137 (`PDCT`), publica `SW_PEN_INSERTED` y atributos sysfs. La propietaria confirmó retirada/reinserción y las dos orientaciones; Tab Companion traduce `direction=2` a `tip-right` y `direction=1` a `tip-left` |
 | S Pen: batería y carga | ❌ | 🟡 | confirmado | Al insertar, el kernel envía automáticamente enable/start/keep-on. El garaje entrega estado discreto y el GATT Samsung identificado entrega porcentaje: se leyó físicamente 100 % (`64 00`) de Battery Level mientras estaba conectado. Falta medir un nivel intermedio |
-| S Pen: emparejamiento BLE | ❌ | 🟡 | confirmado | El comando Wacom 0xea abre el anuncio al acoplarlo. El servicio definitivo aceptó la autorización iniciada por el lápiz y confirmó `Bonded`, `Paired`, `Trusted` y servicios resueltos sin interacción. Sólo admite un SPEN con ambos UUID Samsung mientras `pen_docked=1`; falta validar un arranque completo de la tablet y su reconexión posterior |
+| S Pen: emparejamiento BLE | ❌ | 🟡 | confirmado | El comando Wacom 0xea abre el anuncio al acoplarlo. El servicio aceptó la autorización iniciada por el lápiz y confirmó `Bonded`, `Paired`, `Trusted` sin interacción. Tras un arranque completo conservó el vínculo y 100 %. Se descartó forzar desconexión acoplado: al retirarlo no anunció ni con búsqueda activa y BlueZ no pudo reconectar; insertarlo sigue siendo el despertar fiable |
 | S Pen: gestos | ❌ | 🟡 | confirmado | EMR distingue simple/doble/larga. Por BLE, Mode 0x10 y Button State entregan movimiento incremental; se capturaron y clasificaron físicamente arriba, abajo, izquierda, derecha, círculo horario y antihorario. El movimiento cancela el temporizador de pulsación larga y ejecuta la asignación correspondiente sin duplicarla. Falta comprobar visualmente una acción distinta asignada a cada fila |
 | Táctil: zona que sólo responde al lápiz | — | ❌ | **abierto** | Intermitente. Una región deja de aceptar toques nuevos con el dedo; un arrastre iniciado fuera sí la atraviesa. La marca de proximidad pegada del S Pen se descartó como explicación suficiente: con el flag clavado y verificado, no había zona muerta. Sin diagnosticar; `work/catch-dead-zone.sh` decide si los toques llegan al kernel |
-| Teclado pogo EF-DX920 (STM32 I²C 0x2a) | ❌ | ✅ | confirmado | Requiere V37 en el MCU. Se midieron Galaxy AI 760, DeX 701, Finder 710, Ajustes 709 y Fn+F1–F11: 757, 758, 759, 705, 254, 172, 224, 225, 113, 114 y 115. Fn+F12 no genera evento bruto. Tab Companion 0.6.0 captura y retransmite el teclado para sustituir sólo las asignaciones activas, conservando por defecto Inicio/brillo/volumen de Fn+F6–F11 |
+| Teclado pogo EF-DX920 (STM32 I²C 0x2a) | ❌ | ✅ | confirmado | Requiere V37 en el MCU. Se midieron Galaxy AI 760, DeX 701, Finder 710, Ajustes 709 y Fn+F1–F11: 757, 758, 759, 705, 254, 172, 224, 225, 113, 114 y 115. Fn+F12 no genera evento bruto. Tab Companion 0.7.0 conserva por defecto Inicio/brillo/volumen de Fn+F6–F11 y permite restaurar todos los valores |
+| Otras fundas EF-DX900/910/915/925 | ❌ | 🟡 | medido | El DTS oficial del X910 declara los cinco modelos. El driver ya distingue los identificadores y VERSION, la app publica nombre/modelo y adapta la fila AI. Sólo el DX920 está disponible: enumeración, teclas especiales y touchpads de los otros cuatro siguen pendientes de hardware real |
 | Huella (EgisTec EL7xx, SPI) | ❌ | ❌ | supuesto | Sin driver mainline |
 | Vibración / hápticos | ❌ | ❌ | supuesto | Hardware sin identificar |
 | Flash / linterna | ❌ | ✅ | observado | PM8550 SID 1, canales 0+1 agrupados por `leds-qcom-flash`; iluminación real observada en modo estrobo y linterna. El mosaico **Linterna** de ajustes rápidos está instalado, activo y probado físicamente |
