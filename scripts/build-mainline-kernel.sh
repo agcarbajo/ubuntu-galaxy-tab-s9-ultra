@@ -16,6 +16,13 @@ kernel_tree=${KERNEL_WORKTREE:-$base/build/linux-src-gts9uwifi}
 build_dir=${KERNEL_BUILD_DIR:-$base/build/linux-gts9uwifi}
 out_dir=${KERNEL_OUT_DIR:-$base/out/kernel-gts9uwifi}
 v4l2loopback_commit=9ef83fb9bc88e8f841786753c362ac52c580defc
+fingerprint_baseline=5046f92f507d80b13d2e25c53a5d743861ba5a97
+enable_fingerprint=${ENABLE_FINGERPRINT_EXPERIMENTAL:-0}
+
+case "$enable_fingerprint" in
+	0|1) ;;
+	*) echo 'ENABLE_FINGERPRINT_EXPERIMENTAL must be 0 or 1' >&2; exit 1 ;;
+esac
 
 # Linux 7.2 requires Clang >= 17.  Prefer the versioned LLVM toolchain when it
 # is installed (the imported baseline was generated with LLVM 22), while still
@@ -75,8 +82,20 @@ fi
 # Board device tree
 # ---------------------------------------------------------------------------
 
-install -m 0644 "$dts/sm8550-samsung-gts9uwifi.dts" \
-	"$kernel_tree/arch/arm64/boot/dts/qcom/sm8550-samsung-gts9uwifi.dts"
+board_dts=$kernel_tree/arch/arm64/boot/dts/qcom/sm8550-samsung-gts9uwifi.dts
+if [ "$enable_fingerprint" = 1 ]; then
+	install -m 0644 "$dts/sm8550-samsung-gts9uwifi.dts" "$board_dts"
+	# The repository default is deliberately inert after an early boot-loop.
+	# Opt-in builds enable the device only for controlled layer-by-layer tests.
+	sed -i '/compatible = "egistec,el721";/,/^\t};/ \
+		s/status = "disabled";/status = "okay";/' \
+		"$board_dts"
+else
+	# Recovery builds use the exact last physically booted board description.
+	git -C "$repo" show \
+		"$fingerprint_baseline:kernel/dts/sm8550-samsung-gts9uwifi.dts" \
+		> "$board_dts"
+fi
 
 if ! grep -q 'sm8550-samsung-gts9uwifi.dtb' \
 	"$kernel_tree/arch/arm64/boot/dts/qcom/Makefile"; then
@@ -185,12 +204,14 @@ install -m 0644 "$repo/kernel/include/linux/samsung_wacom.h" \
 apply_unless 'samsung_wacom_should_suppress_touch' \
 	drivers/input/touchscreen/goodix_berlin_core.c \
 	suppress-goodix-touch-while-spen-hovering.patch
-apply_unless 'GOODIX_BERLIN_SPONGE_FOD_RECT' \
-	drivers/input/touchscreen/goodix_berlin_core.c \
-	support-goodix-samsung-fod.patch
-apply_unless 'failed to disable FOD mode at suspend' \
-	drivers/input/touchscreen/goodix_berlin_core.c \
-	cleanup-goodix-fod-on-suspend.patch
+if [ "$enable_fingerprint" = 1 ]; then
+	apply_unless 'GOODIX_BERLIN_SPONGE_FOD_RECT' \
+		drivers/input/touchscreen/goodix_berlin_core.c \
+		support-goodix-samsung-fod.patch
+	apply_unless 'failed to disable FOD mode at suspend' \
+		drivers/input/touchscreen/goodix_berlin_core.c \
+		cleanup-goodix-fod-on-suspend.patch
+fi
 
 # Xorg only creates a PRIME GPU screen when MODE_GETRESOURCES succeeds.  Keep
 # the split GPU/DPU topology, but expose an empty KMS resource list on Adreno.
@@ -244,8 +265,14 @@ grep -q 'dw9808_vcm.o' "$camera_dir/Makefile" || \
 		>> "$camera_dir/Makefile"
 
 panel_dir=$kernel_tree/drivers/gpu/drm/panel
-install -m 0644 "$drv/panel-samsung-ana38407.c" \
-	"$panel_dir/panel-samsung-ana38407.c"
+if [ "$enable_fingerprint" = 1 ]; then
+	install -m 0644 "$drv/panel-samsung-ana38407.c" \
+		"$panel_dir/panel-samsung-ana38407.c"
+else
+	git -C "$repo" show \
+		"$fingerprint_baseline:kernel/drivers/panel-samsung-ana38407.c" \
+		> "$panel_dir/panel-samsung-ana38407.c"
+fi
 if ! grep -q 'DRM_PANEL_SAMSUNG_ANA38407' "$panel_dir/Kconfig"; then
 	sed -i '/^endmenu$/i \
 config DRM_PANEL_SAMSUNG_ANA38407\
@@ -438,6 +465,14 @@ for fragment in "${fragments[@]}"; do
 	apply_fragment "$fragment"
 done
 
+if [ "$enable_fingerprint" = 1 ]; then
+	"$kernel_tree/scripts/config" --file "$build_dir/.config" \
+		--module QCOMTEE --enable FINGERPRINT_EGIS_EL721
+else
+	"$kernel_tree/scripts/config" --file "$build_dir/.config" \
+		--module QCOMTEE --disable FINGERPRINT_EGIS_EL721
+fi
+
 make -C "$kernel_tree" O="$build_dir" ARCH=arm64 LLVM=1 olddefconfig
 
 # A fragment line naming a symbol that does not exist is dropped silently by
@@ -520,6 +555,14 @@ if [ "${BUILD_WIFI_MODULES:-1}" = 1 ]; then
 		M="$module_tree" \
 		INSTALL_MOD_PATH="$modules_root" INSTALL_MOD_STRIP=1 \
 		DEPMOD=true modules_install
+	if grep -qx 'CONFIG_QCOMTEE=m' "$build_dir/.config"; then
+		qcomtee_tree=$kernel_tree/drivers/tee/qcomtee
+		make -C "$kernel_tree" O="$build_dir" ARCH=arm64 LLVM=1 \
+			-j"$(nproc)" M="$qcomtee_tree" modules
+		make -C "$kernel_tree" O="$build_dir" ARCH=arm64 LLVM=1 \
+			M="$qcomtee_tree" INSTALL_MOD_PATH="$modules_root" \
+			INSTALL_MOD_STRIP=1 DEPMOD=true modules_install
+	fi
 
 	release=$(make -s -C "$kernel_tree" O="$build_dir" ARCH=arm64 LLVM=1 \
 		kernelrelease)
@@ -557,8 +600,8 @@ if [ "${BUILD_WIFI_MODULES:-1}" = 1 ]; then
 		"$release_dir/modules.builtin"
 	install -m 0644 "$build_dir/modules.builtin.modinfo" \
 		"$release_dir/modules.builtin.modinfo"
-	find "$release_dir/updates" -type f -name '*.ko*' -printf '%P\n' \
-		| sed 's#^#updates/#' | sort > "$release_dir/modules.order"
+	find "$release_dir" -type f -name '*.ko*' -printf '%P\n' \
+		| sort > "$release_dir/modules.order"
 	depmod -b "$modules_root" "$release"
 	mkdir -p "$modules_root/usr/lib"
 	mv "$modules_root/lib/modules" "$modules_root/usr/lib/modules"

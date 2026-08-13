@@ -47,13 +47,24 @@ con `fprintd`.
 
 ## Arquitectura preparada
 
+La infraestructura es deliberadamente **opt-in**. Una compilación normal usa
+exactamente el DT y el controlador de panel del último commit validado, no
+aplica la extensión FOD de Goodix y no compila el EL721. QCOMTEE conserva la
+configuración modular de la base pero queda en la blacklist. Para una prueba
+controlada se usa `ENABLE_FINGERPRINT_EXPERIMENTAL=1`; sólo entonces se
+introducen el DT, el panel y Goodix experimentales. El módulo QCOMTEE firmado
+sólo se carga con `modprobe qcomtee`, después de arrancar y habilitar el
+registro. Esta separación se introdujo tras observar un reinicio anterior al
+montaje del rootfs y evita convertir otro fallo en un bootloop.
+
 La implementación separa cuatro responsabilidades:
 
 1. `egis_el721.c` controla únicamente el raíl de 3,3 V y la línea de
    enable/reset. Publica `/dev/esfp0` para la parte no sensible de la ABI Egis;
    no registra el sensor como un periférico SPI accesible por Linux.
-2. `CONFIG_TEE=y` y `CONFIG_QCOMTEE=y` integran en el kernel el transporte de
-   objetos QTEE de Qualcomm. Se espera que publique `/dev/tee0` para el futuro
+2. `CONFIG_TEE=y` mantiene la infraestructura común. En builds experimentales,
+   `CONFIG_QCOMTEE=m` empaqueta el transporte de objetos QTEE de Qualcomm; al
+   cargarlo manualmente se espera que publique `/dev/tee0` para el futuro
    puente con la aplicación segura.
 3. `panel-samsung-ana38407.c` ofrece el modo de alto brillo requerido por
    un lector óptico y el círculo de lectura. Conserva el brillo solicitado por
@@ -172,7 +183,16 @@ tiempo del solicitado por la aplicación segura.
 
 ### 1. Sondeo no destructivo
 
-Tras arrancar el kernel nuevo:
+Tras arrancar un build experimental, confirmar primero que QTEE sigue
+descargado y cargarlo sólo con un canal de recuperación disponible:
+
+```sh
+test ! -e /dev/tee0
+lsmod | grep -q '^qcomtee ' && exit 1
+sudo modprobe qcomtee
+```
+
+Después:
 
 ```sh
 test -c /dev/esfp0

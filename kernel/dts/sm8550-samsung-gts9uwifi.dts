@@ -73,6 +73,7 @@
 	 */
 	fingerprint {
 		compatible = "egistec,el721";
+		status = "disabled";
 		vdd-supply = <&vreg_l2b_3p3>;
 		enable-gpios = <&tlmm 155 GPIO_ACTIVE_HIGH>;
 		egistec,model = "X916";

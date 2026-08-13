@@ -64,6 +64,7 @@ done
 
 mkdir -p \
 	"$overlay/etc/modules-load.d" \
+	"$overlay/etc/modprobe.d" \
 	"$overlay/usr/lib/firmware/qcom/sm8550" \
 	"$overlay/usr/lib/firmware/ath12k/WCN7850/hw2.0" \
 	"$overlay/usr/lib/firmware/qca" \
@@ -76,6 +77,13 @@ mkdir -p \
 # from a different build makes modprobe fail with "Operation not permitted".
 cp -a "$kernel_out/modules-root/." "$overlay/"
 printf 'ath12k\n' > "$overlay/etc/modules-load.d/ath12k.conf"
+# QCOMTEE is loaded manually during fingerprint bring-up.  Autoprobing it
+# before logging is available turned a secure-firmware incompatibility into an
+# early boot loop; `modprobe qcomtee` still works explicitly despite blacklist.
+cat > "$overlay/etc/modprobe.d/gts9u-qcomtee.conf" <<'EOF'
+# Load manually while diagnosing the EL721 secure-world bridge.
+blacklist qcomtee
+EOF
 
 # --- Adreno 740 -----------------------------------------------------------
 for f in a740_zap.mdt a740_zap.b00 a740_zap.b01 a740_zap.b02 a740_sqe.fw \

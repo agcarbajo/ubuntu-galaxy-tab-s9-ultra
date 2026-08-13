@@ -5185,3 +5185,43 @@ y el binario AArch64 estático de prueba
 `44fc85bbb1547b9007e9adffc997e4662ac7bed3f3ce4fbd056a6e8d0260fba1`.
 Sólo consulta `lookupTA("securefp")`; no abre el objeto de aplicación ni ejecuta
 operaciones biométricas.
+
+## Sesión 80 — recuperación del bootloop y aislamiento experimental
+
+Fecha: 2026-08-13. Tras escribir la primera infraestructura UDFPS, ABL aceptó
+`boot`, `vendor_boot` e `init_boot`, descomprimió el kernel y saltó a él, pero la
+tablet se reinició antes de montar Ubuntu. `/proc/last_kmsg` conservó catorce
+intentos con la misma secuencia y ningún `Linux version`, panic o journal nuevo:
+no fue un rechazo AVB, un initramfs incorrecto ni corrupción del rootfs, sino
+una regresión anterior a disponer de logs persistentes.
+
+Se probó una segunda imagen con QCOMTEE convertido de built-in a módulo
+firmado, bloqueado para carga automática. Sus particiones se verificaron por
+hash después de escribir y `init_boot` quedó intacto, pero tampoco alcanzó SSH.
+Esto descarta el sondeo de QCOMTEE como causa única; otra capa experimental o
+su interacción participa en el reinicio.
+
+La estrategia queda corregida para que una build normal sea conservadora:
+recupera desde `5046f92` el DT y el panel exactos del último arranque validado,
+no compila EL721 y no aplica los cambios FOD de Goodix. QCOMTEE conserva el
+estado modular de la configuración base y se empaqueta firmado, pero una regla
+de modprobe impide su carga automática. Sólo
+`ENABLE_FINGERPRINT_EXPERIMENTAL=1` introduce DT, panel, EL721 y Goodix-FOD.
+Así se podrán reintroducir sensor, panel, táctil y TEE una capa cada vez desde
+un arranque conocido, en lugar de volver a flashear las cuatro juntas.
+
+La segunda imagen quedó fuera de ADB y SSH tras cuatro minutos. Al no haber
+control remoto de teclas ni canal de bootloader, no es posible devolverla a
+TWRP por software. La recuperación preparada usa los respaldos byte a byte del
+último arranque físico validado, no una recompilación aproximada:
+
+```text
+boot        5f33dcd527bf0693ddf5b6ae1100912f82d0f055ab7f965cabb89053f1df5e0b
+init_boot   8fab5f775748614ee7ff84e62e765d4f8bfeb0ed4f142ba0aaa89ae86be09d26
+vendor_boot ded9ae5ddd3f86ab0ff0c77c410553f86c8d900f663751c95c9751efc5bfb98b
+modules     ee5ef8855223d8229c764980bc10ba36aa4d8e6eb487dac4ed672f8fd3185f5f
+```
+
+No se vuelve a escribir hasta disponer otra vez de TWRP. En esa recuperación
+se restaurarán `boot`, `vendor_boot` y los módulos; `init_boot`, cuyo hash ya
+coincide con el respaldo, seguirá sin tocarse.

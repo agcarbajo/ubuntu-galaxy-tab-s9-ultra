@@ -81,16 +81,11 @@ CONFIG_NETLINK_DIAG=y
 # two signed ath12k ones, so it was simply never there.
 CONFIG_QCOM_SOCINFO=y
 
-# --- secure fingerprint transport -------------------------------------------
-# The EL721 is a secure peripheral: image capture and matching live in a
-# Samsung-signed TrustZone application.  Linux 7.2 has Qualcomm's object-based
-# QTEE transport, but its default is a module and this port intentionally ships
-# no general module tree.  Built-in QCOMTEE creates /dev/tee* for the future
-# libfprint bridge; the small EL721 driver owns only power/reset and never
-# exposes raw frames.
+# --- secure execution infrastructure ----------------------------------------
+# The experimental fingerprint stack is selected explicitly by
+# build-mainline-kernel.sh. TEE itself is common infrastructure and safe to
+# retain in the normal build.
 CONFIG_TEE=y
-CONFIG_QCOMTEE=y
-CONFIG_FINGERPRINT_EGIS_EL721=y
 
 # --- S Pen digitiser ---------------------------------------------------------
 # This port's own driver for the Wacom EMR digitiser on SE3.  The two mainline
