@@ -18,6 +18,9 @@
   <launchable type="desktop-id">io.github.agcarbajo.TabCompanion.desktop</launchable>
   <url type="homepage">https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra</url>
   <releases>
+    <release version="0.10.0" date="2026-08-13">
+      <description><p>Fixes continuous S Pen pointer motion, strengthens keyboard haptics and adds notification vibration.</p></description>
+    </release>
     <release version="0.9.1" date="2026-08-13">
       <description><p>Fixes automatic S Pen re-pairing when BlueZ recreates the device during the dock pairing window.</p></description>
     </release>

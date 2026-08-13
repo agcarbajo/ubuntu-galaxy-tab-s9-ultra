@@ -6,6 +6,7 @@ import argparse
 from dataclasses import dataclass, fields
 import fcntl
 from glob import glob
+import math
 import os
 from pathlib import Path
 import re
@@ -36,6 +37,7 @@ SPEN_SERVICES = {
 SPEN_BATTERY_UUID = "5a87b4ef-3bfa-76a8-e642-92933c31434f"
 SPEN_BUTTON_UUID = "6c290d2e-1c03-aca1-ab48-a9b908bae79e"
 SPEN_MODE_UUID = "aca1ab48-08ba-e79e-ab48-a9b9e6429293"
+SPEN_RAW_SENSOR_UUID = "ddb42396-ca00-4db3-b87d-2ee458279360"
 KEYBOARD_MODELS = {
     "EF-DX900": "Galaxy Tab S8 Ultra Book Cover Keyboard",
     "EF-DX910": "Galaxy Tab S9 Ultra Book Cover Keyboard Slim",
@@ -380,6 +382,8 @@ class HardwareService:
         self.pointer_filtered_y = 0.0
         self.pointer_residual_x = 0.0
         self.pointer_residual_y = 0.0
+        self.pointer_gravity_y = None
+        self.pointer_gravity_z = None
         self.virtual_watch = None
         self.system_bus = None
         self.bluez_manager = None
@@ -389,7 +393,7 @@ class HardwareService:
         self.ble_battery = -1
         self.ble_characteristics = {}
         self.ble_subscribed = set()
-        self.ble_mode_set = False
+        self.ble_mode_value = None
         self.ble_next_battery_read = 0.0
         self.remote_synced = None
         self._init_spen_ble()
@@ -412,6 +416,36 @@ class HardwareService:
         except OSError:
             self.virtual_pointer = None
         self.haptics = ForceFeedback()
+        self.notification_bus = None
+        self.notification_match = (
+            "type='method_call',interface='org.freedesktop.Notifications',"
+            "member='Notify',eavesdrop='true'"
+        )
+        self.last_notification_haptic = 0.0
+        try:
+            self.notification_bus = dbus.SessionBus()
+            self.notification_bus.add_match_string(self.notification_match)
+            self.notification_bus.add_message_filter(
+                self._notification_bus_message
+            )
+        except dbus.DBusException:
+            self.notification_bus = None
+
+    def _notification_bus_message(self, _bus, message):
+        if (
+            message.get_type() != dbus.lowlevel.MESSAGE_TYPE_METHOD_CALL
+            or message.get_interface() != "org.freedesktop.Notifications"
+            or message.get_member() != "Notify"
+            or not self.settings.get_boolean("notification-haptics-enabled")
+        ):
+            return
+        now = time.monotonic()
+        # The session bus may expose both the original and routed method call.
+        # Collapse those copies as well as short notification storms.
+        if now - self.last_notification_haptic < 0.3:
+            return
+        self.last_notification_haptic = now
+        self.haptics.vibrate(60, 65535)
 
     def _migrate_keyboard_codes(self):
         version = self.settings.get_uint("keyboard-mapping-version")
@@ -499,6 +533,15 @@ class HardwareService:
         self.pen_motion = []
         self.pointer_filtered_x = 0.0
         self.pointer_filtered_y = 0.0
+        self.pointer_residual_x = 0.0
+        self.pointer_residual_y = 0.0
+        self.pointer_gravity_y = None
+        self.pointer_gravity_z = None
+        # The stock driver uses DEFAULT (0x10) for button/gesture events and
+        # SENSOR_ON (0x04) for the continuous samples required by a pointer.
+        # Force a write even when the BLE link itself did not change.
+        self.ble_mode_value = None
+        self._refresh_spen_ble()
 
     def _sync_remote_control(self):
         enabled = self.settings.get_boolean("spen-remote-enabled")
@@ -557,17 +600,55 @@ class HardwareService:
             for path, interfaces in objects.items()
             if path.startswith(f"{device_path}/") and BLUEZ_GATT in interfaces
         }
-        if SPEN_MODE_UUID in self.ble_characteristics and not self.ble_mode_set:
+        # The raw sensor stream is only useful while the pen is away from its
+        # charging cradle.  Enabling SENSOR_ON while docked can make the pen
+        # leave the short pairing/charging connection before BlueZ has read
+        # its battery and completed bonding.
+        docked = (
+            self.wacom is not None
+            and read_text(self.wacom / "pen_docked") == "1"
+        )
+        pointer_active = (
+            self.settings.get_string("spen-remote-mode") == "pointer" and not docked
+        )
+        desired_mode = 0x04 if pointer_active else 0x10
+        raw_sensor_path = self.ble_characteristics.get(SPEN_RAW_SENSOR_UUID)
+        if desired_mode == 0x04 and raw_sensor_path not in self.ble_subscribed:
+            try:
+                dbus.Interface(
+                    self.system_bus.get_object(BLUEZ, raw_sensor_path), BLUEZ_GATT
+                ).StartNotify()
+            except (dbus.DBusException, TypeError):
+                pass
+            else:
+                self.ble_subscribed.add(raw_sensor_path)
+        if (
+            SPEN_MODE_UUID in self.ble_characteristics
+            and self.ble_mode_value != desired_mode
+        ):
             try:
                 dbus.Interface(
                     self.system_bus.get_object(
                         BLUEZ, self.ble_characteristics[SPEN_MODE_UUID]
                     ),
                     BLUEZ_GATT,
-                ).WriteValue(dbus.Array([dbus.Byte(0x10)], signature="y"), {})
-                self.ble_mode_set = True
+                ).WriteValue(
+                    dbus.Array([dbus.Byte(desired_mode)], signature="y"), {}
+                )
+                self.ble_mode_value = desired_mode
             except dbus.DBusException:
                 pass
+        if (
+            desired_mode != 0x04
+            and raw_sensor_path in self.ble_subscribed
+        ):
+            try:
+                dbus.Interface(
+                    self.system_bus.get_object(BLUEZ, raw_sensor_path), BLUEZ_GATT
+                ).StopNotify()
+            except dbus.DBusException:
+                pass
+            self.ble_subscribed.discard(raw_sensor_path)
         now = time.monotonic()
         if SPEN_BATTERY_UUID in self.ble_characteristics and now >= self.ble_next_battery_read:
             self.ble_next_battery_read = now + 30
@@ -598,7 +679,7 @@ class HardwareService:
         self.ble_connected = False
         self.ble_characteristics = {}
         self.ble_subscribed.clear()
-        self.ble_mode_set = False
+        self.ble_mode_value = None
         self.ble_next_battery_read = 0.0
 
     def _bluez_properties_changed(self, interface, changed, _invalidated, path=None):
@@ -615,6 +696,67 @@ class HardwareService:
             return
         if path == self.ble_characteristics.get(SPEN_BUTTON_UUID):
             self._spen_ble_button_data(value)
+            return
+        if path == self.ble_characteristics.get(SPEN_RAW_SENSOR_UUID):
+            self._spen_ble_raw_sensor_data(value)
+
+    def _spen_ble_raw_sensor_data(self, value):
+        if (
+            self.settings.get_string("spen-remote-mode") != "pointer"
+            or (
+                self.wacom is not None
+                and read_text(self.wacom / "pen_docked") == "1"
+            )
+            or len(value) < 13
+        ):
+            return
+        # Samsung's SENSOR_ON packet is:
+        # marker, accel X/Y/Z, gyro X/Y/Z (all signed little-endian s16).
+        # Local X is the pen's longitudinal roll axis and must never move the
+        # cursor. Use gravity in the local Y/Z plane to rotate the remaining
+        # gyro axes into screen yaw and pitch. This keeps both cursor axes
+        # stable when the user rolls the pen through any angle.
+        accel_y = int.from_bytes(value[3:5], "little", signed=True)
+        accel_z = int.from_bytes(value[5:7], "little", signed=True)
+        gyro_y = int.from_bytes(value[9:11], "little", signed=True)
+        gyro_z = int.from_bytes(value[11:13], "little", signed=True)
+        gravity_norm = math.hypot(accel_y, accel_z)
+        if gravity_norm >= 500:
+            target_y = accel_y / gravity_norm
+            target_z = accel_z / gravity_norm
+            if self.pointer_gravity_y is None:
+                self.pointer_gravity_y = target_y
+                self.pointer_gravity_z = target_z
+            else:
+                # Gravity changes only with pen roll; a light low-pass filter
+                # rejects hand acceleration without making roll compensation
+                # feel delayed.
+                self.pointer_gravity_y += 0.12 * (
+                    target_y - self.pointer_gravity_y
+                )
+                self.pointer_gravity_z += 0.12 * (
+                    target_z - self.pointer_gravity_z
+                )
+                filtered_norm = math.hypot(
+                    self.pointer_gravity_y, self.pointer_gravity_z
+                )
+                self.pointer_gravity_y /= filtered_norm
+                self.pointer_gravity_z /= filtered_norm
+        if self.pointer_gravity_y is None:
+            return
+        yaw = (
+            gyro_y * self.pointer_gravity_y
+            + gyro_z * self.pointer_gravity_z
+        )
+        pitch = (
+            -gyro_y * self.pointer_gravity_z
+            + gyro_z * self.pointer_gravity_y
+        )
+        if abs(yaw) < 120:
+            yaw = 0
+        if abs(pitch) < 120:
+            pitch = 0
+        self._pointer_move(yaw, pitch)
 
     def _spen_ble_button_data(self, value):
         if not self.settings.get_boolean("spen-remote-enabled"):
@@ -675,9 +817,14 @@ class HardwareService:
             return
         sensitivity = min(300, max(25, self.settings.get_int("pointer-sensitivity")))
         smoothing = min(90, max(0, self.settings.get_int("pointer-smoothing")))
-        scale = 0.035 * sensitivity / 100.0
+        # Raw gyro samples arrive at roughly 24 Hz. This scale is calibrated
+        # against the physical sensor range rather than the much smaller
+        # gesture deltas used by older firmware modes.
+        scale = 0.0045 * sensitivity / 100.0
         if self.settings.get_boolean("pointer-acceleration"):
-            scale *= 1.0 + min(2.0, (abs(raw_x) + abs(raw_y)) / 500.0)
+            scale *= 1.0 + min(
+                1.5, (abs(raw_x) + abs(raw_y)) / 6000.0
+            )
         target_x = raw_x * scale
         target_y = -raw_y * scale
         alpha = 1.0 - smoothing / 110.0
@@ -1054,6 +1201,13 @@ class HardwareService:
             invocation.return_value(GLib.Variant("(b)", (self.execute_mapping(mapping),)))
         elif method == "Vibrate":
             duration_ms, magnitude = params.unpack()
+            # Version 1 of the live Shell extension may remain cached until
+            # logout. Translate its three keyboard pulse tokens in the
+            # service so stronger feedback applies immediately as well as on
+            # the next graphical session.
+            duration_ms = {8: 12, 14: 22, 22: 34}.get(
+                duration_ms, duration_ms
+            )
             invocation.return_value(GLib.Variant(
                 "(b)", (self.haptics.vibrate(duration_ms, magnitude),)
             ))
@@ -1083,6 +1237,16 @@ class HardwareService:
             self.virtual_keyboard.close()
         if self.virtual_pointer is not None:
             self.virtual_pointer.close()
+        if self.notification_bus is not None:
+            self.notification_bus.remove_message_filter(
+                self._notification_bus_message
+            )
+            try:
+                self.notification_bus.remove_match_string(
+                    self.notification_match
+                )
+            except dbus.DBusException:
+                pass
         self.haptics.close()
 
 

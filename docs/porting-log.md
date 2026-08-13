@@ -4868,3 +4868,51 @@ BlueZ lo dejó conectado sin intervención física adicional. El backend public�
 ubuntu-gts9u-companion_0.9.1_all.deb
 3cac7cb597659ab403810323bd54948e2262896a263b9d6f8a166cf3e8671471
 ```
+
+## Sesión 70 — puntero con giroscopio raw y vibración de notificaciones
+
+Fecha: 2026-08-13. La primera versión del puntero creaba correctamente el
+ratón `uinput`, pero dejaba el S Pen en modo `0x10`: Button State sólo aporta
+movimiento durante el reconocimiento de gestos y el cursor permanecía quieto.
+La decompilación del controlador stock distingue `DEFAULT` (`0x10`) de
+`SENSOR_ON` (`0x04`) y activa por separado Raw Sensor Data. Una captura física
+en este último modo produjo 430 muestras en 18 segundos. La primera prueba
+guiada dio para movimiento horizontal una desviación de gyro X de 1643 frente
+a 376 en Y, y para movimiento vertical 1455 en Y frente a 1135 en X. La prueba
+visual posterior descubrió que X era en realidad el giro longitudinal del
+lápiz: movía el cursor al hacerlo rodar, y el eje Y cambiaba de signo al
+rotarlo 180°. La corrección final descarta gyro X y usa la gravedad del
+acelerómetro en el plano local Y/Z. Proyecta gyro Y/Z sobre gravedad para el
+eje horizontal y sobre su perpendicular para el vertical, manteniendo ambos
+invariantes ante cualquier giro axial. La zona muerta es de 120 cuentas.
+
+El backend suscribe Raw Sensor Data sólo en modo puntero y con el lápiz fuera,
+integra las muestras a unos 24 Hz y vuelve a `0x10` al seleccionar gestos o
+insertarlo. Esta última condición corrige una regresión observada físicamente:
+`SENSOR_ON` durante la carga hacía caer el enlace antes de terminar el ciclo de
+emparejamiento y batería. Tras instalar la corrección, BlueZ mantuvo
+`Paired/Bonded/Trusted/Connected` durante más de 20 segundos con `pen_docked=1`
+y carga activa. Al retirarlo, el modo raw vuelve sin intervención.
+
+Sensibilidad, suavizado y aceleración se recalibraron para el rango real del
+sensor. Con el servicio instalado, mover el lápiz generó 621 eventos relativos
+no nulos en 18 segundos, con ambos signos y ambos ejes, a través de
+`/dev/input/event9`. Queda la confirmación visual subjetiva de dirección y
+velocidad.
+
+Los tres pulsos del teclado pasan de 8/14/22 a 12/22/34 ms. El servicio traduce
+también las peticiones de la extensión que GNOME Shell ya tuviera en memoria,
+por lo que no exige cerrar sesión tras actualizar. Para notificaciones se evitó
+depender de una recarga de JavaScript en Wayland: el propio servicio observa
+las llamadas estándar `org.freedesktop.Notifications.Notify`, agrupa duplicados
+durante 300 ms y aplica un pulso de 60 ms cuando la preferencia, activa de
+fábrica, está encendida. Una notificación real trazó GPIO554 alto durante
+64,456 ms.
+
+El paquete 0.10.0 superó compilación Python, sintaxis JavaScript, esquema
+GSettings estricto, Desktop Entry y AppStream pedante:
+
+```text
+ubuntu-gts9u-companion_0.10.0_all.deb
+f5cccca41923c9230aae28ba8f9f08964c6614e6053749adfcf8e08d050b18ef
+```

@@ -35,7 +35,7 @@ from one TWRP-flashable ZIP; a microSD is not required after installation.
 | Cameras and flash | 🟡 | Four cameras, autofocus and flashlight work; colour tuning remains |
 | Ambient light sensor | ❌ | No usable lux data from the sensor DSP |
 | Fingerprint reader | ❌ | No mainline driver |
-| Vibration / haptics | 🟡 | Motor and on-screen keyboard feedback implemented; physical validation remains |
+| Vibration / haptics | ✅ | On-screen keyboard feedback and optional notification vibration |
 | Waydroid | ❓ | Not tested |
 
 ✅ validated on the physical tablet · 🟡 usable with remaining validation ·
@@ -46,7 +46,7 @@ The evidence and technical limitations for every component are documented in
 
 ## Tab Companion
 
-Tab Companion 0.9.1 is preinstalled and provides:
+Tab Companion 0.10.0 is preinstalled and provides:
 
 - S Pen battery, charging and dock status;
 - automatic dock-initiated BLE pairing, air gestures and an air-pointer mode;
@@ -55,7 +55,7 @@ Tab Companion 0.9.1 is preinstalled and provides:
 - optional S Pen digitizer disabling while the pen is docked;
 - remapping for compatible Samsung Book Cover Keyboard keys;
 - application, command, simulated-key and flashlight actions;
-- adjustable vibration feedback for GNOME's on-screen keyboard;
+- adjustable vibration feedback for GNOME's on-screen keyboard and optional notification vibration;
 - English, Spanish, French, German, Italian and Portuguese interfaces.
 
 The EF-DX920 is physically validated. EF-DX900, EF-DX910, EF-DX915 and

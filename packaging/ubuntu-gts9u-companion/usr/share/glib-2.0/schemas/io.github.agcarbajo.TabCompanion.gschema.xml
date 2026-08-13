@@ -38,6 +38,7 @@
     <key name="pointer-acceleration" type="b"><default>true</default></key>
     <key name="keyboard-haptics-enabled" type="b"><default>true</default></key>
     <key name="keyboard-haptics-strength" type="i"><default>2</default></key>
+    <key name="notification-haptics-enabled" type="b"><default>true</default></key>
     <key name="action-targets" type="a{ss}"><default>{}</default></key>
     <key name="keyboard-source-codes" type="a{si}">
       <default>{'key-galaxy-ai': 760, 'key-dex': 701, 'key-finder': 710, 'key-settings': 709, 'key-fn-f1': 757, 'key-fn-f2': 758, 'key-fn-f3': 759, 'key-fn-f4': 705, 'key-fn-f5': 254, 'key-fn-f6': 172, 'key-fn-f7': 224, 'key-fn-f8': 225, 'key-fn-f9': 113, 'key-fn-f10': 114, 'key-fn-f11': 115}</default>

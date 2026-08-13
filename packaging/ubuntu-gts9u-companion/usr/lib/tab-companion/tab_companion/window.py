@@ -360,8 +360,8 @@ class CompanionWindow(Adw.ApplicationWindow):
         page = self._page()
         hero = Adw.StatusPage(
             icon_name="phone-symbolic",
-            title=_("Keyboard haptics"),
-            description=_("Feel a short vibration when touching a key on GNOME's on-screen keyboard."),
+            title=_("Vibration"),
+            description=_("Configure tactile feedback for the on-screen keyboard and notifications."),
         )
         hero.set_vexpand(False)
         hero_group = Adw.PreferencesGroup()
@@ -400,6 +400,21 @@ class CompanionWindow(Adw.ApplicationWindow):
         self.haptics_test.set_activatable_widget(test)
         group.add(self.haptics_test)
         page.add(group)
+
+        notifications = Adw.PreferencesGroup(title=_("Notifications"))
+        notification_enabled = Adw.SwitchRow(
+            title=_("Vibrate for notifications"),
+            subtitle=_("Feel a vibration when a new notification arrives."),
+        )
+        notification_enabled.add_prefix(
+            Gtk.Image(icon_name="preferences-system-notifications-symbolic")
+        )
+        self.settings.bind(
+            "notification-haptics-enabled", notification_enabled, "active",
+            Gio.SettingsBindFlags.DEFAULT,
+        )
+        notifications.add(notification_enabled)
+        page.add(notifications)
         return page
 
     def _haptics_strength_selected(self, row, _param):
