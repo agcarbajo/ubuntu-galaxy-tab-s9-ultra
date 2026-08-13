@@ -25,6 +25,8 @@ SPEN_SERVICES = {
     "0000fd6c-0000-1000-8000-00805f9b34fb",
     "0000fef5-0000-1000-8000-00805f9b34fb",
 }
+CONNECT_TIMEOUT_SECONDS = 12
+CONNECT_FAILURES_BEFORE_REPAIR = 2
 
 
 def is_spen(properties):
@@ -87,8 +89,6 @@ class Agent(dbus.service.Object):
 class PairingService(dbus.service.Object):
     def __init__(self):
         self.bus = dbus.SystemBus()
-        self.bus_name = dbus.service.BusName(BUS_NAME, bus=self.bus)
-        super().__init__(self.bus_name, OBJECT_PATH)
         self.remote_enabled = self._load_remote_enabled()
         self.manager = dbus.Interface(
             self.bus.get_object(BLUEZ, "/"),
@@ -101,10 +101,15 @@ class PairingService(dbus.service.Object):
         adapter_object = self.bus.get_object(BLUEZ, self.adapter_path)
         self.adapter = dbus.Interface(adapter_object, ADAPTER_IFACE)
         self.adapter_properties = dbus.Interface(adapter_object, PROPERTIES_IFACE)
-        self.agent = Agent(self)
         self.agent_manager = dbus.Interface(
             self.bus.get_object(BLUEZ, "/org/bluez"), "org.bluez.AgentManager1"
         )
+        # Export the service only after BlueZ and its adapter are ready.  If
+        # startup races bluetoothd, exporting first leaves a stale object-path
+        # handler behind when main() retries the constructor.
+        self.bus_name = dbus.service.BusName(BUS_NAME, bus=self.bus)
+        super().__init__(self.bus_name, OBJECT_PATH)
+        self.agent = Agent(self)
         self.agent_registered = False
         self.reset_path = self._find_reset_path()
         self.reset_for_dock = False
@@ -161,18 +166,32 @@ class PairingService(dbus.service.Object):
     @dbus.service.method(BUS_NAME, in_signature="", out_signature="b")
     def RecoverStaleBond(self):
         """Replace a docked bond whose BlueZ link has stopped serving GATT."""
-        if not self.remote_enabled or self.repairing_bond or not self.docked():
+        path, _properties = self.paired_spen()
+        return self.recover_stale_bond(path, "unresponsive GATT connection")
+
+    def recover_stale_bond(self, path, reason):
+        """Asynchronously replace only the docked S Pen bond."""
+        if (
+            path is None
+            or not self.remote_enabled
+            or self.repairing_bond
+            or not self.docked()
+        ):
             return False
-        path, properties = self.paired_spen()
-        if path is None or not properties.get("Connected", False):
+        properties = self.devices().get(path)
+        if (
+            properties is None
+            or not properties.get("Paired", False)
+            or not is_spen(properties)
+        ):
             return False
         self.repairing_bond = True
         self.connect_failures.pop(path, None)
         self.finish_pairing()
-        print("Recovering unresponsive S Pen GATT connection", flush=True)
+        print(f"Recovering S Pen {reason}", flush=True)
 
         def removed():
-            print("Unresponsive S Pen bond removed", flush=True)
+            print("Stale S Pen bond removed", flush=True)
             GLib.timeout_add_seconds(1, self.restart_pairing_after_repair)
 
         def failed(error):
@@ -206,7 +225,7 @@ class PairingService(dbus.service.Object):
                 self.pairing = False
                 GLib.timeout_add_seconds(3, self.restart_pairing_after_repair)
                 return
-            print(f"Could not remove unresponsive S Pen: {name}", flush=True)
+            print(f"Could not remove stale S Pen: {name}", flush=True)
             self.repairing_bond = False
 
         try:
@@ -279,18 +298,18 @@ class PairingService(dbus.service.Object):
             if name not in {
                 "org.bluez.Error.AlreadyConnected",
                 "org.bluez.Error.InProgress",
-                "org.freedesktop.DBus.Error.NoReply",
             }:
                 print(f"S Pen connect failed: {name}", flush=True)
                 if self.docked() and not self.pairing and not self.repairing_bond:
                     failures = self.connect_failures.get(path, 0) + 1
                     self.connect_failures[path] = failures
-                    if failures >= 4:
+                    if failures >= CONNECT_FAILURES_BEFORE_REPAIR:
                         GLib.idle_add(self.repair_stale_bond, path)
 
         dbus.Interface(self.bus.get_object(BLUEZ, path), DEVICE_IFACE).Connect(
             reply_handler=finished,
             error_handler=failed,
+            timeout=CONNECT_TIMEOUT_SECONDS,
         )
 
     def disconnect_spen(self):
@@ -307,25 +326,12 @@ class PairingService(dbus.service.Object):
 
     def repair_stale_bond(self, path):
         """Replace a host bond which the docked pen no longer recognises."""
-        if not self.remote_enabled or self.repairing_bond or not self.docked():
-            return GLib.SOURCE_REMOVE
         properties = self.devices().get(path)
-        if properties is None or not properties.get("Paired", False):
-            return GLib.SOURCE_REMOVE
-        self.repairing_bond = True
-        self.connect_failures.pop(path, None)
-        self.finish_pairing()
-        try:
-            self.adapter.RemoveDevice(dbus.ObjectPath(path))
-        except dbus.DBusException as error:
-            print(
-                f"Could not remove stale S Pen bond: {error.get_dbus_name()}",
-                flush=True,
-            )
-            self.repairing_bond = False
-            return GLib.SOURCE_REMOVE
-        print("Stale S Pen bond removed; starting dock pairing again", flush=True)
-        GLib.timeout_add_seconds(1, self.restart_pairing_after_repair)
+        # A timed-out Connect can complete late.  Do not discard a link that
+        # became connected before this idle callback ran; the session backend
+        # will request recovery separately if its GATT operations still fail.
+        if properties is not None and not properties.get("Connected", False):
+            self.recover_stale_bond(path, "connection after repeated failures")
         return GLib.SOURCE_REMOVE
 
     def restart_pairing_after_repair(self):
@@ -439,6 +445,12 @@ class PairingService(dbus.service.Object):
         paired_path, paired = self.paired_spen()
         if self.pairing and time.monotonic() >= self.pairing_deadline:
             self.finish_pairing()
+            if self.repairing_bond:
+                # A pen that missed the bounded advertising window must be
+                # allowed another dock reset instead of remaining wedged until
+                # the user physically removes and reinserts it.
+                self.repairing_bond = False
+                self.reset_for_dock = False
         elif self.pairing and docked:
             # BlueZ can recreate the device immediately after RemoveDevice,
             # before our InterfacesAdded receiver is ready to act on it.  Scan

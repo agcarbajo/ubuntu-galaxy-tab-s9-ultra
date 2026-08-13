@@ -5010,3 +5010,34 @@ queda pendiente de la prueba interactiva de la usuaria.
 ubuntu-gts9u-companion_0.10.3_all.deb
 7a7c8398382eccbeda82af20d0a4f3e6c73f8a63291bab704d684b0b12fbeb6f
 ```
+
+## Sesión 74 — recuperación rápida del vínculo BLE tras reiniciar
+
+Fecha: 2026-08-13. Después de un reinicio, el S Pen permaneció insertado pero
+el vínculo guardado no volvió a conectar. El servicio sí detectó el caso y acabó
+recuperándolo solo, aunque demasiado tarde: cuatro llamadas `Connect` fallidas,
+cada una capaz de esperar unos 30 segundos, retrasaron el nuevo emparejamiento
+hasta 91 segundos. A las 15:01 eliminó exclusivamente el vínculo del S Pen,
+abrió el anuncio del garaje y regresó a `Paired/Bonded/Trusted/Connected`.
+Una lectura GATT directa confirmó que el estado recuperado era real: Battery
+Level `[80, 0]` y Mode `[16]`, no propiedades almacenadas por BlueZ.
+
+Tab Companion 0.10.4 limita ahora cada conexión a 12 segundos y sustituye el
+vínculo después de dos fallos, incluidos los `NoReply`. Tanto la recuperación
+por conexión como la solicitada por el backend GATT usan la misma eliminación
+asíncrona; esta última admite también el estado `Paired` pero desconectado. Si
+vence la ventana de anuncio, el servicio libera su estado de reparación y
+vuelve a abrirla sin exigir retirar el lápiz. Además, el objeto D-Bus ya no se
+exporta hasta que BlueZ y su adaptador existen, evitando el manejador duplicado
+observado durante dos arranques.
+
+La ruta completa se repitió deliberadamente con el lápiz insertado tras
+instalar 0.10.4. `RecoverStaleBond` eliminó el vínculo, activó el anuncio y lo
+dejó otra vez emparejado y conectado sin interacción. Las lecturas finales
+devolvieron Battery Level `[100, 0]`, Mode `[16]` y Tab Companion publicó
+`GestureAvailable=true`.
+
+```text
+ubuntu-gts9u-companion_0.10.4_all.deb
+70e3d50715782081c1e0641178bced1505def8437487bed8cd6955b44619f5d9
+```
