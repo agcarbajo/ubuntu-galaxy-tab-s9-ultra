@@ -1,0 +1,25 @@
+#!/bin/sh
+set -eu
+
+devpath=${1-}
+case "$devpath" in
+	/devices/*) ;;
+	*) exit 1 ;;
+esac
+
+device_dir=/sys$devpath
+[ -d "$device_dir" ]
+
+for attribute in ignore_finger_while_hovering disable_digitizer_when_docked; do
+	path=$device_dir/$attribute
+	[ -e "$path" ] || continue
+	chgrp input "$path"
+	chmod 0660 "$path"
+	owner_file=/run/ubuntu-gts9u/desktop-user
+	if [ -r "$owner_file" ]; then
+		owner=$(cat "$owner_file")
+		if [ -n "$owner" ] && id "$owner" >/dev/null 2>&1; then
+			chown "$owner" "$path"
+		fi
+	fi
+done

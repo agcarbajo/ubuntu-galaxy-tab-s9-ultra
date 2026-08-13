@@ -55,6 +55,7 @@ test -f "$cfg/config-gts9uwifi.fragment"
 test -f "$repo/packaging/v4l2loopback/patches/0001-backward-compatible-client-usage-event.patch"
 test -f "$repo/packaging/v4l2loopback/patches/0002-fix-buffer-queue-management.patch"
 test -f "$repo/packaging/v4l2loopback/patches/0003-preserve-output-queue-for-capture.patch"
+test -f "$repo/kernel/include/linux/samsung_wacom.h"
 
 mkdir -p "$(dirname "$kernel_tree")" "$build_dir" "$out_dir"
 
@@ -171,6 +172,11 @@ if ! grep -q 'forcing 16-byte Samsung events for firmware PID 6936' \
 			< "$pat/support-samsung-goodix-16-byte-events.patch"
 	fi
 fi
+install -m 0644 "$repo/kernel/include/linux/samsung_wacom.h" \
+	"$kernel_tree/include/linux/samsung_wacom.h"
+apply_unless 'samsung_wacom_should_suppress_touch' \
+	drivers/input/touchscreen/goodix_berlin_core.c \
+	suppress-goodix-touch-while-spen-hovering.patch
 
 # Xorg only creates a PRIME GPU screen when MODE_GETRESOURCES succeeds.  Keep
 # the split GPU/DPU topology, but expose an empty KMS resource list on Adreno.

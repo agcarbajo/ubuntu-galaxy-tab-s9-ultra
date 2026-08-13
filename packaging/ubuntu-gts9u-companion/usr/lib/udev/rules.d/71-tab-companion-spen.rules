@@ -1,0 +1,2 @@
+# Allow the desktop user to change only the two boolean S Pen policy knobs.
+SUBSYSTEM=="i2c", DRIVER=="samsung-wacom-w90xx", RUN+="/usr/libexec/tab-companion-spen-permissions %p"

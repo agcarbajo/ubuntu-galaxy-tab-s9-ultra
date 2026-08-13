@@ -16,6 +16,7 @@ class Action:
 ACTIONS = (
     Action("none", N_("Keep the default action"), "edit-clear-all-symbolic"),
     Action("app", N_("Open an application"), "application-x-executable-symbolic"),
+    Action("key", N_("Simulate a key"), "input-keyboard-symbolic"),
     Action("screenshot", N_("Take a screenshot"), "camera-photo-symbolic"),
     Action("back", N_("Back"), "go-previous-symbolic"),
     Action("home", N_("Home"), "go-home-symbolic"),
@@ -26,6 +27,7 @@ ACTIONS = (
     Action("volume-up", N_("Volume up"), "audio-volume-high-symbolic"),
     Action("volume-down", N_("Volume down"), "audio-volume-low-symbolic"),
     Action("mute", N_("Mute"), "audio-volume-muted-symbolic"),
+    Action("flashlight", N_("Toggle the flashlight"), "gts9u-flashlight-symbolic"),
     Action("command", N_("Run a command"), "utilities-terminal-symbolic"),
 )
 

@@ -51,7 +51,7 @@ MAPPINGS = {
     "key-galaxy-ai", "key-dex", "key-finder", "key-settings",
     "key-fn-f1", "key-fn-f2", "key-fn-f3", "key-fn-f4", "key-fn-f5",
     "key-fn-f6", "key-fn-f7", "key-fn-f8", "key-fn-f9", "key-fn-f10",
-    "key-fn-f11", "key-fn-f12",
+    "key-fn-f11",
 }
 
 # Measured on the physical EF-DX920 with firmware 0x00370037.  Fn+F12 does
@@ -217,9 +217,14 @@ class VirtualKeyboard:
         os.write(self.fd, INPUT_EVENT.pack(0, 0, event_type, code, value))
 
     def tap(self, code):
-        self.emit(EV_KEY, code, 1)
+        self.chord((code,))
+
+    def chord(self, codes):
+        for code in codes:
+            self.emit(EV_KEY, code, 1)
         self.emit(EV_SYN, SYN_REPORT, 0)
-        self.emit(EV_KEY, code, 0)
+        for code in reversed(codes):
+            self.emit(EV_KEY, code, 0)
         self.emit(EV_SYN, SYN_REPORT, 0)
 
     def read_output(self):
@@ -242,6 +247,7 @@ class HardwareService:
         self.state = State()
         self.wacom = self._find_wacom()
         self.settings = Gio.Settings.new("io.github.agcarbajo.TabCompanion")
+        self.pen_option_errors = set()
         self.keyboard_fd = None
         self.keyboard_watch = None
         self.pen_fd = None
@@ -275,11 +281,36 @@ class HardwareService:
             self.virtual_keyboard = None
 
     def _migrate_keyboard_codes(self):
-        if self.settings.get_uint("keyboard-mapping-version") < 1:
+        version = self.settings.get_uint("keyboard-mapping-version")
+        if version < 1:
             self.settings.set_value(
                 "keyboard-source-codes", GLib.Variant("a{si}", DEFAULT_SOURCE_CODES)
             )
             self.settings.set_uint("keyboard-mapping-version", 1)
+            version = 1
+        if version < 2:
+            sources = self.settings.get_value("keyboard-source-codes").unpack()
+            sources.pop("key-fn-f12", None)
+            self.settings.set_value(
+                "keyboard-source-codes", GLib.Variant("a{si}", sources)
+            )
+            targets = self.settings.get_value("action-targets").unpack()
+            defaults = self.settings.get_default_value("action-targets").unpack()
+            for mapping, target in defaults.items():
+                targets.setdefault(mapping, target)
+            targets.pop("key-fn-f12", None)
+            self.settings.set_value("action-targets", GLib.Variant("a{ss}", targets))
+            self.settings.set_uint("keyboard-mapping-version", 2)
+            version = 2
+        if version < 3:
+            # Galaxy AI is the one dedicated launcher owned by this port.
+            targets = self.settings.get_value("action-targets").unpack()
+            targets["key-galaxy-ai"] = (
+                "io.github.agcarbajo.TabCompanion.desktop"
+            )
+            self.settings.set_value("action-targets", GLib.Variant("a{ss}", targets))
+            self.settings.set_string("key-galaxy-ai", "app")
+            self.settings.set_uint("keyboard-mapping-version", 3)
 
     def _init_spen_ble(self):
         try:
@@ -434,6 +465,33 @@ class HardwareService:
     def _find_wacom():
         matches = glob("/sys/bus/i2c/devices/*/pen_docked")
         return Path(matches[0]).parent if matches else None
+
+    def _apply_pen_options(self):
+        if self.wacom is None:
+            return
+        options = {
+            "ignore_finger_while_hovering": self.settings.get_boolean(
+                "ignore-finger-while-hovering"
+            ),
+            "disable_digitizer_when_docked": self.settings.get_boolean(
+                "disable-digitizer-when-docked"
+            ),
+        }
+        for attribute, enabled in options.items():
+            path = self.wacom / attribute
+            if not path.exists():
+                continue
+            desired = "1" if enabled else "0"
+            if read_text(path) == desired:
+                self.pen_option_errors.discard(attribute)
+                continue
+            try:
+                path.write_text(desired + "\n", encoding="ascii")
+                self.pen_option_errors.discard(attribute)
+            except OSError as error:
+                if attribute not in self.pen_option_errors:
+                    print(f"Cannot apply S Pen option {attribute}: {error}", flush=True)
+                    self.pen_option_errors.add(attribute)
 
     @staticmethod
     def _keyboard_info():
@@ -642,6 +700,16 @@ class HardwareService:
                 return False
             self.virtual_keyboard.tap(ACTION_KEYS[action])
             return True
+        if action == "flashlight":
+            try:
+                subprocess.Popen(
+                    ["/usr/bin/gts9u-flashlight", "toggle"],
+                    start_new_session=True,
+                )
+                return True
+            except OSError as error:
+                print(f"Cannot toggle flashlight: {error}", flush=True)
+                return False
         targets = self.settings.get_value("action-targets").unpack()
         target = targets.get(mapping, "").strip()
         if action == "app" and target:
@@ -657,6 +725,19 @@ class HardwareService:
         if action == "command" and target:
             subprocess.Popen(["sh", "-lc", target], start_new_session=True)
             return True
+        if action == "key" and target and self.virtual_keyboard is not None:
+            try:
+                codes = tuple(int(part) for part in target.split("+") if part)
+            except ValueError:
+                return False
+            if (
+                not codes
+                or len(codes) > 8
+                or any(code < 1 or code > KEY_MAX for code in codes)
+            ):
+                return False
+            self.virtual_keyboard.chord(codes)
+            return True
         return False
 
     def _replace_dynamic(self, **changes):
@@ -667,6 +748,7 @@ class HardwareService:
     def sample(self):
         if self.wacom is None:
             self.wacom = self._find_wacom()
+        self._apply_pen_options()
         self._ensure_keyboard_reader()
         self._ensure_pen_reader()
         self._refresh_spen_ble()

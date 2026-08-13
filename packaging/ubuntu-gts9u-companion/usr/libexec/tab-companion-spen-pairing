@@ -106,6 +106,8 @@ class PairingService:
         self.pairable_before = False
         self.candidate = None
         self.connecting = set()
+        self.connect_failures = {}
+        self.repairing_bond = False
         self.next_connect = 0.0
         self.started_discovery = False
         self.bus.add_signal_receiver(
@@ -170,6 +172,8 @@ class PairingService:
 
         def finished(*_args):
             self.connecting.discard(path)
+            self.connect_failures.pop(path, None)
+            self.repairing_bond = False
 
         def failed(error):
             self.connecting.discard(path)
@@ -180,11 +184,49 @@ class PairingService:
                 "org.freedesktop.DBus.Error.NoReply",
             }:
                 print(f"S Pen connect failed: {name}", flush=True)
+                if self.docked() and not self.pairing and not self.repairing_bond:
+                    failures = self.connect_failures.get(path, 0) + 1
+                    self.connect_failures[path] = failures
+                    if failures >= 4:
+                        GLib.idle_add(self.repair_stale_bond, path)
 
         dbus.Interface(self.bus.get_object(BLUEZ, path), DEVICE_IFACE).Connect(
             reply_handler=finished,
             error_handler=failed,
         )
+
+    def repair_stale_bond(self, path):
+        """Replace a host bond which the docked pen no longer recognises."""
+        if self.repairing_bond or not self.docked():
+            return GLib.SOURCE_REMOVE
+        properties = self.devices().get(path)
+        if properties is None or not properties.get("Paired", False):
+            return GLib.SOURCE_REMOVE
+        self.repairing_bond = True
+        self.connect_failures.pop(path, None)
+        self.finish_pairing()
+        try:
+            self.adapter.RemoveDevice(dbus.ObjectPath(path))
+        except dbus.DBusException as error:
+            print(
+                f"Could not remove stale S Pen bond: {error.get_dbus_name()}",
+                flush=True,
+            )
+            self.repairing_bond = False
+            return GLib.SOURCE_REMOVE
+        print("Stale S Pen bond removed; starting dock pairing again", flush=True)
+        GLib.timeout_add_seconds(1, self.restart_pairing_after_repair)
+        return GLib.SOURCE_REMOVE
+
+    def restart_pairing_after_repair(self):
+        if not self.docked():
+            self.repairing_bond = False
+            return GLib.SOURCE_REMOVE
+        self.reset_for_dock = True
+        self.begin_pairing()
+        if not self.pairing:
+            self.repairing_bond = False
+        return GLib.SOURCE_REMOVE
 
     def register_agent(self):
         if self.agent_registered:
@@ -246,6 +288,9 @@ class PairingService:
         if not is_spen(properties):
             return
         if properties.get("Paired", False):
+            if properties.get("Connected", False):
+                self.connect_failures.pop(path, None)
+                self.repairing_bond = False
             dbus.Interface(
                 self.bus.get_object(BLUEZ, path), PROPERTIES_IFACE
             ).Set(DEVICE_IFACE, "Trusted", dbus.Boolean(True))
@@ -290,7 +335,13 @@ class PairingService:
 
 def main():
     dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
-    service = PairingService()
+    while True:
+        try:
+            service = PairingService()
+            break
+        except (StopIteration, dbus.DBusException):
+            print("Waiting for the Bluetooth adapter", flush=True)
+            time.sleep(2)
     service.tick()
     GLib.timeout_add_seconds(2, service.tick)
     try:

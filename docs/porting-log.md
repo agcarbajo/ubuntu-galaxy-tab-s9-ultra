@@ -4652,3 +4652,64 @@ relés libcamera. Los `oneshot` de sensores y firmware pogo terminaron con
 la batería real del S Pen al 100 %. La extracción produjo `PenState=paired` y
 la ausencia de anuncio descrita arriba; la reinserción se usó para recuperar el
 enlace con la política definitiva.
+
+## Sesión 66 — Tab Companion 0.8 y políticas EMR
+
+Fecha: 2026-08-13. El S Pen conservaba en BlueZ un enlace que el lápiz ya no
+reconocía tras la prueba de desconexión anterior. Se eliminó sólo ese enlace y
+el flujo del garaje volvió a emparejarlo sin interacción. El servicio ahora
+repara automáticamente ese caso tras cuatro fallos consecutivos únicamente si
+el S Pen sigue insertado, y espera al adaptador durante el arranque.
+
+«Simular una tecla» añade un teclado gráfico con F1–F12, alfanuméricas,
+navegación y modificadores. También captura cualquier teclado físico mientras
+el selector tiene foco. El backend valida los códigos evdev y emite la
+combinación por uinput; la interfaz real mostró correctamente `Ctrl+Alt+T`.
+«Activar/desactivar la linterna» se verificó con dos activaciones D-Bus que
+produjeron los estados físicos `on` y `off`.
+
+Fn+F12 desaparece porque el firmware V37 no produce evento. Los valores de
+fábrica asignan Galaxy AI a Tab Companion, Finder a búsqueda, Ajustes a
+Configuración, Fn+F1/F2/F3 a Archivos/navegador/terminal, Fn+F4 a aplicaciones,
+Fn+F5 a vista general y DeX a maximizar/restaurar. Fn+F6–F11 conservan los
+eventos nativos de inicio, brillo y volumen.
+
+El kernel comparte la proximidad Wacom con Goodix. Cuando el rechazo está
+activo, Goodix libera sus slots y descarta dedos desde el primer hover. La
+segunda opción desactiva la IRQ de coordenadas Wacom con `pen_docked=1`, pero
+conserva PDCT, carga y BLE. Los registros mostraron `digitiser disabled` al
+insertar y `enabled` al extraer; la propietaria confirmó físicamente que ambas
+opciones funcionan como se esperaba. Udev permite al usuario escribir sólo
+estas dos políticas booleanas.
+
+La app 0.8.0 y el bundle Android v4 pasaron todas sus validaciones. Se acreditó
+la partición `boot` por etiqueta y tamaño, se guardó una copia recuperable y se
+escribió sólo esa partición. Los hashes arrancados son:
+
+```text
+boot        524a4ded657f1419640b051f580f8519f6fa79af1aac5e4f68a4505bb042ca02
+vendor_boot bf312f08a6876194e3ce30d52a81f8da23dd88132c4660698eb5cde17a69e6bc
+```
+
+El paquete reproducido desde el árbol definitivo pasó `compileall`, esquema
+GSettings estricto, Desktop Entry y AppStream pedante:
+
+```text
+ubuntu-gts9u-companion_0.8.0_all.deb
+b0eca63313975a28634bc367106bc42556aa939abb4baef788ec3137f6b75dd3
+```
+
+El primer reinicio posterior a la imagen final se detuvo exactamente en
+`PM: suspend entry (deep)`, dentro del `pm_test=platform` preexistente que
+recupera el panel ANA38407 tras un arranque frío. No llegó a iniciarse el
+servicio de hardware de Tab Companion y no hubo mensajes Wacom ni Goodix que
+precedieran al bloqueo. Tras forzar el reinicio, el mismo ciclo retornó en unos
+siete segundos (`PM: suspend exit`) y el sistema arrancó normalmente. Se trata
+por tanto de un fallo intermitente pendiente del recuperador del panel, no de
+una regresión observada en las dos políticas nuevas del S Pen.
+
+La regresión del arranque recuperado dejó cero unidades fallidas, ambos
+servicios de Companion activos y sin avisos, DX920 conectado y remapeable, S Pen
+emparejado al 100 % y cargando, y las dos políticas sysfs activas. La propietaria
+ya había validado físicamente el rechazo de dedos en hover y la
+desactivación/reactivación del digitalizador.

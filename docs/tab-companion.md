@@ -30,12 +30,24 @@ El servicio sólo la acepta cuando coinciden el acoplamiento físico, el nombre
 SPEN y los UUID FD6C/FEF5. El resultado se guarda como enlazado y confiable sin
 PIN ni interacción, como en One UI.
 
+Si BlueZ conserva un enlace que el lápiz ya no reconoce, cuatro intentos de
+conexión fallidos con el S Pen físicamente insertado activan una recuperación
+limitada a ese dispositivo: se descarta el enlace obsoleto y se repite el flujo
+del garaje. El servicio también espera al adaptador durante el arranque.
+
 Se probó físicamente desconectar GATT mientras estaba insertado para ahorrar
 batería. No es viable en este hardware: al sacarlo el lápiz no se anuncia, ni
 siquiera con búsqueda activa, y BlueZ no puede recuperarlo. Por eso se mantiene
 la conexión cuando está disponible. Si el lápiz entra por sí solo en reposo, la
 UI indica que hay que insertarlo para que el garaje lo despierte y BlueZ vuelva
 a conectarlo.
+
+«Ignorar los toques con el dedo durante el hover» comparte la proximidad Wacom
+con el controlador Goodix. En cuanto entra `BTN_TOOL_PEN`, el touchscreen
+libera sus contactos activos y no publica dedos hasta que el lápiz sale de
+rango. «Deshabilitar el digitalizador mientras está insertado» mantiene vivos
+garaje, carga y BLE, pero desactiva la IRQ de coordenadas EMR. La alimentación
+AVDD se comparte con el panel, por lo que no supone un apagado eléctrico total.
 
 Las pulsaciones simple, doble y larga usan `BTN_STYLUS`. Los seis movimientos
 de aire usan Button State del servicio FD6C y se clasifican como arriba, abajo,
@@ -69,8 +81,13 @@ No hay modo «Learn»: los códigos medidos forman parte de los valores de fábr
 «Restablecer valores» restaura de una vez acciones, destinos y códigos físicos.
 En el EF-DX920 son Galaxy AI 760, DeX 701, Finder 710,
 Fn+Finder/Ajustes 709 y Fn+F1–F11 757/758/759/705/254/172/224/225/113/114/115.
-Fn+F12 se muestra para completar las doce combinaciones, aunque el firmware V37
-no emite ningún evento para ella.
+Fn+F12 no se muestra: el firmware V37 no emite ningún evento y no hay nada
+fiable que remapear.
+
+Los valores de fábrica nuevos son: Galaxy AI abre Tab Companion; Finder abre
+la búsqueda; Ajustes abre Configuración; Fn+F1/F2/F3 abren Archivos, navegador
+y terminal; Fn+F4 abre aplicaciones; Fn+F5 la vista general; y DeX maximiza o
+restaura la ventana actual. Fn+F6–F11 conservan sus eventos nativos.
 
 ## Selector de acciones
 
@@ -81,6 +98,12 @@ con icono, nombre, ID de escritorio y búsqueda. «Ejecutar un comando» abre un
 campo de texto; el comando se ejecuta en la sesión de la usuaria y no debe
 contener contraseñas ni secretos.
 
+«Simular una tecla» abre un teclado gráfico con alfanuméricas, F1–F12,
+navegación y modificadores. Se puede tocar una tecla o pulsarla en cualquier
+teclado físico; Ctrl, Mayús, Alt, AltGr y Super permiten crear combinaciones.
+«Activar/desactivar la linterna» usa `gts9u-flashlight toggle` y está disponible
+para cualquier tecla o gesto.
+
 ## Idiomas
 
 La interfaz, los selectores, los estados, la lista de modelos y «Acerca de»
@@ -89,10 +112,18 @@ Se elige el idioma de la sesión y se usa inglés como respaldo.
 
 ## Validación y límites
 
-La versión 0.7.0 se construyó con validación estricta de esquema, escritorio y
-AppStream. En la tablet se comprobaron el desplazamiento del selector, la lista
-de aplicaciones con iconos, el cuadro de comandos, el DX920 conectado, el nivel
-100 % conservado en reposo y un arranque completo sin regresiones.
+La versión 0.8.0 se construyó con validación estricta de esquema, escritorio y
+AppStream. En la tablet se comprobaron el teclado gráfico, una combinación
+`Ctrl+Alt+T`, la linterna, el DX920, BLE al 100 %, permisos sysfs y transiciones
+de IRQ. La propietaria validó físicamente el rechazo del dedo durante hover y
+la desactivación/reactivación del digitalizador al insertar y extraer el S Pen.
+
+Un reinicio de validación quedó detenido antes de iniciar Tab Companion, en el
+ciclo `pm_test=platform` que el port usa para recuperar el panel tras un arranque
+frío. El siguiente arranque completó el ciclo y todas las comprobaciones. Si la
+tablet vuelve a quedar congelada durante el arranque, este recuperador del panel
+es la primera ruta de diagnóstico; no se observó relación con las políticas
+Wacom/Goodix.
 
 Siguen pendientes un porcentaje físico intermedio, probar EF-DX900/910/915/925
 y verificar los touchpads de los modelos que los incluyen.

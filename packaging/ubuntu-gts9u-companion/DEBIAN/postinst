@@ -7,6 +7,7 @@ fi
 
 if command -v udevadm >/dev/null 2>&1 && [ -e /dev/uinput ]; then
 	udevadm trigger --action=change --name-match=uinput || true
+	udevadm trigger --action=change --subsystem-match=i2c || true
 	udevadm settle || true
 fi
 

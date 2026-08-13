@@ -6,6 +6,7 @@ from . import VERSION
 from .actions import ACTIONS, action_index, action_label
 from .hardware import HardwareClient
 from .i18n import _, N_
+from .key_selector import KeyChooser, chord_label
 
 
 GESTURES = (
@@ -21,22 +22,21 @@ GESTURES = (
 )
 
 KEYS = (
-    ("galaxy-ai", "Galaxy AI", N_("Dedicated AI key")),
-    ("dex", "DeX", N_("Desktop mode key")),
-    ("finder", "Finder", N_("Finder key without Fn")),
-    ("settings", N_("Settings"), "Fn + Finder"),
-    ("fn-f1", "Fn + F1", N_("Function shortcut 1")),
-    ("fn-f2", "Fn + F2", N_("Function shortcut 2")),
-    ("fn-f3", "Fn + F3", N_("Function shortcut 3")),
-    ("fn-f4", "Fn + F4", N_("Function shortcut 4")),
-    ("fn-f5", "Fn + F5", N_("Function shortcut 5")),
+    ("galaxy-ai", "Galaxy AI", N_("Tab Companion by default")),
+    ("dex", "DeX", N_("Maximize or restore the current window by default")),
+    ("finder", "Finder", N_("System search by default")),
+    ("settings", N_("Settings"), N_("System Settings by default")),
+    ("fn-f1", "Fn + F1", N_("Files by default")),
+    ("fn-f2", "Fn + F2", N_("Web browser by default")),
+    ("fn-f3", "Fn + F3", N_("Terminal by default")),
+    ("fn-f4", "Fn + F4", N_("Applications by default")),
+    ("fn-f5", "Fn + F5", N_("Overview by default")),
     ("fn-f6", "Fn + F6", N_("Home by default")),
     ("fn-f7", "Fn + F7", N_("Brightness down by default")),
     ("fn-f8", "Fn + F8", N_("Brightness up by default")),
     ("fn-f9", "Fn + F9", N_("Mute by default")),
     ("fn-f10", "Fn + F10", N_("Volume down by default")),
     ("fn-f11", "Fn + F11", N_("Volume up by default")),
-    ("fn-f12", "Fn + F12", N_("Keyboard-specific function")),
 )
 
 COMPATIBLE_KEYBOARDS = (
@@ -147,6 +147,8 @@ class ActionChooser(Adw.Window):
             GLib.idle_add(self.parent_window._choose_application, self.setting)
         elif action_id == "command":
             GLib.idle_add(self.parent_window._edit_command, self.setting)
+        elif action_id == "key":
+            GLib.idle_add(self.parent_window._choose_key, self.setting)
         else:
             self.parent_window.settings.set_string(self.setting, action_id)
 
@@ -215,6 +217,32 @@ class CompanionWindow(Adw.ApplicationWindow):
         self.battery_row.add_suffix(self.battery_bar)
         status.add(self.battery_row)
         page.add(status)
+
+        behaviour = Adw.PreferencesGroup(
+            title=_("S Pen behaviour"),
+            description=_("Control touch rejection and when the digitizer is active."),
+        )
+        reject_touch = Adw.SwitchRow(
+            title=_("Ignore finger touches while hovering"),
+            subtitle=_("Reject finger input as soon as the S Pen approaches the screen."),
+        )
+        reject_touch.add_prefix(Gtk.Image(icon_name="touch-disabled-symbolic"))
+        self.settings.bind(
+            "ignore-finger-while-hovering", reject_touch, "active",
+            Gio.SettingsBindFlags.DEFAULT,
+        )
+        behaviour.add(reject_touch)
+        dock_disable = Adw.SwitchRow(
+            title=_("Disable the digitizer while docked"),
+            subtitle=_("Ignore every S Pen on the screen while the bundled pen is inserted."),
+        )
+        dock_disable.add_prefix(Gtk.Image(icon_name="system-shutdown-symbolic"))
+        self.settings.bind(
+            "disable-digitizer-when-docked", dock_disable, "active",
+            Gio.SettingsBindFlags.DEFAULT,
+        )
+        behaviour.add(dock_disable)
+        page.add(behaviour)
 
         gestures = Adw.PreferencesGroup(
             title=_("Air actions"),
@@ -301,6 +329,8 @@ class CompanionWindow(Adw.ApplicationWindow):
                     box.append(Gtk.Image.new_from_gicon(app.get_icon()))
                     box.append(Gtk.Label(label=label, ellipsize=3, max_width_chars=24))
                     return box
+        if action_id == "key" and target:
+            return icon_label(icon, chord_label(target))
         return icon_label(icon, label)
 
     def _refresh_action_button(self, setting):
@@ -337,6 +367,14 @@ class CompanionWindow(Adw.ApplicationWindow):
         dialog.set_default_response("save")
         dialog.connect("response", self._command_response, setting, entry)
         dialog.present()
+        return GLib.SOURCE_REMOVE
+
+    def _choose_key(self, setting):
+        current = self.settings.get_value("action-targets").unpack().get(setting, "")
+        KeyChooser(
+            self, current,
+            lambda value: self._save_target(setting, "key", value),
+        ).present()
         return GLib.SOURCE_REMOVE
 
     def _command_response(self, _dialog, response, setting, entry):
@@ -401,6 +439,8 @@ class CompanionWindow(Adw.ApplicationWindow):
         self.settings.reset("keyboard-source-codes")
         targets = self.settings.get_value("action-targets").unpack()
         targets = {key: value for key, value in targets.items() if not key.startswith("key-")}
+        defaults = self.settings.get_default_value("action-targets").unpack()
+        targets.update({key: value for key, value in defaults.items() if key.startswith("key-")})
         self.settings.set_value("action-targets", GLib.Variant("a{ss}", targets))
 
     def _forget_keyboard(self, _button):
@@ -439,10 +479,6 @@ class CompanionWindow(Adw.ApplicationWindow):
         self.keyboard_row.set_subtitle(f"{model} · {connection}")
         self.forget_keyboard_button.set_visible(not connected)
         self.key_rows["galaxy-ai"].set_visible(model in {"EF-DX920", "EF-DX925"})
-        if model == "EF-DX920":
-            self.key_rows["fn-f12"].set_subtitle(_("No event from the EF-DX920 firmware"))
-        else:
-            self.key_rows["fn-f12"].set_subtitle(_("Keyboard-specific function"))
 
     def _update_hardware(self, *_args):
         state = self.hardware.state

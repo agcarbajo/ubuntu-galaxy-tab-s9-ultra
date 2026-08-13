@@ -21,6 +21,7 @@
  * certain rather than plausible.
  */
 
+#include <linux/atomic.h>
 #include <linux/bits.h>
 #include <linux/delay.h>
 #include <linux/gpio/consumer.h>
@@ -33,6 +34,7 @@
 #include <linux/of.h>
 #include <linux/power_supply.h>
 #include <linux/regulator/consumer.h>
+#include <linux/samsung_wacom.h>
 #include <linux/slab.h>
 #include <linux/spinlock.h>
 #include <linux/workqueue.h>
@@ -173,17 +175,30 @@ struct samsung_wacom {
 	struct power_supply *pen_supply;
 	struct delayed_work charge_work;
 	struct mutex command_lock;
+	struct mutex option_lock;
 	struct touchscreen_properties props;
 	/* Guards in_range and out_of_range against the proximity timer. */
 	spinlock_t lock;
 	struct timer_list prox_timer;
 	bool in_range;
 	bool docked;
+	bool disable_when_docked;
+	bool pen_irq_disabled;
 	u8 garage_direction;
 	u8 charge_stage;
 	int charge_status;
 	unsigned int out_of_range;
 };
+
+static atomic_t samsung_wacom_pen_proximity = ATOMIC_INIT(0);
+static atomic_t samsung_wacom_touch_suppression = ATOMIC_INIT(1);
+
+bool samsung_wacom_should_suppress_touch(void)
+{
+	return atomic_read(&samsung_wacom_touch_suppression) &&
+	       atomic_read(&samsung_wacom_pen_proximity);
+}
+EXPORT_SYMBOL_GPL(samsung_wacom_should_suppress_touch);
 
 static enum power_supply_property samsung_wacom_pen_properties[] = {
 	POWER_SUPPLY_PROP_STATUS,
@@ -329,6 +344,9 @@ static void samsung_wacom_notify_garage(struct samsung_wacom *wacom)
 		power_supply_changed(wacom->pen_supply);
 }
 
+static bool samsung_wacom_leave_range(struct samsung_wacom *wacom);
+static void samsung_wacom_update_digitizer(struct samsung_wacom *wacom);
+
 static int samsung_wacom_send_command(struct samsung_wacom *wacom, u8 cmd)
 {
 	int ret;
@@ -448,6 +466,7 @@ static irqreturn_t samsung_wacom_pdct_irq(int irq, void *dev_id)
 
 	input_report_switch(wacom->input, SW_PEN_INSERTED, docked);
 	input_sync(wacom->input);
+	samsung_wacom_update_digitizer(wacom);
 	samsung_wacom_notify_garage(wacom);
 	dev_info(&wacom->client->dev, "S Pen %s\n",
 		 docked ? "docked" : "undocked");
@@ -544,11 +563,60 @@ static ssize_t pen_ble_reset_store(struct device *dev,
 }
 static DEVICE_ATTR_WO(pen_ble_reset);
 
+static ssize_t ignore_finger_while_hovering_show(
+	struct device *dev, struct device_attribute *attribute, char *buf)
+{
+	return sysfs_emit(buf, "%u\n",
+			  atomic_read(&samsung_wacom_touch_suppression));
+}
+
+static ssize_t ignore_finger_while_hovering_store(
+	struct device *dev, struct device_attribute *attribute,
+	const char *buf, size_t count)
+{
+	bool enabled;
+	int ret;
+
+	ret = kstrtobool(buf, &enabled);
+	if (ret)
+		return ret;
+	atomic_set(&samsung_wacom_touch_suppression, enabled);
+	return count;
+}
+static DEVICE_ATTR_RW(ignore_finger_while_hovering);
+
+static ssize_t disable_digitizer_when_docked_show(
+	struct device *dev, struct device_attribute *attribute, char *buf)
+{
+	struct samsung_wacom *wacom = dev_get_drvdata(dev);
+
+	return sysfs_emit(buf, "%u\n", READ_ONCE(wacom->disable_when_docked));
+}
+
+static ssize_t disable_digitizer_when_docked_store(
+	struct device *dev, struct device_attribute *attribute,
+	const char *buf, size_t count)
+{
+	struct samsung_wacom *wacom = dev_get_drvdata(dev);
+	bool enabled;
+	int ret;
+
+	ret = kstrtobool(buf, &enabled);
+	if (ret)
+		return ret;
+	WRITE_ONCE(wacom->disable_when_docked, enabled);
+	samsung_wacom_update_digitizer(wacom);
+	return count;
+}
+static DEVICE_ATTR_RW(disable_digitizer_when_docked);
+
 static struct attribute *samsung_wacom_attrs[] = {
 	&dev_attr_pen_docked.attr,
 	&dev_attr_pen_orientation.attr,
 	&dev_attr_pen_charging.attr,
 	&dev_attr_pen_ble_reset.attr,
+	&dev_attr_ignore_finger_while_hovering.attr,
+	&dev_attr_disable_digitizer_when_docked.attr,
 	NULL,
 };
 
@@ -582,11 +650,37 @@ static bool samsung_wacom_leave_range(struct samsung_wacom *wacom)
 	wacom->in_range = false;
 	wacom->out_of_range = 0;
 	spin_unlock_irqrestore(&wacom->lock, flags);
+	atomic_set(&samsung_wacom_pen_proximity, 0);
 
 	if (leaving)
 		samsung_wacom_report_leave(wacom);
 
 	return leaving;
+}
+
+static void samsung_wacom_update_digitizer(struct samsung_wacom *wacom)
+{
+	bool disable = READ_ONCE(wacom->disable_when_docked) &&
+		       READ_ONCE(wacom->docked);
+
+	mutex_lock(&wacom->option_lock);
+	if (disable == wacom->pen_irq_disabled)
+		goto out;
+
+	if (disable) {
+		disable_irq(wacom->client->irq);
+		wacom->pen_irq_disabled = true;
+		timer_delete_sync(&wacom->prox_timer);
+		samsung_wacom_leave_range(wacom);
+		dev_info(&wacom->client->dev,
+			 "digitiser disabled while S Pen is docked\n");
+	} else {
+		wacom->pen_irq_disabled = false;
+		enable_irq(wacom->client->irq);
+		dev_info(&wacom->client->dev, "digitiser enabled\n");
+	}
+out:
+	mutex_unlock(&wacom->option_lock);
 }
 
 static void samsung_wacom_prox_timeout(struct timer_list *t)
@@ -660,6 +754,7 @@ static irqreturn_t samsung_wacom_irq(int irq, void *dev_id)
 	wacom->in_range = true;
 	wacom->out_of_range = 0;
 	spin_unlock_irqrestore(&wacom->lock, flags);
+	atomic_set(&samsung_wacom_pen_proximity, 1);
 
 	if (first) {
 		/*
@@ -774,6 +869,7 @@ static int samsung_wacom_probe(struct i2c_client *client)
 	wacom->docked = gpiod_get_value_cansleep(wacom->pdct) > 0;
 	wacom->charge_status = POWER_SUPPLY_STATUS_UNKNOWN;
 	mutex_init(&wacom->command_lock);
+	mutex_init(&wacom->option_lock);
 	INIT_DELAYED_WORK(&wacom->charge_work, samsung_wacom_charge_work);
 	spin_lock_init(&wacom->lock);
 	timer_setup(&wacom->prox_timer, samsung_wacom_prox_timeout, 0);

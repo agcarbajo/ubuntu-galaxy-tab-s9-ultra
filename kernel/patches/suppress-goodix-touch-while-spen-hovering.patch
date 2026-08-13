@@ -1,0 +1,38 @@
+From: Ubuntu gts9uwifi port contributors
+Subject: [PATCH] input: goodix: reject fingers while the S Pen is in range
+
+The Wacom digitizer knows about hover before the pen touches the panel.  Use
+that state to release and suppress Goodix finger slots, matching the palm
+rejection behaviour exposed by Samsung's software.
+
+---
+ drivers/input/touchscreen/goodix_berlin_core.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/drivers/input/touchscreen/goodix_berlin_core.c b/drivers/input/touchscreen/goodix_berlin_core.c
+index 123456789abc..abcdef012345 100644
+--- a/drivers/input/touchscreen/goodix_berlin_core.c
++++ b/drivers/input/touchscreen/goodix_berlin_core.c
+@@ -27,6 +27,7 @@
+ #include <linux/property.h>
+ #include <linux/regmap.h>
+ #include <linux/regulator/consumer.h>
++#include <linux/samsung_wacom.h>
+ #include <linux/sizes.h>
+ #include <linux/unaligned.h>
+ 
+@@ -538,6 +539,12 @@ static void goodix_berlin_touch_handler(struct goodix_berlin_core *cd)
+ 		return;
+ 	}
+ 
++	if (samsung_wacom_should_suppress_touch()) {
++		/* Also release slots which were active before proximity began. */
++		goodix_berlin_report_state(cd, 0);
++		return;
++	}
++
+ 	if (touch_num > GOODIX_BERLIN_PRE_READ_TOUCHES) {
+ 		/* Read additional contact data after the one pre-read event. */
+ 		error = goodix_berlin_get_remaining_contacts(cd, touch_num);
+-- 
+2.43.0
