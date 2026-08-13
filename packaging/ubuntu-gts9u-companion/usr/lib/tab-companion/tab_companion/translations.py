@@ -165,7 +165,7 @@ TRANSLATIONS = {
     "Medium": ("Media", "Moyenne", "Mittel", "Media", "Média"),
     "Strong": ("Fuerte", "Forte", "Stark", "Forte", "Forte"),
     "Test vibration": ("Probar vibración", "Tester la vibration", "Vibration testen", "Prova vibrazione", "Testar vibração"),
-    "Temporary diagnostic button.": ("Botón temporal de diagnóstico.", "Bouton de diagnostic temporaire.", "Temporäre Diagnosetaste.", "Pulsante diagnostico temporaneo.", "Botão temporário de diagnóstico."),
+    "Uses the selected keyboard vibration strength.": ("Usa la intensidad de vibración elegida para el teclado.", "Utilise l’intensité de vibration choisie pour le clavier.", "Verwendet die ausgewählte Vibrationsstärke der Tastatur.", "Usa l’intensità di vibrazione scelta per la tastiera.", "Usa a intensidade de vibração escolhida para o teclado."),
     "Test": ("Probar", "Tester", "Testen", "Prova", "Testar"),
     "Notifications": ("Notificaciones", "Notifications", "Benachrichtigungen", "Notifiche", "Notificações"),
     "Vibrate for notifications": ("Vibrar con las notificaciones", "Vibrer pour les notifications", "Bei Benachrichtigungen vibrieren", "Vibra per le notifiche", "Vibrar com as notificações"),

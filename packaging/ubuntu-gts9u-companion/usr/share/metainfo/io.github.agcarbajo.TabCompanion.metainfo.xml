@@ -18,6 +18,9 @@
   <launchable type="desktop-id">io.github.agcarbajo.TabCompanion.desktop</launchable>
   <url type="homepage">https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra</url>
   <releases>
+    <release version="0.10.6" date="2026-08-13">
+      <description><p>Makes the vibration test reproduce the selected on-screen keyboard strength.</p></description>
+    </release>
     <release version="0.10.5" date="2026-08-13">
       <description><p>Places S Pen remote controls after behaviour settings and removes the oversized vibration illustration.</p></description>
     </release>

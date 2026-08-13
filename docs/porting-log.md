@@ -5059,3 +5059,18 @@ Entry y AppStream.
 ubuntu-gts9u-companion_0.10.5_all.deb
 1b8455b62ce72db71d18300c5d1ff0313b4ef7366c2855f41c5bc8f28d81c0d9
 ```
+
+## Sesión 76 — prueba háptica fiel a la intensidad del teclado
+
+Fecha: 2026-08-13. El botón Probar vibración utilizaba antes un pulso fijo de
+100 ms, por lo que no representaba ninguno de los tres niveles configurables.
+Ahora lee `keyboard-haptics-strength` en el momento de pulsarlo y usa la misma
+tabla que el teclado en pantalla: Ligera 24 ms, Media 42 ms y Fuerte 66 ms, con
+magnitud 65535. Los valores fuera de rango se limitan al extremo válido igual
+que en la extensión de GNOME Shell. El subtítulo aclara que la prueba reproduce
+la intensidad elegida para el teclado.
+
+```text
+ubuntu-gts9u-companion_0.10.6_all.deb
+0dc708f72abc8fa95d77a7ac5a3a21ea6f56109d2940e98d8d81f8c3851a945c
+```

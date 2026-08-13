@@ -20,6 +20,7 @@ GESTURES = (
     ("circle-clockwise", N_("Clockwise circle"), N_("Draw a clockwise circle in the air")),
     ("circle-counterclockwise", N_("Counter-clockwise circle"), N_("Draw a counter-clockwise circle")),
 )
+KEYBOARD_HAPTIC_DURATIONS_MS = (24, 42, 66)
 
 KEYS = (
     ("galaxy-ai", "Galaxy AI", N_("Tab Companion by default")),
@@ -382,7 +383,7 @@ class CompanionWindow(Adw.ApplicationWindow):
         group.add(self.haptics_strength)
         self.haptics_test = Adw.ActionRow(
             title=_("Test vibration"),
-            subtitle=_("Temporary diagnostic button."),
+            subtitle=_("Uses the selected keyboard vibration strength."),
         )
         test = Gtk.Button(label=_("Test"), valign=Gtk.Align.CENTER, css_classes=["suggested-action"])
         test.connect("clicked", self._test_haptics)
@@ -411,7 +412,10 @@ class CompanionWindow(Adw.ApplicationWindow):
         self.settings.set_int("keyboard-haptics-strength", row.get_selected() + 1)
 
     def _test_haptics(self, _button):
-        self.hardware.vibrate(100, 65535)
+        strength = min(3, max(
+            1, self.settings.get_int("keyboard-haptics-strength")
+        ))
+        self.hardware.vibrate(KEYBOARD_HAPTIC_DURATIONS_MS[strength - 1], 65535)
 
     def _keyboard_page(self):
         page = self._page()
