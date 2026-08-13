@@ -17,7 +17,7 @@ from one TWRP-flashable ZIP; a microSD is not required after installation.
 | Touchscreen | ✅ | Goodix multitouch |
 | S Pen writing | ✅ | Hover, pressure, tilt, side button and palm rejection |
 | S Pen dock | ✅ | Insertion, orientation and charging |
-| S Pen BLE | 🟡 | Pairing, battery, air gestures and pointer mode; final physical validation remains |
+| S Pen BLE | 🟡 | Pairing, real battery levels, air gestures and pointer mode; final pointer validation remains |
 | Tab Companion | ✅ | S Pen remote modes, behaviour options, haptics and keyboard remapping |
 | Keyboard cover | 🟡 | EF-DX920 validated; four related Samsung models are recognised but untested |
 | Cover switch | ✅ | Closing the cover turns off the display |
@@ -46,7 +46,7 @@ The evidence and technical limitations for every component are documented in
 
 ## Tab Companion
 
-Tab Companion 0.9.0 is preinstalled and provides:
+Tab Companion 0.9.1 is preinstalled and provides:
 
 - S Pen battery, charging and dock status;
 - automatic dock-initiated BLE pairing, air gestures and an air-pointer mode;

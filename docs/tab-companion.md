@@ -162,8 +162,8 @@ es la primera ruta de diagnóstico; no se observó relación con las políticas
 Wacom/Goodix.
 
 Siguen pendientes sentir físicamente el motor, calibrar el puntero con uso real,
-validar el ciclo desactivar/reactivar BLE, obtener un porcentaje de batería
-intermedio, probar EF-DX900/910/915/925 y verificar sus touchpads.
+probar EF-DX900/910/915/925 y verificar sus touchpads. La recuperación BLE y
+los porcentajes intermedios 90 %/80 % ya se validaron en hardware.
 
 No se deben documentar direcciones Bluetooth, MAC, SSID ni credenciales.
 

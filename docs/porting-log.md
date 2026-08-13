@@ -4842,3 +4842,29 @@ Desktop Entry, AppStream pedante y validación sintáctica de la extensión:
 ubuntu-gts9u-companion_0.9.0_all.deb
 18e7e34641184806e1c6ff8d1204f5851059cb2250a0a8fde543dd6996d2996a
 ```
+
+## Sesión 69 — recuperación del vínculo BLE tras reiniciar
+
+Fecha: 2026-08-13. Con el lápiz insertado, el garaje informó orientación y
+carga al 90 %, pero el vínculo BlueZ anterior rechazaba `Connect`. El
+recuperador alcanzó correctamente cuatro fallos, eliminó sólo el SPEN obsoleto
+y abrió otra ventana con el comando de reset. El dispositivo reapareció como
+visible y no emparejado, pero no avanzó: BlueZ lo recreó antes de que el
+receptor de `InterfacesAdded` pudiera actuar y después no emitió otra propiedad
+relevante.
+
+Durante los 65 segundos acotados de pairing, el servicio recorre ahora también
+el conjunto actual de objetos BlueZ y aplica la misma validación estricta de
+nombre, UUID, garaje y candidato. Esto cierra la carrera sin ampliar qué
+dispositivos puede autorizar ni repetir resets fuera de una ventana activa.
+
+Tab Companion 0.9.1 se instaló con el S Pen todavía insertado. El servicio abrió
+la ventana, encontró el objeto ya visible, completó `Bonded/Paired/Trusted` y
+BlueZ lo dejó conectado sin intervención física adicional. El backend publicó
+`GestureAvailable=true`; Battery Level pasó de la lectura inicial del 90 % a
+80 %, cerrando también la validación pendiente de porcentajes intermedios.
+
+```text
+ubuntu-gts9u-companion_0.9.1_all.deb
+3cac7cb597659ab403810323bd54948e2262896a263b9d6f8a166cf3e8671471
+```

@@ -378,6 +378,13 @@ class PairingService(dbus.service.Object):
         paired_path, paired = self.paired_spen()
         if self.pairing and time.monotonic() >= self.pairing_deadline:
             self.finish_pairing()
+        elif self.pairing and docked:
+            # BlueZ can recreate the device immediately after RemoveDevice,
+            # before our InterfacesAdded receiver is ready to act on it.  Scan
+            # the current object set throughout the bounded pairing window so
+            # an already-visible, unpaired S Pen cannot be stranded there.
+            for path, properties in self.devices().items():
+                self.consider(path, properties)
         if paired_path is not None:
             self.reset_for_dock = docked
             self.consider(paired_path, paired)
