@@ -18,11 +18,21 @@ out_dir=${KERNEL_OUT_DIR:-$base/out/kernel-gts9uwifi}
 v4l2loopback_commit=9ef83fb9bc88e8f841786753c362ac52c580defc
 fingerprint_baseline=5046f92f507d80b13d2e25c53a5d743861ba5a97
 enable_fingerprint=${ENABLE_FINGERPRINT_EXPERIMENTAL:-0}
+fingerprint_panel=${FINGERPRINT_PANEL_FOD:-$enable_fingerprint}
+fingerprint_touch=${FINGERPRINT_TOUCH_FOD:-$enable_fingerprint}
+fingerprint_sensor=${FINGERPRINT_EL721:-$enable_fingerprint}
 
-case "$enable_fingerprint" in
-	0|1) ;;
-	*) echo 'ENABLE_FINGERPRINT_EXPERIMENTAL must be 0 or 1' >&2; exit 1 ;;
-esac
+validate_bool() {
+	case "$2" in
+		0|1) ;;
+		*) echo "$1 must be 0 or 1" >&2; exit 1 ;;
+	esac
+}
+
+validate_bool ENABLE_FINGERPRINT_EXPERIMENTAL "$enable_fingerprint"
+validate_bool FINGERPRINT_PANEL_FOD "$fingerprint_panel"
+validate_bool FINGERPRINT_TOUCH_FOD "$fingerprint_touch"
+validate_bool FINGERPRINT_EL721 "$fingerprint_sensor"
 
 # Linux 7.2 requires Clang >= 17.  Prefer the versioned LLVM toolchain when it
 # is installed (the imported baseline was generated with LLVM 22), while still
@@ -83,7 +93,7 @@ fi
 # ---------------------------------------------------------------------------
 
 board_dts=$kernel_tree/arch/arm64/boot/dts/qcom/sm8550-samsung-gts9uwifi.dts
-if [ "$enable_fingerprint" = 1 ]; then
+if [ "$fingerprint_sensor" = 1 ]; then
 	install -m 0644 "$dts/sm8550-samsung-gts9uwifi.dts" "$board_dts"
 	# The repository default is deliberately inert after an early boot-loop.
 	# Opt-in builds enable the device only for controlled layer-by-layer tests.
@@ -175,6 +185,26 @@ apply_unless 'disable_irq_nosync(irq)' \
 apply_unless 'soc_marketing_names' \
 	arch/arm64/kernel/cpuinfo.c \
 	arm64-report-soc-marketing-name.patch
+if ! grep -q 'QCOMTEE_SHM_POOL_MAX_SIZE' \
+	"$kernel_tree/drivers/tee/qcomtee/shm.c"; then
+	git -C "$kernel_tree" apply --recount \
+		"$pat/qcomtee-use-tzmem-pool.patch"
+fi
+if ! grep -q 'probe_securefp' \
+	"$kernel_tree/drivers/tee/qcomtee/call.c"; then
+	git -C "$kernel_tree" apply --recount \
+		"$pat/qcomtee-add-securefp-probe.patch"
+fi
+if ! grep -q 'load_securefp' \
+	"$kernel_tree/drivers/tee/qcomtee/call.c"; then
+	git -C "$kernel_tree" apply --recount \
+		"$pat/qcomtee-add-securefp-loader.patch"
+fi
+if ! grep -q 'securefp_name' \
+	"$kernel_tree/drivers/tee/qcomtee/call.c"; then
+	git -C "$kernel_tree" apply --recount \
+		"$pat/qcomtee-add-securefp-name-param.patch"
+fi
 
 # Upstream HI847 currently only binds through ACPI and assumes platform power
 # resources.  The X910 exposes it through CCI/DT and needs explicit VDDIO,
@@ -204,7 +234,7 @@ install -m 0644 "$repo/kernel/include/linux/samsung_wacom.h" \
 apply_unless 'samsung_wacom_should_suppress_touch' \
 	drivers/input/touchscreen/goodix_berlin_core.c \
 	suppress-goodix-touch-while-spen-hovering.patch
-if [ "$enable_fingerprint" = 1 ]; then
+if [ "$fingerprint_touch" = 1 ]; then
 	apply_unless 'GOODIX_BERLIN_SPONGE_FOD_RECT' \
 		drivers/input/touchscreen/goodix_berlin_core.c \
 		support-goodix-samsung-fod.patch
@@ -265,7 +295,7 @@ grep -q 'dw9808_vcm.o' "$camera_dir/Makefile" || \
 		>> "$camera_dir/Makefile"
 
 panel_dir=$kernel_tree/drivers/gpu/drm/panel
-if [ "$enable_fingerprint" = 1 ]; then
+if [ "$fingerprint_panel" = 1 ]; then
 	install -m 0644 "$drv/panel-samsung-ana38407.c" \
 		"$panel_dir/panel-samsung-ana38407.c"
 else
@@ -465,7 +495,7 @@ for fragment in "${fragments[@]}"; do
 	apply_fragment "$fragment"
 done
 
-if [ "$enable_fingerprint" = 1 ]; then
+if [ "$fingerprint_sensor" = 1 ]; then
 	"$kernel_tree/scripts/config" --file "$build_dir/.config" \
 		--module QCOMTEE --enable FINGERPRINT_EGIS_EL721
 else
@@ -618,5 +648,11 @@ install -m 0644 "$build_dir/.config" "$out_dir/config"
 sha256sum "$out_dir/Image.gz" \
 	"$out_dir/sm8550-samsung-gts9uwifi.dtb" \
 	"$out_dir/config" > "$out_dir/SHA256SUMS"
+
+cat > "$out_dir/fingerprint.layers" <<EOF
+panel_fod=$fingerprint_panel
+touch_fod=$fingerprint_touch
+el721=$fingerprint_sensor
+EOF
 
 cat "$out_dir/SHA256SUMS"

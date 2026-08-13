@@ -1,0 +1,167 @@
+diff --git a/drivers/tee/qcomtee/call.c b/drivers/tee/qcomtee/call.c
+--- a/drivers/tee/qcomtee/call.c
++++ b/drivers/tee/qcomtee/call.c
+@@ -5,10 +5,13 @@
+ 
+ #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+ 
++#include <linux/elf.h>
++#include <linux/firmware.h>
+ #include <linux/module.h>
+ #include <linux/slab.h>
+ #include <linux/tee.h>
+ #include <linux/platform_device.h>
++#include <linux/vmalloc.h>
+ #include <linux/xarray.h>
+ 
+ #include "qcomtee.h"
+@@ -17,6 +20,12 @@ static bool probe_securefp;
+ module_param(probe_securefp, bool, 0400);
+ MODULE_PARM_DESC(probe_securefp,
+ 		 "perform a privileged read-only lookup of securefp at probe time");
++static bool load_securefp;
++module_param(load_securefp, bool, 0400);
++MODULE_PARM_DESC(load_securefp,
++		 "load Samsung's signed securefp image after a failed privileged lookup");
++
++#define SECUREFP_SEGMENTS 9
+ 
+ static int find_qtee_object(struct qcomtee_object **object, unsigned long id,
+ 			    struct qcomtee_context_data *ctxdata)
+@@ -697,7 +706,118 @@ static const struct tee_desc qcomtee_desc = {
+ 	.owner = THIS_MODULE,
+ };
+ 
+-static void qcomtee_probe_securefp(struct tee_context *ctx)
++static int qcomtee_load_securefp(struct device *dev,
++				 struct qcomtee_object_invoke_ctx *oic,
++				 struct qcomtee_object *app_loader)
++{
++	static const char app_name[] = "securefp";
++	static const char fw_base[] = "samsung/gts9uwifi/fingerpr";
++	const struct firmware *fw = NULL;
++	Elf64_Ehdr ehdr;
++	Elf64_Phdr phdr[SECUREFP_SEGMENTS];
++	struct qcomtee_arg args[5] = { 0 };
++	char dist_name[64] = { 0 };
++	char fw_name[64];
++	void *image = NULL;
++	size_t image_size, offset;
++	int i, ret, result = QCOMTEE_MSG_ERROR_UNAVAIL;
++
++	snprintf(fw_name, sizeof(fw_name), "%s.b00", fw_base);
++	ret = request_firmware(&fw, fw_name, dev);
++	if (ret) {
++		pr_err("securefp load: %s unavailable: %d\n", fw_name, ret);
++		return ret;
++	}
++	if (fw->size < sizeof(ehdr) + sizeof(phdr)) {
++		ret = -EINVAL;
++		goto out;
++	}
++	memcpy(&ehdr, fw->data, sizeof(ehdr));
++	if (memcmp(ehdr.e_ident, ELFMAG, SELFMAG) ||
++	    ehdr.e_ident[EI_CLASS] != ELFCLASS64 ||
++	    ehdr.e_machine != EM_AARCH64 ||
++	    ehdr.e_phnum != SECUREFP_SEGMENTS ||
++	    ehdr.e_phentsize != sizeof(Elf64_Phdr) ||
++	    ehdr.e_phoff > fw->size - sizeof(phdr)) {
++		ret = -EINVAL;
++		goto out;
++	}
++	memcpy(phdr, fw->data + ehdr.e_phoff, sizeof(phdr));
++
++	snprintf(fw_name, sizeof(fw_name), "%s.b%02d", fw_base,
++		 SECUREFP_SEGMENTS - 1);
++	{
++		const struct firmware *last = NULL;
++
++		ret = request_firmware(&last, fw_name, dev);
++		if (ret)
++			goto out;
++		if (phdr[SECUREFP_SEGMENTS - 1].p_offset >
++		    SIZE_MAX - last->size) {
++			release_firmware(last);
++			ret = -EOVERFLOW;
++			goto out;
++		}
++		image_size = phdr[SECUREFP_SEGMENTS - 1].p_offset +
++			last->size;
++		release_firmware(last);
++	}
++	if (image_size > SZ_32M || fw->size > image_size) {
++		ret = -EFBIG;
++		goto out;
++	}
++	image = vzalloc(image_size);
++	if (!image) {
++		ret = -ENOMEM;
++		goto out;
++	}
++	memcpy(image, fw->data, fw->size);
++	release_firmware(fw);
++	fw = NULL;
++
++	for (i = 1; i < SECUREFP_SEGMENTS; i++) {
++		snprintf(fw_name, sizeof(fw_name), "%s.b%02d", fw_base, i);
++		ret = request_firmware(&fw, fw_name, dev);
++		if (ret)
++			goto out;
++		offset = phdr[i].p_offset;
++		if (offset > image_size || fw->size > image_size - offset) {
++			ret = -EINVAL;
++			goto out;
++		}
++		memcpy(image + offset, fw->data, fw->size);
++		release_firmware(fw);
++		fw = NULL;
++	}
++
++	args[0].b.addr = image;
++	args[0].b.size = image_size;
++	args[0].type = QCOMTEE_ARG_TYPE_IB;
++	args[1].b.addr = (void *)app_name;
++	args[1].b.size = strlen(app_name);
++	args[1].type = QCOMTEE_ARG_TYPE_IB;
++	args[2].b.addr = dist_name;
++	args[2].b.size = sizeof(dist_name);
++	args[2].type = QCOMTEE_ARG_TYPE_OB;
++	args[3].type = QCOMTEE_ARG_TYPE_OO;
++	ret = qcomtee_object_do_invoke(oic, app_loader, 1, args, &result);
++	if (ret)
++		pr_err("securefp privileged load transport error: %d\n", ret);
++	else if (result)
++		pr_info("securefp privileged load result: %d\n", result);
++	else
++		pr_info("securefp privileged load succeeded (%s)\n", dist_name);
++	qcomtee_object_put(args[3].o);
++out:
++	release_firmware(fw);
++	vfree(image);
++	return ret ?: result;
++}
++
++static void qcomtee_probe_securefp(struct tee_context *ctx, struct device *dev)
+ {
+ 	static const char app_name[] = "securefp";
+ 	struct qcomtee_object *client_env = NULL_QCOMTEE_OBJECT;
+@@ -729,8 +849,11 @@ static void qcomtee_probe_securefp(struct tee_context *ctx)
+ 		pr_err("securefp privileged lookup transport error: %d\n", ret);
+ 	else if (result)
+ 		pr_info("securefp privileged lookup result: %d\n", result);
+-	else
++	else
+ 		pr_info("securefp privileged lookup succeeded\n");
++	if (!ret && result && load_securefp)
++		qcomtee_load_securefp(dev, oic, app_loader);
+ 
+ 	qcomtee_object_put(args[1].o);
+ out:
+@@ -799,7 +922,7 @@ static int qcomtee_probe(struct platform_device *pdev)
+ 		QTEE_VERSION_GET_PATCH(qcomtee->qtee_version));
+ 
+ 	if (probe_securefp)
+-		qcomtee_probe_securefp(qcomtee->ctx);
++		qcomtee_probe_securefp(qcomtee->ctx, &pdev->dev);
+ 
+ 	return 0;

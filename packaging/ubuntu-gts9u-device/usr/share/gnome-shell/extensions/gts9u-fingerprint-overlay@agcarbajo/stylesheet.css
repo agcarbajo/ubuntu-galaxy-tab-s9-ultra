@@ -1,0 +1,9 @@
+.gts9u-fingerprint-shade {
+  background-color: black;
+}
+
+.gts9u-fingerprint-overlay {
+  background-color: white;
+  border-radius: 999px;
+  box-shadow: 0 0 12px 4px rgba(255, 255, 255, 0.45);
+}

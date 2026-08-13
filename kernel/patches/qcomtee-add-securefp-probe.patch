@@ -1,0 +1,85 @@
+diff --git a/drivers/tee/qcomtee/call.c b/drivers/tee/qcomtee/call.c
+--- a/drivers/tee/qcomtee/call.c
++++ b/drivers/tee/qcomtee/call.c
+@@ -5,11 +5,19 @@
+ 
+ #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+ 
++#include <linux/module.h>
+ #include <linux/slab.h>
+ #include <linux/tee.h>
+ #include <linux/platform_device.h>
+ #include <linux/xarray.h>
+ 
+ #include "qcomtee.h"
+ 
++static bool probe_securefp;
++module_param(probe_securefp, bool, 0400);
++MODULE_PARM_DESC(probe_securefp,
++		 "perform a privileged read-only lookup of securefp at probe time");
++
+ static int find_qtee_object(struct qcomtee_object **object, unsigned long id,
+ 			    struct qcomtee_context_data *ctxdata)
+ {
+@@ -689,6 +697,50 @@ static const struct tee_desc qcomtee_desc = {
+ 	.owner = THIS_MODULE,
+ };
+ 
++static void qcomtee_probe_securefp(struct tee_context *ctx)
++{
++	static const char app_name[] = "securefp";
++	struct qcomtee_object *client_env = NULL_QCOMTEE_OBJECT;
++	struct qcomtee_object *app_loader = NULL_QCOMTEE_OBJECT;
++	struct qcomtee_object_invoke_ctx *oic;
++	struct qcomtee_arg args[3] = { 0 };
++	int ret, result = QCOMTEE_MSG_ERROR_UNAVAIL;
++
++	oic = qcomtee_object_invoke_ctx_alloc(ctx);
++	if (!oic) {
++		pr_err("securefp probe: no invocation context\n");
++		return;
++	}
++
++	client_env = qcomtee_object_get_client_env(oic);
++	if (client_env == NULL_QCOMTEE_OBJECT) {
++		pr_err("securefp probe: privileged client environment unavailable\n");
++		goto out;
++	}
++	app_loader = qcomtee_object_get_service(oic, client_env, 122);
++	if (app_loader == NULL_QCOMTEE_OBJECT) {
++		pr_err("securefp probe: AppLoader UID 122 unavailable\n");
++		goto out;
++	}
++
++	args[0].b.addr = (void *)app_name;
++	args[0].b.size = strlen(app_name);
++	args[0].type = QCOMTEE_ARG_TYPE_IB;
++	args[1].type = QCOMTEE_ARG_TYPE_OO;
++	ret = qcomtee_object_do_invoke(oic, app_loader, 2, args, &result);
++	if (ret)
++		pr_err("securefp privileged lookup transport error: %d\n", ret);
++	else if (result)
++		pr_info("securefp privileged lookup result: %d\n", result);
++	else
++		pr_info("securefp privileged lookup succeeded\n");
++
++	qcomtee_object_put(args[1].o);
++out:
++	qcomtee_object_put(app_loader);
++	qcomtee_object_put(client_env);
++	kfree(oic);
++}
++
+ static int qcomtee_probe(struct platform_device *pdev)
+ {
+ 	struct workqueue_struct *async_wq;
+@@ -747,6 +799,9 @@ static int qcomtee_probe(struct platform_device *pdev)
+ 		QTEE_VERSION_GET_MINOR(qcomtee->qtee_version),
+ 		QTEE_VERSION_GET_PATCH(qcomtee->qtee_version));
+ 
++	if (probe_securefp)
++		qcomtee_probe_securefp(qcomtee->ctx);
++
+ 	return 0;
+ 
+ err_dest_wq:

@@ -1,0 +1,123 @@
+diff --git a/drivers/tee/qcomtee/shm.c b/drivers/tee/qcomtee/shm.c
+--- a/drivers/tee/qcomtee/shm.c
++++ b/drivers/tee/qcomtee/shm.c
+@@ -27,7 +27,7 @@
+  * requires a size larger than %MAX_INBOUND_BUFFER_SIZE, the user should
+  * consider using another form of shared memory with QTEE.
+  */
+-#define MAX_INBOUND_BUFFER_SIZE SZ_4M
++#define MAX_INBOUND_BUFFER_SIZE SZ_16M
+ 
+ /**
+  * qcomtee_msg_buffers_alloc() - Allocate inbound and outbound buffers.
+@@ -97,7 +97,12 @@ void qcomtee_msg_buffers_free(struct qcomtee_object_invoke_ctx *oic)
+ 	tee_shm_free(oic->out_shm);
+ }
+ 
+-/* Dynamic shared memory pool based on tee_dyn_shm_alloc_helper(). */
++/*
++ * Keep ordinary QTEE messages on the proven page-backed path. Large client
++ * memory objects cannot be allocated there when they exceed MAX_ORDER, so
++ * those are backed by DMA-coherent CMA memory through qcom_tzmem instead.
++ * The larger inbound ceiling is needed for the compat AppLoader's signed
++ * split-image buffer and does not alter its TrustZone signature checks.
++ */
++#define QCOMTEE_SHM_POOL_MAX_SIZE	SZ_32M
++#define QCOMTEE_PAGE_SHM_MAX_SIZE	SZ_4M
+ 
+ static int qcomtee_shm_register(struct tee_context *ctx, struct tee_shm *shm,
+ 				struct page **pages, size_t num_pages,
+@@ -114,20 +119,57 @@ static int qcomtee_shm_unregister(struct tee_context *ctx, struct tee_shm *shm)
+ 	return 0;
+ }
+ 
++struct qcomtee_shm_pool {
++	struct tee_shm_pool base;
++	struct qcom_tzmem_pool *tzmem;
++};
++
++static struct qcomtee_shm_pool *to_qcomtee_shm_pool(struct tee_shm_pool *pool)
++{
++	return container_of(pool, struct qcomtee_shm_pool, base);
++}
++
+ static int pool_op_alloc(struct tee_shm_pool *pool, struct tee_shm *shm,
+ 			 size_t size, size_t align)
+ {
+-	return tee_dyn_shm_alloc_helper(shm, size, align, qcomtee_shm_register);
++	struct qcomtee_shm_pool *qpool = to_qcomtee_shm_pool(pool);
++	void *vaddr;
++
++	if (size <= QCOMTEE_PAGE_SHM_MAX_SIZE)
++		return tee_dyn_shm_alloc_helper(shm, size, align,
++						qcomtee_shm_register);
++
++	size = PAGE_ALIGN(size);
++	vaddr = qcom_tzmem_alloc(qpool->tzmem, size, GFP_KERNEL);
++	if (!vaddr)
++		return -ENOMEM;
++
++	memzero_explicit(vaddr, size);
++	shm->kaddr = vaddr;
++	shm->paddr = qcom_tzmem_to_phys(vaddr);
++	shm->size = size;
++	shm->pages = NULL;
++	shm->num_pages = 0;
++
++	return 0;
+ }
+ 
+ static void pool_op_free(struct tee_shm_pool *pool, struct tee_shm *shm)
+ {
+-	tee_dyn_shm_free_helper(shm, qcomtee_shm_unregister);
++	if (shm->pages) {
++		tee_dyn_shm_free_helper(shm, qcomtee_shm_unregister);
++		return;
++	}
++
++	memzero_explicit(shm->kaddr, shm->size);
++	qcom_tzmem_free(shm->kaddr);
++	shm->kaddr = NULL;
++	shm->paddr = 0;
++	shm->size = 0;
+ }
+ 
+ static void pool_op_destroy_pool(struct tee_shm_pool *pool)
+ {
+-	kfree(pool);
++	struct qcomtee_shm_pool *qpool = to_qcomtee_shm_pool(pool);
++
++	qcom_tzmem_pool_free(qpool->tzmem);
++	kfree(qpool);
+ }
+ 
+ static const struct tee_shm_pool_ops pool_ops = {
+@@ -134,18 +176,29 @@ static const struct tee_shm_pool_ops pool_ops = {
+ 
+ struct tee_shm_pool *qcomtee_shm_pool_alloc(void)
+ {
+-	struct tee_shm_pool *pool;
++	const struct qcom_tzmem_pool_config config = {
++		.policy = QCOM_TZMEM_POLICY_ON_DEMAND,
++		.max_size = QCOMTEE_SHM_POOL_MAX_SIZE,
++	};
++	struct qcomtee_shm_pool *pool;
+ 
+ 	pool = kzalloc_obj(*pool);
+ 	if (!pool)
+ 		return ERR_PTR(-ENOMEM);
+ 
+-	pool->ops = &pool_ops;
++	pool->tzmem = qcom_tzmem_pool_new(&config);
++	if (IS_ERR(pool->tzmem)) {
++		struct qcom_tzmem_pool *tzmem = pool->tzmem;
++
++		kfree(pool);
++		return ERR_CAST(tzmem);
++	}
++
++	pool->base.ops = &pool_ops;
+ 
+-	return pool;
++	return &pool->base;
+ }

@@ -33,12 +33,16 @@ fingerprint-service
   → lookupTA("securefp")
 ```
 
-`securefp` es un TA **precargado por TrustZone**, no un fichero `securefp.mbn`
-que falte copiar a Ubuntu. La ruta `fpta` de Samsung admite una actualización u
-override, pero está vacía en este firmware; el APEX biométrico contiene sólo su
-manifiesto. El fichero `authnr.mbn` pertenece al autenticador y no es el matcher
-de huellas. Esto evita dos vías falsas: buscar indefinidamente un blob
-`securefp` en las particiones o intentar usar `authnr.mbn` en su lugar.
+El servicio Samsung solicita el nombre lógico `securefp`, pero no existe un
+fichero `securefp.mbn` en `system`, `vendor`, `odm` ni en el APEX biométrico. La
+ruta `fpta` admite una actualización u override, pero está vacía en este
+firmware; `authnr.mbn` pertenece al autenticador y no es el matcher de huellas.
+El `NON-HLOS.bin` stock sí contiene una imagen firmada dividida
+`fingerpr.b00`–`fingerpr.b08`, pero ese binario no contiene la cadena
+`securefp` y QTEE rechaza su carga dinámica tanto con el nombre `securefp` como
+con `fingerpr`. Por tanto aún no está demostrado que sea el objeto solicitado
+por la HAL; el arranque Android puede publicar `securefp` mediante otra fase o
+dependencia de TrustZone.
 
 La imagen oficial contiene además el servicio biométrico de Samsung y las
 bibliotecas Egis, pero dependen de Bionic, Binder, la AIDL biométrica de Android
@@ -51,8 +55,10 @@ La infraestructura es deliberadamente **opt-in**. Una compilación normal usa
 exactamente el DT y el controlador de panel del último commit validado, no
 aplica la extensión FOD de Goodix y no compila el EL721. QCOMTEE conserva la
 configuración modular de la base pero queda en la blacklist. Para una prueba
-controlada se usa `ENABLE_FINGERPRINT_EXPERIMENTAL=1`; sólo entonces se
-introducen el DT, el panel y Goodix experimentales. El módulo QCOMTEE firmado
+controlada puede usarse el selector conjunto
+`ENABLE_FINGERPRINT_EXPERIMENTAL=1` o activar por separado
+`FINGERPRINT_PANEL_FOD`, `FINGERPRINT_TOUCH_FOD` y `FINGERPRINT_EL721`. El
+módulo QCOMTEE firmado
 sólo se carga con `modprobe qcomtee`, después de arrancar y habilitar el
 registro. Esta separación se introdujo tras observar un reinicio anterior al
 montaje del rootfs y evita convertir otro fallo en un bootloop.
@@ -64,19 +70,23 @@ La implementación separa cuatro responsabilidades:
    no registra el sensor como un periférico SPI accesible por Linux.
 2. `CONFIG_TEE=y` mantiene la infraestructura común. En builds experimentales,
    `CONFIG_QCOMTEE=m` empaqueta el transporte de objetos QTEE de Qualcomm; al
-   cargarlo manualmente se espera que publique `/dev/tee0` para el futuro
-   puente con la aplicación segura.
+   cargarlo manualmente publica `/dev/tee0`. El transporte Qualcomm Diagnostics
+   y el AppLoader UID 122 están validados físicamente. Los mensajes de hasta
+   4 MiB conservan el allocator upstream; sólo los objetos mayores usan CMA
+   mediante `qcom_tzmem`, con limpieza explícita al liberarlos.
 3. `panel-samsung-ana38407.c` ofrece el modo de alto brillo requerido por
-   un lector óptico y el círculo de lectura. Conserva el brillo solicitado por
-   GNOME, lo restaura al terminar y fuerza la limpieza después de 15 segundos.
+   un lector óptico. Conserva el brillo solicitado por GNOME, lo restaura al
+   terminar y fuerza la limpieza después de 15 segundos. Una extensión de
+   GNOME dibuja el objetivo y compensa el HBM global fuera de esa región.
 4. El controlador Goodix puede suprimir dedos sólo dentro del rectángulo del
    sensor durante una operación biométrica. El resto de la pantalla permanece
    utilizable y al desactivar la sesión se liberan los contactos retenidos. La
    sesión también se cancela, en vez de restaurarse, al suspender el sistema.
 
 GNOME 46 y `fprintd` no conocen por sí mismos la geometría de un UDFPS ni
-controlan el HBM del panel. El backend futuro tendrá que coordinar estas cuatro
-capas y mostrar el indicador en la sesión de usuario y en GDM.
+controlan el HBM del panel. La extensión de sistema
+`gts9u-fingerprint-overlay@agcarbajo` cubre esa carencia en la sesión y el
+desbloqueo; aún hay que conectarla al backend y cargarla también en GDM.
 
 ## Límites de seguridad
 
@@ -139,11 +149,27 @@ Los atributos aparecen junto al backlight ANA38407:
 |---|---|---|
 | `fod_ready` | lectura | `1` cuando el panel está preparado y encendido |
 | `fod_mode` | lectura/escritura | HBM óptico y secuencia FlatZ |
-| `fod_circle` | lectura/escritura | círculo de lectura; exige `fod_mode=1` |
+| `fod_circle` | lectura/escritura | comando DDIC diagnóstico; exige `fod_mode=1`, pero no dibuja sin Self Display |
 
 El panel conserva en paralelo el brillo pedido por el escritorio. Al escribir
 `fod_mode=0` restaura ese valor, y también desactiva el círculo si estuviera
 activo. El watchdog devuelve ambos controles a cero tras 15 segundos.
+
+Esta capa ya arrancó de forma aislada en hardware. Se validaron HBM, el
+watchdog y la restauración exacta del brillo. `fod_circle=1` llega al DDIC sin
+error, pero no produce una imagen visible: el kernel Samsung carga primero una
+imagen Self Display y comprueba su checksum. Portar ese subsistema sólo para el
+indicador no aporta captura; se usa el objetivo de GNOME. El panel por sí solo
+queda descartado como causa del bootloop inicial.
+
+El ANA38407 no ofrece HBM local. Al leer una huella entra en FlatZ/HBM global y
+GNOME oscurece los píxeles externos al objetivo. Al ser OLED, esos píxeles
+emiten físicamente menos luz aunque la selección de la región se haga en el
+compositor. La opacidad se calcula desde el brillo actual con la tabla oficial:
+el modo normal alcanza 420 cd/m² en `WRDISBV=2047` y FlatZ de huella, 650 cd/m².
+El objetivo queda fuera de la compensación y recibe el máximo óptico; el resto
+conserva aproximadamente la luminancia anterior. La extensión recalcula cada
+100 ms si una tecla cambia el brillo durante la lectura.
 
 ### Táctil Goodix
 
@@ -171,7 +197,7 @@ El futuro backend de `fprintd` debe tratar cada lectura como una transacción:
 2. transformar la geometría a la orientación actual y activar únicamente la
    exclusión Goodix de esa zona;
 3. encender y, si procede, resetear el EL721;
-4. activar `fod_mode` y `fod_circle` y mostrar el indicador de GNOME/GDM;
+4. mostrar la máscara/objetivo de GNOME y activar `fod_mode`;
 5. solicitar la captura o comparación a `securefp` mediante QTEE;
 6. en un bloque de limpieza incondicional, quitar círculo y HBM, apagar el
    sensor y reactivar el tacto.
@@ -243,7 +269,6 @@ test -n "$bl"
 test "$(cat "$bl/fod_ready")" = 1
 trap 'printf 0 > "$bl/fod_mode"' EXIT
 printf 1 > "$bl/fod_mode"
-printf 1 > "$bl/fod_circle"
 sleep 2
 printf 0 > "$bl/fod_mode"
 ```
@@ -261,17 +286,25 @@ las cuatro orientaciones.
 
 ### 5. QTEE y autenticación completa
 
-Primero se hará una consulta de sólo lectura con las herramientas oficiales
-`quic-teec`: `/dev/tee0` debe responder y el AppLoader compatible (UID 122) debe
-aceptar `lookupTA("securefp")`. Esto comprueba que el TA precargado es visible;
-no autoriza todavía a invocar operaciones biométricas ni a manipular datos de
-Android.
+La consulta de sólo lectura con las herramientas oficiales `quic-teec` ya
+confirma QTEE 5.2.0, Qualcomm Diagnostics y el AppLoader compatible UID 122.
+`lookupTA("securefp")` devuelve `2` tanto desde clientes de usuario como desde
+el entorno privilegiado interno del driver: el objeto no está publicado en
+este estado de TrustZone. Ninguna prueba obtiene el objeto de aplicación ni
+invoca una operación biométrica.
 
 `scripts/probe-qtee-securefp.c` implementa exactamente esa consulta. Se compila
 contra `quic-teec` `736419e25a2036aac3292a10a93e394a90750ca3` y QCBOR
 `4ace4620d549f22c1163c5b00d3ae0c0dae1d207`: abre UID 122, ejecuta únicamente
 `lookupTA("securefp")` y libera el controlador devuelto sin obtener el objeto de
 aplicación ni enviarle una operación.
+
+`scripts/probe-qtee-load-securefp.c` reconstruye la imagen dividida stock con
+los offsets ELF que utiliza el driver Qualcomm y ejercita `loadFromBuffer`.
+La ampliación CMA permite transportar sus 13.725.784 bytes, pero el AppLoader
+devuelve `1` con los nombres `securefp` y `fingerpr`, también desde el cliente
+privilegiado del kernel. Es un rechazo de TrustZone posterior al transporte,
+no un fallo de memoria, firma AVB o acceso a `/dev/tee0`.
 
 Sólo cuando exista un backend seguro se instalará `fprintd` y se validarán, en
 este orden:
@@ -289,12 +322,11 @@ autenticación por huella se considera no disponible.
 ## Bloqueo actual y siguiente paso
 
 `libfprint` no incluye soporte para el EL721 y el sensor no entrega imágenes a
-Linux. El trabajo pendiente no es un decodificador SPI: es un puente mínimo que
-hable con `securefp` por QTEE, mantenga las plantillas dentro del entorno seguro
-y presente a `fprintd` las operaciones de registro/verificación que GNOME ya
-consume. Antes de diseñar ese backend hay que confirmar en hardware, con la
-consulta de sólo lectura UID 122 `lookupTA("securefp")`, que QTEE puede obtener
-el objeto del TA precargado y documentar su protocolo sin escribir en las
-plantillas existentes. `fprintd` no se añade ni se habilita mientras falte ese
-backend: mostrar una opción de huella en GNOME sin poder completarla sería un
-falso positivo de compatibilidad.
+Linux. El transporte QTEE, el AppLoader, los búferes grandes y la iluminación
+óptica ya están comprobados; el bloqueo actual es reproducir la fase del
+arranque Android que hace visible el objeto lógico `securefp`. Hay que aislar
+esa dependencia —probablemente dentro de la cadena AuthFW/TrustZone— antes de
+crear el puente mínimo hacia `fprintd`. Las plantillas y la comparación deben
+permanecer en el entorno seguro. `fprintd` no se añade ni se habilita mientras
+falte ese backend: mostrar una opción de huella en GNOME sin poder completarla
+sería un falso positivo de compatibilidad.

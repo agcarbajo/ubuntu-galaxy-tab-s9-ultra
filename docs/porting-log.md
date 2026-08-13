@@ -5236,3 +5236,42 @@ validado en la sesión 74, se trata como el atasco conocido de primer reinicio o
 como estado de hardware persistente, no como evidencia de otra diferencia en
 las imágenes. Hace falta un reinicio forzado físico antes de continuar las
 pruebas A/B.
+
+## Sesión 81 — aislamiento del panel y transporte seguro de `fingerpr`
+
+Fecha: 2026-08-14. Se dividió el selector experimental en tres capas
+independientes: panel FOD, Goodix-FOD y EL721. Una compilación desde cero con
+únicamente el panel activado arrancó correctamente, por lo que esa capa queda
+descartada como causa del bootloop inicial. En hardware se validaron HBM, el
+watchdog de 15 segundos y la restauración exacta del brillo. El host DSI
+devuelve `0` en una escritura genérica correcta y el driver exigía erróneamente
+el número de bytes; corregido ese contrato, `fod_circle=1` alcanza el DDIC pero
+no produce imagen visible. El kernel Samsung carga antes una imagen Self
+Display y valida su checksum. Se descartó portar ese subsistema gráfico y se
+añadió un objetivo de GNOME que sigue la rotación, bloquea los toques exteriores
+y compensa el HBM global con la relación oficial 420/650 cd/m². El círculo queda
+fuera de la máscara y recibe el máximo óptico, mientras el fondo conserva su
+luminancia previa. La usuaria validó físicamente posición, HBM y compensación.
+
+QCOMTEE continúa modular y bloqueado para carga automática. Cargado a mano
+publica `/dev/tee0`, informa QTEE 5.2.0 y supera Qualcomm Diagnostics. El
+AppLoader UID 122 responde, pero `lookupTA("securefp")` devuelve `2` incluso
+desde el cliente privilegiado interno del kernel. `NON-HLOS.bin` contiene la
+imagen firmada `fingerpr.b00`–`b08`; se reconstruyó con los offsets ELF del
+driver Qualcomm, con un tamaño de 13.725.784 bytes. El allocator upstream no
+puede reservar ese bloque por `MAX_ORDER`, así que sólo los mensajes mayores de
+4 MiB pasan ahora por CMA/`qcom_tzmem`; el control normal conserva el camino
+upstream. La imagen completa alcanza `loadFromBuffer`, pero TrustZone devuelve
+`1` con los nombres `securefp` y `fingerpr`, tanto desde usuario como desde el
+cliente privilegiado. No se obtuvo el objeto de aplicación ni se ejecutó una
+operación biométrica.
+
+La imagen de panel corregida quedó verificada por AVB y por lectura completa de
+la partición después de escribirla:
+
+```text
+Image.gz  3f62bafce653866570c79ed7a829cc47c143cb0ff08e79d335040b7768cadded
+DTB       613b3bb7729d55d1c60aaeda348a098163b79aed1efbf24cdcc582ff0d58ccc4
+boot.img  f08073bb6c1295775d3043c2ceb6ad0e72fa4c761fc96547240cc50e5a71bc2e
+modules   b7976a8cd4eb4a2e4af01a4f63bce4c69298dc830401ae375cf65374664e6768
+```

@@ -1,0 +1,31 @@
+diff --git a/drivers/tee/qcomtee/call.c b/drivers/tee/qcomtee/call.c
+--- a/drivers/tee/qcomtee/call.c
++++ b/drivers/tee/qcomtee/call.c
+@@ -26,6 +26,10 @@ module_param(load_securefp, bool, 0400);
+ MODULE_PARM_DESC(load_securefp,
+ 		 "load Samsung's signed securefp image after a failed privileged lookup");
+ 
++static char securefp_name[64] = "securefp";
++module_param_string(securefp_name, securefp_name, sizeof(securefp_name), 0400);
++MODULE_PARM_DESC(securefp_name, "signed fingerprint TA name to probe or load");
++
+ #define SECUREFP_SEGMENTS 9
+ 
+ static int find_qtee_object(struct qcomtee_object **object, unsigned long id,
+@@ -711,7 +715,7 @@ static int qcomtee_load_securefp(struct device *dev,
+ 				 struct qcomtee_object_invoke_ctx *oic,
+ 				 struct qcomtee_object *app_loader)
+ {
+-	static const char app_name[] = "securefp";
++	const char *app_name = securefp_name;
+ 	static const char fw_base[] = "samsung/gts9uwifi/fingerpr";
+ 	const struct firmware *fw = NULL;
+ 	Elf64_Ehdr ehdr;
+@@ -826,7 +830,7 @@ out:
+ 
+ static void qcomtee_probe_securefp(struct tee_context *ctx, struct device *dev)
+ {
+-	static const char app_name[] = "securefp";
++	const char *app_name = securefp_name;
+ 	struct qcomtee_object *client_env = NULL_QCOMTEE_OBJECT;
+ 	struct qcomtee_object *app_loader = NULL_QCOMTEE_OBJECT;

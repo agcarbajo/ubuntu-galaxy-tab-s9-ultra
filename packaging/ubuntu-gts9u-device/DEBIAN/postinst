@@ -71,7 +71,10 @@ case "$1" in
 		# is for accounts that already existed before that override did, and
 		# whose dconf therefore already has a value the default cannot reach.
 		for existing in $(getent passwd | awk -F: '$3 >= 1000 && $3 < 60000 { print $1 }'); do
-			/usr/libexec/ubuntu-gts9u-enable-flashlight "$existing" || true
+			/usr/libexec/ubuntu-gts9u-enable-extension "$existing" \
+				flashlight@ubuntu-gts9u || true
+			/usr/libexec/ubuntu-gts9u-enable-extension "$existing" \
+				gts9u-fingerprint-overlay@agcarbajo || true
 		done
 
 		# Apply the dynamic owner, device groups, linger and relay drop-in now too

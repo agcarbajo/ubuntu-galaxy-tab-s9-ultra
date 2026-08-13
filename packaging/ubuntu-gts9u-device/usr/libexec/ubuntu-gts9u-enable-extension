@@ -1,0 +1,25 @@
+#!/bin/sh
+set -eu
+
+username=${1-ubuntu}
+uuid=${2:?extension UUID is required}
+
+id "$username" >/dev/null 2>&1 || exit 0
+command -v gsettings >/dev/null 2>&1 || exit 0
+command -v dbus-run-session >/dev/null 2>&1 || exit 0
+
+# gnome-extensions asks the running Shell for its cached catalogue. A system
+# extension installed during an upgrade is not in that catalogue until the
+# next login, so update the standard enabled list directly and preserve every
+# existing entry.
+current=$(runuser -u "$username" -- dbus-run-session -- \
+	gsettings get org.gnome.shell enabled-extensions)
+case "$current" in
+	*"'$uuid'"*) exit 0 ;;
+	'@as []'|'[]') next="['$uuid']" ;;
+	*']') next="${current%]}, '$uuid']" ;;
+	*) echo "ubuntu-gts9u-device: unexpected enabled-extensions value: $current" >&2; exit 1 ;;
+esac
+
+runuser -u "$username" -- dbus-run-session -- \
+	gsettings set org.gnome.shell enabled-extensions "$next"

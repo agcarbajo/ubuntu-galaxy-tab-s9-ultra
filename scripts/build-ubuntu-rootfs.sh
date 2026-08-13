@@ -378,7 +378,10 @@ if [ -n '$password' ]; then
 	# anyone has touched the screen.
 	chroot "\$target" useradd -m -s /bin/bash -G sudo,adm,dialout,cdrom,audio,video,plugdev,netdev,input,render '$username'
 	echo '$username:$password' | chroot "\$target" chpasswd
-	chroot "\$target" /usr/libexec/ubuntu-gts9u-enable-flashlight '$username' || true
+	chroot "\$target" /usr/libexec/ubuntu-gts9u-enable-extension \
+		'$username' flashlight@ubuntu-gts9u || true
+	chroot "\$target" /usr/libexec/ubuntu-gts9u-enable-extension \
+		'$username' gts9u-fingerprint-overlay@agcarbajo || true
 	# Camera relays are system services backed by this user's PipeWire graph.
 	# Keep its user manager alive from boot, including before the first
 	# graphical login.

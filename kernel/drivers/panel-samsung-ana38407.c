@@ -185,8 +185,6 @@ static int ana38407_generic_write(struct ana38407 *ctx, const u8 *data,
 	ret = mipi_dsi_generic_write(ctx->dsi, data, len);
 	if (ret < 0)
 		return ret;
-	if (ret != len)
-		return -EIO;
 
 	return 0;
 }
