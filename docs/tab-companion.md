@@ -13,9 +13,10 @@ esté cerrada.
 - `tab-companion-spen-pairing.service` reproduce el emparejamiento iniciado al
   insertar el lápiz y sólo autoriza un SPEN con los dos UUID Samsung.
 - Sólo el backend accede a sysfs, evdev y `uinput`.
-- El backend captura la funda conectada y retransmite sus eventos normales por
-  `Tab Companion virtual keyboard`; únicamente sustituye una tecla cuando su
-  asignación deja de ser «Mantener la acción predeterminada».
+- El backend captura la funda conectada y retransmite sus eventos por
+  `Tab Companion virtual keyboard`. En «Mantener la acción predeterminada»,
+  deja pasar las teclas que ya entrega correctamente el firmware y aplica la
+  utilidad base del port a las teclas especiales sin función nativa en GNOME.
 
 ## S Pen
 
@@ -84,10 +85,16 @@ Fn+Finder/Ajustes 709 y Fn+F1–F11 757/758/759/705/254/172/224/225/113/114/115.
 Fn+F12 no se muestra: el firmware V37 no emite ningún evento y no hay nada
 fiable que remapear.
 
-Los valores de fábrica nuevos son: Galaxy AI abre Tab Companion; Finder abre
-la búsqueda; Ajustes abre Configuración; Fn+F1/F2/F3 abren Archivos, navegador
-y terminal; Fn+F4 abre aplicaciones; Fn+F5 la vista general; y DeX maximiza o
-restaura la ventana actual. Fn+F6–F11 conservan sus eventos nativos.
+«Mantener la acción predeterminada» no es una asignación guardada. Para las
+teclas sin función nativa, el backend aplica la utilidad base del port: Galaxy
+AI abre Tab Companion; Finder abre la búsqueda; Ajustes abre Configuración;
+Fn+F1/F2/F3 abren Archivos, navegador y terminal; Fn+F4 abre aplicaciones;
+Fn+F5 abre la vista general; y DeX maximiza o restaura la ventana actual.
+Fn+F6–F11 se retransmiten sin sustituir y conservan sus eventos nativos.
+
+Elegir otra acción sólo reemplaza ese comportamiento mientras la asignación
+esté guardada. Volver a «Mantener la acción predeterminada», o usar
+«Restablecer valores», elimina la personalización y recupera la utilidad base.
 
 ## Selector de acciones
 
@@ -112,7 +119,7 @@ Se elige el idioma de la sesión y se usa inglés como respaldo.
 
 ## Validación y límites
 
-La versión 0.8.0 se construyó con validación estricta de esquema, escritorio y
+La versión 0.8.1 se construyó con validación estricta de esquema, escritorio y
 AppStream. En la tablet se comprobaron el teclado gráfico, una combinación
 `Ctrl+Alt+T`, la linterna, el DX920, BLE al 100 %, permisos sysfs y transiciones
 de IRQ. La propietaria validó físicamente el rechazo del dedo durante hover y

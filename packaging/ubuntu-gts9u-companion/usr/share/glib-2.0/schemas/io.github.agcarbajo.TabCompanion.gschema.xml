@@ -10,15 +10,15 @@
     <key name="gesture-swipe-right" type="s"><default>'none'</default></key>
     <key name="gesture-circle-clockwise" type="s"><default>'none'</default></key>
     <key name="gesture-circle-counterclockwise" type="s"><default>'none'</default></key>
-    <key name="key-galaxy-ai" type="s"><default>'app'</default></key>
-    <key name="key-dex" type="s"><default>'key'</default></key>
-    <key name="key-finder" type="s"><default>'overview'</default></key>
-    <key name="key-settings" type="s"><default>'app'</default></key>
-    <key name="key-fn-f1" type="s"><default>'app'</default></key>
-    <key name="key-fn-f2" type="s"><default>'key'</default></key>
-    <key name="key-fn-f3" type="s"><default>'key'</default></key>
-    <key name="key-fn-f4" type="s"><default>'key'</default></key>
-    <key name="key-fn-f5" type="s"><default>'overview'</default></key>
+    <key name="key-galaxy-ai" type="s"><default>'none'</default></key>
+    <key name="key-dex" type="s"><default>'none'</default></key>
+    <key name="key-finder" type="s"><default>'none'</default></key>
+    <key name="key-settings" type="s"><default>'none'</default></key>
+    <key name="key-fn-f1" type="s"><default>'none'</default></key>
+    <key name="key-fn-f2" type="s"><default>'none'</default></key>
+    <key name="key-fn-f3" type="s"><default>'none'</default></key>
+    <key name="key-fn-f4" type="s"><default>'none'</default></key>
+    <key name="key-fn-f5" type="s"><default>'none'</default></key>
     <key name="key-fn-f6" type="s"><default>'none'</default></key>
     <key name="key-fn-f7" type="s"><default>'none'</default></key>
     <key name="key-fn-f8" type="s"><default>'none'</default></key>
@@ -31,9 +31,7 @@
     <key name="last-pen-battery" type="i"><default>-1</default></key>
     <key name="ignore-finger-while-hovering" type="b"><default>true</default></key>
     <key name="disable-digitizer-when-docked" type="b"><default>false</default></key>
-    <key name="action-targets" type="a{ss}">
-      <default>{'key-galaxy-ai': 'io.github.agcarbajo.TabCompanion.desktop', 'key-dex': '56+68', 'key-settings': 'org.gnome.Settings.desktop', 'key-fn-f1': 'org.gnome.Nautilus.desktop', 'key-fn-f2': '150', 'key-fn-f3': '29+56+20', 'key-fn-f4': '125+30'}</default>
-    </key>
+    <key name="action-targets" type="a{ss}"><default>{}</default></key>
     <key name="keyboard-source-codes" type="a{si}">
       <default>{'key-galaxy-ai': 760, 'key-dex': 701, 'key-finder': 710, 'key-settings': 709, 'key-fn-f1': 757, 'key-fn-f2': 758, 'key-fn-f3': 759, 'key-fn-f4': 705, 'key-fn-f5': 254, 'key-fn-f6': 172, 'key-fn-f7': 224, 'key-fn-f8': 225, 'key-fn-f9': 113, 'key-fn-f10': 114, 'key-fn-f11': 115}</default>
       <summary>Linux key codes emitted by the cover keyboard</summary>

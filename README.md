@@ -1,174 +1,115 @@
-# Ubuntu 24.04 LTS for the Samsung Galaxy Tab S9 Ultra Wi-Fi
+# Ubuntu 24.04 LTS for Samsung Galaxy Tab S9 Ultra Wi-Fi
 
-An **Ubuntu 24.04 LTS arm64** userspace on the Samsung Galaxy Tab S9 Ultra
-Wi-Fi (**SM-X910**, codename `gts9uwifi`, Qualcomm Snapdragon 8 Gen 2 / SM8550
-"kalama"), running upstream Linux **7.2-rc3**.
+Ubuntu 24.04 LTS arm64 for the Samsung Galaxy Tab S9 Ultra Wi-Fi
+(`SM-X910`, `gts9uwifi`), running GNOME 46 on Wayland and upstream Linux
+7.2-rc3.
 
-This is not a bring-up from scratch. The hardware enablement — device tree,
-panel driver, charging, USB-C/DisplayPort, Wi-Fi and audio — is inherited from
-the physically validated
-[postmarketOS port](https://github.com/agcarbajo/postmarketos-galaxy-tab-s9-ultra)
-baseline v1.71. The goal here is to keep that hardware parity while replacing
-the Alpine userspace with Ubuntu, so that standard Debian/Ubuntu desktop
-software, and later Vulkan/Turnip-based gaming stacks, become usable.
+The current release is **v0.26**. It installs to the tablet's internal storage
+from one TWRP-flashable ZIP; a microSD is not required after installation.
 
-## Status
+## Hardware compatibility
 
-Ubuntu boots and is usable as a desktop tablet: GNOME on the native panel, with
-display, GPU, touch, audio, Wi-Fi, Bluetooth, sensors, USB host, DisplayPort and
-the pogo keyboard all confirmed on the physical hardware. The current release is
-**v0.18**: it installs to the tablet's own internal storage as a single
-flashable ZIP, and it has been flashed and booted from there on the tablet. A
-microSD is no longer part of the system.
+| Component | Status | Summary |
+|---|---:|---|
+| Display | ✅ | Native 2960×1848 at 120 Hz |
+| Desktop | ✅ | GNOME 46, Wayland and GDM |
+| GPU | ✅ | Adreno 740 with Freedreno/Turnip |
+| Touchscreen | ✅ | Goodix multitouch |
+| S Pen writing | ✅ | Hover, pressure, tilt, side button and palm rejection |
+| S Pen dock | ✅ | Insertion, orientation and charging |
+| S Pen BLE | 🟡 | Pairing, battery and air gestures work; more battery levels remain to be tested |
+| Tab Companion | ✅ | S Pen options, gesture actions and keyboard remapping |
+| Keyboard cover | 🟡 | EF-DX920 validated; four related Samsung models are recognised but untested |
+| Cover switch | ✅ | Closing the cover turns off the display |
+| Power and volume buttons | ✅ | Including suspend from the power button |
+| Wi-Fi | ✅ | WCN7850 / ath12k |
+| Bluetooth | ✅ | Controller, audio and S Pen BLE |
+| Speakers and microphones | ✅ | Four speakers and digital microphones |
+| Motion sensors | ✅ | Rotation, accelerometer, gyroscope and compass |
+| Battery telemetry | ✅ | Charge, voltage, current and temperature |
+| USB-PD/PPS charging | ✅ | Up to 25 W measured into the battery |
+| Suspend / resume | ✅ | Deep suspend |
+| USB host | ✅ | HID and storage, powered or unpowered |
+| USB-C DisplayPort | ✅ | External video output |
+| Cameras and flash | 🟡 | Four cameras, autofocus and flashlight work; colour tuning remains |
+| Ambient light sensor | ❌ | No usable lux data from the sensor DSP |
+| Fingerprint reader | ❌ | No mainline driver |
+| Vibration / haptics | ❌ | Not implemented |
+| Waydroid | ❓ | Not tested |
 
-Evidence level per component, what is still inherited from the postmarketOS
-baseline rather than proven under Ubuntu, and the open problems are in
-[docs/hardware-status.md](docs/hardware-status.md). A rollback build of the
-postmarketOS v1.71 baseline is kept outside Git.
+✅ validated on the physical tablet · 🟡 usable with remaining validation ·
+❌ unavailable · ❓ not tested
 
-| Component | Status | Notes |
-|---|---|---|
-| **Display** | ✅ | 2960×1848 at 120 Hz, DSI + DSC + TE, native panel |
-| **Desktop** | ✅ | GNOME 46 on Wayland with GDM3, stock Ubuntu packages |
-| **Tab Companion** | 🟡 | Native GTK4/libadwaita settings app, packaged and preinstalled. Version 0.7 adds a graphical action/app/command chooser, reset-to-default, remembered disconnected keyboards, a battery bar and complete English, Spanish, French, German, Italian and Portuguese UI. Its tested `uinput` engine preserves ordinary keys and replaces only configured mappings |
-| **GPU** | ✅ | Adreno 740 through Mesa (Freedreno/Turnip); no Android graphics stack |
-| **Touchscreen** | ✅ | Goodix Berlin / GT9916, Samsung 16-byte event layout |
-| **Buttons** | ✅ | Power and volume; a short press on power suspends |
-| **Keyboard cover** | ✅ | Samsung EF-DX920 pogo keyboard physically validated; EF-DX900, EF-DX910, EF-DX915 and EF-DX925 identification is integrated from Samsung's X910 model table but awaits each physical cover. The tablet's STM32 is repaired automatically if another OS downgrades it ([details](packaging/ubuntu-gts9u-device/usr/share/doc/ubuntu-gts9u-device/pogo-keyboard.md)) |
-| **Cover / lid switch** | ✅ | Closing the cover blanks the screen |
-| **S Pen (writing)** | ✅ | Wacom EMR digitiser: hover, pressure, tilt and the side button, with this port's own driver |
-| **Wi-Fi** | ✅ | WCN7850 / ath12k, official firmware and the QRD board data |
-| **Bluetooth** | ✅ | Controller and A2DP, with the tablet's own address from the Samsung EFS |
-| **Speakers / microphones** | ✅ | Four CS35L45 and the digital microphones, natively through PipeWire |
-| **Motion sensors** | ✅ | Accelerometer, gyroscope, compass and autorotation via the SSC DSP, at idle CPU cost. Compass re-measured under Ubuntu: `HasCompass=true` and a live heading tracking 127–134° |
-| **Battery** | ✅ | SM5714 telemetry: percentage, voltage, current and pack temperature |
-| **Charging (USB-PD/PPS)** | ✅ | 25 W into the pack over PPS with the SM5440 2:1 pump, sustained and thermally flat |
-| **Suspend / resume** | ✅ | Deep suspend, validated with the cover |
-| **USB host** | ✅ | HID and storage, with and without external power |
-| **USB-C DisplayPort** | ✅ | Video output confirmed |
-| **Audio/sensor DSPs** | ✅ | ADSP and SSC both reach `running`; prerequisite for audio and sensors |
-| **Package management** | ✅ | A stock Ubuntu userspace: `apt`, PPAs and snaps all work |
-| **SSH over Wi-Fi** | ✅ | Used for development throughout |
-| **Storage** | ✅ | Root filesystem on the internal UFS, in the partition Android used for user data: no microSD needed and no partition table change. Flashed and booted from there |
-| **Swap** | ✅ | Two tiers, 23 GiB total: 8 GiB of zstd-compressed zram in front of a 16 GiB swapfile on the UFS. Measured 4.5× compression, and 11 GiB allocated with no OOM kill |
-| **Backlight** | ❔ | Inherited from postmarketOS, not re-validated here. Automatic brightness works on no distribution |
-| **USB gadget / RNDIS** | ❔ | Inherited, not re-validated |
-| **Ethernet (RTL8153)** | ❔ | Enumerates and loads firmware; real link and traffic untested |
-| **Waydroid** | ❔ | Never tried |
-| **S Pen docking** | ✅ | GPIO137 and `SW_PEN_INSERTED` report removal/reinsertion; both physical orientations are confirmed and exposed by Tab Companion |
-| **S Pen battery / charging** | 🟡 | Automatic dock charging and discrete state work. The identified Samsung BLE Battery characteristic returned the real 100 % level while connected; an intermediate physical level is still pending |
-| **S Pen pairing (BLE)** | 🟡 | The bundled pen is bonded and trusted. A restricted system service reproduces One UI's dock-initiated authorization flow and never accepts an arbitrary Bluetooth device. A clean boot preserves the bond. Forced docked disconnection was physically rejected: the removed pen does not advertise, so insertion remains the reliable wake/reconnect trigger |
-| **S Pen gestures** | 🟡 | Single, double and long side-button presses work through EMR. Over BLE, all six air gestures were captured and classified on the physical pen: up, down, left, right, clockwise and counterclockwise. Each runs its Tab Companion mapping; visible per-action UI checks remain open |
-| **Ambient light / automatic brightness** | ❌ | 0x48 answers on no AP-reachable bus, so a mainline IIO driver has nothing to bind to. That is a limit on the AP route only: the working compass is equally invisible to the AP, because SSC sensors hang off the DSP's own I²C. The ALS remains an SSC-side failure — it enumerates and accepts its enable but never emits lux. GNOME's support is ready and the unusable ALS is deliberately not exposed |
-| **Speaker protection** | ❌ | Cirrus protection firmware not loaded; hardware volume kept conservative |
-| **Fingerprint** | ❌ | No mainline driver for the EgisTec sensor |
-| **Vibration / haptics** | ❌ | Hardware not identified |
-| **Flash / cameras** | 🟡 | All four sensors take pictures, and the flash works. They are processed by a tuned libcamera software ISP and exposed as exactly four named, ordinary V4L2 cameras, so GNOME Camera and Chrome WebRTC can switch through all four without per-user scenes. Repeated browser and OBS tests verified advancing video rather than a cached frame, including after a cold reboot; OBS was the verification tool and is no longer shipped in the image. The software ISP preserves each sensor's full field of view, and the rear-main DW9808 has validated continuous autofocus. A native **Flashlight** tile controls continuous light without root. Automatic exposure-synchronised photo flash and factory colour calibration remain open |
-| **Modem** | — | Not applicable to the Wi-Fi-only model |
+The evidence and technical limitations for every component are documented in
+[hardware-status.md](docs/hardware-status.md).
 
-✅ tested on the physical tablet · 🟡 partially working · ❌ known not to work
-or not integrated · ❔ not tested yet · — not applicable
+## Tab Companion
 
-Every ✅ entry was observed on the physical tablet. A driver merely binding is
-not considered proof that a subsystem works, and nothing is marked ✅ because it
-works under another operating system on the same hardware.
+Tab Companion 0.8.1 is preinstalled and provides:
 
-## Installing
+- S Pen battery, charging and dock status;
+- automatic dock-initiated BLE pairing and air gestures;
+- finger rejection while the S Pen is hovering;
+- optional S Pen digitizer disabling while the pen is docked;
+- remapping for compatible Samsung Book Cover Keyboard keys;
+- application, command, simulated-key and flashlight actions;
+- English, Spanish, French, German, Italian and Portuguese interfaces.
 
-Installation is **one flashable ZIP**. Copy it to a microSD or a USB-OTG
-drive, boot TWRP, and flash it. There is no image to write to a card by hand
-any more, and no second step.
+The EF-DX920 is physically validated. EF-DX900, EF-DX910, EF-DX915 and
+EF-DX925 are recognised but still need tests with the real accessories. See
+[tab-companion.md](docs/tab-companion.md) for implementation and diagnostics.
 
-The ZIP writes `boot`, `init_boot`, `vendor_boot` and `dtbo`, and copies the
-Ubuntu root filesystem into the tablet's internal UFS. It reads the root
-filesystem back and compares its SHA-256 before writing anything else, it does
-not reboot, and on any failure it stops with TWRP still running. The exact
-boot chain, the installation procedure step by step and the recovery paths are
-in [docs/boot-strategy.md](docs/boot-strategy.md).
+## Installation
 
-Flash it **from external media** — `adb sideload` is the simplest. The
-installer refuses to run from the tablet's internal storage, because that is
-the partition it is about to overwrite.
+1. Copy the release ZIP to external media or use `adb sideload`.
+2. Boot TWRP.
+3. Flash the ZIP and wait for its verification to finish.
+4. Reboot and complete GNOME's first-run setup.
 
-The image ships **without a user account**. On the first boot GNOME's setup
-wizard asks for a name, a password, the language, the keyboard layout and the
-time zone, the way any Ubuntu install does. Nothing in the image is named after
-a user, and building a release needs no password and no secret of any kind.
+> [!WARNING]
+> Installation replaces Android's `userdata` with Ubuntu. It erases Android
+> apps and user data and is **not dual boot**. Back up anything important first.
 
-### Installing to the UFS without repartitioning
-
-Ubuntu's root filesystem goes into the partition Android calls `userdata`,
-which on the SM-X910 is 939 GiB. It is written there as a plain ext4 image and
-grown to the whole partition on first boot.
-
-The partition table is never touched. Nothing in the build tooling or in the
-installer creates, deletes, moves or resizes a partition, and neither one runs
-`mkfs`, `parted` or `sgdisk` against the tablet — `dd` into partitions that
-already exist is the only write there is. `super`, the bootloader chain, EFS,
-persist, modem and the calibration partitions are all left alone, so restoring
-One UI is still an Odin flash of the official firmware and nothing else.
-
-What this **does** replace is everything Android kept in `userdata`. Android's
-system image survives in `super`, but its user data does not; there is no
-partition left over for it, and this is not a dual boot.
-
-Installing to a microSD is what the port did up to v0.17, and those releases
-still work: their root filesystem carries the label `UBTS9U_ROOT`, while a UFS
-install carries `UBTS9U_UFS`, so a card left in the slot cannot be mistaken for
-the internal install by either one.
-
-The remaining direction is to install **alongside Android rather than instead
-of it**, so the tablet can dual boot. That is not implemented and is not
-promised here; the boot chain is kept deliberately close to Samsung's so that
-it stays possible.
+The installer does not repartition the UFS and leaves Samsung's bootloader,
+EFS, calibration and modem-related partitions alone. It must run from external
+media because the internal `userdata` partition becomes Ubuntu's root
+filesystem. Full installation, recovery and boot-chain details are in
+[boot-strategy.md](docs/boot-strategy.md).
 
 ## Documentation
 
-> The documents below are written in **Spanish**. This README is the only
-> English-language document in the repository.
+The detailed project documentation is written in Spanish:
 
 | Document | Contents |
 |---|---|
-| [docs/hardware-status.md](docs/hardware-status.md) | Current hardware matrix and evidence level per component |
-| [docs/ubuntu-userspace.md](docs/ubuntu-userspace.md) | Rootfs construction and Ubuntu-specific decisions |
-| [docs/boot-strategy.md](docs/boot-strategy.md) | Boot chain, partitions, installation and recovery |
-| [docs/tab-companion.md](docs/tab-companion.md) | Tab Companion architecture, usage and the remaining hands-on validation checklist |
-| [docs/development-notes.md](docs/development-notes.md) | Durable conclusions and the "do not retry" inventory |
-| [docs/porting-log.md](docs/porting-log.md) | Chronological engineering log, including failures |
+| [Hardware status](docs/hardware-status.md) | Evidence, limitations and pending hardware tests |
+| [Tab Companion](docs/tab-companion.md) | S Pen and keyboard behaviour, architecture and diagnostics |
+| [Boot strategy](docs/boot-strategy.md) | Installation, partitions, boot chain and recovery |
+| [Ubuntu userspace](docs/ubuntu-userspace.md) | Root filesystem and desktop integration |
+| [Development notes](docs/development-notes.md) | Durable technical conclusions and rejected approaches |
+| [Porting log](docs/porting-log.md) | Chronological engineering history |
 
-## Layout
+## Repository layout
 
 ```text
-├── kernel/       Imported DTS, drivers, patches and kernel config
-├── packaging/    Debian packaging for the device support packages
-├── configs/      Audio, Bluetooth, display, sensors, USB and systemd overlays
-├── scripts/      Reproducible rootfs, image, bundle and validation tooling
-├── docs/         Reference documentation and chronological history
-├── artifacts/    Generated output only; intentionally not versioned
-└── work/         Disposable local scratch space
+kernel/       Device tree, drivers, patches and kernel configuration
+packaging/    Debian packages installed in the Ubuntu image
+configs/      System configuration and service overlays
+scripts/      Reproducible build and validation tools
+docs/         Detailed documentation and engineering history
+artifacts/    Generated release files; not versioned
 ```
 
-## Firmware
+## Firmware and licensing
 
-This repository contains **no proprietary firmware**. Samsung and Qualcomm
-blobs — Wi-Fi, Bluetooth, GPU, ADSP, CS35L45, audio topology and the STM32
-keyboard application — are staged
-from the owner's device or from the official Samsung firmware package by the
-`scripts/stage-stock-*.sh` helpers, which verify pinned checksums. Generated
-images and ZIP files are ignored by Git.
+Proprietary Samsung and Qualcomm firmware is not stored in Git. Build helpers
+stage it from the owner's tablet or official Samsung firmware and verify pinned
+checksums.
 
-## Licensing
-
-The project default is **MIT** (see [LICENSE](LICENSE)), except where a file's
-SPDX header states otherwise; that per-file header always takes precedence.
-Kernel drivers and patches remain `GPL-2.0-only` and the device tree remains
-`BSD-3-Clause`. Imported files record their origin in
+The project default license is MIT; per-file SPDX headers take precedence.
+Kernel code and patches remain GPL-2.0-only, and the device tree remains
+BSD-3-Clause. Imported sources are listed in
 [kernel/PROVENANCE.md](kernel/PROVENANCE.md).
 
-## Contributing
-
-Two project rules carry over from the postmarketOS port:
-
-- **No live-only fixes:** every change belongs in a reproducible DTS, config,
-  package or script.
-- **Verify on hardware:** a successful probe is not a functional test.
+Contributions must be reproducible in the repository and validated on physical
+hardware before a component is marked as working.

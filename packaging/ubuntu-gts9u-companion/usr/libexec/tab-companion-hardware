@@ -74,6 +74,21 @@ DEFAULT_SOURCE_CODES = {
     "key-fn-f11": 115,
 }
 
+# These keys have no useful native Linux event.  Keeping their GSettings action
+# at "none" means "use this port default", just like passing Fn+F6..F11 through
+# preserves their firmware-provided Home/brightness/volume behaviour.
+DEFAULT_KEY_ACTIONS = {
+    "key-galaxy-ai": ("app", "io.github.agcarbajo.TabCompanion.desktop"),
+    "key-dex": ("key", "56+68"),              # Alt+F10
+    "key-finder": ("overview", ""),           # Super tap / GNOME search
+    "key-settings": ("app", "org.gnome.Settings.desktop"),
+    "key-fn-f1": ("app", "org.gnome.Nautilus.desktop"),
+    "key-fn-f2": ("key", "150"),             # KEY_WWW
+    "key-fn-f3": ("key", "29+56+20"),        # Ctrl+Alt+T
+    "key-fn-f4": ("key", "125+30"),          # Super+A
+    "key-fn-f5": ("overview", ""),
+}
+
 EV_SYN = 0
 EV_KEY = 1
 EV_SW = 5
@@ -311,6 +326,27 @@ class HardwareService:
             self.settings.set_value("action-targets", GLib.Variant("a{ss}", targets))
             self.settings.set_string("key-galaxy-ai", "app")
             self.settings.set_uint("keyboard-mapping-version", 3)
+            version = 3
+        if version < 4:
+            # 0.8 initially stored the useful port defaults as explicit user
+            # mappings.  Convert only those exact values back to "none" so the
+            # UI truthfully shows "Keep the default action" without discarding
+            # a different customization.
+            targets = self.settings.get_value("action-targets").unpack()
+            for mapping, (legacy_action, legacy_target) in DEFAULT_KEY_ACTIONS.items():
+                current_action = self.settings.get_string(mapping)
+                if current_action not in {"none", legacy_action}:
+                    continue
+                if legacy_target:
+                    if targets.get(mapping, "") != legacy_target:
+                        continue
+                    targets.pop(mapping, None)
+                if current_action == legacy_action:
+                    self.settings.reset(mapping)
+                    if not legacy_target:
+                        targets.pop(mapping, None)
+            self.settings.set_value("action-targets", GLib.Variant("a{ss}", targets))
+            self.settings.set_uint("keyboard-mapping-version", 4)
 
     def _init_spen_ble(self):
         try:
@@ -596,7 +632,10 @@ class HardwareService:
             suppress = False
             if event_type == EV_KEY:
                 mapping = self._mapping_for_code(code)
-                if mapping and self.settings.get_string(mapping) != "none":
+                if mapping and (
+                    self.settings.get_string(mapping) != "none"
+                    or mapping in DEFAULT_KEY_ACTIONS
+                ):
                     suppress = True
                     if value == 1:
                         self._replace_dynamic(LastSpecialKey=f"{mapping}:{code}")
@@ -694,7 +733,13 @@ class HardwareService:
             return False
         action = self.settings.get_string(mapping)
         if action == "none":
-            return True
+            default = DEFAULT_KEY_ACTIONS.get(mapping)
+            if default is None:
+                return True
+            action, target = default
+        else:
+            targets = self.settings.get_value("action-targets").unpack()
+            target = targets.get(mapping, "").strip()
         if action in ACTION_KEYS:
             if self.virtual_keyboard is None:
                 return False
@@ -710,8 +755,6 @@ class HardwareService:
             except OSError as error:
                 print(f"Cannot toggle flashlight: {error}", flush=True)
                 return False
-        targets = self.settings.get_value("action-targets").unpack()
-        target = targets.get(mapping, "").strip()
         if action == "app" and target:
             app = Gio.DesktopAppInfo.new(target)
             if app is None:

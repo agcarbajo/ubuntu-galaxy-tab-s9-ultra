@@ -439,8 +439,6 @@ class CompanionWindow(Adw.ApplicationWindow):
         self.settings.reset("keyboard-source-codes")
         targets = self.settings.get_value("action-targets").unpack()
         targets = {key: value for key, value in targets.items() if not key.startswith("key-")}
-        defaults = self.settings.get_default_value("action-targets").unpack()
-        targets.update({key: value for key, value in defaults.items() if key.startswith("key-")})
         self.settings.set_value("action-targets", GLib.Variant("a{ss}", targets))
 
     def _forget_keyboard(self, _button):

@@ -4713,3 +4713,38 @@ servicios de Companion activos y sin avisos, DX920 conectado y remapeable, S Pen
 emparejado al 100 % y cargando, y las dos políticas sysfs activas. La propietaria
 ya había validado físicamente el rechazo de dedos en hover y la
 desactivación/reactivación del digitalizador.
+
+## Sesión 67 — semántica real de los valores predeterminados
+
+Fecha: 2026-08-13. La primera implementación guardaba explícitamente como
+acciones personalizadas las utilidades elegidas para Galaxy AI, DeX, Finder,
+Ajustes y Fn+F1–F5. Eso hacía que el selector mostrase «Abrir una aplicación»,
+«Simular una tecla» o «Vista general», aunque conceptualmente debían ser la
+conducta de «Mantener la acción predeterminada».
+
+Tab Companion 0.8.1 mantiene ahora todas las claves GSettings de teclado en
+`none`. El backend distingue dos clases: Fn+F6–F11 ya tienen un evento Linux
+útil y se retransmiten intactas; las teclas especiales sin función nativa se
+sustituyen por la utilidad base del port sólo mientras continúen en `none`.
+Una selección del usuario tiene prioridad y volver a «Mantener» recupera la
+utilidad base sin conservar una asignación oculta. La migración 4 convierte
+únicamente las combinaciones exactas que 0.8.0 había instalado, respetando
+cualquier personalización diferente.
+
+El README se redujo a compatibilidad, instalación y funciones orientadas al
+usuario final. La evidencia, las decisiones del port y las limitaciones
+detalladas permanecen en `docs/`.
+
+El paquete 0.8.1 pasó `compileall`, esquema estricto, Desktop Entry y AppStream
+pedante, y se instaló sobre 0.8.0:
+
+```text
+ubuntu-gts9u-companion_0.8.1_all.deb
+648267df87b9ec5810613e9278e6dd7eafea83b348ce272b87c66c94119902ef
+```
+
+La migración en la tablet terminó en versión 4. Galaxy AI, DeX, Finder,
+Ajustes y Fn+F1–F10 quedaron en `none`; se conservó una personalización posterior
+de Fn+F11 con su destino de comando. `TriggerMapping` ejecutó correctamente la
+utilidad base de Galaxy AI y dos activaciones de DeX maximizaron y restauraron
+sin escribir ninguna asignación. Ambos servicios siguieron activos y sin avisos.
