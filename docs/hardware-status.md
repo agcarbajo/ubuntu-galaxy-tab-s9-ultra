@@ -1,7 +1,7 @@
 # Estado de hardware del SM-X910 bajo Ubuntu 24.04
 
-Última actualización: 2026-08-13, tras instalar Tab Companion 0.7.0, ampliar
-las fundas reconocidas y validar su rediseño en la tablet.
+Última actualización: 2026-08-13, tras instalar Tab Companion 0.8.1 y confirmar
+el funcionamiento normal de la microSD como almacenamiento extraíble.
 
 Ubuntu **ya arranca** en la tablet. Esta matriz distingue explícitamente lo
 heredado de lo comprobado, y ningún componente pasa a ✅ sin observación real.
@@ -51,7 +51,7 @@ sondea» como prueba de funcionamiento.
 | Táctil Goodix GT9916 | ✅ | ✅ | confirmado | Layout Samsung de eventos de 16 bytes |
 | Botones power y volumen | ✅ | ✅ | confirmado | |
 | UFS interna | ✅ | ✅ | medido | Seis LUN `sda`–`sdf`. Desde v0.18 aloja también la raíz, en `userdata` (`sda34`, 1 007 985 586 176 B), etiquetada `UBTS9U_UFS`. **Se reutiliza la partición tal cual: no se crea, borra ni redimensiona ninguna**, y en el primer arranque solo se redimensiona el sistema de ficheros con `resize2fs` |
-| microSD | ✅ | ✅ | medido | Raíz por etiqueta `UBTS9U_ROOT` hasta v0.17; la partición se expande en el primer arranque. Desde 2026-08-03 se crea **con journal** y `errors=remount-ro`: sin journal un apagado sucio acabó tirando el arranque a modo emergencia. La misma decisión se hereda en la imagen de UFS |
+| microSD | ✅ | ✅ | confirmado | Funciona con normalidad como almacenamiento extraíble en la instalación UFS actual. Hasta v0.17 también alojó la raíz `UBTS9U_ROOT`; aquellas imágenes usan journal y `errors=remount-ro` para tolerar apagados sucios |
 | Wi-Fi WCN7850 / ath12k | ✅ | ✅ | confirmado | Conectada a la red por la usuaria; SSH en uso para el desarrollo |
 | Bluetooth y A2DP | ✅ | ✅ | confirmado | La unidad espera a `bluetoothd`, alimenta correctamente `btmgmt` y reaplica la dirección nativa; controlador y A2DP validados |
 | Altavoces 4× CS35L45 y DMIC | ✅ | ✅ | confirmado | PipeWire nativo, sin PulseAudio. Requiere el arranque tardío del ADSP y `protection-domain-mapper` |

@@ -29,6 +29,7 @@ from one TWRP-flashable ZIP; a microSD is not required after installation.
 | Battery telemetry | ✅ | Charge, voltage, current and temperature |
 | USB-PD/PPS charging | ✅ | Up to 25 W measured into the battery |
 | Suspend / resume | ✅ | Deep suspend |
+| microSD | ✅ | Read and write storage works normally |
 | USB host | ✅ | HID and storage, powered or unpowered |
 | USB-C DisplayPort | ✅ | External video output |
 | Cameras and flash | 🟡 | Four cameras, autofocus and flashlight work; colour tuning remains |
