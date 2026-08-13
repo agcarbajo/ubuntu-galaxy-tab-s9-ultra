@@ -60,6 +60,27 @@
 		enable-gpios = <&tlmm 18 GPIO_ACTIVE_HIGH>;
 	};
 
+	/*
+	 * EgisTec EL721 optical under-display fingerprint sensor.  Samsung runs
+	 * this peripheral in secure mode: Linux owns only its 3.3 V rail and
+	 * sleep/reset line, while capture and matching stay inside QTEE.  It is
+	 * deliberately a platform device rather than a raw SPI child so normal
+	 * userspace can never request sensor frames around TrustZone.
+	 *
+	 * The geometry strings are copied from the X910 R03 stock overlay.  They
+	 * are metadata for the future fprintd/gnome-shell bridge; the panel driver
+	 * does not infer a touch region from them.
+	 */
+	fingerprint {
+		compatible = "egistec,el721";
+		vdd-supply = <&vreg_l2b_3p3>;
+		enable-gpios = <&tlmm 155 GPIO_ACTIVE_HIGH>;
+		egistec,model = "X916";
+		egistec,position =
+			"16.70,0.00,9.10,9.10,14.80,14.80,12.00,12.00,5.00";
+		egistec,rb = "634,-1,-1,D9D9D9";
+	};
+
 	reserved-memory {
 		/*
 		 * Samsung ABL patches the /memory ranges but, without the stock
@@ -450,6 +471,17 @@
 			regulator-max-microvolt = <1800000>;
 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
 			regulator-always-on;
+		};
+
+		/* Dedicated 3.3 V BTP rail for the secure EgisTec EL721. */
+		vreg_l2b_3p3: ldo2 {
+			regulator-name = "vreg_l2b_3p3";
+			regulator-min-microvolt = <3300000>;
+			regulator-max-microvolt = <3300000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+			regulator-allow-set-load;
+			regulator-allowed-modes = <RPMH_REGULATOR_MODE_LPM
+						   RPMH_REGULATOR_MODE_HPM>;
 		};
 
 		/* Shared 1.8 V camera I/O rail (Samsung downstream pm_humu_l4). */

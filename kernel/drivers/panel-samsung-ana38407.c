@@ -16,8 +16,10 @@
 #include <linux/delay.h>
 #include <linux/gpio/consumer.h>
 #include <linux/module.h>
+#include <linux/mutex.h>
 #include <linux/of.h>
 #include <linux/regulator/consumer.h>
+#include <linux/workqueue.h>
 
 #include <drm/display/drm_dsc.h>
 #include <drm/display/drm_dsc_helper.h>
@@ -32,6 +34,8 @@
  * desktop's slider sweep the panel from dark to bright twice.
  */
 #define ANA38407_MAX_BRIGHTNESS		0x07ff
+#define ANA38407_FOD_WATCHDOG_MS	15000
+#define ANA38407_FOD_SETTLE_MS		35
 
 /* Revision D, as read back by the bootloader (lcd_id=0x800004). */
 static const u8 ana38407_expected_id[3] = { 0x80, 0x00, 0x04 };
@@ -56,6 +60,14 @@ struct ana38407 {
 	struct drm_dsc_config dsc;
 	struct regulator_bulk_data *supplies;
 	struct gpio_desc *reset_gpio;
+	/* Serializes panel lifetime, normal brightness and optical FOD state. */
+	struct mutex lock;
+	struct delayed_work fod_watchdog;
+	u16 user_brightness;
+	bool prepared;
+	bool enabled;
+	bool fod_mode;
+	bool fod_circle;
 	u8 id[3];
 };
 
@@ -117,6 +129,134 @@ static void ana38407_reset(struct ana38407 *ctx)
 	usleep_range(10000, 11000);
 	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
 	usleep_range(10000, 11000);
+}
+
+/*
+ * The optical sensor needs Samsung's short-lived fingerprint HBM sequence.
+ * Keep every brightness and FOD transaction under the same lock: GNOME may
+ * update the normal backlight while fprintd is sampling, but that new value
+ * must only be remembered and restored after the sample has finished.
+ */
+static int ana38407_write_brightness_locked(struct ana38407 *ctx, u16 brightness)
+{
+	unsigned long mode_flags = ctx->dsi->mode_flags;
+	int ret;
+
+	ctx->dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
+	ret = mipi_dsi_dcs_set_display_brightness_large(ctx->dsi, brightness);
+	ctx->dsi->mode_flags = mode_flags;
+
+	return ret;
+}
+
+static int ana38407_write_fod_locked(struct ana38407 *ctx, bool enable)
+{
+	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
+	unsigned long mode_flags = ctx->dsi->mode_flags;
+	u8 brightness_hi = ctx->user_brightness >> 8;
+	u8 brightness_lo = ctx->user_brightness & 0xff;
+
+	ctx->dsi->mode_flags |= MIPI_DSI_MODE_LPM;
+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x5a, 0x5a);
+	if (enable) {
+		/* Revision-D optical FOD + FlatZ sequence from Samsung's panel data. */
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x53, 0xe0);
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x51, 0x07, 0xff);
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb0, 0x0a, 0xe0);
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xe0, 0x3c, 0xfd, 0xff,
+					     0x15, 0x00, 0x00, 0x66, 0xcc,
+					     0x00, 0xff, 0x12);
+	} else {
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x53, 0x28);
+		mipi_dsi_dcs_write_var_seq_multi(&dsi_ctx, 0x51,
+						 brightness_hi, brightness_lo);
+	}
+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0xa5, 0xa5);
+	ctx->dsi->mode_flags = mode_flags;
+
+	return dsi_ctx.accum_err;
+}
+
+static int ana38407_generic_write(struct ana38407 *ctx, const u8 *data,
+				  size_t len)
+{
+	ssize_t ret;
+
+	ret = mipi_dsi_generic_write(ctx->dsi, data, len);
+	if (ret < 0)
+		return ret;
+	if (ret != len)
+		return -EIO;
+
+	return 0;
+}
+
+static int ana38407_write_fod_circle_locked(struct ana38407 *ctx, bool enable)
+{
+	static const u8 level2_unlock[] = { 0xf1, 0x5a, 0x5a };
+	static const u8 level2_lock[] = { 0xf1, 0xa5, 0xa5 };
+	u8 circle[] = { 0x7a, 0x05, 0x00, 0x00, enable ? 0x00 : 0x02 };
+	unsigned long mode_flags = ctx->dsi->mode_flags;
+	int ret, lock_ret;
+
+	ctx->dsi->mode_flags |= MIPI_DSI_MODE_LPM;
+	ret = ana38407_generic_write(ctx, level2_unlock,
+				     sizeof(level2_unlock));
+	if (!ret)
+		ret = ana38407_generic_write(ctx, circle, sizeof(circle));
+	lock_ret = ana38407_generic_write(ctx, level2_lock,
+					  sizeof(level2_lock));
+	ctx->dsi->mode_flags = mode_flags;
+	if (!ret)
+		ret = lock_ret;
+
+	/* No TE-wait primitive is available here; cover two frames at 60 Hz. */
+	if (!ret)
+		msleep(ANA38407_FOD_SETTLE_MS);
+
+	return ret;
+}
+
+static int ana38407_fod_cleanup_locked(struct ana38407 *ctx)
+{
+	int ret = 0, tmp;
+
+	if (ctx->fod_circle) {
+		tmp = ana38407_write_fod_circle_locked(ctx, false);
+		if (!ret)
+			ret = tmp;
+		ctx->fod_circle = false;
+	}
+
+	if (ctx->fod_mode) {
+		tmp = ana38407_write_fod_locked(ctx, false);
+		if (!ret)
+			ret = tmp;
+		ctx->fod_mode = false;
+	}
+
+	return ret;
+}
+
+static void ana38407_fod_watchdog_work(struct work_struct *work)
+{
+	struct ana38407 *ctx = container_of(to_delayed_work(work),
+						  struct ana38407,
+						  fod_watchdog);
+	int ret = 0;
+
+	mutex_lock(&ctx->lock);
+	if (ctx->prepared && ctx->enabled) {
+		ret = ana38407_fod_cleanup_locked(ctx);
+	} else {
+		ctx->fod_circle = false;
+		ctx->fod_mode = false;
+	}
+	mutex_unlock(&ctx->lock);
+
+	if (ret)
+		dev_warn(&ctx->dsi->dev,
+			 "failed to leave fingerprint display mode: %d\n", ret);
 }
 
 /*
@@ -231,7 +371,9 @@ static int ana38407_on(struct ana38407 *ctx)
 	 */
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x5a, 0x5a);
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x53, 0x28);
-	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x51, 0x07, 0xff);
+	mipi_dsi_dcs_write_var_seq_multi(&dsi_ctx, 0x51,
+					 ctx->user_brightness >> 8,
+					 ctx->user_brightness & 0xff);
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0xa5, 0xa5);
 
 	/* SP_SETTING */
@@ -256,26 +398,52 @@ static int ana38407_enable(struct drm_panel *panel)
 {
 	struct ana38407 *ctx = to_ana38407(panel);
 	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
+	int ret = 0;
+
+	mutex_lock(&ctx->lock);
+	if (!ctx->prepared) {
+		ret = -EPIPE;
+		goto out_unlock;
+	}
+	if (ctx->enabled)
+		goto out_unlock;
 
 	ctx->dsi->mode_flags |= MIPI_DSI_MODE_LPM;
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x5a, 0x5a);
 	mipi_dsi_dcs_set_display_on_multi(&dsi_ctx);
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0xa5, 0xa5);
 	mipi_dsi_msleep(&dsi_ctx, 20);
+	ret = dsi_ctx.accum_err;
+	if (!ret)
+		ctx->enabled = true;
 
-	return dsi_ctx.accum_err;
+out_unlock:
+	mutex_unlock(&ctx->lock);
+	return ret;
 }
 
 static int ana38407_disable(struct drm_panel *panel)
 {
 	struct ana38407 *ctx = to_ana38407(panel);
 	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
+	int cleanup_ret = 0, ret = 0;
 
+	mutex_lock(&ctx->lock);
+	if (!ctx->enabled)
+		goto out_unlock;
+
+	cleanup_ret = ana38407_fod_cleanup_locked(ctx);
 	ctx->dsi->mode_flags |= MIPI_DSI_MODE_LPM;
 	mipi_dsi_dcs_set_display_off_multi(&dsi_ctx);
 	mipi_dsi_msleep(&dsi_ctx, 20);
+	ret = dsi_ctx.accum_err;
+	ctx->enabled = false;
 
-	return dsi_ctx.accum_err;
+out_unlock:
+	mutex_unlock(&ctx->lock);
+	cancel_delayed_work_sync(&ctx->fod_watchdog);
+
+	return ret ?: cleanup_ret;
 }
 
 static int ana38407_sleep_in(struct ana38407 *ctx)
@@ -294,9 +462,15 @@ static int ana38407_prepare(struct drm_panel *panel)
 	struct ana38407 *ctx = to_ana38407(panel);
 	int ret;
 
+	mutex_lock(&ctx->lock);
+	if (ctx->prepared) {
+		ret = 0;
+		goto out_unlock;
+	}
+
 	ret = ana38407_power_on(ctx);
 	if (ret)
-		return ret;
+		goto out_unlock;
 
 	ana38407_reset(ctx);
 
@@ -304,8 +478,9 @@ static int ana38407_prepare(struct drm_panel *panel)
 	if (ret) {
 		gpiod_set_value_cansleep(ctx->reset_gpio, 0);
 		regulator_bulk_disable(ARRAY_SIZE(ana38407_supplies), ctx->supplies);
-		return ret;
+		goto out_unlock;
 	}
+	ctx->prepared = true;
 
 	if (memcmp(ctx->id, ana38407_expected_id, sizeof(ctx->id)))
 		dev_warn(&ctx->dsi->dev,
@@ -314,18 +489,32 @@ static int ana38407_prepare(struct drm_panel *panel)
 			 ana38407_expected_id[0], ana38407_expected_id[1],
 			 ana38407_expected_id[2]);
 
-	return 0;
+out_unlock:
+	mutex_unlock(&ctx->lock);
+	return ret;
 }
 
 static int ana38407_unprepare(struct drm_panel *panel)
 {
 	struct ana38407 *ctx = to_ana38407(panel);
+	int cleanup_ret = 0, ret = 0;
 
-	ana38407_sleep_in(ctx);
+	mutex_lock(&ctx->lock);
+	if (!ctx->prepared)
+		goto out_unlock;
+
+	cleanup_ret = ana38407_fod_cleanup_locked(ctx);
+	ret = ana38407_sleep_in(ctx);
+	ctx->enabled = false;
+	ctx->prepared = false;
 	gpiod_set_value_cansleep(ctx->reset_gpio, 0);
 	regulator_bulk_disable(ARRAY_SIZE(ana38407_supplies), ctx->supplies);
 
-	return 0;
+out_unlock:
+	mutex_unlock(&ctx->lock);
+	cancel_delayed_work_sync(&ctx->fod_watchdog);
+
+	return ret ?: cleanup_ret;
 }
 
 /* All five timing modes from the stock DTBO, hactive/vactive 2960x1848. */
@@ -389,13 +578,16 @@ static const struct drm_panel_funcs ana38407_panel_funcs = {
 
 static int ana38407_bl_update(struct backlight_device *bl)
 {
-	struct mipi_dsi_device *dsi = bl_get_data(bl);
-	u16 brightness = backlight_get_brightness(bl);
-	int ret;
+	struct ana38407 *ctx = bl_get_data(bl);
+	u16 brightness = min_t(u16, backlight_get_brightness(bl),
+			       ANA38407_MAX_BRIGHTNESS);
+	int ret = 0;
 
-	dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
-	ret = mipi_dsi_dcs_set_display_brightness_large(dsi, brightness);
-	dsi->mode_flags |= MIPI_DSI_MODE_LPM;
+	mutex_lock(&ctx->lock);
+	ctx->user_brightness = brightness;
+	if (ctx->prepared && !ctx->fod_mode)
+		ret = ana38407_write_brightness_locked(ctx, brightness);
+	mutex_unlock(&ctx->lock);
 
 	return ret;
 }
@@ -404,16 +596,165 @@ static const struct backlight_ops ana38407_bl_ops = {
 	.update_status = ana38407_bl_update,
 };
 
-static struct backlight_device *ana38407_create_backlight(struct mipi_dsi_device *dsi)
+static struct ana38407 *ana38407_from_bl_dev(struct device *dev)
 {
-	struct device *dev = &dsi->dev;
+	return bl_get_data(to_backlight_device(dev));
+}
+
+static void ana38407_update_fod_watchdog_locked(struct ana38407 *ctx)
+{
+	if (ctx->fod_mode || ctx->fod_circle)
+		mod_delayed_work(system_wq, &ctx->fod_watchdog,
+				 msecs_to_jiffies(ANA38407_FOD_WATCHDOG_MS));
+	else
+		cancel_delayed_work(&ctx->fod_watchdog);
+}
+
+static ssize_t fod_mode_show(struct device *dev,
+			     struct device_attribute *attr, char *buf)
+{
+	struct ana38407 *ctx = ana38407_from_bl_dev(dev);
+	bool enabled;
+
+	mutex_lock(&ctx->lock);
+	enabled = ctx->fod_mode;
+	mutex_unlock(&ctx->lock);
+
+	return sysfs_emit(buf, "%u\n", enabled);
+}
+
+static ssize_t fod_mode_store(struct device *dev,
+			      struct device_attribute *attr,
+			      const char *buf, size_t count)
+{
+	struct ana38407 *ctx = ana38407_from_bl_dev(dev);
+	bool enable;
+	int ret;
+
+	ret = kstrtobool(buf, &enable);
+	if (ret)
+		return ret;
+
+	mutex_lock(&ctx->lock);
+	if (!ctx->prepared || !ctx->enabled) {
+		ret = -EPIPE;
+		goto out_unlock;
+	}
+
+	if (ctx->fod_mode == enable) {
+		ana38407_update_fod_watchdog_locked(ctx);
+		ret = 0;
+		goto out_unlock;
+	}
+
+	if (enable) {
+		ret = ana38407_write_fod_locked(ctx, true);
+		if (ret) {
+			/* A failed sequence may have raised HBM; restore normal mode. */
+			ana38407_write_fod_locked(ctx, false);
+			goto out_unlock;
+		}
+		ctx->fod_mode = true;
+	} else {
+		ret = ana38407_fod_cleanup_locked(ctx);
+	}
+	ana38407_update_fod_watchdog_locked(ctx);
+
+out_unlock:
+	mutex_unlock(&ctx->lock);
+	return ret ? ret : count;
+}
+
+static ssize_t fod_circle_show(struct device *dev,
+			       struct device_attribute *attr, char *buf)
+{
+	struct ana38407 *ctx = ana38407_from_bl_dev(dev);
+	bool enabled;
+
+	mutex_lock(&ctx->lock);
+	enabled = ctx->fod_circle;
+	mutex_unlock(&ctx->lock);
+
+	return sysfs_emit(buf, "%u\n", enabled);
+}
+
+static ssize_t fod_circle_store(struct device *dev,
+				struct device_attribute *attr,
+				const char *buf, size_t count)
+{
+	struct ana38407 *ctx = ana38407_from_bl_dev(dev);
+	bool enable;
+	int ret;
+
+	ret = kstrtobool(buf, &enable);
+	if (ret)
+		return ret;
+
+	mutex_lock(&ctx->lock);
+	if (!ctx->prepared || !ctx->enabled) {
+		ret = -EPIPE;
+		goto out_unlock;
+	}
+	if (enable && !ctx->fod_mode) {
+		ret = -EINVAL;
+		goto out_unlock;
+	}
+	if (ctx->fod_circle == enable) {
+		ana38407_update_fod_watchdog_locked(ctx);
+		ret = 0;
+		goto out_unlock;
+	}
+
+	ret = ana38407_write_fod_circle_locked(ctx, enable);
+	if (!ret)
+		ctx->fod_circle = enable;
+	else if (enable)
+		ana38407_write_fod_circle_locked(ctx, false);
+	ana38407_update_fod_watchdog_locked(ctx);
+
+out_unlock:
+	mutex_unlock(&ctx->lock);
+	return ret ? ret : count;
+}
+
+static ssize_t fod_ready_show(struct device *dev,
+			      struct device_attribute *attr, char *buf)
+{
+	struct ana38407 *ctx = ana38407_from_bl_dev(dev);
+	bool ready;
+
+	mutex_lock(&ctx->lock);
+	ready = ctx->prepared && ctx->enabled;
+	mutex_unlock(&ctx->lock);
+
+	return sysfs_emit(buf, "%u\n", ready);
+}
+
+static DEVICE_ATTR_RW(fod_mode);
+static DEVICE_ATTR_RW(fod_circle);
+static DEVICE_ATTR_RO(fod_ready);
+
+static struct attribute *ana38407_bl_attrs[] = {
+	&dev_attr_fod_mode.attr,
+	&dev_attr_fod_circle.attr,
+	&dev_attr_fod_ready.attr,
+	NULL,
+};
+
+static const struct attribute_group ana38407_bl_attr_group = {
+	.attrs = ana38407_bl_attrs,
+};
+
+static struct backlight_device *ana38407_create_backlight(struct ana38407 *ctx)
+{
+	struct device *dev = &ctx->dsi->dev;
 	const struct backlight_properties props = {
 		.type = BACKLIGHT_RAW,
 		.brightness = ANA38407_MAX_BRIGHTNESS,
 		.max_brightness = ANA38407_MAX_BRIGHTNESS,
 	};
 
-	return devm_backlight_device_register(dev, dev_name(dev), dev, dsi,
+	return devm_backlight_device_register(dev, dev_name(dev), dev, ctx,
 					      &ana38407_bl_ops, &props);
 }
 
@@ -498,6 +839,9 @@ static int ana38407_probe(struct mipi_dsi_device *dsi)
 
 	ctx->dsi = dsi;
 	mipi_dsi_set_drvdata(dsi, ctx);
+	mutex_init(&ctx->lock);
+	INIT_DELAYED_WORK(&ctx->fod_watchdog, ana38407_fod_watchdog_work);
+	ctx->user_brightness = ANA38407_MAX_BRIGHTNESS;
 
 	dsi->lanes = 4;
 	dsi->format = MIPI_DSI_FMT_RGB888;
@@ -505,10 +849,16 @@ static int ana38407_probe(struct mipi_dsi_device *dsi)
 
 	ctx->panel.prepare_prev_first = true;
 
-	ctx->panel.backlight = ana38407_create_backlight(dsi);
+	ctx->panel.backlight = ana38407_create_backlight(ctx);
 	if (IS_ERR(ctx->panel.backlight))
 		return dev_err_probe(dev, PTR_ERR(ctx->panel.backlight),
 				     "failed to create backlight\n");
+
+	ret = sysfs_create_group(&ctx->panel.backlight->dev.kobj,
+				 &ana38407_bl_attr_group);
+	if (ret)
+		return dev_err_probe(dev, ret,
+				     "failed to create fingerprint controls\n");
 
 	drm_panel_add(&ctx->panel);
 
@@ -518,6 +868,8 @@ static int ana38407_probe(struct mipi_dsi_device *dsi)
 	ret = mipi_dsi_attach(dsi);
 	if (ret < 0) {
 		drm_panel_remove(&ctx->panel);
+		sysfs_remove_group(&ctx->panel.backlight->dev.kobj,
+				   &ana38407_bl_attr_group);
 		return dev_err_probe(dev, ret, "failed to attach to DSI host\n");
 	}
 
@@ -528,6 +880,14 @@ static void ana38407_remove(struct mipi_dsi_device *dsi)
 {
 	struct ana38407 *ctx = mipi_dsi_get_drvdata(dsi);
 	int ret;
+
+	sysfs_remove_group(&ctx->panel.backlight->dev.kobj,
+			   &ana38407_bl_attr_group);
+	cancel_delayed_work_sync(&ctx->fod_watchdog);
+	mutex_lock(&ctx->lock);
+	if (ctx->prepared)
+		ana38407_fod_cleanup_locked(ctx);
+	mutex_unlock(&ctx->lock);
 
 	ret = mipi_dsi_detach(dsi);
 	if (ret < 0)

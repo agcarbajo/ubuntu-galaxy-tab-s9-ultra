@@ -1,0 +1,597 @@
+From: Ubuntu gts9uwifi port contributors <gts9uwifi@example.com>
+Subject: [PATCH] input: goodix: expose Samsung optical FOD events
+
+Samsung's GT6936 firmware carries its low-power "sponge" address in the SEC
+extension at the end of IC_INFO.  Expose the controls needed by a userspace
+UDFPS bridge, report vendor gestures through a pollable state attribute and
+consume only touch slots that start in the fingerprint area.
+
+The sponge layout and notification command match Samsung's GPL driver.  The
+address remains firmware-provided; no board register address is hard-coded.
+
+Signed-off-by: Ubuntu gts9uwifi port contributors <gts9uwifi@example.com>
+
+---
+diff --git a/drivers/input/touchscreen/goodix_berlin_core.c b/drivers/input/touchscreen/goodix_berlin_core.c
+index 580e402e0..d2d424acf 100644
+--- a/drivers/input/touchscreen/goodix_berlin_core.c
++++ b/drivers/input/touchscreen/goodix_berlin_core.c
+@@ -24,16 +24,19 @@
+  */
+ 
+ #include <linux/bitfield.h>
++#include <linux/delay.h>
+ #include <linux/export.h>
+ #include <linux/gpio/consumer.h>
+ #include <linux/input.h>
+ #include <linux/input/mt.h>
+ #include <linux/input/touchscreen.h>
++#include <linux/mutex.h>
+ #include <linux/property.h>
+ #include <linux/regmap.h>
+ #include <linux/regulator/consumer.h>
+ #include <linux/samsung_wacom.h>
+ #include <linux/sizes.h>
++#include <linux/sysfs.h>
+ #include <linux/unaligned.h>
+ 
+ #include "goodix_berlin.h"
+@@ -60,8 +63,28 @@
+ #define GOODIX_BERLIN_SAMSUNG_TOUCH_ID_MASK	GENMASK(5, 2)
+ #define GOODIX_BERLIN_SAMSUNG_ACTION_MASK	GENMASK(7, 6)
+ #define GOODIX_BERLIN_SAMSUNG_COORD_EVENT	0
++#define GOODIX_BERLIN_SAMSUNG_EVENT_TYPE_MASK	GENMASK(5, 2)
++#define GOODIX_BERLIN_SAMSUNG_GESTURE_EVENT	2
++#define GOODIX_BERLIN_SAMSUNG_FOD_GESTURE_TYPE	3
++#define GOODIX_BERLIN_SAMSUNG_ACTION_PRESS	1
+ #define GOODIX_BERLIN_SAMSUNG_ACTION_RELEASE	3
+ 
++#define GOODIX_BERLIN_FOD_EVENT_PRESS		1
++#define GOODIX_BERLIN_FOD_EVENT_RELEASE		2
++#define GOODIX_BERLIN_FOD_EVENT_OUT		3
++#define GOODIX_BERLIN_FOD_EVENT_VI		4
++
++#define GOODIX_BERLIN_SPONGE_MODE_OFFSET		0x00
++#define GOODIX_BERLIN_SPONGE_PRESS_PROPERTY	0x14
++#define GOODIX_BERLIN_SPONGE_FOD_RECT		0x4b
++#define GOODIX_BERLIN_SPONGE_FOD_BIT		BIT(4)
++
++#define GOODIX_BERLIN_CMD_NOTIFY_SPONGE		0xf2
++#define GOODIX_BERLIN_CMD_ACK_BUSY		0x02
++#define GOODIX_BERLIN_CMD_ACK_OK			0x80
++#define GOODIX_BERLIN_CMD_RETRIES		6
++#define GOODIX_BERLIN_CMD_BUF_SIZE		16
++
+ #define GOODIX_BERLIN_DEV_CONFIRM_VAL		0xAA
+ #define GOODIX_BERLIN_BOOTOPTION_ADDR		0x10000
+ 
+@@ -145,6 +166,26 @@ struct goodix_berlin_ic_info_misc {
+ 	__le32 esd_addr;
+ } __packed;
+ 
++/* Samsung's extension at the end of IC_INFO. */
++struct goodix_berlin_ic_info_sec {
++	__le16 ic_vendor;
++	u8 ic_name_list;
++	u8 project_id;
++	u8 module_version;
++	u8 firmware_version;
++	__le32 total_checksum;
++	__le32 sponge_addr;
++	__le16 sponge_len;
++} __packed;
++
++enum goodix_berlin_fod_state {
++	GOODIX_BERLIN_FOD_IDLE,
++	GOODIX_BERLIN_FOD_PRESSED,
++	GOODIX_BERLIN_FOD_RELEASED,
++	GOODIX_BERLIN_FOD_OUT,
++	GOODIX_BERLIN_FOD_VI,
++};
++
+ struct goodix_berlin_touch {
+ 	u8 status;
+ 	u8 reserved;
+@@ -182,9 +223,23 @@ struct goodix_berlin_core {
+ 	int irq;
+ 
+ 	/* Runtime parameters extracted from IC_INFO buffer  */
++	u32 cmd_addr;
+ 	u32 touch_data_addr;
+ 	u16 touch_data_head_len;
+ 	u16 point_struct_len;
++	u32 sponge_addr;
++	u16 sponge_len;
++
++	/* Serializes sponge I/O, FOD state and suppressed touch slots. */
++	struct mutex fod_lock;
++	bool fod_enabled;
++	bool fod_rect_valid;
++	u16 fod_rect[4];
++	unsigned long fod_suppressed_slots;
++	enum goodix_berlin_fod_state fod_state;
++	u16 fod_x;
++	u16 fod_y;
++	u64 fod_sequence;
+ 
+ 	const struct goodix_berlin_ic_data *ic_data;
+ 
+@@ -208,6 +262,119 @@ static bool goodix_berlin_checksum_valid(const u8 *data, int size)
+ 	return (u16)cal_checksum == r_checksum;
+ }
+ 
++static int goodix_berlin_notify_sponge_locked(struct goodix_berlin_core *cd)
++{
++	u8 ack[GOODIX_BERLIN_CMD_BUF_SIZE];
++	u8 cmd[GOODIX_BERLIN_CMD_BUF_SIZE] = { 0 };
++	int error = -ETIMEDOUT;
++	int retry, poll;
++
++	if (!cd->cmd_addr)
++		return -EOPNOTSUPP;
++
++	/* len and checksum cover len + opcode, exactly as Samsung's driver. */
++	cmd[2] = 4;
++	cmd[3] = GOODIX_BERLIN_CMD_NOTIFY_SPONGE;
++	put_unaligned_le16(cmd[2] + cmd[3], &cmd[4]);
++
++	for (retry = 0; retry < GOODIX_BERLIN_CMD_RETRIES; retry++) {
++		error = regmap_raw_write(cd->regmap, cd->cmd_addr, cmd,
++					 sizeof(cmd));
++		if (error)
++			return error;
++
++		for (poll = 0; poll < GOODIX_BERLIN_CMD_RETRIES; poll++) {
++			error = regmap_raw_read(cd->regmap, cd->cmd_addr, ack,
++						sizeof(ack));
++			if (error)
++				return error;
++
++			if (ack[1] == GOODIX_BERLIN_CMD_ACK_OK) {
++				msleep(20);
++				return 0;
++			}
++			if (ack[1] != 0 &&
++			    ack[1] != GOODIX_BERLIN_CMD_ACK_BUSY)
++				break;
++			usleep_range(1000, 1100);
++		}
++	}
++
++	return error ?: -ETIMEDOUT;
++}
++
++static int goodix_berlin_write_sponge_locked(struct goodix_berlin_core *cd,
++					     u16 offset, const void *data,
++					      size_t len)
++{
++	int error;
++
++	if (!cd->sponge_addr || offset + len > cd->sponge_len)
++		return -EOPNOTSUPP;
++
++	error = regmap_raw_write(cd->regmap, cd->sponge_addr + offset,
++				 data, len);
++	if (error)
++		return error;
++
++	return goodix_berlin_notify_sponge_locked(cd);
++}
++
++static int goodix_berlin_write_fod_rect_locked(struct goodix_berlin_core *cd,
++					       const u16 rect[4])
++{
++	u8 data[8];
++	int i;
++
++	for (i = 0; i < ARRAY_SIZE(cd->fod_rect); i++)
++		put_unaligned_le16(rect[i], &data[i * sizeof(__le16)]);
++
++	return goodix_berlin_write_sponge_locked(cd,
++			GOODIX_BERLIN_SPONGE_FOD_RECT, data, sizeof(data));
++}
++
++static int goodix_berlin_set_fod_mode_locked(struct goodix_berlin_core *cd,
++					     bool enable)
++{
++	u8 mode;
++	int error;
++
++	if (!cd->cmd_addr || !cd->sponge_addr ||
++	    cd->sponge_len < GOODIX_BERLIN_SPONGE_FOD_RECT + 8)
++		return -EOPNOTSUPP;
++
++	if (enable) {
++		u8 property = 0;
++
++		if (!cd->fod_rect_valid)
++			return -EINVAL;
++
++		error = goodix_berlin_write_fod_rect_locked(cd, cd->fod_rect);
++		if (error)
++			return error;
++
++		error = goodix_berlin_write_sponge_locked(cd,
++							  GOODIX_BERLIN_SPONGE_PRESS_PROPERTY,
++							  &property, sizeof(property));
++		if (error)
++			return error;
++	}
++
++	error = regmap_raw_read(cd->regmap,
++				cd->sponge_addr + GOODIX_BERLIN_SPONGE_MODE_OFFSET,
++				&mode, sizeof(mode));
++	if (error)
++		return error;
++
++	if (enable)
++		mode |= GOODIX_BERLIN_SPONGE_FOD_BIT;
++	else
++		mode &= ~GOODIX_BERLIN_SPONGE_FOD_BIT;
++
++	return goodix_berlin_write_sponge_locked(cd,
++			GOODIX_BERLIN_SPONGE_MODE_OFFSET, &mode, sizeof(mode));
++}
++
+ static bool goodix_berlin_is_dummy_data(struct goodix_berlin_core *cd,
+ 					const u8 *data, int size)
+ {
+@@ -333,6 +500,7 @@ static int goodix_berlin_parse_ic_info(struct goodix_berlin_core *cd,
+ 				       const u8 *data, u16 length)
+ {
+ 	struct goodix_berlin_ic_info_misc *misc;
++	struct goodix_berlin_ic_info_sec *sec;
+ 	unsigned int offset = 0;
+ 
+ 	offset += sizeof(__le16); /* length */
+@@ -362,6 +530,7 @@ static int goodix_berlin_parse_ic_info(struct goodix_berlin_core *cd,
+ 	if (offset + sizeof(*misc) > length)
+ 		goto invalid_offset;
+ 
++	cd->cmd_addr = le32_to_cpu(misc->cmd_addr);
+ 	cd->touch_data_addr = le32_to_cpu(misc->touch_data_addr);
+ 	cd->touch_data_head_len = le16_to_cpu(misc->touch_data_head_len);
+ 	cd->point_struct_len = le16_to_cpu(misc->point_struct_len);
+@@ -384,6 +553,14 @@ static int goodix_berlin_parse_ic_info(struct goodix_berlin_core *cd,
+ 			"unsupported event layout: header %u point %u\n",
+ 			cd->touch_data_head_len, cd->point_struct_len);
+ 
++	offset += sizeof(*misc);
++	if (!memcmp(cd->fw_version.patch_pid, "6936", 4) &&
++	    offset + sizeof(*sec) + GOODIX_BERLIN_CHECKSUM_SIZE <= length) {
++		sec = (struct goodix_berlin_ic_info_sec *)&data[offset];
++		cd->sponge_addr = le32_to_cpu(sec->sponge_addr);
++		cd->sponge_len = le16_to_cpu(sec->sponge_len);
++	}
++
+ 	return 0;
+ 
+ invalid_offset:
+@@ -444,6 +620,13 @@ static int goodix_berlin_get_ic_info(struct goodix_berlin_core *cd)
+ 		return -EINVAL;
+ 	}
+ 
++	if (cd->sponge_addr &&
++	    cd->sponge_len >= GOODIX_BERLIN_SPONGE_FOD_RECT + 8)
++		dev_info(cd->dev, "Samsung sponge at %#x, length %u\n",
++			 cd->sponge_addr, cd->sponge_len);
++	else
++		dev_info(cd->dev, "Samsung FOD sponge extension unavailable\n");
++
+ 	return 0;
+ }
+ 
+@@ -469,12 +652,88 @@ static int goodix_berlin_get_remaining_contacts(struct goodix_berlin_core *cd,
+ 	return 0;
+ }
+ 
++static bool goodix_berlin_report_samsung_fod(struct goodix_berlin_core *cd,
++					     const u8 *data)
++{
++	enum goodix_berlin_fod_state state;
++	u8 event;
++	bool notify = false;
++
++	if (FIELD_GET(GOODIX_BERLIN_SAMSUNG_EVENT_ID_MASK, data[0]) !=
++	    GOODIX_BERLIN_SAMSUNG_GESTURE_EVENT ||
++	    FIELD_GET(GOODIX_BERLIN_SAMSUNG_EVENT_TYPE_MASK, data[0]) !=
++	    GOODIX_BERLIN_SAMSUNG_FOD_GESTURE_TYPE)
++		return false;
++
++	event = data[1];
++	switch (event) {
++	case GOODIX_BERLIN_FOD_EVENT_PRESS:
++		state = GOODIX_BERLIN_FOD_PRESSED;
++		break;
++	case GOODIX_BERLIN_FOD_EVENT_RELEASE:
++		state = GOODIX_BERLIN_FOD_RELEASED;
++		break;
++	case GOODIX_BERLIN_FOD_EVENT_OUT:
++		state = GOODIX_BERLIN_FOD_OUT;
++		break;
++	case GOODIX_BERLIN_FOD_EVENT_VI:
++		state = GOODIX_BERLIN_FOD_VI;
++		break;
++	default:
++		return true;
++	}
++
++	mutex_lock(&cd->fod_lock);
++	if (cd->fod_enabled) {
++		cd->fod_state = state;
++		cd->fod_x = data[2] << 4 | data[4] >> 4;
++		cd->fod_y = data[3] << 4 | (data[4] & 0x0f);
++		cd->fod_sequence++;
++		notify = true;
++	}
++	mutex_unlock(&cd->fod_lock);
++
++	if (notify)
++		sysfs_notify(&cd->dev->kobj, NULL, "fod_state");
++
++	return true;
++}
++
++static bool goodix_berlin_suppress_fod_touch(struct goodix_berlin_core *cd,
++					     u8 id, u8 action, u16 x, u16 y)
++{
++	bool suppress = false;
++
++	mutex_lock(&cd->fod_lock);
++	if (!cd->fod_enabled)
++		goto out;
++
++	if (action == GOODIX_BERLIN_SAMSUNG_ACTION_RELEASE) {
++		suppress = test_and_clear_bit(id, &cd->fod_suppressed_slots);
++		goto out;
++	}
++
++	if (action == GOODIX_BERLIN_SAMSUNG_ACTION_PRESS &&
++	    cd->fod_rect_valid && x >= cd->fod_rect[0] &&
++	    x <= cd->fod_rect[2] && y >= cd->fod_rect[1] &&
++	    y <= cd->fod_rect[3])
++		set_bit(id, &cd->fod_suppressed_slots);
++
++	suppress = test_bit(id, &cd->fod_suppressed_slots);
++out:
++	mutex_unlock(&cd->fod_lock);
++	return suppress;
++}
++
+ static void goodix_berlin_report_samsung_touch(struct goodix_berlin_core *cd,
+ 					       const u8 *data, bool *coordinate)
+ {
+ 	u8 action, id;
+ 	u16 x, y;
+ 
++	if (goodix_berlin_report_samsung_fod(cd, data))
++		return;
++
+ 	if (FIELD_GET(GOODIX_BERLIN_SAMSUNG_EVENT_ID_MASK, data[0]) !=
+ 	    GOODIX_BERLIN_SAMSUNG_COORD_EVENT)
+ 		return;
+@@ -485,14 +742,17 @@ static void goodix_berlin_report_samsung_touch(struct goodix_berlin_core *cd,
+ 		return;
+ 
+ 	action = FIELD_GET(GOODIX_BERLIN_SAMSUNG_ACTION_MASK, data[0]);
++	x = data[1] << 4 | data[3] >> 4;
++	y = data[2] << 4 | (data[3] & 0x0f);
++	if (goodix_berlin_suppress_fod_touch(cd, id, action, x, y))
++		return;
++
+ 	input_mt_slot(cd->input_dev, id);
+ 	input_mt_report_slot_state(cd->input_dev, MT_TOOL_FINGER,
+ 				   action != GOODIX_BERLIN_SAMSUNG_ACTION_RELEASE);
+ 	if (action == GOODIX_BERLIN_SAMSUNG_ACTION_RELEASE)
+ 		return;
+ 
+-	x = data[1] << 4 | data[3] >> 4;
+-	y = data[2] << 4 | (data[3] & 0x0f);
+ 	touchscreen_report_pos(cd->input_dev, &cd->props, x, y, true);
+ 	input_report_abs(cd->input_dev, ABS_MT_TOUCH_MAJOR, data[4]);
+ }
+@@ -586,12 +846,22 @@ static void goodix_berlin_touch_handler(struct goodix_berlin_core *cd)
+ 
+ static int goodix_berlin_request_handle_reset(struct goodix_berlin_core *cd)
+ {
++	int error;
++
+ 	gpiod_set_value_cansleep(cd->reset_gpio, 1);
+ 	usleep_range(2000, 2100);
+ 	gpiod_set_value_cansleep(cd->reset_gpio, 0);
+ 
+ 	msleep(GOODIX_BERLIN_NORMAL_RESET_DELAY_MS);
+ 
++	mutex_lock(&cd->fod_lock);
++	error = cd->fod_enabled ?
++		goodix_berlin_set_fod_mode_locked(cd, true) : 0;
++	mutex_unlock(&cd->fod_lock);
++	if (error)
++		dev_warn(cd->dev, "failed to restore FOD mode after reset: %d\n",
++			 error);
++
+ 	return 0;
+ }
+ 
+@@ -728,6 +998,14 @@ static int goodix_berlin_resume(struct device *dev)
+ 	if (error)
+ 		return error;
+ 
++	mutex_lock(&cd->fod_lock);
++	error = cd->fod_enabled ?
++		goodix_berlin_set_fod_mode_locked(cd, true) : 0;
++	mutex_unlock(&cd->fod_lock);
++	if (error)
++		dev_warn(dev, "failed to restore FOD mode after resume: %d\n",
++			 error);
++
+ 	enable_irq(cd->irq);
+ 
+ 	return 0;
+@@ -771,12 +1049,147 @@ static ssize_t registers_write(struct file *filp, struct kobject *kobj,
+ 
+ static const BIN_ATTR_ADMIN_RW(registers, 0);
+ 
++static ssize_t fod_enable_show(struct device *dev,
++			       struct device_attribute *attr, char *buf)
++{
++	struct goodix_berlin_core *cd = dev_get_drvdata(dev);
++	bool enabled;
++
++	mutex_lock(&cd->fod_lock);
++	enabled = cd->fod_enabled;
++	mutex_unlock(&cd->fod_lock);
++
++	return sysfs_emit(buf, "%u\n", enabled);
++}
++
++static ssize_t fod_enable_store(struct device *dev,
++				struct device_attribute *attr,
++				const char *buf, size_t count)
++{
++	struct goodix_berlin_core *cd = dev_get_drvdata(dev);
++	bool enable;
++	int error;
++
++	error = kstrtobool(buf, &enable);
++	if (error)
++		return error;
++
++	mutex_lock(&cd->fod_lock);
++	if (enable == cd->fod_enabled) {
++		error = 0;
++		goto out;
++	}
++
++	error = goodix_berlin_set_fod_mode_locked(cd, enable);
++	if (!error) {
++		cd->fod_enabled = enable;
++		if (!enable) {
++			cd->fod_suppressed_slots = 0;
++			cd->fod_state = GOODIX_BERLIN_FOD_IDLE;
++			cd->fod_x = 0;
++			cd->fod_y = 0;
++			cd->fod_sequence++;
++		}
++	}
++out:
++	mutex_unlock(&cd->fod_lock);
++	if (error)
++		return error;
++	if (!enable)
++		sysfs_notify(&dev->kobj, NULL, "fod_state");
++
++	return count;
++}
++static DEVICE_ATTR_ADMIN_RW(fod_enable);
++
++static ssize_t fod_rect_show(struct device *dev,
++			     struct device_attribute *attr, char *buf)
++{
++	struct goodix_berlin_core *cd = dev_get_drvdata(dev);
++	ssize_t count;
++
++	mutex_lock(&cd->fod_lock);
++	count = sysfs_emit(buf, "%u %u %u %u\n", cd->fod_rect[0],
++			   cd->fod_rect[1], cd->fod_rect[2], cd->fod_rect[3]);
++	mutex_unlock(&cd->fod_lock);
++
++	return count;
++}
++
++static ssize_t fod_rect_store(struct device *dev,
++			      struct device_attribute *attr,
++			      const char *buf, size_t count)
++{
++	struct goodix_berlin_core *cd = dev_get_drvdata(dev);
++	unsigned int value[4];
++	u16 rect[4];
++	int error, i;
++
++	if (sscanf(buf, "%u %u %u %u", &value[0], &value[1],
++		   &value[2], &value[3]) != ARRAY_SIZE(value))
++		return -EINVAL;
++
++	for (i = 0; i < ARRAY_SIZE(value); i++) {
++		if (value[i] > U16_MAX)
++			return -ERANGE;
++		rect[i] = value[i];
++	}
++	if (rect[0] >= rect[2] || rect[1] >= rect[3])
++		return -EINVAL;
++
++	mutex_lock(&cd->fod_lock);
++	if (cd->fod_enabled) {
++		error = goodix_berlin_write_fod_rect_locked(cd, rect);
++		if (error)
++			goto out;
++	}
++	memcpy(cd->fod_rect, rect, sizeof(rect));
++	cd->fod_rect_valid = true;
++	error = 0;
++out:
++	mutex_unlock(&cd->fod_lock);
++
++	return error ? error : count;
++}
++static DEVICE_ATTR_ADMIN_RW(fod_rect);
++
++static ssize_t fod_state_show(struct device *dev,
++			      struct device_attribute *attr, char *buf)
++{
++	static const char *const names[] = {
++		[GOODIX_BERLIN_FOD_IDLE] = "idle",
++		[GOODIX_BERLIN_FOD_PRESSED] = "pressed",
++		[GOODIX_BERLIN_FOD_RELEASED] = "released",
++		[GOODIX_BERLIN_FOD_OUT] = "out",
++		[GOODIX_BERLIN_FOD_VI] = "vi",
++	};
++	struct goodix_berlin_core *cd = dev_get_drvdata(dev);
++	ssize_t count;
++
++	mutex_lock(&cd->fod_lock);
++	count = sysfs_emit(buf, "%s %u %u %llu\n", names[cd->fod_state],
++			   cd->fod_x, cd->fod_y,
++			   (unsigned long long)cd->fod_sequence);
++	mutex_unlock(&cd->fod_lock);
++
++	return count;
++}
++static DEVICE_ATTR_RO(fod_state);
++
++static struct attribute *goodix_berlin_attrs[] = {
++	&dev_attr_fod_enable.attr,
++	&dev_attr_fod_rect.attr,
++	&dev_attr_fod_state.attr,
++	NULL,
++};
++
+ static const struct bin_attribute *const goodix_berlin_bin_attrs[] = {
+ 	&bin_attr_registers,
+ 	NULL,
+ };
+ 
+ static const struct attribute_group goodix_berlin_attr_group = {
++	.attrs = goodix_berlin_attrs,
+ 	.bin_attrs = goodix_berlin_bin_attrs,
+ };
+ 
+@@ -806,6 +1219,8 @@ int goodix_berlin_probe(struct device *dev, int irq, const struct input_id *id,
+ 	cd->regmap = regmap;
+ 	cd->irq = irq;
+ 	cd->ic_data = ic_data;
++	mutex_init(&cd->fod_lock);
++	dev_set_drvdata(dev, cd);
+ 
+ 	cd->reset_gpio = devm_gpiod_get_optional(dev, "reset", GPIOD_OUT_HIGH);
+ 	if (IS_ERR(cd->reset_gpio))
+@@ -857,8 +1272,6 @@ int goodix_berlin_probe(struct device *dev, int irq, const struct input_id *id,
+ 		return error;
+ 	}
+ 
+-	dev_set_drvdata(dev, cd);
+-
+ 	dev_info(dev,
+ 		 "Goodix Berlin %s Touchscreen Controller, event layout %u/%u\n",
+ 		 cd->fw_version.patch_pid, cd->touch_data_head_len,
+

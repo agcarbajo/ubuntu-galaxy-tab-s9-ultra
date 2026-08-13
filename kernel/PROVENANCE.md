@@ -1,7 +1,8 @@
 # Procedencia de las fuentes de kernel importadas
 
-Todo lo que hay bajo `kernel/` procede del port postmarketOS del mismo
-dispositivo y conserva su licencia y autoría:
+La base bajo `kernel/` procede del port postmarketOS del mismo dispositivo. El
+inventario también identifica las extensiones propias desarrolladas después y
+su relación con Linux y con los datos públicos o stock usados como referencia:
 
 - Repositorio de origen:
   <https://github.com/agcarbajo/postmarketos-galaxy-tab-s9-ultra>
@@ -37,7 +38,8 @@ copia de origen para poder detectar divergencias futuras.
 | `configs/vendor_boot/cmdline.txt` | `configs/vendor_boot/cmdline.txt` | `847006d1438a43e1e848f6ab42e1f7cabbf85b7c7b955d2c7f2bd5ceac48c793` |
 | `kernel/config/config-gts9uwifi.fragment` | `pmaports/device/testing/linux-samsung-gts9uwifi-mainline/config-gts9uwifi.fragment` | `c6b57032a2171dec1c847385adee5d4263769c3578acba629c0fa023285f9b8f` |
 | `kernel/config/config-mainline.aarch64` | `/root/pmos-gts9u/pmaports/device/main/linux-postmarketos-mainline/config-mainline.aarch64` | `661c45023794690f38609be08e5a2a0b77eef5224f48f971f6d709a1871d132b` |
-| `kernel/drivers/panel-samsung-ana38407.c` | `pmaports/device/testing/linux-samsung-gts9uwifi-mainline/panel-samsung-ana38407.c` | `354a5dad9aa119475971d6b7bb347293c2afaff1384f9c79c589f065cddeae24` |
+| `kernel/drivers/panel-samsung-ana38407.c` | Base de `pmaports/device/testing/linux-samsung-gts9uwifi-mainline/panel-samsung-ana38407.c`; extensión UDFPS propia sobre DRM/MIPI DSI con secuencias del panel stock del SM-X910 | `354a5dad9aa119475971d6b7bb347293c2afaff1384f9c79c589f065cddeae24` (base importada) |
+| `kernel/drivers/egis_el721.c` | Obra propia sobre las interfaces regulator/GPIO/misc de Linux y la parte no sensible de la ABI EgisTec; alimentación, temporización y metadatos contrastados con el DTS y controlador GPL stock del SM-X910 | — (no es una copia importada) |
 | `kernel/drivers/hi1337_gts9u.c` | Obra propia sobre las interfaces V4L2/I²C de Linux; secuencias eléctricas y variantes contrastadas con el CamX stock del SM-X910 | — (no es una copia importada) |
 | `kernel/drivers/hi1337_gts9u_tables.h` | Generado de forma determinista desde los blobs Parameter Parser V3 del CamX stock del SM-X910; 1.476 registros globales y los modos exactos de sus tres módulos HI1337 | — (datos derivados del firmware de la propietaria) |
 | `kernel/drivers/dw9808_vcm.c` | Obra propia sobre las interfaces V4L2/I²C de Linux; identidad, dirección y secuencia de arranque contrastadas con el módulo CamX stock del SM-X910 | — (no es una copia importada) |
@@ -46,7 +48,7 @@ copia de origen para poder detectar divergencias futuras.
 | `kernel/drivers/sm5714_battery.c` | `pmaports/device/testing/linux-samsung-gts9uwifi-mainline/sm5714_battery.c` | `91e5766a09c91df4cdfb0f7ffbe297e68ab8e2b8c0392d777995fc56e50a656f` |
 | `kernel/drivers/sm5714_usbpd.c` | `pmaports/device/testing/linux-samsung-gts9uwifi-mainline/sm5714_usbpd.c` | `f51803065b130427c1f733be595bd3230eca02c69f723c6a490774d6f7dd3a92` |
 | `kernel/drivers/samsung_stm32_pogo.c` | Adaptación mainline del protocolo de `kernel/vendor/samsung-stm32-pogo/` | Véase `kernel/vendor/samsung-stm32-pogo/SHA256SUMS` |
-| `kernel/dts/sm8550-samsung-gts9uwifi.dts` | `pmaports/device/testing/linux-samsung-gts9uwifi-mainline/sm8550-samsung-gts9uwifi.dts` | `a9ff4284183c7943b2a94ac704e19b3974a58197f082e2602e1aea09f7851937` |
+| `kernel/dts/sm8550-samsung-gts9uwifi.dts` | Base de `pmaports/device/testing/linux-samsung-gts9uwifi-mainline/sm8550-samsung-gts9uwifi.dts`; nodo EL721, raíl BTP y geometría derivados del overlay R03 stock | `a9ff4284183c7943b2a94ac704e19b3974a58197f082e2602e1aea09f7851937` (base importada) |
 | `kernel/patches/add-gts9uwifi-dtb.patch` | `pmaports/device/testing/linux-samsung-gts9uwifi-mainline/add-gts9uwifi-dtb.patch` | `36acdf4aff5abb1022edb431b39b0f99e680b9a006c859ed1f986fea7f788da3` |
 | `kernel/patches/add-samsung-sec-log-console.patch` | `pmaports/device/testing/linux-samsung-gts9uwifi-mainline/add-samsung-sec-log-console.patch` | `8a0d84ca1a2e32c937edca91752379429e42563a3308f1b880381191e6b3bfba` |
 | `kernel/patches/build-wcn-pcie-providers-in.patch` | `pmaports/device/testing/linux-samsung-gts9uwifi-mainline/build-wcn-pcie-providers-in.patch` | `279b162777a99f533eb09377270003ceef82c692e6de7faecbb47580182e5678` |
@@ -62,6 +64,8 @@ copia de origen para poder detectar divergencias futuras.
 | `kernel/patches/qcom-q6v5-mask-completed-handover-irq.patch` | Corrección propia sobre Linux 7.2-rc3 para la IRQ one-shot de handover del ADSP | `a221e088bc4c33f7ff86dfeaa155f46c4f1d947638e2b96729299f6882626598` |
 | `kernel/patches/set-mi2s-codec-dai-format.patch` | `pmaports/device/testing/linux-samsung-gts9uwifi-mainline/set-mi2s-codec-dai-format.patch` | `442ea71ece9b3574f409bb620810e811716404456682c5e6b77edb9dd2c4647b` |
 | `kernel/patches/support-samsung-goodix-16-byte-events.patch` | `pmaports/device/testing/linux-samsung-gts9uwifi-mainline/support-samsung-goodix-16-byte-events.patch` | `0ce2f9466eae22c427b03c5af6a6c7a07fb3530d378581d946d262909d574f3e` |
+| `kernel/patches/support-goodix-samsung-fod.patch` | Obra propia sobre Goodix Berlin de Linux 7.2-rc3; formato sponge, eventos FOD y comando 0xF2 contrastados con el controlador GPL stock del SM-X910 | — (derivado del kernel fijado arriba) |
+| `kernel/patches/cleanup-goodix-fod-on-suspend.patch` | Corrección propia sobre la extensión FOD anterior para cerrar la sesión, liberar el tacto regional y notificar al cliente antes de suspender | — (derivado del kernel fijado arriba) |
 | `kernel/patches/tcpm-adopt-retained-source-ufp-role.patch` | `pmaports/device/testing/linux-samsung-gts9uwifi-mainline/tcpm-adopt-retained-source-ufp-role.patch` | `eef7cd7b96373ee8a02ec0d8be91f4e3715a2594a44eb4963ea504dc5199a5b2` |
 | `kernel/patches/tcpm-use-retained-sink-data-role.patch` | `pmaports/device/testing/linux-samsung-gts9uwifi-mainline/tcpm-use-retained-sink-data-role.patch` | `2565ee41257290bd4828fd80a8beda377f284fb2154aab66e47a53a3ebe178c5` |
 | `kernel/patches/unpark-pcie0-pipe-mux.patch` | `pmaports/device/testing/linux-samsung-gts9uwifi-mainline/unpark-pcie0-pipe-mux.patch` | `b435e5297a34ce353eb8e4793546d35c21e120e7ee04b547b73ec1d72dc2dc9b` |

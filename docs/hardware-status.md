@@ -1,7 +1,7 @@
 # Estado de hardware del SM-X910 bajo Ubuntu 24.04
 
-Última actualización: 2026-08-13, tras implementar Tab Companion 0.9.0,
-el puntero aéreo del S Pen y el soporte del motor de vibración.
+Última actualización: 2026-08-13, tras preparar la infraestructura experimental
+del lector de huellas EL721/UDFPS.
 
 Ubuntu **ya arranca** en la tablet. Esta matriz distingue explícitamente lo
 heredado de lo comprobado, y ningún componente pasa a ✅ sin observación real.
@@ -78,7 +78,8 @@ sondea» como prueba de funcionamiento.
 | Táctil: zona que sólo responde al lápiz | — | ❌ | **abierto** | Intermitente. Una región deja de aceptar toques nuevos con el dedo; un arrastre iniciado fuera sí la atraviesa. La marca de proximidad pegada del S Pen se descartó como explicación suficiente: con el flag clavado y verificado, no había zona muerta. Sin diagnosticar; `work/catch-dead-zone.sh` decide si los toques llegan al kernel |
 | Teclado pogo EF-DX920 (STM32 I²C 0x2a) | ❌ | ✅ | confirmado | Requiere V37 en el MCU. Se midieron Galaxy AI 760, DeX 701, Finder 710, Ajustes 709 y Fn+F1–F11: 757, 758, 759, 705, 254, 172, 224, 225, 113, 114 y 115. Fn+F12 no genera evento bruto. Tab Companion 0.7.0 conserva por defecto Inicio/brillo/volumen de Fn+F6–F11 y permite restaurar todos los valores |
 | Otras fundas EF-DX900/910/915/925 | ❌ | 🟡 | medido | El DTS oficial del X910 declara los cinco modelos. El driver ya distingue los identificadores y VERSION, la app publica nombre/modelo y adapta la fila AI. Sólo el DX920 está disponible: enumeración, teclas especiales y touchpads de los otros cuatro siguen pendientes de hardware real |
-| Huella (EgisTec EL7xx, SPI) | ❌ | ❌ | supuesto | Sin driver mainline |
+| Huella: infraestructura EL721/UDFPS | ❌ | 🟡 | supuesto | Preparados el control restringido de alimentación/reset sin acceso a datos, el transporte QTEE, el modo óptico del panel y la exclusión regional del táctil. Sigue pendiente arrancar y validar esta pila completa en la tablet; detalles en [fingerprint-reader.md](fingerprint-reader.md) |
+| Huella: registro, verificación y GDM | ❌ | ❌ | supuesto | No existe todavía un backend seguro para `libfprint`/`fprintd`. No se ofrece autenticación biométrica hasta validar registro, verificación, cancelación, bloqueo y GDM de extremo a extremo |
 | Vibración / hápticos | ❌ | ✅ | confirmado | El DTS stock identifica `dc_vibrator` COINDC en TLMM GPIO18 y mainline lo publica como `gpio-vibrator`/`FF_RUMBLE`. La usuaria confirmó motor y teclado en pantalla; Tab Companion ofrece pulsos de 24/42/66 ms. Las notificaciones vibran de forma opcional y una prueba real midió GPIO554 activo durante 64,5 ms |
 | Flash / linterna | ❌ | ✅ | observado | PM8550 SID 1, canales 0+1 agrupados por `leds-qcom-flash`; iluminación real observada en modo estrobo y linterna. El mosaico **Linterna** de ajustes rápidos está instalado, activo y probado físicamente |
 | Cámaras | ❌ | 🟡 | observado | Los cuatro sensores hacen fotos y pasan por `libcamera` simple + software ISP, apareciendo como exactamente cuatro cámaras V4L2 normales y nombradas. GNOME Cámara, Chrome WebRTC y OBS abrieron y alternaron las cuatro con vídeo cambiante, también después de un arranque en frío; la trasera principal enfoca con su DW9808. El relevo entre sensores queda cerrado. Siguen abiertos la calibración de fábrica y el flash fotográfico automático |

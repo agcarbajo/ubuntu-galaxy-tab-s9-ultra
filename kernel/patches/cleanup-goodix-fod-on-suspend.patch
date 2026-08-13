@@ -1,0 +1,58 @@
+From: Ubuntu gts9uwifi port contributors <gts9uwifi@example.com>
+Subject: [PATCH] input: goodix: close active FOD session on suspend
+
+An authentication client may disappear during suspend. Do not restore its
+regional touch suppression after resume. Disable the sponge mode while the
+controller is still powered, clear all cached FOD state and wake polling
+clients before powering the touchscreen off.
+
+Signed-off-by: Ubuntu gts9uwifi port contributors <gts9uwifi@example.com>
+
+---
+diff --git a/drivers/input/touchscreen/goodix_berlin_core.c b/drivers/input/touchscreen/goodix_berlin_core.c
+index d2d424acf..02a0f09e0 100644
+--- a/drivers/input/touchscreen/goodix_berlin_core.c
++++ b/drivers/input/touchscreen/goodix_berlin_core.c
+@@ -987,7 +987,27 @@ static int goodix_berlin_suspend(struct device *dev)
+ {
+ 	struct goodix_berlin_core *cd = dev_get_drvdata(dev);
++	bool notify = false;
++	int error = 0;
+ 
+ 	disable_irq(cd->irq);
++	mutex_lock(&cd->fod_lock);
++	if (cd->fod_enabled) {
++		error = goodix_berlin_set_fod_mode_locked(cd, false);
++		cd->fod_enabled = false;
++		cd->fod_suppressed_slots = 0;
++		cd->fod_state = GOODIX_BERLIN_FOD_IDLE;
++		cd->fod_x = 0;
++		cd->fod_y = 0;
++		cd->fod_sequence++;
++		notify = true;
++	}
++	mutex_unlock(&cd->fod_lock);
++	if (error)
++		dev_warn(dev, "failed to disable FOD mode at suspend: %d\n",
++			 error);
++	if (notify)
++		sysfs_notify(&dev->kobj, NULL, "fod_state");
++
+ 	goodix_berlin_power_off(cd);
+ 
+ 	return 0;
+@@ -1003,14 +1023,6 @@ static int goodix_berlin_resume(struct device *dev)
+ 	if (error)
+ 		return error;
+ 
+-	mutex_lock(&cd->fod_lock);
+-	error = cd->fod_enabled ?
+-		goodix_berlin_set_fod_mode_locked(cd, true) : 0;
+-	mutex_unlock(&cd->fod_lock);
+-	if (error)
+-		dev_warn(dev, "failed to restore FOD mode after resume: %d\n",
+-			 error);
+-
+ 	enable_irq(cd->irq);
+ 
+ 	return 0;

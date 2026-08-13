@@ -35,10 +35,11 @@ from one TWRP-flashable ZIP; a microSD is not required after installation.
 | USB-C DisplayPort | ✅ | External video output |
 | Cameras and flash | ✅ | Four cameras, autofocus and flashlight work; colour tuning remains a future improvement |
 | Ambient light sensor | ❌ | No usable lux data from the sensor DSP |
-| Fingerprint reader | ❌ | No mainline driver |
+| Fingerprint reader | 🟡 | Experimental EL721/QTEE/FOD plumbing; enrolment and login are not available yet |
 | Waydroid | ❓ | Not tested |
 
-✅ working on the physical tablet · ❌ unavailable · ❓ not tested
+✅ working on the physical tablet · 🟡 experimental or partially validated ·
+❌ unavailable · ❓ not tested
 
 The evidence and technical limitations for every component are documented in
 [hardware-status.md](docs/hardware-status.md).
@@ -89,6 +90,7 @@ The detailed project documentation is written in Spanish:
 | Document | Contents |
 |---|---|
 | [Hardware status](docs/hardware-status.md) | Evidence, limitations and pending hardware tests |
+| [Fingerprint reader](docs/fingerprint-reader.md) | EL721/UDFPS architecture, security model and validation plan |
 | [Tab Companion](docs/tab-companion.md) | S Pen and keyboard behaviour, architecture and diagnostics |
 | [Boot strategy](docs/boot-strategy.md) | Installation, partitions, boot chain and recovery |
 | [Ubuntu userspace](docs/ubuntu-userspace.md) | Root filesystem and desktop integration |

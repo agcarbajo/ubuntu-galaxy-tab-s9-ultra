@@ -17,6 +17,13 @@ build_dir=${KERNEL_BUILD_DIR:-$base/build/linux-gts9uwifi}
 out_dir=${KERNEL_OUT_DIR:-$base/out/kernel-gts9uwifi}
 v4l2loopback_commit=9ef83fb9bc88e8f841786753c362ac52c580defc
 
+# Linux 7.2 requires Clang >= 17.  Prefer the versioned LLVM toolchain when it
+# is installed (the imported baseline was generated with LLVM 22), while still
+# allowing CI/builders that already expose a suitable unversioned clang.
+if [ -x /usr/lib/llvm-22/bin/clang ]; then
+	export PATH=/usr/lib/llvm-22/bin:$PATH
+fi
+
 # The build directory is reused between runs, which is what makes an ordinary
 # rebuild quick.  It also makes the resulting image depend on what was in the
 # tree beforehand: on 2026-08-04, building v0.11 from sources identical to the
@@ -56,6 +63,7 @@ test -f "$repo/packaging/v4l2loopback/patches/0001-backward-compatible-client-us
 test -f "$repo/packaging/v4l2loopback/patches/0002-fix-buffer-queue-management.patch"
 test -f "$repo/packaging/v4l2loopback/patches/0003-preserve-output-queue-for-capture.patch"
 test -f "$repo/kernel/include/linux/samsung_wacom.h"
+test -f "$drv/egis_el721.c"
 
 mkdir -p "$(dirname "$kernel_tree")" "$build_dir" "$out_dir"
 
@@ -177,6 +185,12 @@ install -m 0644 "$repo/kernel/include/linux/samsung_wacom.h" \
 apply_unless 'samsung_wacom_should_suppress_touch' \
 	drivers/input/touchscreen/goodix_berlin_core.c \
 	suppress-goodix-touch-while-spen-hovering.patch
+apply_unless 'GOODIX_BERLIN_SPONGE_FOD_RECT' \
+	drivers/input/touchscreen/goodix_berlin_core.c \
+	support-goodix-samsung-fod.patch
+apply_unless 'failed to disable FOD mode at suspend' \
+	drivers/input/touchscreen/goodix_berlin_core.c \
+	cleanup-goodix-fod-on-suspend.patch
 
 # Xorg only creates a PRIME GPU screen when MODE_GETRESOURCES succeeds.  Keep
 # the split GPU/DPU topology, but expose an empty KMS resource list on Adreno.
@@ -353,6 +367,29 @@ fi
 grep -q 'samsung_wacom_w90xx.o' "$touch_dir/Makefile" || \
 	printf 'obj-$(CONFIG_TOUCHSCREEN_SAMSUNG_WACOM_W90XX) += samsung_wacom_w90xx.o\n' \
 		>> "$touch_dir/Makefile"
+
+# The EL721 is permanently assigned to TrustZone on the shipping X910.  This
+# driver therefore mirrors only Samsung's power/reset ABI and intentionally
+# contains no SPI transfer or image-capture path.  Matching will be provided by
+# a QTEE-backed libfprint driver once its userspace protocol is bridged.
+fingerprint_dir=$kernel_tree/drivers/misc
+install -m 0644 "$drv/egis_el721.c" "$fingerprint_dir/egis_el721.c"
+if ! grep -q 'FINGERPRINT_EGIS_EL721' "$fingerprint_dir/Kconfig"; then
+	cat >> "$fingerprint_dir/Kconfig" <<'EOF'
+
+config FINGERPRINT_EGIS_EL721
+	tristate "EgisTec EL721 secure fingerprint power interface"
+	depends on OF && GPIOLIB && REGULATOR
+	help
+	  Power/reset and restricted compatibility interface for the secure
+	  EgisTec EL721 optical fingerprint sensor in the Galaxy Tab S9 Ultra.
+	  Image capture and matching remain in Qualcomm TrustZone and are never
+	  exposed by this driver.
+EOF
+fi
+grep -q 'egis_el721.o' "$fingerprint_dir/Makefile" || \
+	printf 'obj-$(CONFIG_FINGERPRINT_EGIS_EL721) += egis_el721.o\n' \
+		>> "$fingerprint_dir/Makefile"
 
 # ---------------------------------------------------------------------------
 # Configuration

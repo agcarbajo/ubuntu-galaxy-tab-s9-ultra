@@ -5120,3 +5120,68 @@ Bluetooth disponible, Battery Level 90 % y gestos disponibles.
 ubuntu-gts9u-companion_0.10.8_all.deb
 bf9e04819278947039d29d26710bce277ea8f8287aa0868722530637bc78781b
 ```
+
+## Sesión 79 — base experimental del lector EL721/UDFPS
+
+Fecha: 2026-08-13. El overlay R03 y el controlador GPL de Samsung identifican
+el lector en pantalla como un EgisTec EL721 seguro: LDO2 del PM8550B a 3,3 V,
+enable/reset en GPIO155 y modelo `X916`. El SPI queda asignado a TrustZone; no es
+correcto exponer imágenes o transacciones crudas desde Linux.
+
+Se preparan cuatro capas independientes: un controlador mínimo de
+alimentación/reset con `/dev/esfp0`, QTEE integrado para el futuro acceso a la
+aplicación firmada `securefp`, el modo óptico/círculo del panel ANA38407 con
+restauración de brillo y watchdog, y la exclusión Goodix limitada al rectángulo
+del sensor. La intención es que una lectura no pulse controles bajo el dedo sin
+bloquear el resto de la pantalla.
+
+Esta infraestructura no convierte todavía el lector en una fuente de
+autenticación. `libfprint` no soporta el EL721 y la pila Samsung depende de
+TrustZone y de componentes Android. El análisis del firmware fija la cadena
+`fingerprint-service` → `libsfp_sensor` → `libsfp_teegw` →
+`libQSEEComAPI` por objetos → AppLoader compatible UID 122 →
+`lookupTA("securefp")`. `securefp` es un TA precargado, no un `.mbn` ausente; la
+ruta opcional `fpta` está vacía y `authnr.mbn` corresponde a otro autenticador.
+
+Quedan pendientes el arranque físico de las cuatro capas, comprobar de forma
+no destructiva que UID 122 devuelve el objeto de `securefp` y crear un backend
+seguro para `fprintd`. Registro, verificación, desbloqueo y GDM siguen marcados
+como no disponibles hasta su validación completa. La arquitectura, ABI y
+protocolo de pruebas quedan en `fingerprint-reader.md`.
+
+La implementación final se recompiló desde cero sobre Linux `7.2-rc3` con
+Clang 22. El kernel, el DTB y la configuración resultantes contienen los
+símbolos de EL721, QTEE, FOD del panel y FOD Goodix:
+
+```text
+Image.gz  5057fcc1eba5d3b824fd4c6315f791df43ee5886e34fce577431403fb5f75ea5
+DTB       b69f6d138e028ca507007e037d307c6ba859959d883a9be09999243d2520f3a9
+config    16421292ef8d604803d44cbd202521004d42832ac230c4bc2d2caa6f9fb09a8c
+```
+
+El bundle Android v4 pasó todas las comprobaciones estáticas: tamaños de
+partición, AVB, LZ4 legacy, DTB anexado, DTB de `vendor_boot`, símbolos y
+configuración. Sus dos imágenes modificadas quedaron en:
+
+```text
+boot.img        fe1f274af9d3ed524007093560bd3ab46158c2eb13717c19327407f341add041
+vendor_boot.img 8599e133383e4e50227d9e2ac480bd3e0c53aa162dfad9bd83e1ee52b2ae63d9
+```
+
+Antes de la primera escritura se guardaron fuera del dispositivo `boot`,
+`init_boot`, `vendor_boot` y los módulos. Una compilación inmediatamente
+anterior, funcionalmente equivalente salvo por limpieza de código y el apagado
+del EL721 al suspender, se escribió y verificó por lectura antes de reiniciar.
+La tablet no volvió a anunciar SSH después de ese reinicio. Todavía no hay
+consola o USB para distinguir un arranque detenido del conocido primer reinicio
+problemático del port, por lo que no se atribuye el incidente al lector ni se
+considera validado el arranque. El bundle final no se vuelve a escribir a
+ciegas: primero se recuperará el equipo con un reinicio forzado y se ejecutará
+la matriz no destructiva documentada.
+
+El probe `scripts/probe-qtee-securefp.c` también quedó fijado. Su fuente
+tiene SHA-256 `06c664e0d322c8c6cbcb034274ad34c5ea9cdb6f8c68b1af0842c0e898bdf51e`
+y el binario AArch64 estático de prueba
+`44fc85bbb1547b9007e9adffc997e4662ac7bed3f3ce4fbd056a6e8d0260fba1`.
+Sólo consulta `lookupTA("securefp")`; no abre el objeto de aplicación ni ejecuta
+operaciones biométricas.
