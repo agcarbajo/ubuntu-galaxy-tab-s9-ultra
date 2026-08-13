@@ -5222,6 +5222,17 @@ vendor_boot ded9ae5ddd3f86ab0ff0c77c410553f86c8d900f663751c95c9751efc5bfb98b
 modules     ee5ef8855223d8229c764980bc10ba36aa4d8e6eb487dac4ed672f8fd3185f5f
 ```
 
-No se vuelve a escribir hasta disponer otra vez de TWRP. En esa recuperación
-se restaurarán `boot`, `vendor_boot` y los módulos; `init_boot`, cuyo hash ya
-coincide con el respaldo, seguirá sin tocarse.
+Con TWRP disponible de nuevo se restauraron `boot`, `vendor_boot` y los módulos
+desde esos tres respaldos. Antes de escribir se verificaron los ficheros
+transferidos y después se releyeron completas ambas particiones; los hashes
+coincidieron. `init_boot` siguió intacto y también conservó el hash del respaldo.
+El árbol de módulos fallido quedó apartado con sufijo
+`.20260813-fingerprint-failed`, y el árbol activo ya no contiene `qcomtee.ko` ni
+la regla temporal de modprobe.
+
+El primer arranque tras esa restauración exacta no publicó ADB ni SSH en cuatro
+minutos. Como el conjunto restaurado es byte a byte el mismo que arrancó y fue
+validado en la sesión 74, se trata como el atasco conocido de primer reinicio o
+como estado de hardware persistente, no como evidencia de otra diferencia en
+las imágenes. Hace falta un reinicio forzado físico antes de continuar las
+pruebas A/B.
