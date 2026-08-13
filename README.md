@@ -17,14 +17,15 @@ from one TWRP-flashable ZIP; a microSD is not required after installation.
 | Touchscreen | ✅ | Goodix multitouch |
 | S Pen writing | ✅ | Hover, pressure, tilt, side button and palm rejection |
 | S Pen dock | ✅ | Insertion, orientation and charging |
-| S Pen BLE | 🟡 | Pairing, real battery levels, air gestures and pointer mode; final pointer validation remains |
+| S Pen BLE | ✅ | Pairing, real battery levels, air gestures and pointer mode fully validated |
 | Tab Companion | ✅ | S Pen remote modes, behaviour options, haptics and keyboard remapping |
-| Keyboard cover | 🟡 | EF-DX920 validated; four related Samsung models are recognised but untested |
+| Keyboard cover | ✅ | EF-DX920 validated; four related Samsung models are recognised but untested |
 | Cover switch | ✅ | Closing the cover turns off the display |
 | Power and volume buttons | ✅ | Including suspend from the power button |
 | Wi-Fi | ✅ | WCN7850 / ath12k |
 | Bluetooth | ✅ | Controller, audio and S Pen BLE |
 | Speakers and microphones | ✅ | Four speakers and digital microphones |
+| Vibration / haptics | ✅ | On-screen keyboard feedback and optional notification vibration |
 | Motion sensors | ✅ | Rotation, accelerometer, gyroscope and compass |
 | Battery telemetry | ✅ | Charge, voltage, current and temperature |
 | USB-PD/PPS charging | ✅ | Up to 25 W measured into the battery |
@@ -32,14 +33,12 @@ from one TWRP-flashable ZIP; a microSD is not required after installation.
 | microSD | ✅ | Read and write storage works normally |
 | USB host | ✅ | HID and storage, powered or unpowered |
 | USB-C DisplayPort | ✅ | External video output |
-| Cameras and flash | 🟡 | Four cameras, autofocus and flashlight work; colour tuning remains |
+| Cameras and flash | ✅ | Four cameras, autofocus and flashlight work; colour tuning remains a future improvement |
 | Ambient light sensor | ❌ | No usable lux data from the sensor DSP |
 | Fingerprint reader | ❌ | No mainline driver |
-| Vibration / haptics | ✅ | On-screen keyboard feedback and optional notification vibration |
 | Waydroid | ❓ | Not tested |
 
-✅ validated on the physical tablet · 🟡 usable with remaining validation ·
-❌ unavailable · ❓ not tested
+✅ working on the physical tablet · ❌ unavailable · ❓ not tested
 
 The evidence and technical limitations for every component are documented in
 [hardware-status.md](docs/hardware-status.md).
