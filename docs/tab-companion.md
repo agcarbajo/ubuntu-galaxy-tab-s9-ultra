@@ -11,7 +11,8 @@ esté cerrada.
 - `tab-companion-hardware.service` detecta las capacidades presentes y publica
   `io.github.agcarbajo.TabCompanion.Hardware`.
 - `tab-companion-spen-pairing.service` reproduce el emparejamiento iniciado al
-  insertar el lápiz y sólo autoriza un SPEN con los dos UUID Samsung.
+  insertar el lápiz, sólo autoriza un SPEN con los dos UUID Samsung y expone
+  el control privilegiado que conecta o desconecta sus funciones remotas.
 - Sólo el backend accede a sysfs, evdev y `uinput`.
 - El backend captura la funda conectada y retransmite sus eventos por
   `Tab Companion virtual keyboard`. En «Mantener la acción predeterminada»,
@@ -36,24 +37,51 @@ conexión fallidos con el S Pen físicamente insertado activan una recuperación
 limitada a ese dispositivo: se descarta el enlace obsoleto y se repite el flujo
 del garaje. El servicio también espera al adaptador durante el arranque.
 
-Se probó físicamente desconectar GATT mientras estaba insertado para ahorrar
-batería. No es viable en este hardware: al sacarlo el lápiz no se anuncia, ni
-siquiera con búsqueda activa, y BlueZ no puede recuperarlo. Por eso se mantiene
-la conexión cuando está disponible. Si el lápiz entra por sí solo en reposo, la
-UI indica que hay que insertarlo para que el garaje lo despierte y BlueZ vuelva
-a conectarlo.
+«Activar funciones remotas» separa por completo BLE de la escritura EMR. Al
+desactivarlo, el servicio raíz cancela emparejamientos en curso, desconecta el
+S Pen sin borrar su vínculo y deja de intentar conectar o emparejar. La app sólo
+muestra si está insertado; la escritura y las dos opciones de comportamiento
+siguen funcionando. La preferencia se guarda también bajo `/var/lib` para que
+se respete antes de iniciar sesión. Al reactivarla puede ser necesario insertar
+el lápiz: el garaje es el único mecanismo fiable para despertarlo y hacer que
+vuelva a anunciarse.
 
 «Ignorar los toques con el dedo durante el hover» comparte la proximidad Wacom
 con el controlador Goodix. En cuanto entra `BTN_TOOL_PEN`, el touchscreen
 libera sus contactos activos y no publica dedos hasta que el lápiz sale de
 rango. «Deshabilitar el digitalizador mientras está insertado» mantiene vivos
-garaje, carga y BLE, pero desactiva la IRQ de coordenadas EMR. La alimentación
-AVDD se comparte con el panel, por lo que no supone un apagado eléctrico total.
+garaje, carga y BLE, pero descarta los paquetes de coordenadas EMR. La IRQ
+física no se desactiva porque también transporta las respuestas de orientación
+y carga; esta separación corrige la orientación obsoleta al reinsertar el S Pen
+al revés. La alimentación AVDD se comparte con el panel, por lo que no supone
+un apagado eléctrico total.
 
 Las pulsaciones simple, doble y larga usan `BTN_STYLUS`. Los seis movimientos
 de aire usan Button State del servicio FD6C y se clasifican como arriba, abajo,
 izquierda, derecha, círculo horario o antihorario. El movimiento cancela la
 pulsación larga para que un trazo no ejecute dos acciones.
+
+Gestos y puntero son modos alternativos. El segundo sigue el concepto de
+[PenMouseS](https://github.com/jojczak/PenMouseS): integra los incrementos del
+giroscopio BLE y los convierte en un
+ratón relativo nativo mediante `uinput`, sin overlay ni servicio de
+accesibilidad. El botón es el clic principal y permite arrastrar. La app expone
+sensibilidad, suavizado y aceleración; el eje vertical se invierte para que el
+movimiento físico coincida con el cursor.
+
+## Vibración y teclado en pantalla
+
+El firmware stock describe un motor COINDC habilitado por TLMM GPIO18. El DTS
+mainline lo registra con `gpio-vibrator`, que publica un dispositivo evdev
+`FF_RUMBLE`. El servicio de hardware es el único que abre ese nodo y ofrece el
+método D-Bus `Vibrate`.
+
+GNOME Shell 46 no ofrece una preferencia genérica de hápticos para su teclado en
+pantalla. La extensión incluida observa únicamente pulsaciones táctiles sobre
+actores `keyboard-key` y solicita un pulso al backend. Como el GPIO sólo permite
+encendido/apagado, Suave/Media/Fuerte ajustan la duración (8/14/22 ms), no la
+amplitud eléctrica. La nueva página Hápticos permite apagarlo y contiene un
+botón temporal de prueba.
 
 ## Fundas con teclado
 
@@ -119,8 +147,9 @@ Se elige el idioma de la sesión y se usa inglés como respaldo.
 
 ## Validación y límites
 
-La versión 0.8.1 se construyó con validación estricta de esquema, escritorio y
-AppStream. En la tablet se comprobaron el teclado gráfico, una combinación
+La versión 0.9.0 se construyó con validación estricta de esquema, escritorio y
+AppStream. En la tablet se comprobaron el backend, los dispositivos `uinput`,
+la API D-Bus, el teclado gráfico, una combinación
 `Ctrl+Alt+T`, la linterna, el DX920, BLE al 100 %, permisos sysfs y transiciones
 de IRQ. La propietaria validó físicamente el rechazo del dedo durante hover y
 la desactivación/reactivación del digitalizador al insertar y extraer el S Pen.
@@ -132,8 +161,9 @@ tablet vuelve a quedar congelada durante el arranque, este recuperador del panel
 es la primera ruta de diagnóstico; no se observó relación con las políticas
 Wacom/Goodix.
 
-Siguen pendientes un porcentaje físico intermedio, probar EF-DX900/910/915/925
-y verificar los touchpads de los modelos que los incluyen.
+Siguen pendientes sentir físicamente el motor, calibrar el puntero con uso real,
+validar el ciclo desactivar/reactivar BLE, obtener un porcentaje de batería
+intermedio, probar EF-DX900/910/915/925 y verificar sus touchpads.
 
 No se deben documentar direcciones Bluetooth, MAC, SSID ni credenciales.
 
@@ -142,6 +172,7 @@ No se deben documentar direcciones Bluetooth, MAC, SSID ni credenciales.
 ```sh
 systemctl --user status tab-companion-hardware.service
 systemctl status tab-companion-spen-pairing.service
+gnome-extensions info tab-companion-haptics@agcarbajo
 gdbus introspect --session \
   --dest io.github.agcarbajo.TabCompanion.Hardware \
   --object-path /io/github/agcarbajo/TabCompanion/Hardware \
@@ -149,4 +180,4 @@ gdbus introspect --session \
 ```
 
 Los estados principales son `PenState`, `PenBattery`, `KeyboardPresent`,
-`KeyboardModel`, `RemappingAvailable` y `GestureAvailable`.
+`KeyboardModel`, `RemappingAvailable`, `GestureAvailable` y `HapticsAvailable`.

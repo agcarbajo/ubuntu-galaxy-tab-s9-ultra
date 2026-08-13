@@ -54,6 +54,12 @@
 		 */
 	};
 
+	/* Stock dc_vibrator: Samsung drives the coin motor from TLMM GPIO18. */
+	vibrator {
+		compatible = "gpio-vibrator";
+		enable-gpios = <&tlmm 18 GPIO_ACTIVE_HIGH>;
+	};
+
 	reserved-memory {
 		/*
 		 * Samsung ABL patches the /memory ranges but, without the stock

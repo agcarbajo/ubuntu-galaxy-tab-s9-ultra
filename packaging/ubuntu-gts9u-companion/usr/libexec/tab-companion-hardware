@@ -27,6 +27,8 @@ BLUEZ = "org.bluez"
 BLUEZ_DEVICE = "org.bluez.Device1"
 BLUEZ_GATT = "org.bluez.GattCharacteristic1"
 DBUS_PROPERTIES = "org.freedesktop.DBus.Properties"
+PAIRING_BUS_NAME = "io.github.agcarbajo.TabCompanion.SPenPairing"
+PAIRING_OBJECT_PATH = "/io/github/agcarbajo/TabCompanion/SPenPairing"
 SPEN_SERVICES = {
     "0000fd6c-0000-1000-8000-00805f9b34fb",
     "0000fef5-0000-1000-8000-00805f9b34fb",
@@ -91,23 +93,31 @@ DEFAULT_KEY_ACTIONS = {
 
 EV_SYN = 0
 EV_KEY = 1
+EV_REL = 2
 EV_SW = 5
 EV_LED = 17
+EV_FF = 21
 SYN_REPORT = 0
+REL_X = 0
+REL_Y = 1
 SW_LID = 0
 LED_CAPSL = 1
+BTN_LEFT = 272
 BTN_STYLUS = 331
 KEY_F24 = 194
 KEY_MAX = 767
 INPUT_EVENT = struct.Struct("llHHi")
 UI_SET_EVBIT = 0x40045564
 UI_SET_KEYBIT = 0x40045565
+UI_SET_RELBIT = 0x40045566
 UI_SET_LEDBIT = 0x40045569
 UI_SET_SWBIT = 0x4004556D
 UI_DEV_CREATE = 0x5501
 UI_DEV_DESTROY = 0x5502
 UI_DEV_SETUP = 0x405C5503
 EVIOCGRAB = 0x40044590
+EVIOCSFF_48 = 0x40304580
+FF_RUMBLE = 0x50
 
 ACTION_KEYS = {
     "screenshot": 99,       # KEY_SYSRQ
@@ -126,6 +136,7 @@ INTROSPECTION = """
 <node>
   <interface name="io.github.agcarbajo.TabCompanion.Hardware">
     <method name="TriggerMapping"><arg name="mapping" type="s" direction="in"/><arg name="accepted" type="b" direction="out"/></method>
+    <method name="Vibrate"><arg name="duration_ms" type="u" direction="in"/><arg name="magnitude" type="u" direction="in"/><arg name="accepted" type="b" direction="out"/></method>
     <property name="PenState" type="s" access="read"/>
     <property name="PenOrientation" type="s" access="read"/>
     <property name="PenBattery" type="i" access="read"/>
@@ -138,6 +149,7 @@ INTROSPECTION = """
     <property name="ButtonActionsAvailable" type="b" access="read"/>
     <property name="BluetoothAvailable" type="b" access="read"/>
     <property name="GestureAvailable" type="b" access="read"/>
+    <property name="HapticsAvailable" type="b" access="read"/>
   </interface>
 </node>
 """
@@ -157,6 +169,7 @@ class State:
     ButtonActionsAvailable: bool = False
     BluetoothAvailable: bool = False
     GestureAvailable: bool = False
+    HapticsAvailable: bool = False
 
 
 SIGNATURES = {
@@ -166,6 +179,7 @@ SIGNATURES = {
     "LastSpecialKey": "s", "ButtonActionsAvailable": "b",
     "BluetoothAvailable": "b",
     "GestureAvailable": "b",
+    "HapticsAvailable": "b",
 }
 
 
@@ -255,6 +269,94 @@ class VirtualKeyboard:
             self.fd = None
 
 
+class VirtualPointer:
+    """Relative pointer fed by the S Pen's BLE gyroscope deltas."""
+
+    def __init__(self):
+        self.fd = os.open("/dev/uinput", os.O_RDWR | os.O_NONBLOCK)
+        fcntl.ioctl(self.fd, UI_SET_EVBIT, EV_KEY)
+        fcntl.ioctl(self.fd, UI_SET_EVBIT, EV_REL)
+        fcntl.ioctl(self.fd, UI_SET_KEYBIT, BTN_LEFT)
+        fcntl.ioctl(self.fd, UI_SET_RELBIT, REL_X)
+        fcntl.ioctl(self.fd, UI_SET_RELBIT, REL_Y)
+        name = b"Tab Companion S Pen pointer".ljust(80, b"\0")
+        setup = struct.pack("HHHH80sI", 0x03, 0x04E8, 0xA037, 1, name, 0)
+        fcntl.ioctl(self.fd, UI_DEV_SETUP, setup)
+        fcntl.ioctl(self.fd, UI_DEV_CREATE)
+
+    def emit(self, event_type, code, value):
+        os.write(self.fd, INPUT_EVENT.pack(0, 0, event_type, code, value))
+
+    def move(self, dx, dy):
+        if dx:
+            self.emit(EV_REL, REL_X, dx)
+        if dy:
+            self.emit(EV_REL, REL_Y, dy)
+        if dx or dy:
+            self.emit(EV_SYN, SYN_REPORT, 0)
+
+    def button(self, pressed):
+        self.emit(EV_KEY, BTN_LEFT, int(pressed))
+        self.emit(EV_SYN, SYN_REPORT, 0)
+
+    def close(self):
+        if self.fd is not None:
+            fcntl.ioctl(self.fd, UI_DEV_DESTROY)
+            os.close(self.fd)
+            self.fd = None
+
+
+class ForceFeedback:
+    """Small evdev FF_RUMBLE client for the board's gpio-vibrator."""
+
+    def __init__(self):
+        self.fd = None
+        self.effect_id = -1
+        for event in glob("/sys/class/input/event*"):
+            name = read_text(Path(event) / "device/name").lower()
+            if "vibrator" not in name:
+                continue
+            try:
+                self.fd = os.open(
+                    "/dev/input/" + Path(event).name,
+                    os.O_RDWR | os.O_NONBLOCK,
+                )
+                break
+            except OSError:
+                continue
+
+    @property
+    def available(self):
+        return self.fd is not None
+
+    def vibrate(self, duration_ms, magnitude):
+        if self.fd is None:
+            return False
+        duration_ms = min(5000, max(1, int(duration_ms)))
+        magnitude = min(65535, max(1, int(magnitude)))
+        effect = bytearray(struct.pack(
+            "<HhHHHHH2xHH28x",
+            FF_RUMBLE, self.effect_id, 0, 0, 0, duration_ms, 0,
+            magnitude, 0,
+        ))
+        try:
+            fcntl.ioctl(self.fd, EVIOCSFF_48, effect, True)
+            self.effect_id = struct.unpack_from("<h", effect, 2)[0]
+            os.write(
+                self.fd,
+                INPUT_EVENT.pack(0, 0, EV_FF, self.effect_id, 1),
+            )
+            return True
+        except OSError as error:
+            print(f"Cannot vibrate: {error}", flush=True)
+            return False
+
+    def close(self):
+        if self.fd is not None:
+            os.close(self.fd)
+            self.fd = None
+
+
 class HardwareService:
     def __init__(self):
         self.connection = None
@@ -274,6 +376,10 @@ class HardwareService:
         self.pen_motion = []
         self.pen_motion_energy = 0
         self.pen_motion_active = False
+        self.pointer_filtered_x = 0.0
+        self.pointer_filtered_y = 0.0
+        self.pointer_residual_x = 0.0
+        self.pointer_residual_y = 0.0
         self.virtual_watch = None
         self.system_bus = None
         self.bluez_manager = None
@@ -285,7 +391,14 @@ class HardwareService:
         self.ble_subscribed = set()
         self.ble_mode_set = False
         self.ble_next_battery_read = 0.0
+        self.remote_synced = None
         self._init_spen_ble()
+        self.settings.connect(
+            "changed::spen-remote-enabled", self._remote_enabled_changed
+        )
+        self.settings.connect(
+            "changed::spen-remote-mode", self._remote_mode_changed
+        )
         self._migrate_keyboard_codes()
         try:
             self.virtual_keyboard = VirtualKeyboard()
@@ -294,6 +407,11 @@ class HardwareService:
             )
         except OSError:
             self.virtual_keyboard = None
+        try:
+            self.virtual_pointer = VirtualPointer()
+        except OSError:
+            self.virtual_pointer = None
+        self.haptics = ForceFeedback()
 
     def _migrate_keyboard_codes(self):
         version = self.settings.get_uint("keyboard-mapping-version")
@@ -365,6 +483,39 @@ class HardwareService:
             self.system_bus = None
             self.bluez_manager = None
 
+    def _remote_enabled_changed(self, *_args):
+        self.remote_synced = None
+        if not self.settings.get_boolean("spen-remote-enabled"):
+            self._ble_disconnected()
+            if self.virtual_pointer is not None and self.pen_pressed:
+                self.virtual_pointer.button(False)
+            self.pen_pressed = False
+        self._sync_remote_control()
+
+    def _remote_mode_changed(self, *_args):
+        if self.pen_pressed and self.virtual_pointer is not None:
+            self.virtual_pointer.button(False)
+        self.pen_pressed = False
+        self.pen_motion = []
+        self.pointer_filtered_x = 0.0
+        self.pointer_filtered_y = 0.0
+
+    def _sync_remote_control(self):
+        enabled = self.settings.get_boolean("spen-remote-enabled")
+        if self.remote_synced == enabled or self.system_bus is None:
+            return
+        try:
+            service = dbus.Interface(
+                self.system_bus.get_object(
+                    PAIRING_BUS_NAME, PAIRING_OBJECT_PATH, introspect=False
+                ),
+                PAIRING_BUS_NAME,
+            )
+            service.SetRemoteEnabled(dbus.Boolean(enabled))
+            self.remote_synced = enabled
+        except dbus.DBusException:
+            pass
+
     @staticmethod
     def _is_spen(properties):
         name = str(properties.get("Alias") or properties.get("Name") or "")
@@ -372,6 +523,8 @@ class HardwareService:
         return name.startswith("SPEN") and SPEN_SERVICES <= services
 
     def _refresh_spen_ble(self):
+        if not self.settings.get_boolean("spen-remote-enabled"):
+            return
         if self.bluez_manager is None:
             return
         try:
@@ -464,6 +617,9 @@ class HardwareService:
             self._spen_ble_button_data(value)
 
     def _spen_ble_button_data(self, value):
+        if not self.settings.get_boolean("spen-remote-enabled"):
+            return
+        pointer_mode = self.settings.get_string("spen-remote-mode") == "pointer"
         offset = 0
         count = 1
         if len(value) >= 2 and value[0] == 0xF0:
@@ -474,28 +630,66 @@ class HardwareService:
                 break
             header = value[offset]
             if header == 3:
-                self._pen_button(True)
+                if pointer_mode and self.virtual_pointer is not None:
+                    if not self.pen_pressed:
+                        self.pen_pressed = True
+                        self.virtual_pointer.button(True)
+                else:
+                    self._pen_button(True)
                 offset += 1
             elif header == 0 and offset + 6 <= len(value):
-                self._pen_button(False)
+                if pointer_mode and self.virtual_pointer is not None:
+                    if self.pen_pressed:
+                        self.virtual_pointer.button(False)
+                    self.pen_pressed = False
+                else:
+                    self._pen_button(False)
                 offset += 6
             elif header in {14, 15, 142, 143} and offset + 6 <= len(value):
                 dx = int.from_bytes(value[offset + 1:offset + 3], "little", signed=True)
                 dy = int.from_bytes(value[offset + 3:offset + 5], "little", signed=True)
-                if header in {15, 143} and not self.pen_pressed:
-                    self._pen_button(True)
-                self.pen_motion.append((dx, dy))
-                self.pen_motion_energy += abs(dx) + abs(dy)
-                if self.pen_motion_energy >= 300 and not self.pen_motion_active:
-                    self.pen_motion_active = True
-                    if self.pen_long_timer is not None:
-                        GLib.source_remove(self.pen_long_timer)
-                        self.pen_long_timer = None
-                if header in {14, 142}:
-                    self._pen_button(False)
+                if pointer_mode:
+                    pressed = header in {15, 143}
+                    if pressed != self.pen_pressed and self.virtual_pointer is not None:
+                        self.pen_pressed = pressed
+                        self.virtual_pointer.button(pressed)
+                    self._pointer_move(dx, dy)
+                else:
+                    if header in {15, 143} and not self.pen_pressed:
+                        self._pen_button(True)
+                    self.pen_motion.append((dx, dy))
+                    self.pen_motion_energy += abs(dx) + abs(dy)
+                    if self.pen_motion_energy >= 300 and not self.pen_motion_active:
+                        self.pen_motion_active = True
+                        if self.pen_long_timer is not None:
+                            GLib.source_remove(self.pen_long_timer)
+                            self.pen_long_timer = None
+                    if header in {14, 142}:
+                        self._pen_button(False)
                 offset += 6
             else:
                 break
+
+    def _pointer_move(self, raw_x, raw_y):
+        if self.virtual_pointer is None:
+            return
+        sensitivity = min(300, max(25, self.settings.get_int("pointer-sensitivity")))
+        smoothing = min(90, max(0, self.settings.get_int("pointer-smoothing")))
+        scale = 0.035 * sensitivity / 100.0
+        if self.settings.get_boolean("pointer-acceleration"):
+            scale *= 1.0 + min(2.0, (abs(raw_x) + abs(raw_y)) / 500.0)
+        target_x = raw_x * scale
+        target_y = -raw_y * scale
+        alpha = 1.0 - smoothing / 110.0
+        self.pointer_filtered_x += alpha * (target_x - self.pointer_filtered_x)
+        self.pointer_filtered_y += alpha * (target_y - self.pointer_filtered_y)
+        self.pointer_residual_x += self.pointer_filtered_x
+        self.pointer_residual_y += self.pointer_filtered_y
+        move_x = int(self.pointer_residual_x)
+        move_y = int(self.pointer_residual_y)
+        self.pointer_residual_x -= move_x
+        self.pointer_residual_y -= move_y
+        self.virtual_pointer.move(move_x, move_y)
 
     @staticmethod
     def _find_wacom():
@@ -792,9 +986,12 @@ class HardwareService:
         if self.wacom is None:
             self.wacom = self._find_wacom()
         self._apply_pen_options()
+        self._sync_remote_control()
         self._ensure_keyboard_reader()
         self._ensure_pen_reader()
         self._refresh_spen_ble()
+        if not self.haptics.available and int(time.monotonic()) % 5 == 0:
+            self.haptics = ForceFeedback()
         docked = self.wacom is not None and read_text(self.wacom / "pen_docked") == "1"
         raw_orientation = read_text(self.wacom / "pen_orientation") if self.wacom else ""
         orientation = {"downside": "tip-right", "upside": "tip-left"}.get(
@@ -826,9 +1023,12 @@ class HardwareService:
             ButtonActionsAvailable=self.pen_fd is not None or self.ble_connected,
             BluetoothAvailable=Path("/sys/class/bluetooth/hci0").exists(),
             GestureAvailable=(
+                self.settings.get_boolean("spen-remote-enabled")
+                and
                 self.ble_connected
                 and self.ble_characteristics.get(SPEN_BUTTON_UUID) in self.ble_subscribed
             ),
+            HapticsAvailable=self.haptics.available,
         ))
         return GLib.SOURCE_CONTINUE
 
@@ -852,6 +1052,11 @@ class HardwareService:
         if method == "TriggerMapping":
             mapping = params.unpack()[0]
             invocation.return_value(GLib.Variant("(b)", (self.execute_mapping(mapping),)))
+        elif method == "Vibrate":
+            duration_ms, magnitude = params.unpack()
+            invocation.return_value(GLib.Variant(
+                "(b)", (self.haptics.vibrate(duration_ms, magnitude),)
+            ))
 
     def get_property(self, _connection, _sender, _path, _interface, name):
         return GLib.Variant(SIGNATURES[name], getattr(self.state, name))
@@ -876,6 +1081,9 @@ class HardwareService:
             self.virtual_watch = None
         if self.virtual_keyboard is not None:
             self.virtual_keyboard.close()
+        if self.virtual_pointer is not None:
+            self.virtual_pointer.close()
+        self.haptics.close()
 
 
 def main():

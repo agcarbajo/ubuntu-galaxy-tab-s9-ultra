@@ -1,2 +1,3 @@
 # The per-user daemon runs as the tablet owner, who is a member of input.
 KERNEL=="uinput", SUBSYSTEM=="misc", GROUP="input", MODE="0660"
+KERNEL=="event*", SUBSYSTEM=="input", ATTRS{name}=="gpio-vibrator", GROUP="input", MODE="0660"

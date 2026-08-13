@@ -1,0 +1,7 @@
+{
+  "uuid": "tab-companion-haptics@agcarbajo",
+  "name": "Tab Companion keyboard haptics",
+  "description": "Vibration feedback for GNOME's on-screen keyboard on the Galaxy Tab S9 Ultra",
+  "shell-version": ["46"],
+  "version": 1
+}

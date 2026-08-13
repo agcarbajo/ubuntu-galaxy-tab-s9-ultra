@@ -13,7 +13,10 @@ from gi.repository import GLib
 
 
 BLUEZ = "org.bluez"
+BUS_NAME = "io.github.agcarbajo.TabCompanion.SPenPairing"
+OBJECT_PATH = "/io/github/agcarbajo/TabCompanion/SPenPairing"
 AGENT_PATH = "/io/github/agcarbajo/TabCompanion/SpenAgent"
+STATE_PATH = Path("/var/lib/tab-companion/spen-remote-enabled")
 DEVICE_IFACE = "org.bluez.Device1"
 ADAPTER_IFACE = "org.bluez.Adapter1"
 PROPERTIES_IFACE = "org.freedesktop.DBus.Properties"
@@ -80,9 +83,12 @@ class Agent(dbus.service.Object):
         pass
 
 
-class PairingService:
+class PairingService(dbus.service.Object):
     def __init__(self):
         self.bus = dbus.SystemBus()
+        self.bus_name = dbus.service.BusName(BUS_NAME, bus=self.bus)
+        super().__init__(self.bus_name, OBJECT_PATH)
+        self.remote_enabled = self._load_remote_enabled()
         self.manager = dbus.Interface(
             self.bus.get_object(BLUEZ, "/"),
             "org.freedesktop.DBus.ObjectManager",
@@ -123,6 +129,35 @@ class PairingService:
         )
 
     @staticmethod
+    def _load_remote_enabled():
+        try:
+            return STATE_PATH.read_text(encoding="ascii").strip() != "0"
+        except OSError:
+            return True
+
+    def _save_remote_enabled(self):
+        STATE_PATH.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+        STATE_PATH.write_text("1\n" if self.remote_enabled else "0\n", encoding="ascii")
+
+    @dbus.service.method(BUS_NAME, in_signature="b", out_signature="b")
+    def SetRemoteEnabled(self, enabled):
+        enabled = bool(enabled)
+        if enabled == self.remote_enabled:
+            return True
+        self.remote_enabled = enabled
+        self._save_remote_enabled()
+        self.finish_pairing()
+        self.connecting.clear()
+        self.next_connect = 0.0
+        if not enabled:
+            self.disconnect_spen()
+            print("S Pen Bluetooth remote features disabled", flush=True)
+        else:
+            print("S Pen Bluetooth remote features enabled", flush=True)
+            GLib.idle_add(self.tick)
+        return True
+
+    @staticmethod
     def _find_reset_path():
         matches = glob("/sys/bus/i2c/devices/*/pen_ble_reset")
         return Path(matches[0]) if matches else None
@@ -158,12 +193,15 @@ class PairingService:
         properties = self.devices().get(path)
         return (
             properties is not None
+            and self.remote_enabled
             and is_spen(properties)
             and (properties.get("Paired", False) or (self.pairing and self.docked()))
             and (self.candidate in {None, path} or properties.get("Paired", False))
         )
 
     def connect(self, path):
+        if not self.remote_enabled:
+            return
         now = time.monotonic()
         if path in self.connecting or now < self.next_connect:
             return
@@ -195,9 +233,21 @@ class PairingService:
             error_handler=failed,
         )
 
+    def disconnect_spen(self):
+        for path, properties in self.devices().items():
+            if not is_spen(properties) or not properties.get("Connected", False):
+                continue
+            try:
+                dbus.Interface(
+                    self.bus.get_object(BLUEZ, path), DEVICE_IFACE
+                ).Disconnect()
+            except dbus.DBusException as error:
+                if error.get_dbus_name() != "org.bluez.Error.NotConnected":
+                    print(f"S Pen disconnect failed: {error.get_dbus_name()}", flush=True)
+
     def repair_stale_bond(self, path):
         """Replace a host bond which the docked pen no longer recognises."""
-        if self.repairing_bond or not self.docked():
+        if not self.remote_enabled or self.repairing_bond or not self.docked():
             return GLib.SOURCE_REMOVE
         properties = self.devices().get(path)
         if properties is None or not properties.get("Paired", False):
@@ -236,6 +286,8 @@ class PairingService:
         self.agent_registered = True
 
     def begin_pairing(self):
+        if not self.remote_enabled:
+            return
         if self.reset_path is None:
             self.reset_path = self._find_reset_path()
         if self.reset_path is None:
@@ -285,7 +337,7 @@ class PairingService:
             self.agent_registered = False
 
     def consider(self, path, properties):
-        if not is_spen(properties):
+        if not self.remote_enabled or not is_spen(properties):
             return
         if properties.get("Paired", False):
             if properties.get("Connected", False):
@@ -295,7 +347,10 @@ class PairingService:
                 self.bus.get_object(BLUEZ, path), PROPERTIES_IFACE
             ).Set(DEVICE_IFACE, "Trusted", dbus.Boolean(True))
             self.finish_pairing()
-            if not properties.get("Connected", False):
+            # The pen only advertises reliably after the garage wakes it.  A
+            # disconnected, undocked bond is the normal sleeping state; do
+            # not waste power or flood the journal with impossible retries.
+            if not properties.get("Connected", False) and self.docked():
                 self.connect(path)
             return
         if self.pairing and self.docked():
@@ -315,6 +370,11 @@ class PairingService:
 
     def tick(self):
         docked = self.docked()
+        if not self.remote_enabled:
+            self.finish_pairing()
+            self.reset_for_dock = docked
+            self.disconnect_spen()
+            return GLib.SOURCE_CONTINUE
         paired_path, paired = self.paired_spen()
         if self.pairing and time.monotonic() >= self.pairing_deadline:
             self.finish_pairing()

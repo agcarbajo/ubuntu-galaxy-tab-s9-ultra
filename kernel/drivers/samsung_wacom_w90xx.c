@@ -458,8 +458,9 @@ static irqreturn_t samsung_wacom_pdct_irq(int irq, void *dev_id)
 
 	WRITE_ONCE(wacom->docked, docked);
 	wacom->charge_stage = 0;
+	/* Never expose the orientation reported for a previous insertion. */
+	WRITE_ONCE(wacom->garage_direction, 0);
 	if (!docked) {
-		WRITE_ONCE(wacom->garage_direction, 0);
 		WRITE_ONCE(wacom->charge_status,
 			   POWER_SUPPLY_STATUS_NOT_CHARGING);
 	}
@@ -668,7 +669,6 @@ static void samsung_wacom_update_digitizer(struct samsung_wacom *wacom)
 		goto out;
 
 	if (disable) {
-		disable_irq(wacom->client->irq);
 		wacom->pen_irq_disabled = true;
 		timer_delete_sync(&wacom->prox_timer);
 		samsung_wacom_leave_range(wacom);
@@ -676,7 +676,6 @@ static void samsung_wacom_update_digitizer(struct samsung_wacom *wacom)
 			 "digitiser disabled while S Pen is docked\n");
 	} else {
 		wacom->pen_irq_disabled = false;
-		enable_irq(wacom->client->irq);
 		dev_info(&wacom->client->dev, "digitiser enabled\n");
 	}
 out:
@@ -708,6 +707,13 @@ static irqreturn_t samsung_wacom_irq(int irq, void *dev_id)
 	if (ret != sizeof(data))
 		return IRQ_HANDLED;
 	if (samsung_wacom_handle_garage_reply(wacom, data))
+		return IRQ_HANDLED;
+	/*
+	 * Garage replies share this IRQ with coordinate packets.  Keep the line
+	 * enabled while docked and suppress only pen coordinates, otherwise a
+	 * fresh orientation/charge reply cannot be received after insertion.
+	 */
+	if (READ_ONCE(wacom->pen_irq_disabled))
 		return IRQ_HANDLED;
 
 	/*

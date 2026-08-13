@@ -13,8 +13,10 @@ fi
 
 if command -v systemctl >/dev/null 2>&1; then
 	systemctl daemon-reload
+	systemctl reload dbus.service >/dev/null 2>&1 || true
 	systemctl enable tab-companion-spen-pairing.service >/dev/null 2>&1 || true
 	systemctl restart tab-companion-spen-pairing.service || true
+	systemctl --global enable tab-companion-haptics-enable.service >/dev/null 2>&1 || true
 fi
 
 exit 0

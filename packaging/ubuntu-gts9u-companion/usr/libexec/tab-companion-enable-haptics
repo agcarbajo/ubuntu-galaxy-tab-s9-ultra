@@ -1,0 +1,14 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: MIT
+"""Enable the bundled extension without overwriting the user's extension list."""
+
+from gi.repository import Gio
+
+
+UUID = "tab-companion-haptics@agcarbajo"
+settings = Gio.Settings.new("org.gnome.shell")
+enabled = list(settings.get_strv("enabled-extensions"))
+if UUID not in enabled:
+    enabled.append(UUID)
+    if not settings.set_strv("enabled-extensions", enabled):
+        raise SystemExit("could not enable Tab Companion haptics")

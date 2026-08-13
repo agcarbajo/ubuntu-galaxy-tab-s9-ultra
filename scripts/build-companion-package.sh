@@ -50,6 +50,7 @@ find "$staging" -type f -exec chmod 0644 {} +
 chmod 0755 "$staging/usr/bin/tab-companion" \
 	"$staging/usr/libexec/tab-companion-hardware" \
 	"$staging/usr/libexec/tab-companion-spen-pairing" \
+	"$staging/usr/libexec/tab-companion-enable-haptics" \
 	"$staging/usr/libexec/tab-companion-spen-permissions" \
 	"$staging/DEBIAN/postinst" "$staging/DEBIAN/postrm"
 find "$staging" -exec touch -h -d '@0' {} +

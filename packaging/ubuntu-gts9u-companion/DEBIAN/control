@@ -1,10 +1,10 @@
 Package: ubuntu-gts9u-companion
-Version: 0.8.1
+Version: 0.9.0
 Section: utils
 Priority: optional
 Architecture: all
 Maintainer: Ubuntu gts9uwifi port contributors <noreply@example.invalid>
-Depends: python3, python3-dbus, python3-gi, gir1.2-gtk-4.0, gir1.2-adw-1, dconf-gsettings-backend
+Depends: python3, python3-dbus, python3-gi, gir1.2-gtk-4.0, gir1.2-adw-1, dconf-gsettings-backend, gnome-shell
 Description: S Pen and cover keyboard settings for the Galaxy Tab S9 Ultra
- Tab Companion provides a native GNOME interface for S Pen status, gesture
- actions and the special keys of Samsung's compatible keyboard covers.
+ Tab Companion provides a native GNOME interface for S Pen status, remote
+ modes, haptics and the special keys of Samsung's compatible keyboard covers.

@@ -164,6 +164,8 @@ class CompanionWindow(Adw.ApplicationWindow):
         self.hardware.connect("state-changed", self._update_hardware)
         self.settings.connect("changed::known-keyboard-model", self._known_keyboard_changed)
         self.settings.connect("changed::known-keyboard-name", self._known_keyboard_changed)
+        self.settings.connect("changed::spen-remote-enabled", self._remote_settings_changed)
+        self.settings.connect("changed::spen-remote-mode", self._remote_settings_changed)
         self._build()
         self._update_hardware()
 
@@ -180,6 +182,9 @@ class CompanionWindow(Adw.ApplicationWindow):
         self.view_stack.add_titled_with_icon(self._pen_page(), "pen", "S Pen", "input-tablet-symbolic")
         self.view_stack.add_titled_with_icon(
             self._keyboard_page(), "keyboard", _("Cover keyboard"), "input-keyboard-symbolic"
+        )
+        self.view_stack.add_titled_with_icon(
+            self._haptics_page(), "haptics", _("Haptics"), "phone-symbolic"
         )
         switcher = Adw.ViewSwitcherBar(stack=self.view_stack, reveal=True)
         toolbar.set_content(self.view_stack)
@@ -209,7 +214,34 @@ class CompanionWindow(Adw.ApplicationWindow):
         hero.add(hero_box)
         page.add(hero)
 
+        remote = Adw.PreferencesGroup(
+            title=_("Remote features"),
+            description=_("Use Bluetooth for air gestures or pointer mode."),
+        )
+        self.remote_switch = Adw.SwitchRow(
+            title=_("Enable S Pen remote features"),
+            subtitle=_("When disabled, Bluetooth disconnects and the S Pen remains available for writing."),
+        )
+        self.remote_switch.add_prefix(Gtk.Image(icon_name="bluetooth-active-symbolic"))
+        self.settings.bind(
+            "spen-remote-enabled", self.remote_switch, "active",
+            Gio.SettingsBindFlags.DEFAULT,
+        )
+        remote.add(self.remote_switch)
+        self.remote_mode_row = Adw.ComboRow(
+            title=_("Remote mode"),
+            subtitle=_("Air gestures and pointer mode cannot be used at the same time."),
+            model=Gtk.StringList.new([_("Air gestures"), _("Pointer")]));
+        self.remote_mode_row.add_prefix(Gtk.Image(icon_name="input-mouse-symbolic"))
+        self.remote_mode_row.set_selected(
+            1 if self.settings.get_string("spen-remote-mode") == "pointer" else 0
+        )
+        self.remote_mode_row.connect("notify::selected", self._remote_mode_selected)
+        remote.add(self.remote_mode_row)
+        page.add(remote)
+
         status = Adw.PreferencesGroup(title=_("Battery"))
+        self.battery_group = status
         self.battery_row = Adw.ActionRow(title=_("S Pen battery"))
         self.battery_icon = Gtk.Image(icon_name="battery-missing-symbolic")
         self.battery_row.add_prefix(self.battery_icon)
@@ -248,10 +280,133 @@ class CompanionWindow(Adw.ApplicationWindow):
             title=_("Air actions"),
             description=_("Choose what the S Pen button and each air gesture should do."),
         )
+        self.gesture_group = gestures
         for key, title, subtitle in GESTURES:
             gestures.add(self._action_row("gesture-" + key, _(title), _(subtitle)))
         page.add(gestures)
+
+        pointer = Adw.PreferencesGroup(
+            title=_("Pointer mode"),
+            description=_("Move the S Pen in the air like a Wii Remote. Its button acts as the primary mouse button and supports dragging."),
+        )
+        self.pointer_group = pointer
+        pointer.add(self._scale_setting_row(
+            "pointer-sensitivity", _("Sensitivity"),
+            _("Controls how far the pointer moves."), 25, 300, 5,
+            "preferences-system-symbolic",
+        ))
+        pointer.add(self._scale_setting_row(
+            "pointer-smoothing", _("Smoothing"),
+            _("Reduces hand jitter at the cost of a little response time."), 0, 90, 5,
+            "weather-clear-symbolic",
+        ))
+        acceleration = Adw.SwitchRow(
+            title=_("Pointer acceleration"),
+            subtitle=_("Move farther when the S Pen is swung faster."),
+        )
+        acceleration.add_prefix(Gtk.Image(icon_name="speedometer-symbolic"))
+        self.settings.bind(
+            "pointer-acceleration", acceleration, "active",
+            Gio.SettingsBindFlags.DEFAULT,
+        )
+        pointer.add(acceleration)
+        page.add(pointer)
+        self._update_remote_sections()
         return page
+
+    def _scale_setting_row(self, setting, title, subtitle, lower, upper, step, icon):
+        row = Adw.ActionRow(title=title, subtitle=subtitle)
+        row.add_prefix(Gtk.Image(icon_name=icon))
+        scale = Gtk.Scale(
+            orientation=Gtk.Orientation.HORIZONTAL,
+            adjustment=Gtk.Adjustment(
+                value=self.settings.get_int(setting), lower=lower, upper=upper,
+                step_increment=step, page_increment=step * 4,
+            ),
+            draw_value=True,
+            digits=0,
+            width_request=240,
+            valign=Gtk.Align.CENTER,
+        )
+        scale.connect(
+            "value-changed",
+            lambda widget: self.settings.set_int(setting, round(widget.get_value())),
+        )
+        row.add_suffix(scale)
+        return row
+
+    def _remote_mode_selected(self, row, _param):
+        self.settings.set_string(
+            "spen-remote-mode", "pointer" if row.get_selected() == 1 else "gestures"
+        )
+
+    def _remote_settings_changed(self, *_args):
+        if hasattr(self, "remote_mode_row"):
+            expected = 1 if self.settings.get_string("spen-remote-mode") == "pointer" else 0
+            if self.remote_mode_row.get_selected() != expected:
+                self.remote_mode_row.set_selected(expected)
+            self._update_remote_sections()
+            self._update_hardware()
+
+    def _update_remote_sections(self):
+        enabled = self.settings.get_boolean("spen-remote-enabled")
+        pointer = self.settings.get_string("spen-remote-mode") == "pointer"
+        self.remote_mode_row.set_sensitive(enabled)
+        self.battery_group.set_visible(enabled)
+        self.gesture_group.set_visible(enabled and not pointer)
+        self.pointer_group.set_visible(enabled and pointer)
+
+    def _haptics_page(self):
+        page = self._page()
+        hero = Adw.StatusPage(
+            icon_name="phone-symbolic",
+            title=_("Keyboard haptics"),
+            description=_("Feel a short vibration when touching a key on GNOME's on-screen keyboard."),
+        )
+        hero.set_vexpand(False)
+        hero_group = Adw.PreferencesGroup()
+        hero_group.add(hero)
+        page.add(hero_group)
+
+        group = Adw.PreferencesGroup(
+            title=_("On-screen keyboard"),
+            description=_("The vibration motor has a fixed intensity; strength changes the pulse duration."),
+        )
+        enabled = Adw.SwitchRow(
+            title=_("Vibrate on key press"),
+            subtitle=_("Applies only to GNOME's on-screen keyboard."),
+        )
+        enabled.add_prefix(Gtk.Image(icon_name="input-keyboard-symbolic"))
+        self.settings.bind(
+            "keyboard-haptics-enabled", enabled, "active",
+            Gio.SettingsBindFlags.DEFAULT,
+        )
+        group.add(enabled)
+        self.haptics_strength = Adw.ComboRow(
+            title=_("Strength"),
+            model=Gtk.StringList.new([_("Light"), _("Medium"), _("Strong")]),
+        )
+        strength = min(3, max(1, self.settings.get_int("keyboard-haptics-strength")))
+        self.haptics_strength.set_selected(strength - 1)
+        self.haptics_strength.connect("notify::selected", self._haptics_strength_selected)
+        group.add(self.haptics_strength)
+        self.haptics_test = Adw.ActionRow(
+            title=_("Test vibration"),
+            subtitle=_("Temporary diagnostic button."),
+        )
+        test = Gtk.Button(label=_("Test"), valign=Gtk.Align.CENTER, css_classes=["suggested-action"])
+        test.connect("clicked", self._test_haptics)
+        self.haptics_test.add_suffix(test)
+        self.haptics_test.set_activatable_widget(test)
+        group.add(self.haptics_test)
+        page.add(group)
+        return page
+
+    def _haptics_strength_selected(self, row, _param):
+        self.settings.set_int("keyboard-haptics-strength", row.get_selected() + 1)
+
+    def _test_haptics(self, _button):
+        self.hardware.vibrate(100, 65535)
 
     def _keyboard_page(self):
         page = self._page()
@@ -480,13 +635,18 @@ class CompanionWindow(Adw.ApplicationWindow):
 
     def _update_hardware(self, *_args):
         state = self.hardware.state
-        status = {
-            "docked": _("Docked and charging") if state.pen_charging else _("Docked"),
-            "nearby": _("Connected and ready for air gestures"),
-            "paired": _("Insert the S Pen to reconnect it"),
-            "unpaired": _("Not paired"),
-            "unavailable": _("Hardware service unavailable"),
-        }.get(state.pen_state, _("Unknown state"))
+        remote_enabled = self.settings.get_boolean("spen-remote-enabled")
+        if not remote_enabled:
+            status = _("Inserted") if state.pen_state == "docked" else _("Not inserted")
+        else:
+            pointer = self.settings.get_string("spen-remote-mode") == "pointer"
+            status = {
+                "docked": _("Docked and charging") if state.pen_charging else _("Docked"),
+                "nearby": _("Connected and ready for pointer mode") if pointer else _("Connected and ready for air gestures"),
+                "paired": _("Insert the S Pen to reconnect it"),
+                "unpaired": _("Not paired"),
+                "unavailable": _("Hardware service unavailable"),
+            }.get(state.pen_state, _("Unknown state"))
         self.pen_status.set_label(status)
         resource = {
             "tip-right": "/io/github/agcarbajo/TabCompanion/images/spen-tip-right.svg",
@@ -506,6 +666,11 @@ class CompanionWindow(Adw.ApplicationWindow):
             self.battery_bar.set_fraction(0)
             self.battery_bar.set_text(_("Unknown"))
             self.battery_row.set_subtitle(_("Insert the S Pen to read its battery"))
+        self.haptics_test.set_subtitle(
+            _("Motor ready") if state.haptics_available
+            else _("The updated kernel is required")
+        )
+        self.haptics_test.set_sensitive(state.haptics_available)
         self._update_keyboard()
 
     def _show_about(self, _button):
@@ -517,6 +682,7 @@ class CompanionWindow(Adw.ApplicationWindow):
             f"Cover keyboard: {state.keyboard_model or 'not reported'}\n"
             f"Remapping: {'available' if state.remapping_available else 'unavailable'}\n"
             f"S Pen button actions: {'available' if state.button_actions_available else 'unavailable'}"
+            f"\nHaptics: {'available' if state.haptics_available else 'unavailable'}"
         )
         about = Adw.AboutWindow(
             transient_for=self,

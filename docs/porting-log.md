@@ -4748,3 +4748,97 @@ Ajustes y Fn+F1–F10 quedaron en `none`; se conservó una personalización post
 de Fn+F11 con su destino de comando. `TriggerMapping` ejecutó correctamente la
 utilidad base de Galaxy AI y dos activaciones de DeX maximizaron y restauraron
 sin escribir ninguna asignación. Ambos servicios siguieron activos y sin avisos.
+
+## Sesión 68 — modos remotos del S Pen, puntero y vibración
+
+Fecha: 2026-08-13. Tab Companion 0.9.0 separa la escritura EMR de las funciones
+remotas BLE. La preferencia `spen-remote-enabled` llega por D-Bus del servicio
+de usuario al servicio raíz de emparejamiento. Al apagarla, éste cancela su
+ventana, desconecta únicamente el S Pen y conserva el vínculo BlueZ; además
+persiste el estado en `/var/lib/tab-companion` para no reconectar antes del
+login. Al encenderla vuelve a permitir conexión y pairing. La interfaz oculta
+batería y controles remotos mientras está apagada y sólo conserva insertado/no
+insertado, pero no toca las políticas independientes de Goodix/Wacom.
+
+El modo puntero toma como referencia conceptual PenMouseS, que integra los
+incrementos del giroscopio del S Pen para desplazar un cursor y usa el botón
+para clic/arrastre. En GNOME no necesita overlay ni accesibilidad: el backend
+crea `Tab Companion S Pen pointer`, un dispositivo `uinput` relativo con
+`REL_X`, `REL_Y` y `BTN_LEFT`. Los mismos paquetes Button State que alimentan el
+clasificador de gestos se enrutan alternativamente al puntero. Se invierte Y,
+se conservan residuos subpíxel y se aplican sensibilidad, filtro exponencial y
+aceleración configurables. Gestos y puntero no pueden activarse a la vez.
+
+El fallo de orientación al insertar al revés provenía de
+`disable_digitizer_when_docked`: apagaba la IRQ I²C principal, pero las
+respuestas `GARAGE_STATUS` de orientación/carga viajan por esa misma línea. El
+driver conserva ahora la IRQ, consume primero las respuestas de garaje y sólo
+descarta después los paquetes de coordenadas si la política está activa. Cada
+borde PDCT borra también la orientación anterior hasta recibir una respuesta
+nueva, evitando mostrar un sentido obsoleto.
+
+El DTS downstream identifica el actuador como `samsung,dc_vibrator`, tipo
+`COINDC`, con enable en TLMM GPIO18. Mainline se configura con
+`CONFIG_INPUT_GPIO_VIBRA=y` y un nodo `gpio-vibrator`; su interfaz es evdev
+`FF_RUMBLE`. El backend carga/reutiliza un efecto y ofrece `Vibrate(uu)` en el
+D-Bus de sesión. El GPIO no regula amplitud, de modo que la intensidad aparente
+del teclado se representa mediante pulsos de 8, 14 o 22 ms.
+
+GNOME Shell 46 no trae una opción nativa de vibración para su teclado en
+pantalla. La extensión `tab-companion-haptics@agcarbajo` escucha sólo
+`TOUCH_BEGIN` dentro del actor visible del teclado y comprueba la clase
+`keyboard-key` antes de solicitar el pulso. Un helper añade su UUID a
+`enabled-extensions` sin reemplazar las extensiones de la usuaria. La app añade
+una tercera página con interruptor, intensidad y un botón temporal de prueba.
+
+Antes de reiniciar se preservó la conexión BLE del lápiz desacoplado. Tras
+varias horas el Battery Level seguía entregando 100 %, así que no se inventa ni
+interpola un valor intermedio: esa validación física continúa pendiente.
+
+La primera escritura actualizó sólo `boot`. El kernel nuevo arrancó sin fallos,
+pero `/proc/device-tree` demostró que Samsung ABL seguía tomando el DTB de
+`vendor_boot`: el nodo `vibrator` aún no existía. Antes de actualizar esa
+partición se extrajeron ambas imágenes v4 y se compararon sus secciones. La
+línea de arranque, el ramdisk de plataforma, su tabla y bootconfig eran
+idénticos byte a byte; la única diferencia era el DTB de 177740 frente a 177812
+bytes. Se respaldó y verificó la imagen anterior y se escribió la nueva en la
+partición acreditada por etiqueta y tamaño.
+
+Los hashes arrancados y los respaldos recuperables son:
+
+```text
+boot nuevo          5f33dcd527bf0693ddf5b6ae1100912f82d0f055ab7f965cabb89053f1df5e0b
+boot respaldo       524a4ded657f1419640b051f580f8519f6fa79af1aac5e4f68a4505bb042ca02
+vendor_boot nuevo   ded9ae5ddd3f86ab0ff0c77c410553f86c8d900f663751c95c9751efc5bfb98b
+vendor_boot respaldo bf312f08a6876194e3ce30d52a81f8da23dd88132c4660698eb5cde17a69e6bc
+```
+
+El segundo arranque dejó cero unidades fallidas de sistema y usuario. El DT
+vivo contenía `gpio-vibrator`, el driver publicó `event2` con `FF_RUMBLE` y
+`HapticsAvailable=true`. `Vibrate(500, 65535)` devolvió éxito y la traza
+`gpio:gpio_value` midió el GPIO global 554 a 1 y, 500,741 ms después, a 0. Esto
+valida todo el recorrido software y eléctrico de control; queda que la usuaria
+confirme la sensación física.
+
+Con el S Pen ya dormido por el reinicio se probó sin perder una conexión útil
+el ciclo remoto `true → false → true`. El estado privilegiado cambió 1/0/1,
+BlueZ conservó el vínculo y `ignore_finger_while_hovering` y
+`disable_digitizer_when_docked` permanecieron ambos a 1. La política final no
+intenta conectar un vínculo dormido mientras está fuera del garaje; espera una
+inserción y evita errores periódicos en el journal.
+
+El parser del puntero se ejercitó con pulsación, cinco muestras firmadas y
+liberación: produjo `BTN_LEFT` down/up y desplazamientos positivos coherentes
+tras invertir Y. El dispositivo vivo publica `EV_KEY`, `REL_X` y `REL_Y`. La
+app abrió durante ocho segundos en la sesión Wayland sin excepción. El helper
+añadió la extensión háptica preservando las cuatro extensiones existentes; se
+cargará al próximo login gráfico de la usuaria, que aún no había ocurrido tras
+el reinicio.
+
+El artefacto reproducible definitivo pasó `compileall`, esquema estricto,
+Desktop Entry, AppStream pedante y validación sintáctica de la extensión:
+
+```text
+ubuntu-gts9u-companion_0.9.0_all.deb
+18e7e34641184806e1c6ff8d1204f5851059cb2250a0a8fde543dd6996d2996a
+```

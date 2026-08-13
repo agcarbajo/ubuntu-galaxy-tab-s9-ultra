@@ -25,6 +25,7 @@ class HardwareState:
     button_actions_available: bool = False
     bluetooth_available: bool = False
     gesture_available: bool = False
+    haptics_available: bool = False
 
 
 class HardwareClient(GObject.Object):
@@ -76,5 +77,18 @@ class HardwareClient(GObject.Object):
             button_actions_available=self._value("ButtonActionsAvailable", False),
             bluetooth_available=self._value("BluetoothAvailable", False),
             gesture_available=self._value("GestureAvailable", False),
+            haptics_available=self._value("HapticsAvailable", False),
         )
         self.emit("state-changed")
+
+    def vibrate(self, duration_ms=80, magnitude=65535):
+        if self.proxy is None:
+            return
+        self.proxy.call(
+            "Vibrate",
+            GLib.Variant("(uu)", (duration_ms, magnitude)),
+            Gio.DBusCallFlags.NONE,
+            2000,
+            None,
+            None,
+        )

@@ -3,6 +3,11 @@ set -e
 
 if [ "$1" = remove ] || [ "$1" = purge ]; then
 	systemctl disable --now tab-companion-spen-pairing.service >/dev/null 2>&1 || true
+	systemctl --global disable tab-companion-haptics-enable.service >/dev/null 2>&1 || true
+fi
+
+if [ "$1" = purge ]; then
+	rm -f /var/lib/tab-companion/spen-remote-enabled
 fi
 
 if command -v glib-compile-schemas >/dev/null 2>&1; then

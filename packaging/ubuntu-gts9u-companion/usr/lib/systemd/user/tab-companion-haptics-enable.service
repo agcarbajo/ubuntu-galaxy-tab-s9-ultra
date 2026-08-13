@@ -1,0 +1,12 @@
+[Unit]
+Description=Enable Tab Companion on-screen keyboard haptics
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/tab-companion-enable-haptics
+RemainAfterExit=yes
+
+[Install]
+WantedBy=graphical-session.target

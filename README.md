@@ -17,8 +17,8 @@ from one TWRP-flashable ZIP; a microSD is not required after installation.
 | Touchscreen | ✅ | Goodix multitouch |
 | S Pen writing | ✅ | Hover, pressure, tilt, side button and palm rejection |
 | S Pen dock | ✅ | Insertion, orientation and charging |
-| S Pen BLE | 🟡 | Pairing, battery and air gestures work; more battery levels remain to be tested |
-| Tab Companion | ✅ | S Pen options, gesture actions and keyboard remapping |
+| S Pen BLE | 🟡 | Pairing, battery, air gestures and pointer mode; final physical validation remains |
+| Tab Companion | ✅ | S Pen remote modes, behaviour options, haptics and keyboard remapping |
 | Keyboard cover | 🟡 | EF-DX920 validated; four related Samsung models are recognised but untested |
 | Cover switch | ✅ | Closing the cover turns off the display |
 | Power and volume buttons | ✅ | Including suspend from the power button |
@@ -35,7 +35,7 @@ from one TWRP-flashable ZIP; a microSD is not required after installation.
 | Cameras and flash | 🟡 | Four cameras, autofocus and flashlight work; colour tuning remains |
 | Ambient light sensor | ❌ | No usable lux data from the sensor DSP |
 | Fingerprint reader | ❌ | No mainline driver |
-| Vibration / haptics | ❌ | Not implemented |
+| Vibration / haptics | 🟡 | Motor and on-screen keyboard feedback implemented; physical validation remains |
 | Waydroid | ❓ | Not tested |
 
 ✅ validated on the physical tablet · 🟡 usable with remaining validation ·
@@ -46,14 +46,16 @@ The evidence and technical limitations for every component are documented in
 
 ## Tab Companion
 
-Tab Companion 0.8.1 is preinstalled and provides:
+Tab Companion 0.9.0 is preinstalled and provides:
 
 - S Pen battery, charging and dock status;
-- automatic dock-initiated BLE pairing and air gestures;
+- automatic dock-initiated BLE pairing, air gestures and an air-pointer mode;
+- a switch that disconnects all S Pen remote features while preserving writing;
 - finger rejection while the S Pen is hovering;
 - optional S Pen digitizer disabling while the pen is docked;
 - remapping for compatible Samsung Book Cover Keyboard keys;
 - application, command, simulated-key and flashlight actions;
+- adjustable vibration feedback for GNOME's on-screen keyboard;
 - English, Spanish, French, German, Italian and Portuguese interfaces.
 
 The EF-DX920 is physically validated. EF-DX900, EF-DX910, EF-DX915 and
