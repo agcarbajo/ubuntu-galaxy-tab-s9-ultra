@@ -4,6 +4,7 @@
 
 from glob import glob
 from pathlib import Path
+import subprocess
 import time
 
 import dbus
@@ -155,6 +156,65 @@ class PairingService(dbus.service.Object):
         else:
             print("S Pen Bluetooth remote features enabled", flush=True)
             GLib.idle_add(self.tick)
+        return True
+
+    @dbus.service.method(BUS_NAME, in_signature="", out_signature="b")
+    def RecoverStaleBond(self):
+        """Replace a docked bond whose BlueZ link has stopped serving GATT."""
+        if not self.remote_enabled or self.repairing_bond or not self.docked():
+            return False
+        path, properties = self.paired_spen()
+        if path is None or not properties.get("Connected", False):
+            return False
+        self.repairing_bond = True
+        self.connect_failures.pop(path, None)
+        self.finish_pairing()
+        print("Recovering unresponsive S Pen GATT connection", flush=True)
+
+        def removed():
+            print("Unresponsive S Pen bond removed", flush=True)
+            GLib.timeout_add_seconds(1, self.restart_pairing_after_repair)
+
+        def failed(error):
+            name = error.get_dbus_name()
+            if name == "org.bluez.Error.DoesNotExist":
+                removed()
+                return
+            if name == "org.freedesktop.DBus.Error.NoReply":
+                # A wedged BlueZ may update its bond store without completing
+                # RemoveDevice. Restarting just the Bluetooth daemon makes
+                # that state effective and leaves the rest of the OS running.
+                print(
+                    "BlueZ did not answer S Pen removal; restarting Bluetooth",
+                    flush=True,
+                )
+                try:
+                    subprocess.run(
+                        ["systemctl", "restart", "bluetooth.service"],
+                        check=True,
+                        timeout=15,
+                    )
+                except (OSError, subprocess.SubprocessError) as restart_error:
+                    print(
+                        f"Could not restart Bluetooth: {restart_error}",
+                        flush=True,
+                    )
+                    self.repairing_bond = False
+                    return
+                self.agent_registered = False
+                self.started_discovery = False
+                self.pairing = False
+                GLib.timeout_add_seconds(3, self.restart_pairing_after_repair)
+                return
+            print(f"Could not remove unresponsive S Pen: {name}", flush=True)
+            self.repairing_bond = False
+
+        try:
+            self.adapter.RemoveDevice(
+                dbus.ObjectPath(path), reply_handler=removed, error_handler=failed
+            )
+        except dbus.DBusException as error:
+            failed(error)
         return True
 
     @staticmethod
@@ -342,7 +402,8 @@ class PairingService(dbus.service.Object):
         if properties.get("Paired", False):
             if properties.get("Connected", False):
                 self.connect_failures.pop(path, None)
-                self.repairing_bond = False
+                if self.pairing:
+                    self.repairing_bond = False
             dbus.Interface(
                 self.bus.get_object(BLUEZ, path), PROPERTIES_IFACE
             ).Set(DEVICE_IFACE, "Trusted", dbus.Boolean(True))

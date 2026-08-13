@@ -4916,3 +4916,38 @@ GSettings estricto, Desktop Entry y AppStream pedante:
 ubuntu-gts9u-companion_0.10.0_all.deb
 f5cccca41923c9230aae28ba8f9f08964c6614e6053749adfcf8e08d050b18ef
 ```
+
+## Sesión 71 — detección y recuperación de una conexión GATT fantasma
+
+Fecha: 2026-08-13. Aunque BlueZ publicaba simultáneamente `Connected`,
+`Paired`, `Bonded`, `Trusted` y `ServicesResolved`, los gestos y el puntero no
+recibían datos y la app mostraba 0 %. La inspección de todas las características
+separó el estado superficial del enlace real: cada `ReadValue` y `WriteValue`
+fallaba, Mode conservaba en caché `0x04` pese a estar seleccionado Gestos y
+Battery Level reproducía el antiguo `00 00`. Por tanto, ese cero no era una
+medición física.
+
+Reiniciar únicamente `bluetooth.service` hizo efectivo el descarte pendiente
+del S Pen. El servicio del garaje volvió a autorizarlo sin interacción; una
+lectura GATT real devolvió Battery Level `[100, 0]`, Mode aceptó `0x10` y Tab
+Companion publicó 100 %, carga y gestos disponibles.
+
+Tab Companion 0.10.1 no acepta ya una notificación de batería almacenada hasta
+que `ReadValue` haya respondido en la conexión actual. También exige una
+operación GATT correcta para anunciar gestos disponibles. Tres fallos GATT
+consecutivos con el lápiz insertado solicitan al servicio privilegiado que
+reemplace exclusivamente ese vínculo; si BlueZ no responde a `RemoveDevice`,
+reinicia sólo el daemon Bluetooth y continúa el emparejamiento acotado.
+
+La ruta nueva se probó de extremo a extremo forzando su llamada sobre un vínculo
+sano: pasó por no emparejado, abrió la ventana del garaje y regresó por sí sola
+a `Paired/Bonded/Trusted/Connected`, Battery Level 100 % y
+`GestureAvailable=true`. Ya con el lápiz fuera, una conmutación final abrió Raw
+Sensor Data y recibió muestras nuevas en Puntero; al volver a Gestos lo cerró,
+mantuvo Button State suscrito y las lecturas directas devolvieron Mode `[16]`
+(`0x10`) y Battery Level `[100, 0]`.
+
+```text
+ubuntu-gts9u-companion_0.10.1_all.deb
+a3aeabd722727df80c2d8ad2370d95643b46729fafbe10ec75c6400a7f8c0c75
+```

@@ -26,6 +26,15 @@ La página muestra gráficamente la orientación, el estado y una barra con el
 carga; el porcentaje procede de la característica Battery Level del perfil BLE
 Samsung y se conserva mientras el lápiz duerme. No se estima ningún valor.
 
+El estado `Connected` de BlueZ no basta por sí solo: una conexión puede quedar
+registrada aunque todas sus operaciones GATT fallen. Tab Companion sólo acepta
+el porcentaje después de que `ReadValue` responda en la conexión actual y sólo
+habilita gestos o puntero tras una operación GATT válida. Si detecta tres fallos
+consecutivos con el lápiz insertado, descarta únicamente ese vínculo, vuelve a
+abrir el emparejamiento del garaje y lo reconstruye automáticamente. Si BlueZ
+ni siquiera responde al descarte, reinicia sólo el servicio Bluetooth antes de
+reintentarlo.
+
 El emparejamiento no usa el diálogo Bluetooth clásico. Al insertar el lápiz,
 el comando Wacom `0xea` abre el anuncio y el propio S Pen inicia la solicitud.
 El servicio sólo la acepta cuando coinciden el acoplamiento físico, el nombre

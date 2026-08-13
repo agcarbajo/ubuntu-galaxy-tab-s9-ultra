@@ -394,6 +394,10 @@ class HardwareService:
         self.ble_characteristics = {}
         self.ble_subscribed = set()
         self.ble_mode_value = None
+        self.ble_battery_valid = False
+        self.ble_gatt_ready = False
+        self.ble_gatt_failures = 0
+        self.ble_next_recovery = 0.0
         self.ble_next_battery_read = 0.0
         self.remote_synced = None
         self._init_spen_ble()
@@ -559,6 +563,41 @@ class HardwareService:
         except dbus.DBusException:
             pass
 
+    def _spen_gatt_success(self):
+        self.ble_gatt_ready = True
+        self.ble_gatt_failures = 0
+
+    def _spen_gatt_failure(self):
+        self.ble_gatt_ready = False
+        # Re-probe on the next sample even if this mode was written earlier;
+        # Connected may remain true after the physical GATT link has wedged.
+        self.ble_mode_value = None
+        self.ble_gatt_failures += 1
+        docked = (
+            self.wacom is not None
+            and read_text(self.wacom / "pen_docked") == "1"
+        )
+        now = time.monotonic()
+        if (
+            self.ble_gatt_failures < 3
+            or not docked
+            or now < self.ble_next_recovery
+            or self.system_bus is None
+        ):
+            return
+        self.ble_next_recovery = now + 90
+        try:
+            service = dbus.Interface(
+                self.system_bus.get_object(
+                    PAIRING_BUS_NAME, PAIRING_OBJECT_PATH, introspect=False
+                ),
+                PAIRING_BUS_NAME,
+            )
+            if service.RecoverStaleBond():
+                self._ble_disconnected(self.ble_device_path)
+        except dbus.DBusException:
+            pass
+
     @staticmethod
     def _is_spen(properties):
         name = str(properties.get("Alias") or properties.get("Name") or "")
@@ -636,8 +675,9 @@ class HardwareService:
                     dbus.Array([dbus.Byte(desired_mode)], signature="y"), {}
                 )
                 self.ble_mode_value = desired_mode
+                self._spen_gatt_success()
             except dbus.DBusException:
-                pass
+                self._spen_gatt_failure()
         if (
             desired_mode != 0x04
             and raw_sensor_path in self.ble_subscribed
@@ -659,9 +699,16 @@ class HardwareService:
                     ),
                     BLUEZ_GATT,
                 ).ReadValue({})
-                self.ble_battery = int(value[0]) if value else -1
+                if value and int(value[0]) <= 100:
+                    self.ble_battery = int(value[0])
+                    self.ble_battery_valid = True
+                    self._spen_gatt_success()
+                else:
+                    self.ble_battery_valid = False
+                    self._spen_gatt_failure()
             except dbus.DBusException:
-                pass
+                self.ble_battery_valid = False
+                self._spen_gatt_failure()
         for uuid in (SPEN_BATTERY_UUID, SPEN_BUTTON_UUID):
             path = self.ble_characteristics.get(uuid)
             if path is None or path in self.ble_subscribed:
@@ -680,6 +727,10 @@ class HardwareService:
         self.ble_characteristics = {}
         self.ble_subscribed.clear()
         self.ble_mode_value = None
+        self.ble_battery = -1
+        self.ble_battery_valid = False
+        self.ble_gatt_ready = False
+        self.ble_gatt_failures = 0
         self.ble_next_battery_read = 0.0
 
     def _bluez_properties_changed(self, interface, changed, _invalidated, path=None):
@@ -691,7 +742,10 @@ class HardwareService:
             return
         value = bytes(changed["Value"])
         if path == self.ble_characteristics.get(SPEN_BATTERY_UUID):
-            if value and value[0] <= 100:
+            # StartNotify may replay BlueZ's old cached value even when the
+            # physical GATT link is wedged. Accept notifications only after a
+            # successful ReadValue in this connection.
+            if self.ble_battery_valid and value and value[0] <= 100:
                 self.ble_battery = value[0]
             return
         if path == self.ble_characteristics.get(SPEN_BUTTON_UUID):
@@ -1173,6 +1227,7 @@ class HardwareService:
                 self.settings.get_boolean("spen-remote-enabled")
                 and
                 self.ble_connected
+                and self.ble_gatt_ready
                 and self.ble_characteristics.get(SPEN_BUTTON_UUID) in self.ble_subscribed
             ),
             HapticsAvailable=self.haptics.available,
