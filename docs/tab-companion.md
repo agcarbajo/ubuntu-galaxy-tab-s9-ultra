@@ -82,7 +82,9 @@ vertical. Esto compensa cualquier giro axial del lápiz; una zona muerta elimina
 el sesgo en reposo. El resultado se convierte en un
 ratón relativo nativo mediante `uinput`, sin overlay ni servicio de
 accesibilidad. El botón es el clic principal y permite arrastrar. La app expone
-sensibilidad, suavizado y aceleración; al volver a gestos detiene el canal raw
+sensibilidad, suavizado y aceleración. La dirección de ambos ejes se calibra
+físicamente y el horizontal recibe una ganancia adicional de 1,6× para cubrir
+la relación de aspecto de la pantalla; al volver a gestos detiene el canal raw
 y restaura `0x10` para no mantener el sensor de alto consumo encendido. Aunque
 el modo puntero siga seleccionado, al insertar el lápiz también detiene el
 canal raw y usa `0x10`; así la conexión breve de carga puede completar el
@@ -99,7 +101,7 @@ método D-Bus `Vibrate`.
 GNOME Shell 46 no ofrece una preferencia genérica de hápticos para su teclado en
 pantalla. La extensión incluida observa únicamente pulsaciones táctiles sobre
 actores `keyboard-key` y solicita un pulso al backend. Como el GPIO sólo permite
-encendido/apagado, Suave/Media/Fuerte ajustan la duración (12/22/34 ms), no la
+encendido/apagado, Suave/Media/Fuerte ajustan la duración (24/42/66 ms), no la
 amplitud eléctrica. La página Vibración permite apagarlo y contiene un botón
 temporal de prueba.
 
@@ -108,6 +110,15 @@ servicio de sesión observa las llamadas estándar `Notify`, agrupa duplicados o
 ráfagas de menos de 300 ms y solicita un pulso de 60 ms. Su interruptor está
 activado de fábrica. Esta ruta funciona en la sesión actual aunque GNOME Shell
 mantenga JavaScript antiguo en memoria hasta el siguiente inicio de sesión.
+
+## Créditos del modo puntero
+
+El concepto del puntero aéreo está inspirado por
+[PenMouse S](https://github.com/jojczak/PenMouseS), creado por Jakub J
+(`@jojczak`) y publicado bajo GPL-3.0. Tab Companion no incorpora código de la
+aplicación Android: implementa de forma independiente la lectura del protocolo
+BLE Samsung, la compensación de orientación y el ratón nativo Linux con
+`uinput`. El crédito y el enlace también aparecen en «Acerca de».
 
 ## Fundas con teclado
 

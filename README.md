@@ -46,7 +46,7 @@ The evidence and technical limitations for every component are documented in
 
 ## Tab Companion
 
-Tab Companion 0.10.1 is preinstalled and provides:
+Tab Companion 0.10.2 is preinstalled and provides:
 
 - S Pen battery, charging and dock status;
 - automatic dock-initiated BLE pairing, air gestures and an air-pointer mode;
@@ -61,6 +61,10 @@ Tab Companion 0.10.1 is preinstalled and provides:
 The EF-DX920 is physically validated. EF-DX900, EF-DX910, EF-DX915 and
 EF-DX925 are recognised but still need tests with the real accessories. See
 [tab-companion.md](docs/tab-companion.md) for implementation and diagnostics.
+
+The air-pointer concept is inspired by
+[PenMouse S](https://github.com/jojczak/PenMouseS) by Jakub J (`@jojczak`).
+Tab Companion uses an independent native Linux implementation.
 
 ## Installation
 

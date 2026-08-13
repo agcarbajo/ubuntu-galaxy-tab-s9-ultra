@@ -879,8 +879,11 @@ class HardwareService:
             scale *= 1.0 + min(
                 1.5, (abs(raw_x) + abs(raw_y)) / 6000.0
             )
-        target_x = raw_x * scale
-        target_y = -raw_y * scale
+        # The panel is roughly 1.6 times wider than it is tall. Give yaw the
+        # corresponding extra travel, and match both signs to the physical
+        # direction confirmed on the tablet.
+        target_x = -raw_x * scale * 1.6
+        target_y = raw_y * scale
         alpha = 1.0 - smoothing / 110.0
         self.pointer_filtered_x += alpha * (target_x - self.pointer_filtered_x)
         self.pointer_filtered_y += alpha * (target_y - self.pointer_filtered_y)
@@ -1260,7 +1263,7 @@ class HardwareService:
             # logout. Translate its three keyboard pulse tokens in the
             # service so stronger feedback applies immediately as well as on
             # the next graphical session.
-            duration_ms = {8: 12, 14: 22, 22: 34}.get(
+            duration_ms = {8: 24, 14: 42, 22: 66}.get(
                 duration_ms, duration_ms
             )
             invocation.return_value(GLib.Variant(

@@ -713,4 +713,12 @@ class CompanionWindow(Adw.ApplicationWindow):
             debug_info_filename="tab-companion-hardware.txt",
         )
         about.add_credit_section(_("Hardware enablement"), [_("Ubuntu gts9uwifi port contributors")])
+        about.add_credit_section(
+            _("Air pointer inspiration"),
+            ["PenMouse S — Jakub J (@jojczak)"],
+        )
+        about.add_link(
+            _("PenMouse S on GitHub"),
+            "https://github.com/jojczak/PenMouseS",
+        )
         about.present()

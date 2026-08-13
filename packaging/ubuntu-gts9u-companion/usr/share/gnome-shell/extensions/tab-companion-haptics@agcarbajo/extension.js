@@ -54,7 +54,7 @@ export default class TabCompanionHaptics extends Extension {
 
         const strength = Math.max(1, Math.min(3,
             this._settings.get_int('keyboard-haptics-strength')));
-        const durations = [8, 14, 22];
+        const durations = [24, 42, 66];
         this._proxy.call(
             'Vibrate',
             new GLib.Variant('(uu)', [durations[strength - 1], 65535]),

@@ -18,6 +18,9 @@
   <launchable type="desktop-id">io.github.agcarbajo.TabCompanion.desktop</launchable>
   <url type="homepage">https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra</url>
   <releases>
+    <release version="0.10.2" date="2026-08-13">
+      <description><p>Corrects both pointer axes, balances horizontal travel, strengthens keyboard haptics and credits PenMouse S.</p></description>
+    </release>
     <release version="0.10.1" date="2026-08-13">
       <description><p>Detects and automatically repairs unresponsive S Pen GATT links without showing cached battery values.</p></description>
     </release>

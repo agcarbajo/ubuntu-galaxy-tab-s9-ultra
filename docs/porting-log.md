@@ -4951,3 +4951,34 @@ mantuvo Button State suscrito y las lecturas directas devolvieron Mode `[16]`
 ubuntu-gts9u-companion_0.10.1_all.deb
 a3aeabd722727df80c2d8ad2370d95643b46729fafbe10ec75c6400a7f8c0c75
 ```
+
+## Sesión 72 — dirección, recorrido horizontal, hápticos y créditos
+
+Fecha: 2026-08-13. La prueba visual de 0.10.1 confirmó que la compensación de
+giro axial ya era estable, pero ambos ejes se percibían con el signo contrario
+y el recorrido horizontal quedaba corto frente al ancho del panel. La salida
+final invierte X e Y y aplica a X una ganancia adicional de 1,6×, próxima a la
+relación 2960:1848 de la pantalla. Sensibilidad, aceleración y suavizado siguen
+actuando antes de esa corrección geométrica.
+
+Los niveles hápticos del teclado aumentan de 12/22/34 a 24/42/66 ms. La
+extensión nueva solicita directamente esos valores; el backend sigue traduciendo
+8/14/22, los tokens de la copia que GNOME Shell puede mantener cargada, para que
+la mejora sea inmediata sin cerrar sesión. Las tres llamadas físicas devolvieron
+éxito con el motor disponible.
+
+«Acerca de», el README y la documentación acreditan ahora a
+[PenMouse S](https://github.com/jojczak/PenMouseS), de Jakub J (`@jojczak`),
+como inspiración conceptual del puntero aéreo y enlazan su repositorio
+GPL-3.0. Se aclara que Tab Companion no reutiliza su código Android: la ruta
+BLE + `uinput` es una implementación nativa Linux independiente. La API
+libadwaita instalada confirmó soporte para el enlace adicional.
+
+Tras instalar 0.10.2, el S Pen continuó conectado, publicó una nueva medición
+real de batería del 70 % y conservó los gestos disponibles. Al dejar seleccionado
+Puntero, Raw Sensor Data quedó suscrito y entregó una muestra nueva.
+
+```text
+ubuntu-gts9u-companion_0.10.2_all.deb
+215450fcdff6a6ccf0f90da6dee95ac07064e5e62545122a09923dcf9ead7c7b
+```
