@@ -5687,3 +5687,31 @@ falta de intentos, y no justifica formatear para tener dualboot.
 Queda anotado como dato útil que la propietaria confirmó que **el lector
 funciona sin problemas bajo One UI en este mismo aparato**: el sensor, su
 cableado y la capacidad de TrustZone para manejar su SPI están fuera de duda.
+
+## Sesión 91 — cierre del frente de huella
+
+Fecha: 2026-08-14. Última comprobación antes de aparcar el asunto: si la HAL
+stock envía a la TA algún comando previo al `TypeCheck` que no estuviéramos
+reproduciendo. El candidato era
+`FPBAuthService::turnOnSensorPowerAndOpenSession(int, bool)`, que por nombre es
+exactamente el paso de inicio. Desensamblado, resulta que llama al **mismo
+método virtual** (ranura 3 del objeto en `this+80`) que `readSensorType`, y que
+el «abrir sesión» es el `BAuth_SessionOpen` del host, del cual ya se demostró
+que no envía ningún comando a la TA: sólo reserva los búferes y arranca la app.
+
+**No hay ningún comando previo que falte.** Con esto se agotan las vías
+comprobables desde el port:
+
+- transporte: resuelto, la TA ejecuta el comando y escribe su resultado;
+- parámetros: enum, nombre de carga, tamaños y sobre, todos verificados;
+- capa Linux: idéntica a stock en nodo SPI, tipo de driver, pines reservados,
+  relojes y línea de comandos;
+- estímulos físicos: alimentación, reset y tiempos, sin efecto;
+- relojes e interconnect del QUP forzados, sin efecto;
+- log de TrustZone: existe, se localizó, y está cifrado con clave envuelta.
+
+Lo único que queda es información que sólo se puede obtener con el aparato
+funcionando: capturar bajo One UI el estado del hardware mientras el lector
+opera —relojes, votos de interconnect, configuración de los pads `gpio36`–`39`
+y estado de los raíles del PMIC— y compararlo con el nuestro. Eso exige poder
+arrancar Android, que pasa a ser el siguiente objetivo por sí mismo.
