@@ -78,10 +78,12 @@ La implementación separa cuatro responsabilidades:
    un lector óptico. Conserva el brillo solicitado por GNOME, lo restaura al
    terminar y fuerza la limpieza después de 15 segundos. Una extensión de
    GNOME dibuja el objetivo y compensa el HBM global fuera de esa región.
-4. El controlador Goodix puede suprimir dedos sólo dentro del rectángulo del
-   sensor durante una operación biométrica. El resto de la pantalla permanece
-   utilizable y al desactivar la sesión se liberan los contactos retenidos. La
-   sesión también se cancela, en vez de restaurarse, al suspender el sistema.
+4. El controlador Goodix suprime dedos sólo dentro del rectángulo del sensor
+   durante una operación biométrica. El firmware ya entrega `press/release`
+   FOD reales y no reenvía ese contacto como toque normal. El resto de la
+   pantalla permanece utilizable y al desactivar la sesión se liberan los
+   contactos retenidos. La sesión también se cancela, en vez de restaurarse,
+   al suspender el sistema.
 
 GNOME 46 y `fprintd` no conocen por sí mismos la geometría de un UDFPS ni
 controlan el HBM del panel. La extensión de sistema
@@ -173,21 +175,29 @@ conserva aproximadamente la luminancia anterior. La extensión recalcula cada
 
 ### Táctil Goodix
 
-El bloqueo UDFPS se configura en el dispositivo I²C Goodix mediante tres
+El bloqueo UDFPS se configura en el dispositivo I²C Goodix mediante cuatro
 atributos sysfs:
 
 | Atributo | Acceso | Contenido |
 |---|---|---|
 | `fod_rect` | root lectura/escritura | `left top right bottom` en coordenadas crudas Goodix |
 | `fod_enable` | root lectura/escritura | activa el sponge FOD y la supresión regional |
+| `fod_property` | root lectura/escritura | política Samsung `fast/strict`, valores `0`–`3`; por defecto `3` |
 | `fod_state` | lectura, pollable | `idle|pressed|released|out|vi x y secuencia` |
 
 El driver obtiene la dirección del sponge de la extensión SEC que publica el
-firmware GT6936; no fija registros del controlador en el código. La estimación
-inicial del rectángulo en coordenadas crudas verticales es
-`[854,2732]–[994,2872]`; **no es aún una calibración física**. Cada slot se
-clasifica al comenzar: un dedo iniciado dentro se consume hasta `UP`, mientras
-uno iniciado fuera sigue funcionando aunque cruce el rectángulo.
+firmware GT6936; no fija registros del controlador en el código. En la unidad
+física anuncia `0x29800`, longitud 1024. La estructura SEC empieza después de
+los 10 bytes reservados finales de `IC_INFO`; omitirlos produce una dirección
+falsa. Igual que el driver Samsung, cada acceso despierta primero el firmware
+al modo normal con el comando `0x9f` y después confirma el sponge con `0xf2`.
+
+El rectángulo crudo `[854,2732]–[994,2872]` quedó validado físicamente: un dedo
+en el centro visual produjo `released 911 2808` y `released 945 2809`. Durante
+la misma prueba no apareció ningún `BTN_TOUCH`, tracking ID ni coordenada
+normal. Cada slot se clasifica al comenzar: un dedo iniciado dentro se consume
+hasta `UP`, mientras uno iniciado fuera sigue funcionando aunque cruce el
+rectángulo.
 
 ## Secuencia prevista para una lectura
 
@@ -278,11 +288,11 @@ apagar limpia el estado y que el watchdog actúa si el cliente muere.
 
 ### 4. Exclusión táctil
 
-Con una herramienta de eventos se comprobará que, al activar una sesión FOD,
-un dedo iniciado dentro del rectángulo no genera contactos, un dedo fuera sí
-funciona y un contacto existente se libera correctamente. Al desactivar la
-sesión toda la pantalla debe responder de inmediato. La prueba se repetirá en
-las cuatro orientaciones.
+Validado el 14 de agosto de 2026 en la tablet física. Con `fod_property=3`, el
+GT6936 entregó `released` dentro del rectángulo y la escucha simultánea de
+`/dev/input/event5` no recibió ningún contacto normal. Al desactivar la sesión,
+la pantalla respondió de inmediato. Queda repetir la experiencia completa de
+autenticación en GDM y en las cuatro orientaciones cuando exista el backend.
 
 ### 5. QTEE y autenticación completa
 
@@ -322,8 +332,9 @@ autenticación por huella se considera no disponible.
 ## Bloqueo actual y siguiente paso
 
 `libfprint` no incluye soporte para el EL721 y el sensor no entrega imágenes a
-Linux. El transporte QTEE, el AppLoader, los búferes grandes y la iluminación
-óptica ya están comprobados; el bloqueo actual es reproducir la fase del
+Linux. El transporte QTEE, el AppLoader, los búferes grandes, la iluminación
+óptica y la señal/supresión FOD de Goodix ya están comprobados; el bloqueo
+actual es reproducir la fase del
 arranque Android que hace visible el objeto lógico `securefp`. Hay que aislar
 esa dependencia —probablemente dentro de la cadena AuthFW/TrustZone— antes de
 crear el puente mínimo hacia `fprintd`. Las plantillas y la comparación deben

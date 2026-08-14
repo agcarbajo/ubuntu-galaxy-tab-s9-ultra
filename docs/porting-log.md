@@ -5275,3 +5275,33 @@ DTB       613b3bb7729d55d1c60aaeda348a098163b79aed1efbf24cdcc582ff0d58ccc4
 boot.img  f08073bb6c1295775d3043c2ceb6ad0e72fa4c761fc96547240cc50e5a71bc2e
 modules   b7976a8cd4eb4a2e4af01a4f63bce4c69298dc830401ae375cf65374664e6768
 ```
+
+## Sesión 82 — eventos FOD reales y aislamiento regional
+
+Fecha: 2026-08-14. La capa Goodix-FOD arrancó de forma independiente junto al
+panel. La primera versión encontraba una dirección falsa (`0x06015447`) porque
+la estructura mainline omitía los 10 bytes reservados que Samsung coloca al
+final de `IC_INFO.misc`. La lectura cruda de los 181 bytes publicados por el
+GT6936 confirmó la extensión SEC real: sponge `0x00029800`, longitud 1024.
+
+Se restauró el campo reservado y la secuencia stock completa: antes de cada
+acceso al sponge se envía `0x9f` con modo normal, y después de escribir se
+confirma con `0xf2`. También se respeta el orden rectángulo → bit FOD → política
+`fast/strict`, con `fod_property=3` por defecto y ajustable en vivo.
+
+En la tablet física el toque central produjo primero
+`released 911 2808` y después `released 945 2809`. Una escucha simultánea del
+dispositivo Goodix no recibió tracking ID, `BTN_TOUCH` ni coordenadas normales,
+por lo que el contacto dentro del sensor queda aislado de GNOME. La imagen
+arrancada fue verificada antes y después de escribir:
+
+```text
+Image.gz  861624962e12df39de7945430b83468736bf72286feedbbd46a159e5a9415e22
+DTB       613b3bb7729d55d1c60aaeda348a098163b79aed1efbf24cdcc582ff0d58ccc4
+boot.img  8f260c5c74606886fd961cfdabfee7400c3430ec30210256ab1a560f77ebe0f3
+modules   7528c67b18c6a0a842f069bc8aa54203f7adfd1f40a7980d8d909d2fa502521a
+```
+
+El siguiente bloqueo ya no está en panel ni táctil: TrustZone sigue sin
+publicar el objeto lógico `securefp`, así que todavía no se instala ni anuncia
+un dispositivo funcional en `fprintd`.

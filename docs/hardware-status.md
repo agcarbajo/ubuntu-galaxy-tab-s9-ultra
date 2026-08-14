@@ -1,7 +1,7 @@
 # Estado de hardware del SM-X910 bajo Ubuntu 24.04
 
-Última actualización: 2026-08-13, tras preparar la infraestructura experimental
-del lector de huellas EL721/UDFPS.
+Última actualización: 2026-08-14, tras validar la iluminación óptica y los
+eventos/supresión táctil FOD en hardware.
 
 Ubuntu **ya arranca** en la tablet. Esta matriz distingue explícitamente lo
 heredado de lo comprobado, y ningún componente pasa a ✅ sin observación real.
@@ -78,7 +78,7 @@ sondea» como prueba de funcionamiento.
 | Táctil: zona que sólo responde al lápiz | — | ❌ | **abierto** | Intermitente. Una región deja de aceptar toques nuevos con el dedo; un arrastre iniciado fuera sí la atraviesa. La marca de proximidad pegada del S Pen se descartó como explicación suficiente: con el flag clavado y verificado, no había zona muerta. Sin diagnosticar; `work/catch-dead-zone.sh` decide si los toques llegan al kernel |
 | Teclado pogo EF-DX920 (STM32 I²C 0x2a) | ❌ | ✅ | confirmado | Requiere V37 en el MCU. Se midieron Galaxy AI 760, DeX 701, Finder 710, Ajustes 709 y Fn+F1–F11: 757, 758, 759, 705, 254, 172, 224, 225, 113, 114 y 115. Fn+F12 no genera evento bruto. Tab Companion 0.7.0 conserva por defecto Inicio/brillo/volumen de Fn+F6–F11 y permite restaurar todos los valores |
 | Otras fundas EF-DX900/910/915/925 | ❌ | 🟡 | medido | El DTS oficial del X910 declara los cinco modelos. El driver ya distingue los identificadores y VERSION, la app publica nombre/modelo y adapta la fila AI. Sólo el DX920 está disponible: enumeración, teclas especiales y touchpads de los otros cuatro siguen pendientes de hardware real |
-| Huella: infraestructura EL721/UDFPS | ❌ | 🟡 | parcial | QTEE 5.2.0, UID 122, HBM FlatZ, watchdog, restauración de brillo y el indicador GNOME orientable están validados. El círculo interno del DDIC no dibuja sin la imagen Self Display de Samsung y no se usa. EL721 y Goodix-FOD siguen aislados, y TrustZone aún no publica `securefp`; detalles en [fingerprint-reader.md](fingerprint-reader.md) |
+| Huella: infraestructura EL721/UDFPS | ❌ | 🟡 | parcial | QTEE 5.2.0, UID 122, HBM FlatZ, watchdog, indicador GNOME y eventos/supresión Goodix-FOD están validados físicamente. El círculo interno del DDIC no dibuja sin Self Display y no se usa. EL721 sigue aislado y TrustZone aún no publica `securefp`; detalles en [fingerprint-reader.md](fingerprint-reader.md) |
 | Huella: registro, verificación y GDM | ❌ | ❌ | supuesto | No existe todavía un backend seguro para `libfprint`/`fprintd`. No se ofrece autenticación biométrica hasta validar registro, verificación, cancelación, bloqueo y GDM de extremo a extremo |
 | Vibración / hápticos | ❌ | ✅ | confirmado | El DTS stock identifica `dc_vibrator` COINDC en TLMM GPIO18 y mainline lo publica como `gpio-vibrator`/`FF_RUMBLE`. La usuaria confirmó motor y teclado en pantalla; Tab Companion ofrece pulsos de 24/42/66 ms. Las notificaciones vibran de forma opcional y una prueba real midió GPIO554 activo durante 64,5 ms |
 | Flash / linterna | ❌ | ✅ | observado | PM8550 SID 1, canales 0+1 agrupados por `leds-qcom-flash`; iluminación real observada en modo estrobo y linterna. El mosaico **Linterna** de ajustes rápidos está instalado, activo y probado físicamente |
