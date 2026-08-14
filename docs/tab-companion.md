@@ -231,3 +231,57 @@ gdbus introspect --session \
 
 Los estados principales son `PenState`, `PenBattery`, `KeyboardPresent`,
 `KeyboardModel`, `RemappingAvailable`, `GestureAvailable` y `HapticsAvailable`.
+
+## Rotación automática y dispositivos virtuales
+
+El companion publica dispositivos `uinput` y eso interactúa con el criterio que
+usa GNOME para decidir si el aparato es una tablet. La condición real, leída del
+propio código de la shell, es `MetaMonitorManager.get_panel_orientation_managed()`:
+si es falsa desaparece el botón de giro automático **y** la pantalla deja de
+seguir al acelerómetro.
+
+Tres cosas del companion la afectaban, y las tres están corregidas:
+
+1. **`SW_LID` en el teclado virtual.** Se declaraba pero no se emitía nunca.
+   Bastaba con declararlo para que UPower publicara `LidIsPresent=true` en un
+   aparato sin tapa. La tapa real de la Book Cover la reporta el controlador
+   pogo, que sólo existe con la funda puesta.
+2. **El rango `BTN_MOUSE` en el teclado virtual.** El teclado declaraba todos
+   los códigos de `1` a `KEY_MAX`, y ahí dentro está el rango que udev recorre
+   —de `0x110` a `0x11F`— para decidir si algo tiene botones de ratón. Lo
+   etiquetaba `ID_INPUT_MOUSE` y la orientación dejaba de gestionarse. Ahora se
+   omite sólo ese rango: el resto de códigos `BTN_*` siguen disponibles para los
+   mapeos del usuario, que sí los usan.
+3. **El puntero del S Pen se creaba al arrancar.** Existía siempre, aunque el
+   modo puntero no estuviera activo, así que la tablet tenía un ratón fantasma
+   permanente y nunca rotaba. Ahora se crea al entrar en modo puntero y se
+   destruye al salir, sincronizado con `_sync_remote_control`, con los cambios
+   de `spen-remote-mode` y con la conexión del lápiz. Si estaba pulsado al
+   destruirlo, suelta el botón antes para no dejar un clic colgado.
+
+Queda un límite que **no es un fallo del port**: mientras el modo puntero está
+activo existe un puntero de verdad, y GNOME no gestiona la orientación con un
+ratón presente. Se comprobó que no basta con enmascarar la clasificación: una
+regla de udev que borra `ID_INPUT_MOUSE` deja de etiquetarlo, pero
+`PanelOrientationManaged` sigue en `false` porque mutter atiende a la capacidad
+real del dispositivo. Tenerlas a la vez exigiría inyectar el movimiento por la
+interfaz de escritorio remoto de mutter en vez de publicar un `uinput`.
+
+## Sincronización del estado remoto
+
+El servicio de emparejamiento guarda su propia copia de la bandera de funciones
+remotas en `/var/lib/tab-companion/spen-remote-enabled`, y **todo** lo que hace
+está condicionado a ella. El servicio de hardware sólo se la enviaba cuando
+cambiaba, de modo que si el de emparejamiento se reiniciaba —o arrancaba en
+distinto orden, o se le enviaba un `false` mientras el Bluetooth estaba caído—
+su copia quedaba obsoleta y nadie la corregía. Con la bandera en `0` no
+empareja, no conecta y no reacciona al hueco: el S Pen queda completamente
+muerto sin que ningún registro lo explique.
+
+Ahora el servicio de hardware observa `NameOwnerChanged` del bus del
+emparejamiento y reenvía el estado cada vez que ese servicio aparece.
+
+Queda anotado un fallo aparte, todavía sin corregir: el servicio de
+emparejamiento **no sobrevive a un reinicio de `bluetoothd`**. Su referencia al
+bus queda inválida, lanza `ServiceUnknown` y sigue vivo sin hacer nada, gastando
+CPU.

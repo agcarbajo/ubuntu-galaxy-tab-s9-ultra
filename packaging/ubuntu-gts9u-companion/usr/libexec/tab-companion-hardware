@@ -97,16 +97,22 @@ DEFAULT_KEY_ACTIONS = {
 EV_SYN = 0
 EV_KEY = 1
 EV_REL = 2
-EV_SW = 5
 EV_LED = 17
 EV_FF = 21
 SYN_REPORT = 0
 REL_X = 0
 REL_Y = 1
-SW_LID = 0
 LED_CAPSL = 1
 BTN_LEFT = 272
 BTN_STYLUS = 331
+BUS_VIRTUAL = 0x06
+# BTN_MOUSE up to just below BTN_JOYSTICK: the exact range udev scans to decide
+# whether a device has mouse buttons.  Declaring it made udev tag the virtual
+# keyboard ID_INPUT_MOUSE, and GNOME stops managing the panel orientation as
+# soon as it believes a mouse is attached: no rotation control and no
+# auto-rotation.  Only this range is withheld, because the rest of the BTN_*
+# codes are legitimate targets for user key mappings.
+BTN_MOUSE_RANGE = (0x110, 0x11F)
 KEY_F24 = 194
 KEY_MAX = 767
 INPUT_EVENT = struct.Struct("llHHi")
@@ -234,11 +240,17 @@ class VirtualKeyboard:
     def __init__(self):
         self.fd = os.open("/dev/uinput", os.O_RDWR | os.O_NONBLOCK)
         fcntl.ioctl(self.fd, UI_SET_EVBIT, EV_KEY)
-        fcntl.ioctl(self.fd, UI_SET_EVBIT, EV_SW)
         fcntl.ioctl(self.fd, UI_SET_EVBIT, EV_LED)
         for code in range(1, KEY_MAX + 1):
+            if BTN_MOUSE_RANGE[0] <= code <= BTN_MOUSE_RANGE[1]:
+                continue
             fcntl.ioctl(self.fd, UI_SET_KEYBIT, code)
-        fcntl.ioctl(self.fd, UI_SET_SWBIT, SW_LID)
+        # No switch capability here.  Declaring SW_LID made UPower report
+        # LidIsPresent on a device that has no lid, and since this keyboard
+        # exists whether or not the cover is attached, the desktop treated the
+        # tablet as a permanently docked laptop: no auto-rotation and no
+        # rotation-lock control.  The cover's own lid is reported by the pogo
+        # driver, which only exists while the cover is attached.
         fcntl.ioctl(self.fd, UI_SET_LEDBIT, LED_CAPSL)
         name = b"Tab Companion virtual keyboard".ljust(80, b"\0")
         setup = struct.pack("HHHH80sI", 0x03, 0x04E8, 0xA036, 1, name, 0)
@@ -283,7 +295,11 @@ class VirtualPointer:
         fcntl.ioctl(self.fd, UI_SET_RELBIT, REL_X)
         fcntl.ioctl(self.fd, UI_SET_RELBIT, REL_Y)
         name = b"Tab Companion S Pen pointer".ljust(80, b"\0")
-        setup = struct.pack("HHHH80sI", 0x03, 0x04E8, 0xA037, 1, name, 0)
+        # BUS_VIRTUAL rather than BUS_USB: this pointer is synthesised from the
+        # S Pen's gyroscope, not a peripheral anyone plugged in, and announcing
+        # it as USB made the desktop treat the tablet as having an external
+        # mouse attached, which costs auto-rotation while pointer mode is on.
+        setup = struct.pack("HHHH80sI", BUS_VIRTUAL, 0x04E8, 0xA037, 1, name, 0)
         fcntl.ioctl(self.fd, UI_DEV_SETUP, setup)
         fcntl.ioctl(self.fd, UI_DEV_CREATE)
 
@@ -417,10 +433,8 @@ class HardwareService:
             )
         except OSError:
             self.virtual_keyboard = None
-        try:
-            self.virtual_pointer = VirtualPointer()
-        except OSError:
-            self.virtual_pointer = None
+        # Created on demand; see _sync_pointer().
+        self.virtual_pointer = None
         self.haptics = ForceFeedback()
         self.notification_bus = None
         self.notification_match = (
@@ -519,6 +533,18 @@ class HardwareService:
                 signal_name="PropertiesChanged",
                 path_keyword="path",
             )
+            # The pairing service keeps its own copy of the enabled flag, saved
+            # across restarts.  If it restarts, or starts after this service,
+            # its copy can disagree with the setting and nothing would correct
+            # it: this service only pushes the flag when it changes, so a stale
+            # "disabled" there silently kills docking, pairing and every remote
+            # S Pen feature.  Re-send it whenever the pairing service appears.
+            self.system_bus.add_signal_receiver(
+                self._pairing_owner_changed,
+                dbus_interface="org.freedesktop.DBus",
+                signal_name="NameOwnerChanged",
+                arg0=PAIRING_BUS_NAME,
+            )
             self._refresh_bluetooth_powered()
         except dbus.DBusException:
             self.system_bus = None
@@ -585,7 +611,49 @@ class HardwareService:
         self.ble_mode_value = None
         self._refresh_spen_ble()
 
+    def _pairing_owner_changed(self, _name, _old_owner, new_owner):
+        if not new_owner:
+            return
+        self.remote_synced = None
+        self._sync_remote_control()
+
+    def _pointer_wanted(self):
+        return (
+            self._remote_effective()
+            and self.settings.get_string("spen-remote-mode") == "pointer"
+        )
+
+    def _sync_pointer(self):
+        """Keep the virtual pointer alive only while the S Pen is driving it.
+
+        A relative pointer that exists from start-up looks to the desktop like a
+        permanently attached mouse, and that alone is enough for GNOME to stop
+        offering auto-rotation: the rotation control disappears and the screen
+        no longer follows the accelerometer, cover or no cover.  Creating the
+        device only for as long as pointer mode is actually in use keeps both
+        features working.
+        """
+        if not hasattr(self, "virtual_pointer"):
+            # The Bluetooth probe in the constructor reaches this before the
+            # attribute exists; there is nothing to sync that early.
+            return
+        if self._pointer_wanted():
+            if self.virtual_pointer is None:
+                try:
+                    self.virtual_pointer = VirtualPointer()
+                except OSError:
+                    self.virtual_pointer = None
+            return
+        if self.virtual_pointer is None:
+            return
+        if self.pen_pressed:
+            self.virtual_pointer.button(False)
+            self.pen_pressed = False
+        self.virtual_pointer.close()
+        self.virtual_pointer = None
+
     def _sync_remote_control(self):
+        self._sync_pointer()
         enabled = self._remote_effective()
         if self.remote_synced == enabled or self.system_bus is None:
             return
@@ -857,8 +925,11 @@ class HardwareService:
 
     def _spen_ble_button_data(self, value):
         if not self._remote_effective():
+            self._sync_pointer()
             return
         pointer_mode = self.settings.get_string("spen-remote-mode") == "pointer"
+        if pointer_mode and self.virtual_pointer is None:
+            self._sync_pointer()
         offset = 0
         count = 1
         if len(value) >= 2 and value[0] == 0xF0:
