@@ -5648,3 +5648,42 @@ stock sí incluye `tzdbg`. Ejecutar la consulta fallida bajo Ubuntu y leer
 después `/sys/kernel/debug/tzdbg/log` desde el arranque stock daría el motivo
 exacto que la TA registra, siempre que el anillo sobreviva al reinicio en
 caliente.
+
+## Sesión 90 — el log de TrustZone existe, pero está cifrado
+
+Fecha: 2026-08-14. Se localizó por fin dónde vive el diagnóstico de TrustZone
+en este aparato, y resultó accesible sin arrancar Android: Samsung no lo lee de
+memoria viva sino de una **partición de depuración**. El módulo
+`sec_qc_hw_param.ko`, presente en TWRP, usa
+`sec_qc_dbg_part_read(debug_index_reset_tzlog, …)`, y el overlay del X910 da la
+ubicación: `sec,bdev_path = "PARTUUID=a17d0ddb-cec4-4a80-9e22-7d43fec26358"`,
+que en la tablet es `/dev/sda8`, etiqueta `debug`, 10 MB.
+
+Barriendo la partición aparece el magic `tzda` (`0x747a6461`, el mismo que ya
+usaba nuestro lector) en el offset **`0x90000`**. La tabla es legible:
+
+```text
+version    = 0x00090004
+cpu_count  = 8
+ring_off   = 0x11c0
+ring_len   = 0x1e40   (7744 bytes)
+ring_wrap  = 1
+```
+
+El anillo, en cambio, **está cifrado**: sólo 2996 de sus 7744 bytes son
+imprimibles y el resto es ruido de alta entropía. La explicación está en la
+propia cabecera de Samsung: a partir de `TZBSP_DIAG_VERSION_V9_2` el log usa
+`tzbsp_encr_info_t`, con AES-GCM, `nonce[12]`, `tag[16]` y una clave de **256
+bytes que va a su vez envuelta** (`TZBSP_AES_256_ENCRYPTED_KEY_SIZE`). Su
+código no lo descifra: lo vuelca en hexadecimal bajo la clave `"TZDA"` para
+analizarlo fuera del dispositivo. Nuestra versión es la 9.4, por encima del
+umbral.
+
+Conclusión firme: **no hay forma de leer el log de TrustZone en este firmware**,
+ni desde Ubuntu ni arrancando One UI, porque el contenido sale cifrado en ambos
+casos. La instrumentación por esa vía queda descartada con evidencia, no por
+falta de intentos, y no justifica formatear para tener dualboot.
+
+Queda anotado como dato útil que la propietaria confirmó que **el lector
+funciona sin problemas bajo One UI en este mismo aparato**: el sensor, su
+cableado y la capacidad de TrustZone para manejar su SPI están fuera de duda.
