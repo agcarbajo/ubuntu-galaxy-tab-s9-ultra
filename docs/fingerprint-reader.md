@@ -350,21 +350,35 @@ transferencias SPI y exige leer `rx[42]==0x07` y `rx[46]==21` para declarar
 demostrado: envenenando el búfer de salida antes de la llamada, vuelve con sus
 ocho primeros bytes escritos y el resto intacto.
 
-El bus es **QUP1_SE2**. La propia TA nombra sus pads —`qup1_se2_l0` MISO,
-`l1` MOSI, `l2` CLK, `l3` CS—, que en SM8550 son `gpio64`–`gpio67`. Ese bus no
-es de Linux: en el árbol stock `etspi,el7xx` cuelga de `soc` y no de un
-controlador SPI, en la build segura el driver de Samsung es un `platform_driver`
-que sólo maneja LDO y reset, y este port no habilita ningún nodo SPI ni reclama
-esos pines.
+El bus es **QUP1_SE2**, y conviene fijar bien sus pines porque una medición
+anterior se hizo sobre los equivocados. La TA nombra sus pads `qup1_se2_l0..l3`,
+y `qup1_se2` es **gpio36–gpio39**, no gpio64–67 —esos son `qup2_se2`—. La
+numeración coincide entre el árbol stock y mainline: gpio26 es `qup1_se7` en
+ambos.
 
-`scripts/probe-fp-spi-pins.c` mide qué ocurre realmente en esas cuatro líneas
-mientras corre la TA. Con 13,4 millones de muestras a lo largo de una
-transacción completa, **ninguna se mueve**: TrustZone no llega a agitar el bus.
-El fallo está antes de la primera transferencia, en su propia capa de pads
-(`qsee_tlmm_get_gpio_id`, `sec_tzspi_open`), y no cambia al alimentar el sensor
-ni al desenganchar el controlador Linux. El port ya no tiene ninguna palanca
-ahí: para avanzar hace falta leer el log de TrustZone, donde la TA sí registra
-el motivo exacto.
+Esos pines están **fuera del alcance de Linux por diseño**, aquí y en stock:
+este port declara `gpio-reserved-ranges = <36 4>` y el árbol stock
+`qcom,gpios-reserved = <0x20 … 0x27>`, precisamente porque los gobierna
+TrustZone. El kernel no los expone, así que ningún muestreo desde el espacio de
+usuario puede observarlos, y **no hay medición válida de si TrustZone agita o no
+ese bus**. La que se publicó antes miraba gpio64–67 y no prueba nada.
+
+El resto de la capa Linux ya replica exactamente a stock, lo que se comprobó una
+a una: el nodo `spi@a88000` (`qupv3_se2_spi`) está deshabilitado también en el
+árbol stock y el overlay del X910 no lo referencia nunca; el controlador de
+Samsung en build segura es un `platform_driver` colgado de `soc`; y los relojes
+del SE vienen apagados del bootloader, no los apaga Linux —la línea de comandos
+ya lleva `clk_ignore_unused`, `pd_ignore_unused` y `regulator_ignore_unused`—.
+Sujetar `gcc_qupv3_wrap1_s2_clk` encendido desde un módulo no cambia el
+resultado.
+
+Tampoco se ha conseguido leer el log de TrustZone, que es donde la TA registra
+el motivo. El árbol stock describe `tz-log@146AA720`, pero esa ventana es un
+área de punteros en IMEM: su primer cuadword vale `0x14696000` y mapear esa
+dirección reinicia la tablet, porque es memoria segura. La llamada SIP clásica
+(servicio 6, comando 2) responde «no soportada» en este firmware, y el servicio
+Diagnostics de QTEE (UID 143) sólo devuelve la lista de TAs cargadas
+(`keymaster64`, `featenabler`, `tz_hdm`, `tz_iccc`).
 
 Se verificó que las particiones activas de la tablet coinciden byte a byte con
 el firmware analizado: `apnhlos` coincide con `NON-HLOS.bin` (SHA-256

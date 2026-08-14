@@ -5519,3 +5519,61 @@ adivinar.
 
 La tablet queda con `sensor_power=0`, QCOMTEE descargado, GPIO91/155 a cero y el
 sistema en `running`.
+
+## Sesión 87 — corrección del bus, y TrustZone sigue sin log
+
+Fecha: 2026-08-14. La sesión anterior afirmó que el bus del lector eran
+`gpio64`–`gpio67` y publicó una medición de 13,4 millones de muestras sobre
+ellos. **Esa identificación era incorrecta y la medición queda retirada.** La TA
+nombra sus pads `qup1_se2_l0..l3`, y `qup1_se2` es `gpio36`–`gpio39`;
+`gpio64`–`gpio67` son `qup2_se2`. La numeración coincide entre el árbol stock y
+mainline —`gpio26` es `qup1_se7` en ambos—, así que no hay ambigüedad.
+
+Los pines reales están fuera del alcance de Linux **por diseño y en los dos
+árboles**: este port declara `gpio-reserved-ranges = <36 4>` y el stock
+`qcom,gpios-reserved = <0x20 … 0x27>`, porque los gobierna TrustZone. El kernel
+no los expone en `/sys/kernel/debug/gpio` ni por el chardev, de modo que no
+existe forma de observarlos desde el espacio de usuario y **no hay medición
+válida sobre si TrustZone agita ese bus**. `probe-fp-spi-pins.c` se conserva
+como muestreador genérico, con la primera línea seleccionable y su premisa
+corregida en la cabecera.
+
+Se verificó, una a una, que la capa Linux ya replica a stock:
+
+- `spi@a88000` (`qupv3_se2_spi`) está deshabilitado también en el árbol stock, y
+  el overlay del X910 —confirmado sobre `dtbo.img`, board-id 00, con
+  `etspi-chipid = "EL721"` y `etspi-modelinfo = "X916"`— no lo referencia nunca;
+- el controlador de Samsung en build segura es un `platform_driver` colgado de
+  `soc` (`el7xx_probe(struct platform_device *)`), no un `spi_driver`;
+- los relojes del SE vienen apagados del bootloader y Linux no los apaga: la
+  línea de comandos ya incluye `clk_ignore_unused`, `pd_ignore_unused` y
+  `regulator_ignore_unused`. Sujetar `gcc_qupv3_wrap1_s2_clk` encendido desde un
+  módulo (`scripts/tzlog/gts9u-fpclk.c`) no cambia el resultado de `TypeCheck`.
+
+El intento de leer el log de TrustZone tampoco prosperó, y su recorrido queda
+documentado para no repetirlo:
+
+- el árbol stock describe `tz-log@146AA720`, `reg = <0x146aa720 0x3000>`. Esa
+  ventana se puede mapear, pero es un área de punteros en IMEM: su primer
+  cuadword vale `0x14696000`, y mapear esa dirección **reinicia la tablet**
+  porque es memoria segura;
+- la llamada SIP clásica (owner 2, servicio 6, comando 2) responde `-1`, «no
+  soportada», en este firmware. La plomería SMC es correcta: el comando 1
+  (`is_svc_available`) devuelve 0. Los comandos 3 y 7 existen pero rechazan las
+  formas de argumento probadas (`0x80000001`);
+- el servicio Diagnostics de QTEE (UID 143) responde: su operación 1 devuelve la
+  lista de TAs cargadas (`keymaster64`, `featenabler`, `tz_hdm`, `tz_iccc` y dos
+  UUID), pero ninguna operación de 0 a 31 entrega el log.
+
+Queda en el árbol `scripts/tzlog/` con el lector (`gts9u-tzlog.c`, que admite
+tanto mapear una ventana como pedir el volcado por SMC) y el módulo de relojes,
+más `scripts/probe-qtee-diag.c`. Un primer lector que copiaba los 12 KB de golpe
+provocó un oops y dejó el módulo en estado `Unloading`, lo que bloqueó el
+apagado; la versión commiteada lee sólo la ventana pedida y en accesos alineados
+de 32 bits.
+
+El estado real del bloqueo es por tanto: la TA ejecuta `TypeCheck`, escribe su
+resultado y devuelve tipo `0`; todo lo que el port controla coincide con stock; y
+no hay visibilidad dentro de TrustZone para decidir si el fallo está en su SPI o
+en que el sensor no responde. Sin esa visibilidad —o sin medir físicamente los
+raíles del sensor— cualquier cambio adicional en el port sería adivinar.

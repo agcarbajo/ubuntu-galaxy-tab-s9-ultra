@@ -1,12 +1,19 @@
 // SPDX-License-Identifier: GPL-2.0-only
-// Watch the fingerprint SPI lines while TrustZone runs.
+// Sample four TLMM lines at high rate through the GPIO character device.
 //
-// The EL721 hangs off QUP1_SE2, which the TA names by pad: qup1_se2_l0 is
-// MISO, l1 MOSI, l2 CLK and l3 CS.  On SM8550 those are gpio64..gpio67, and
-// Linux claims none of them, so if the secure world really drives the bus the
-// levels have to move.  A shell loop over debugfs samples far too slowly to
-// catch a transfer and /dev/mem is refused by this kernel, so read the four
-// lines as inputs through the GPIO character device instead.
+// Written to watch the fingerprint SPI while TrustZone runs, but it cannot see
+// that bus, and the distinction matters: the TA names its pads qup1_se2_l0..l3,
+// and qup1_se2 is gpio36..gpio39, not gpio64..gpio67.  (gpio64..67 are
+// qup2_se2; the numbering is the same in the stock tree and in mainline, where
+// gpio26 is qup1_se7 in both.)  Those real pads sit inside the reserved range
+// this port and the stock tree both keep away from Linux precisely because
+// TrustZone owns them, so the kernel does not expose them at all and no
+// userspace sampler can reach them.
+//
+// It is kept as a general sampler — /dev/mem is refused by this kernel and a
+// shell loop over debugfs is orders of magnitude too slow for a SPI transfer —
+// with the first line selectable so it is not silently pointed at the wrong
+// pads again.
 //
 // Read-only: the lines are requested as inputs and never driven.
 
@@ -21,10 +28,12 @@
 #include <time.h>
 #include <unistd.h>
 
-#define FIRST_LINE 64U
+#define DEFAULT_FIRST_LINE 36U
 #define LINE_COUNT 4U
 
-static const char *const pad_name[LINE_COUNT] = { "MISO", "MOSI", "CLK", "CS" };
+static const char *const pad_name[LINE_COUNT] = { "l0", "l1", "l2", "l3" };
+
+static unsigned int first_line = DEFAULT_FIRST_LINE;
 
 static double now_seconds(void)
 {
@@ -49,8 +58,11 @@ int main(int argc, char **argv)
 
 	chip = argc > 1 ? argv[1] : "/dev/gpiochip3";
 	seconds = argc > 2 ? atof(argv[2]) : 20.0;
+	if (argc > 3)
+		first_line = (unsigned int)strtoul(argv[3], NULL, 0);
 	if (seconds <= 0 || seconds > 600) {
-		fprintf(stderr, "usage: %s [GPIOCHIP [SECONDS]]\n", argv[0]);
+		fprintf(stderr, "usage: %s [GPIOCHIP [SECONDS [FIRST_LINE]]]\n",
+			argv[0]);
 		return 64;
 	}
 
@@ -61,14 +73,14 @@ int main(int argc, char **argv)
 	}
 
 	for (i = 0; i < LINE_COUNT; i++)
-		request.offsets[i] = FIRST_LINE + i;
+		request.offsets[i] = first_line + i;
 	request.num_lines = LINE_COUNT;
 	request.config.flags = GPIO_V2_LINE_FLAG_INPUT;
 	strncpy(request.consumer, "gts9u-fp-spi-watch",
 		sizeof(request.consumer) - 1);
 	if (ioctl(fd, GPIO_V2_GET_LINE_IOCTL, &request) < 0) {
-		fprintf(stderr, "requesting gpio%u..%u: %s\n", FIRST_LINE,
-			FIRST_LINE + LINE_COUNT - 1, strerror(errno));
+		fprintf(stderr, "requesting gpio%u..%u: %s\n", first_line,
+			first_line + LINE_COUNT - 1, strerror(errno));
 		close(fd);
 		return 1;
 	}
