@@ -5473,3 +5473,49 @@ en el log de TrustZone, que este kernel todavía no expone; instrumentarlo es el
 siguiente paso.
 
 La tablet queda con `sensor_power=0`, QCOMTEE descargado y el sistema estable.
+
+## Sesión 86 — el bus del lector es QUP1_SE2 y TrustZone no lo agita
+
+Fecha: 2026-08-14. Con el transporte ya resuelto se atacó el resultado
+`sensor=0`. Lo primero fue descartar que la TA no llegara a ejecutar la
+consulta: envenenando el búfer de salida con `0xa5` antes de la llamada, vuelve
+con sus ocho primeros bytes a cero y el resto intacto. La TA sí ejecuta
+`TypeCheck`, escribe su resultado y declara tipo `0`.
+
+El desensamblado dio el bus exacto. La TA resuelve sus pads por nombre —
+`qup1_se2_l0` es MISO, `l1` MOSI, `l2` CLK y `l3` CS—, es decir **QUP1_SE2**,
+que en SM8550 son `gpio64`–`gpio67`. En la tablet esos cuatro pines están en
+`func0`, entrada, sin reclamar por Linux, y `spi10@888000` ni siquiera existe
+como dispositivo: este port no habilita ningún nodo SPI.
+
+`scripts/probe-fp-spi-pins.c` los muestrea por el chardev GPIO a unas 445.000
+lecturas por segundo, porque `/dev/mem` está bloqueado y un bucle de shell sobre
+debugfs es varios órdenes de magnitud demasiado lento. Durante una transacción
+completa, con 13.357.820 muestras en 30 segundos, **ninguna de las cuatro líneas
+cambia de estado**. TrustZone no llega a la primera transferencia.
+
+Se descartaron además, con la TA ya ejecutando el comando:
+
+- `QSEECom_set_bandwidth` no es la pieza que falta: en la build compat de
+  `libQSEEComAPI.so` es literalmente `mov w0, wzr; ret`;
+- el driver stock no hace nada especial: en la build segura es un
+  `platform_driver` colgado de `soc`, con `el7xx_pin_control` compilado fuera y
+  `spi_clk_enable` como no-op en Qualcomm;
+- no es que Linux retenga los pines del sensor: desenganchando `egis-el721` el
+  resultado es idéntico;
+- tampoco es la alimentación: idéntico con `sensor_power` a 1 y a 0.
+
+Los símbolos importados por la TA acotan dónde falla. Usa `qsee_spi_open`,
+`qsee_spi_full_duplex`, `qsee_tlmm_get_gpio_id`, `qsee_tlmm_config_gpio_id` y
+`qsee_tlmm_select_gpio_id_mode`, y tiene mensajes propios para cada fallo
+(`qsee_tlmm_get_gpio_id: BLSP_CLK Failed`, `sec_tzspi_open failed : %d`,
+`gpio control tz_open error : %d`). El fallo está en esa capa, dentro de
+TrustZone, donde el port no tiene ninguna palanca.
+
+El siguiente paso es por tanto instrumental y no especulativo: portar un lector
+del log de diagnóstico de TrustZone, estilo `tzdbg`, que este kernel no expone.
+Ese log contiene el motivo exacto. Sin él, cualquier cambio en el port sería
+adivinar.
+
+La tablet queda con `sensor_power=0`, QCOMTEE descargado, GPIO91/155 a cero y el
+sistema en `running`.

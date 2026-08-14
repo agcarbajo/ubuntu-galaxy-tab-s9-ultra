@@ -346,11 +346,25 @@ significaba simplemente que los búferes eran demasiado pequeños.
 Con el transporte ya correcto, el bloqueo se desplaza al sensor. `TypeCheck`
 devuelve tipo `0`, es decir «no identificado»: la TA hace hasta tres
 transferencias SPI y exige leer `rx[42]==0x07` y `rx[46]==21` para declarar
-`ET721` y devolver el tipo `8`. El resultado es idéntico con `sensor_power=1` y
-con el sensor apagado, así que su SPI no está alcanzando el chip. Conviene
-recordar que quien maneja ese bus es TrustZone, no Linux: en el árbol stock el
-nodo `etspi,el7xx` cuelga de `soc`, no de un controlador SPI, y la TA lleva su
-propio `sec_tzspi_*` y su propio control TLMM (`run_tlmm gpio control tz_open`).
+`ET721` y devolver el tipo `8`. Que la TA llega a ejecutar esa consulta está
+demostrado: envenenando el búfer de salida antes de la llamada, vuelve con sus
+ocho primeros bytes escritos y el resto intacto.
+
+El bus es **QUP1_SE2**. La propia TA nombra sus pads —`qup1_se2_l0` MISO,
+`l1` MOSI, `l2` CLK, `l3` CS—, que en SM8550 son `gpio64`–`gpio67`. Ese bus no
+es de Linux: en el árbol stock `etspi,el7xx` cuelga de `soc` y no de un
+controlador SPI, en la build segura el driver de Samsung es un `platform_driver`
+que sólo maneja LDO y reset, y este port no habilita ningún nodo SPI ni reclama
+esos pines.
+
+`scripts/probe-fp-spi-pins.c` mide qué ocurre realmente en esas cuatro líneas
+mientras corre la TA. Con 13,4 millones de muestras a lo largo de una
+transacción completa, **ninguna se mueve**: TrustZone no llega a agitar el bus.
+El fallo está antes de la primera transferencia, en su propia capa de pads
+(`qsee_tlmm_get_gpio_id`, `sec_tzspi_open`), y no cambia al alimentar el sensor
+ni al desenganchar el controlador Linux. El port ya no tiene ninguna palanca
+ahí: para avanzar hace falta leer el log de TrustZone, donde la TA sí registra
+el motivo exacto.
 
 Se verificó que las particiones activas de la tablet coinciden byte a byte con
 el firmware analizado: `apnhlos` coincide con `NON-HLOS.bin` (SHA-256
@@ -388,11 +402,12 @@ encendieron y apagaron sobre la tablet, con reset y sin reiniciarla.
 
 El transporte BAUTH también está resuelto: con los shared buffers del tamaño que
 exige la TA, acepta y ejecuta el comando. Lo que falta es que TrustZone consiga
-hablar por SPI con el sensor; hoy `TypeCheck` devuelve tipo `0` tanto con el
-raíl encendido como apagado. Como ese bus lo maneja la TA y no Linux, el
-siguiente paso es instrumentarlo: la TA registra sus errores
-(`gpio control tz_open error`, `Sensor is not ready!!`, los bytes leídos) en el
-log de TrustZone, que este kernel todavía no expone.
+hablar por SPI con el sensor, y está medido que hoy ni siquiera lo intenta: las
+cuatro líneas de QUP1_SE2 no se mueven en 13,4 millones de muestras. Como ese
+bus lo maneja la TA y no Linux, el siguiente paso es leer el log de TrustZone,
+donde la TA registra el motivo (`gpio control tz_open error : %d`,
+`qsee_tlmm_get_gpio_id: BLSP_CLK Failed`, `sec_tzspi_open failed : %d`). Este
+kernel todavía no lo expone: haría falta portar un lector estilo `tzdbg`.
 
 Después se implementará el puente mínimo hacia `libfprint`/`fprintd`. Las
 plantillas y la comparación permanecerán en TrustZone. `fprintd` no se añade ni

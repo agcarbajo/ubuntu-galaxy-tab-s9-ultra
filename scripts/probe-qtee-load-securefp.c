@@ -31,6 +31,7 @@
  */
 #define DUALFP_SHARED_BUFFER_SIZE 0x2a4000U
 #define DUALFP_TYPE_CHECK_PAYLOAD 8U
+#define DUALFP_OUTPUT_POISON 0xa5
 #define QCOMTEE_MAX_INBOUND_BUFFER_SIZE (4U * 1024U * 1024U)
 #define EL721_SENSOR_NAME UINT32_C(21)
 
@@ -254,6 +255,7 @@ static int type_check_ta(struct qcomtee_object *controller,
 	unsigned char request_out[DUALFP_MESSAGE_SIZE] = { 0 };
 	unsigned char response_out[DUALFP_MESSAGE_SIZE] = { 0 };
 	uint32_t embedded_offsets[] = { 4, 16 };
+	size_t i;
 	uint32_t is_64_bit = 1;
 	unsigned char *input_data;
 	unsigned char *output_data;
@@ -272,7 +274,12 @@ static int type_check_ta(struct qcomtee_object *controller,
 	input_data = qcomtee_memory_object_addr(input);
 	output_data = qcomtee_memory_object_addr(output);
 	memset(input_data, 0, DUALFP_SHARED_BUFFER_SIZE);
-	memset(output_data, 0, DUALFP_SHARED_BUFFER_SIZE);
+	/*
+	 * Poison rather than zero the output: a zeroed result and an untouched
+	 * buffer are indistinguishable otherwise, and "sensor type 0" is exactly
+	 * what an unwritten buffer looks like.
+	 */
+	memset(output_data, DUALFP_OUTPUT_POISON, DUALFP_SHARED_BUFFER_SIZE);
 
 	/* Reconstructed from BAuth_Type_Check in Samsung's arm64 gateway. */
 	store_u32(request, 0, DUALFP_TYPE_CHECK_COMMAND);
@@ -322,6 +329,10 @@ static int type_check_ta(struct qcomtee_object *controller,
 	 */
 	dump_envelope("request", request_out);
 	dump_envelope("response", response_out);
+	printf("  out[0..15] ");
+	for (i = 0; i < 16; i++)
+		printf(" %02x", output_data[i]);
+	putchar('\n');
 	trustlet_result = load_u32(response_out, 4);
 	payload_result = load_u32(output_data, 0);
 	printf("TypeCheck name=%u: invoke result %u; trustlet=%u, payload=%u, sensor=%u.\n",

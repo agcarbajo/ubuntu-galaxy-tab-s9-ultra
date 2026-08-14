@@ -1,0 +1,107 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// Watch the fingerprint SPI lines while TrustZone runs.
+//
+// The EL721 hangs off QUP1_SE2, which the TA names by pad: qup1_se2_l0 is
+// MISO, l1 MOSI, l2 CLK and l3 CS.  On SM8550 those are gpio64..gpio67, and
+// Linux claims none of them, so if the secure world really drives the bus the
+// levels have to move.  A shell loop over debugfs samples far too slowly to
+// catch a transfer and /dev/mem is refused by this kernel, so read the four
+// lines as inputs through the GPIO character device instead.
+//
+// Read-only: the lines are requested as inputs and never driven.
+
+#include <errno.h>
+#include <fcntl.h>
+#include <linux/gpio.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/ioctl.h>
+#include <time.h>
+#include <unistd.h>
+
+#define FIRST_LINE 64U
+#define LINE_COUNT 4U
+
+static const char *const pad_name[LINE_COUNT] = { "MISO", "MOSI", "CLK", "CS" };
+
+static double now_seconds(void)
+{
+	struct timespec ts;
+
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
+}
+
+int main(int argc, char **argv)
+{
+	struct gpio_v2_line_request request = { 0 };
+	struct gpio_v2_line_values values = { 0 };
+	unsigned long counts[1U << LINE_COUNT] = { 0 };
+	double first[1U << LINE_COUNT] = { 0 };
+	unsigned long samples = 0;
+	const char *chip;
+	double seconds;
+	double start;
+	unsigned int i;
+	int fd;
+
+	chip = argc > 1 ? argv[1] : "/dev/gpiochip3";
+	seconds = argc > 2 ? atof(argv[2]) : 20.0;
+	if (seconds <= 0 || seconds > 600) {
+		fprintf(stderr, "usage: %s [GPIOCHIP [SECONDS]]\n", argv[0]);
+		return 64;
+	}
+
+	fd = open(chip, O_RDONLY | O_CLOEXEC);
+	if (fd < 0) {
+		fprintf(stderr, "open %s: %s\n", chip, strerror(errno));
+		return 1;
+	}
+
+	for (i = 0; i < LINE_COUNT; i++)
+		request.offsets[i] = FIRST_LINE + i;
+	request.num_lines = LINE_COUNT;
+	request.config.flags = GPIO_V2_LINE_FLAG_INPUT;
+	strncpy(request.consumer, "gts9u-fp-spi-watch",
+		sizeof(request.consumer) - 1);
+	if (ioctl(fd, GPIO_V2_GET_LINE_IOCTL, &request) < 0) {
+		fprintf(stderr, "requesting gpio%u..%u: %s\n", FIRST_LINE,
+			FIRST_LINE + LINE_COUNT - 1, strerror(errno));
+		close(fd);
+		return 1;
+	}
+	close(fd);
+
+	values.mask = (1U << LINE_COUNT) - 1;
+	start = now_seconds();
+	while (now_seconds() - start < seconds) {
+		if (ioctl(request.fd, GPIO_V2_LINE_GET_VALUES_IOCTL,
+			  &values) < 0) {
+			fprintf(stderr, "reading values: %s\n",
+				strerror(errno));
+			close(request.fd);
+			return 1;
+		}
+		if (!counts[values.bits & 0xf])
+			first[values.bits & 0xf] = now_seconds() - start;
+		counts[values.bits & 0xf]++;
+		samples++;
+	}
+	close(request.fd);
+
+	printf("sampled %lu times over %.1f s\n", samples, seconds);
+	for (i = 0; i < (1U << LINE_COUNT); i++) {
+		unsigned int bit;
+
+		if (!counts[i])
+			continue;
+		printf("  ");
+		for (bit = 0; bit < LINE_COUNT; bit++)
+			printf("%s=%u ", pad_name[bit], !!(i & (1U << bit)));
+		printf(" seen %lu times, first at %.3f s\n", counts[i],
+		       first[i]);
+	}
+	return 0;
+}
