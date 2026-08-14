@@ -296,7 +296,7 @@ class CompanionWindow(Adw.ApplicationWindow):
 
         pointer = Adw.PreferencesGroup(
             title=_("Pointer mode"),
-            description=_("Move the S Pen in the air like a Wii Remote. Its button acts as the primary mouse button and supports dragging."),
+            description=_("Move the S Pen in the air like a Wii Remote. Its button acts as the primary mouse button and supports dragging. Automatic screen rotation is unavailable while this mode is active."),
         )
         self.pointer_group = pointer
         pointer.add(self._scale_setting_row(
