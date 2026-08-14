@@ -318,12 +318,41 @@ aplicación ni enviarle una operación.
 los offsets ELF que utiliza Qualcomm. Recibe por separado el nombre base de los
 segmentos y el nombre de carga. Para `dualfp` reserva un objeto de memoria
 TEE y usa `loadFromRegion`; QTEE aceptó los 19.927.128 bytes como `dualfp` y los
-descargó limpiamente. El probe ofrece además `--type-check`: la petición llega
-a la TA (`invoke result 0`). La HAL stock identifica `EL721` con el enum de
-nombre `21` y lo traduce al tipo de sensor `8`; el probe reproduce ese mapeo
-exacto. Con el sensor físicamente apagado, la TA aún devuelve `29`, por lo que
-el siguiente ensayo debe repetir la consulta tras la alimentación diferida.
+descargó limpiamente. El probe ofrece además
+`--type-check[=PRIMERO[-ÚLTIMO]]`: la petición llega a la TA
+(`invoke result 0`). La HAL stock identifica `EL721` con el enum de nombre `21`
+y lo traduce al tipo de sensor `8`; el probe reproduce ese mapeo exacto.
 No se inicia captura, registro ni comparación.
+
+La TA responde `29` de forma invariable, y el 14 de agosto de 2026 se acotó qué
+significa eso. El valor **no es un diagnóstico**: es el código de fallo genérico
+de la pila Samsung, el mismo que `readSensorType` devuelve ante un puntero nulo
+y que `BAuth_Get_Ta_Version` usa para cualquier error. Se descartaron una por
+una las causas plausibles, todas sobre la tablet física:
+
+- No es la alimentación. Con GPIO91/GPIO155 activos y `sensor_power=1` la
+  respuesta es idéntica a la del sensor apagado.
+- No es el tamaño del búfer. El gateway stock declara 8 bytes pero respalda cada
+  búfer con una página dmabuf completa; reproducirlo no cambia la respuesta.
+- No es el enum de nombre. Un barrido de `0` a `40` dentro de una sola carga
+  devuelve `29` en los 41 casos y el búfer de salida vuelve intacto, así que la
+  TA falla antes de consumir el payload.
+- No es el nombre de carga: `dualfp` y `securefp` se comportan igual.
+- No es el sobre. El volcado de los búferes devueltos demuestra que QTEE inyecta
+  los punteros embebidos reales en los offsets 4 y 16 con longitud 8, tal y como
+  hace `QSEECom_send_modified_cmd_64`.
+- No falta una sesión previa. `BAuth_Type_Check` no abre ninguna; la HAL se
+  limita a reintentar una vez si falla.
+- No falta nada del lado del kernel. En la build segura de Samsung
+  `el7xx_pin_control` queda compilado fuera y `spi_clk_enable` es un no-op en
+  Qualcomm: el controlador Linux stock sólo maneja LDO y reset, igual que este.
+
+Durante la transacción `qcomtee` no registra ningún error. La hipótesis
+principal que queda es que la TA depende de servicios que en Android aporta el
+lado HLOS de QSEECom —los *listener* de `qseecomd`, necesarios para su
+almacenamiento— o de un estado de arranque que sólo establece la pila Android.
+Comprobarlo exige identificar qué listener pide y servirlo; hasta entonces la
+autenticación por huella sigue sin ruta viable.
 
 Se verificó que las particiones activas de la tablet coinciden byte a byte con
 el firmware analizado: `apnhlos` coincide con `NON-HLOS.bin` (SHA-256
@@ -355,20 +384,27 @@ autenticación por huella se considera no disponible.
 
 `libfprint` no incluye soporte para el EL721 y el sensor no entrega imágenes a
 Linux. Transporte QTEE, AppLoader, carga de `dualfp`, iluminación óptica y
-señal/supresión FOD de Goodix están comprobados. El bloqueo actual se ha
-reducido a encender de forma segura el EL721 después del arranque y completar
-el protocolo BAUTH sobre el controlador ya obtenido. El driver prepara un
-dispositivo de plataforma tardío y mapea GPIO91/GPIO155 sin modificar el DTB;
-esta nueva alimentación diferida debe validarse físicamente antes de enviar
-comandos de captura.
+señal/supresión FOD de Goodix están comprobados. La alimentación diferida
+también: el 14 de agosto de 2026 el raíl de 3,3 V y la línea de enable se
+encendieron y apagaron sobre la tablet, con reset y sin reiniciarla.
+
+El bloqueo actual es el protocolo BAUTH. La TA se carga, recibe una petición
+bien formada y la rechaza con el código genérico `29` sea cual sea su contenido.
+Las causas achacables a este port —alimentación, búferes, enum, nombre de carga,
+sobre, sesión previa y controlador de kernel— quedan descartadas
+experimentalmente. El siguiente paso ya no es del sensor sino del entorno
+seguro: averiguar qué servicio HLOS espera la TA y si es reproducible fuera de
+Android.
 
 Después se implementará el puente mínimo hacia `libfprint`/`fprintd`. Las
 plantillas y la comparación permanecerán en TrustZone. `fprintd` no se añade ni
 se habilita mientras falte ese backend: mostrar una opción de huella en GNOME
 sin poder completarla sería un falso positivo de compatibilidad.
 
-`scripts/test-el721-type-check.sh` deja preparada esa prueba física como una
+`scripts/test-el721-type-check.sh` ejecuta esa prueba física como una
 transacción única. Rechaza un sensor o `/dev/tee0` ya activos, comprueba los
 nueve segmentos firmados y garantiza mediante `trap` que GPIO91/GPIO155 vuelvan
-a cero y que QCOMTEE se descargue incluso si `TypeCheck` falla. No activa HBM,
+a cero y que QCOMTEE se descargue incluso si `TypeCheck` falla. Admite un quinto
+argumento con el selector que se pasa al probe, para barrer varios enums dentro
+de una sola carga —lo caro es cargar los 19 MB, no la consulta—. No activa HBM,
 no solicita una captura y no registra datos biométricos.

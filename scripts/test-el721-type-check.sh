@@ -8,8 +8,8 @@ if [ "$(id -u)" -ne 0 ]; then
 	echo "run as root" >&2
 	exit 77
 fi
-if [ "$#" -lt 2 ] || [ "$#" -gt 4 ]; then
-	echo "usage: $0 PROBE SPLIT_DIRECTORY [BASENAME [LOAD_NAME]]" >&2
+if [ "$#" -lt 2 ] || [ "$#" -gt 5 ]; then
+	echo "usage: $0 PROBE SPLIT_DIRECTORY [BASENAME [LOAD_NAME [SELECTOR]]]" >&2
 	exit 64
 fi
 
@@ -17,6 +17,8 @@ probe=$1
 split_dir=$2
 basename=${3:-dualfp}
 load_name=${4:-dualfp}
+# Which sensor-name enums to query; a range asks several inside one load.
+selector=${5:---type-check}
 fp_sysfs=
 qcomtee_loaded=0
 sensor_powered=0
@@ -79,4 +81,4 @@ if [ ! -c /dev/tee0 ]; then
 	exit 1
 fi
 
-"$probe" "$split_dir" "$basename" "$load_name" --type-check
+"$probe" "$split_dir" "$basename" "$load_name" "$selector"

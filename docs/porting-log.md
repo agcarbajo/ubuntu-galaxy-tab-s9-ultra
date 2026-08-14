@@ -5361,3 +5361,59 @@ Quedó además preparado `test-el721-type-check.sh` para la primera validación
 del kernel nuevo. Encapsula alimentación, carga de QCOMTEE, `TypeCheck` y
 limpieza incondicional, y se niega a operar si encuentra el sensor o TEE ya
 activos. No se ejecuta sobre la imagen actualmente arrancada.
+
+## Sesión 84 — el EL721 se alimenta y la TA sigue rechazando la petición
+
+Fecha: 2026-08-14. Se flasheó por fin el kernel de la sesión 83, el que
+corresponde exactamente a los fuentes commiteados. Antes de escribir se respaldó
+la partición arrancada y se releyó después; la tablet arrancó a la primera:
+
+```text
+Image.gz  d5021f8c99332149454a3c79fbfa7f648d10ae4abc9b8e1b15ffae5bc93e8e56
+DTB       613b3bb7729d55d1c60aaeda348a098163b79aed1efbf24cdcc582ff0d58ccc4
+boot.img  b4df747fda34b22b4258ecc7cfca646a389da0c42f9d341a81d47158da622f2d
+previo    b8e7a938c9ac5f0a1a73c23cb5db2d677290bc158461ed2108791d0cccf6cad0
+```
+
+La imagen que corría era la experimental de las 04:00, no la corregida: pedía
+todavía el regulador `vdd` y fallaba con `error -ENOENT: failed to get enable
+GPIO`. Con el kernel nuevo, **la alimentación diferida funciona en hardware por
+primera vez**: `sensor_power` sube a 1, el reset incrementa `reset_count`,
+GPIO91 y GPIO155 pasan de entrada a salida y vuelven a cero al terminar. Antes
+de flashear se comprobó que ambas líneas estaban libres y que `gpiochip3` se
+llama `f100000.pinctrl`, el nombre que asume la tabla de lookup. La tablet no se
+reinició en ningún momento.
+
+Con el sensor alimentado, `TypeCheck` sigue devolviendo `29`. Queda por tanto
+refutada la hipótesis de la sesión 83. El análisis del gateway y de la HAL
+stock aclaró además que `29` **no es un diagnóstico**: es el código de fallo
+genérico de la pila Samsung; `readSensorType` lo devuelve ante un puntero nulo y
+`BAuth_Get_Ta_Version` para cualquier error. Al desensamblar hubo que resolver
+los PLT contra la GOT, porque objdump los etiqueta desplazados: lo que parecía
+un `BAuth_SessionOpen` previo al comando es en realidad `memset`.
+
+Se descartaron experimentalmente, sobre la tablet física, todas las causas
+atribuibles a este port:
+
+- alimentación: idéntico resultado con el sensor encendido y apagado;
+- tamaño de búfer: reproducir la página dmabuf completa de stock no cambia nada;
+- enum de nombre: barrido de `0` a `40` en una sola carga, `29` en los 41 casos
+  y búfer de salida intacto, luego la TA falla antes de leer el payload;
+- nombre de carga: `dualfp` y `securefp` se comportan igual;
+- sobre de la petición: el volcado de los búferes devueltos demuestra que QTEE
+  inyecta punteros embebidos reales (`0x921885000` y `0x924e64000`) en los
+  offsets 4 y 16 con longitud 8, como hace `QSEECom_send_modified_cmd_64`;
+- sesión previa: `BAuth_Type_Check` no abre ninguna, la HAL sólo reintenta;
+- controlador de kernel: en la build segura de Samsung `el7xx_pin_control` está
+  compilado fuera y `spi_clk_enable` es un no-op en Qualcomm, así que el driver
+  stock tampoco hace pinctrl ni entrega relojes SPI.
+
+`qcomtee` no registra ningún error durante la transacción. La hipótesis que
+queda es que la TA depende de servicios que en Android presta el lado HLOS de
+QSEECom —los *listener* de `qseecomd`— o de un estado que sólo establece esa
+pila. El probe pasó a admitir `--type-check=PRIMERO-ÚLTIMO` y el script
+transaccional un quinto argumento con ese selector, porque lo caro es cargar los
+19 MB, no repetir la consulta.
+
+La tablet queda con el kernel nuevo arrancado, `sensor_power=0`, QCOMTEE
+descargado y el sistema en `running`.

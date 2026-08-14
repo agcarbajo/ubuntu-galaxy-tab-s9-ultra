@@ -21,6 +21,14 @@
 #define MAX_DIST_NAME_SIZE 4096U
 #define DUALFP_TYPE_CHECK_COMMAND UINT32_C(16)
 #define DUALFP_MESSAGE_SIZE 64U
+/*
+ * Samsung's gateway declares an 8-byte payload but backs each embedded buffer
+ * with a whole dmabuf page.  The TA rejects an exactly-8-byte mapping with 29,
+ * the same "invalid parameter" code the stock host code returns for a missing
+ * or undersized buffer, so reproduce the page-sized allocation.
+ */
+#define DUALFP_SHARED_BUFFER_SIZE 4096U
+#define DUALFP_TYPE_CHECK_PAYLOAD 8U
 #define QCOMTEE_MAX_INBOUND_BUFFER_SIZE (4U * 1024U * 1024U)
 #define EL721_SENSOR_NAME UINT32_C(21)
 
@@ -220,8 +228,21 @@ static void report_dist_output(const unsigned char *buffer, size_t size)
 	fputc('\n', stderr);
 }
 
+static void dump_envelope(const char *label, const unsigned char *buffer)
+{
+	size_t i;
+
+	printf("  %-8s", label);
+	for (i = 0; i < DUALFP_MESSAGE_SIZE; i++) {
+		if (i && !(i % 16))
+			printf("\n          ");
+		printf(" %02x", buffer[i]);
+	}
+	putchar('\n');
+}
+
 static int type_check_ta(struct qcomtee_object *controller,
-			 struct qcomtee_object *root)
+			 struct qcomtee_object *root, uint32_t sensor_name)
 {
 	struct qcomtee_object *input = QCOMTEE_OBJECT_NULL;
 	struct qcomtee_object *output = QCOMTEE_OBJECT_NULL;
@@ -239,23 +260,25 @@ static int type_check_ta(struct qcomtee_object *controller,
 	qcomtee_result_t result = QCOMTEE_ERROR;
 	int ret = -1;
 
-	if (qcomtee_memory_object_alloc(8, root, &input) ||
-	    qcomtee_memory_object_alloc(8, root, &output)) {
+	if (qcomtee_memory_object_alloc(DUALFP_SHARED_BUFFER_SIZE, root,
+					&input) ||
+	    qcomtee_memory_object_alloc(DUALFP_SHARED_BUFFER_SIZE, root,
+					&output)) {
 		fprintf(stderr, "FAIL: could not allocate TypeCheck buffers\n");
 		goto out;
 	}
 	input_data = qcomtee_memory_object_addr(input);
 	output_data = qcomtee_memory_object_addr(output);
-	memset(input_data, 0, 8);
-	memset(output_data, 0, 8);
+	memset(input_data, 0, DUALFP_SHARED_BUFFER_SIZE);
+	memset(output_data, 0, DUALFP_SHARED_BUFFER_SIZE);
 
 	/* Reconstructed from BAuth_Type_Check in Samsung's arm64 gateway. */
 	store_u32(request, 0, DUALFP_TYPE_CHECK_COMMAND);
-	store_u32(request, 12, 8);
-	store_u32(request, 24, 8);
+	store_u32(request, 12, DUALFP_TYPE_CHECK_PAYLOAD);
+	store_u32(request, 24, DUALFP_TYPE_CHECK_PAYLOAD);
 	store_u32(input_data, 0, DUALFP_TYPE_CHECK_COMMAND);
 	/* SensorInfo maps the stock model string "EL721" to sensor-name enum 21. */
-	store_u32(input_data, 4, EL721_SENSOR_NAME);
+	store_u32(input_data, 4, sensor_name);
 
 	params[0].attr = QCOMTEE_UBUF_INPUT;
 	params[0].ubuf.addr = request;
@@ -290,10 +313,17 @@ static int type_check_ta(struct qcomtee_object *controller,
 		fprintf(stderr, "FAIL: TypeCheck transport error\n");
 		goto out;
 	}
+	/*
+	 * The returned request shows whether QTEE patched the embedded buffer
+	 * pointers into offsets 4 and 16.  If they come back zero the TA was
+	 * handed null buffers, which it rejects regardless of the payload.
+	 */
+	dump_envelope("request", request_out);
+	dump_envelope("response", response_out);
 	trustlet_result = load_u32(response_out, 4);
 	payload_result = load_u32(output_data, 0);
-	printf("TypeCheck invoke result %u; trustlet=%u, payload=%u, sensor=%u.\n",
-	       result, trustlet_result, payload_result,
+	printf("TypeCheck name=%u: invoke result %u; trustlet=%u, payload=%u, sensor=%u.\n",
+	       sensor_name, result, trustlet_result, payload_result,
 	       load_u32(output_data, 4));
 	ret = result == QCOMTEE_OK && !trustlet_result && !payload_result ? 0 : -1;
 
@@ -301,6 +331,48 @@ out:
 	qcomtee_memory_object_release(output);
 	qcomtee_memory_object_release(input);
 	return ret;
+}
+
+/*
+ * Accepts "--type-check", "--type-check=N" and "--type-check=FIRST-LAST".  The
+ * range form asks the same question for a run of sensor-name enums inside one
+ * load, because loading the 19 MB image is what costs time, not the query.
+ */
+static int parse_type_check(const char *argument, uint32_t *first,
+			    uint32_t *last)
+{
+	unsigned long low;
+	unsigned long high;
+	const char *value;
+	char *end;
+
+	if (strncmp(argument, "--type-check", 12))
+		return -1;
+	value = argument + 12;
+	if (!*value)
+		return 0;
+	if (*value != '=')
+		return -1;
+
+	value++;
+	errno = 0;
+	low = strtoul(value, &end, 10);
+	if (errno || end == value || low > UINT32_MAX)
+		return -1;
+	high = low;
+	if (*end == '-') {
+		value = end + 1;
+		errno = 0;
+		high = strtoul(value, &end, 10);
+		if (errno || end == value || high > UINT32_MAX || high < low)
+			return -1;
+	}
+	if (*end)
+		return -1;
+
+	*first = (uint32_t)low;
+	*last = (uint32_t)high;
+	return 0;
 }
 
 int main(int argc, char **argv)
@@ -320,13 +392,16 @@ int main(int argc, char **argv)
 	qcomtee_result_t result = QCOMTEE_ERROR;
 	const char *load_method = "loadFromBuffer";
 	int loaded_here = 0;
+	uint32_t name_first = EL721_SENSOR_NAME;
+	uint32_t name_last = EL721_SENSOR_NAME;
+	uint32_t sensor_name;
 	int run_type_check = 0;
 	int exit_code = 1;
 
 	if (argc < 4 || argc > 5 ||
-	    (argc == 5 && strcmp(argv[4], "--type-check"))) {
+	    (argc == 5 && parse_type_check(argv[4], &name_first, &name_last))) {
 		fprintf(stderr,
-			"usage: %s SPLIT_DIRECTORY BASENAME LOAD_NAME [--type-check]\n",
+			"usage: %s SPLIT_DIRECTORY BASENAME LOAD_NAME [--type-check[=FIRST[-LAST]]]\n",
 			argv[0]);
 		return 64;
 	}
@@ -446,7 +521,13 @@ int main(int argc, char **argv)
 	if (dist_name[0])
 		printf("Distribution name: %s\n", dist_name);
 	loaded_here = 1;
-	exit_code = run_type_check ? type_check_ta(controller, root) != 0 : 0;
+	exit_code = 0;
+	for (sensor_name = name_first; run_type_check; sensor_name++) {
+		if (type_check_ta(controller, root, sensor_name))
+			exit_code = 1;
+		if (sensor_name == name_last)
+			break;
+	}
 
 out:
 	if (loaded_here && controller != QCOMTEE_OBJECT_NULL) {
