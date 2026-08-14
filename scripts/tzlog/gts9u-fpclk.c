@@ -19,10 +19,12 @@
  */
 
 #include <linux/clk.h>
+#include <linux/interconnect.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/of_clk.h>
+#include <linux/platform_device.h>
 
 #define FP_SE_COMPATIBLE "qcom,geni-spi"
 #define FP_SE_NODE "spi@a88000"
@@ -30,6 +32,70 @@
 
 static struct clk *held[FP_MAX_CLOCKS];
 static unsigned int held_count;
+
+/*
+ * The serial engine clock alone is not enough: a QUP moves data on its
+ * wrapper's core clocks, and mainline drives those from the interconnect
+ * "qup-core" vote rather than from a clocks property.  Android keeps engines in
+ * this wrapper busy so the vote is always present; here nothing does, and
+ * gcc_qupv3_wrap1_core_clk reads as disabled.  Vote for the paths the serial
+ * engine's own node declares.
+ */
+static const char *const icc_names[] = { "qup-core", "qup-config", "qup-memory" };
+static struct icc_path *paths[ARRAY_SIZE(icc_names)];
+static struct platform_device *icc_pdev;
+
+static void fpclk_vote_icc(struct device_node *np)
+{
+	unsigned int i;
+
+	/*
+	 * of_icc_get() needs a device carrying the node; the serial engine is
+	 * disabled, so no platform device exists for it.  Create a bare one that
+	 * borrows the node purely as a handle for the lookup.
+	 */
+	icc_pdev = platform_device_alloc("gts9u-fpclk-icc", PLATFORM_DEVID_NONE);
+	if (!icc_pdev)
+		return;
+	device_set_node(&icc_pdev->dev, of_fwnode_handle(of_node_get(np)));
+	if (platform_device_add(icc_pdev)) {
+		platform_device_put(icc_pdev);
+		icc_pdev = NULL;
+		return;
+	}
+
+	for (i = 0; i < ARRAY_SIZE(icc_names); i++) {
+		struct icc_path *path = of_icc_get(&icc_pdev->dev, icc_names[i]);
+
+		if (IS_ERR_OR_NULL(path)) {
+			pr_warn("gts9u-fpclk: no %s path (%ld)\n", icc_names[i],
+				PTR_ERR(path));
+			continue;
+		}
+		if (icc_set_bw(path, Bps_to_icc(1000), Bps_to_icc(1000))) {
+			pr_warn("gts9u-fpclk: cannot vote %s\n", icc_names[i]);
+			icc_put(path);
+			continue;
+		}
+		pr_info("gts9u-fpclk: voted %s\n", icc_names[i]);
+		paths[i] = path;
+	}
+}
+
+static void fpclk_release_icc(void)
+{
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(icc_names); i++) {
+		if (!paths[i])
+			continue;
+		icc_set_bw(paths[i], 0, 0);
+		icc_put(paths[i]);
+		paths[i] = NULL;
+	}
+	if (icc_pdev)
+		platform_device_unregister(icc_pdev);
+}
 
 static struct device_node *fpclk_find_se(void)
 {
@@ -97,6 +163,7 @@ static int __init fpclk_init(void)
 		of_node_put(qup);
 	}
 	fpclk_hold(se, "serial engine");
+	fpclk_vote_icc(se);
 	of_node_put(se);
 
 	if (!held_count) {
@@ -108,6 +175,7 @@ static int __init fpclk_init(void)
 
 static void __exit fpclk_exit(void)
 {
+	fpclk_release_icc();
 	while (held_count--) {
 		clk_disable_unprepare(held[held_count]);
 		clk_put(held[held_count]);

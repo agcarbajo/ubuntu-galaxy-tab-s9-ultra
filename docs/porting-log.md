@@ -5608,3 +5608,43 @@ Lo que sí decidiría el asunto es una prueba que no depende del port: confirmar
 que el lector responde en este mismo aparato bajo Android stock. Si responde, el
 problema está en el entorno que ofrecemos a la TA y merece seguir; si no
 responde, ninguna cantidad de trabajo en el port lo arreglará.
+
+## Sesión 89 — el lector funciona en One UI: el fallo es de entorno
+
+Fecha: 2026-08-14. La propietaria confirmó que **el lector funciona sin
+problemas bajo One UI en este mismo aparato**. Eso fija dos cosas: el sensor y
+su cableado están bien, y TrustZone sabe manejar su SPI aquí. Queda descartado
+que el bootloader desbloqueado degrade la función. El fallo está por tanto en el
+entorno que este port ofrece a la TA, no en el hardware.
+
+Conviene además precisar un malentendido: la detección de dedo que se documentó
+en la sesión 82 (`released 911 2808`) venía del **controlador táctil Goodix** a
+través de `fod_state`, es decir la pantalla notando un dedo dentro del
+rectángulo del lector. Es la señal que dispara una lectura, pero no es el EL721
+leyendo por SPI; no demuestra que esa ruta funcione.
+
+Intentos de esta ronda, todos negativos:
+
+- **Votos de interconnect del QUP.** El reloj del SE no basta: un QUP mueve
+  datos con los relojes de núcleo de su wrapper, y en mainline salen del voto
+  `qup-core`, no de una propiedad `clocks`. En Android hay SEs activos que
+  mantienen ese voto y aquí no. Se añadió a `gts9u-fpclk.c` la reserva de los
+  tres caminos (`qup-core`, `qup-config`, `qup-memory`) creando un dispositivo
+  que toma prestado el nodo del SE. Los tres votos entran —el reloj del SE
+  incluso cambia de tasa—, pero `TypeCheck` sigue devolviendo tipo `0`.
+- **`BAuth_SessionOpen` no es un comando de la TA.** Se desensambló entero: no
+  llama nunca a `QSEECom_send_modified_cmd_64`. Sólo reserva los dos búferes
+  —de `0x2a4000` bytes, lo que confirma de forma independiente el tamaño que
+  descubrimos— y arranca la app con el nombre `securefp` o `dualfp`. No existe
+  una sesión previa que abrir en la TA.
+- **Llamada de diagnóstico de TrustZone.** Se amplió el lector para barrer
+  *owner* y convención de llamada. Con owner SIP la respuesta es `-1`, «no
+  soportada». Con owner 50 (OS de confianza) responde `0x80000001` para las doce
+  formas de argumento probadas, lo que en ese espacio de servicios significa que
+  el comando no es ése. No hay ruta conocida al log desde este firmware.
+
+El siguiente paso ya no es del port sino de instrumentación cruzada: el kernel
+stock sí incluye `tzdbg`. Ejecutar la consulta fallida bajo Ubuntu y leer
+después `/sys/kernel/debug/tzdbg/log` desde el arranque stock daría el motivo
+exacto que la TA registra, siempre que el anillo sobreviva al reinicio en
+caliente.

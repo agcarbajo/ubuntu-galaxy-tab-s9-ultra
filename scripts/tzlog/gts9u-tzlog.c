@@ -69,6 +69,18 @@ static unsigned long smc_arg1 = ~0UL;
 module_param(smc_arg1, ulong, 0444);
 MODULE_PARM_DESC(smc_arg1, "second argument; the buffer size when left unset");
 
+static unsigned int smc_owner = TZLOG_SMC_OWNER_SIP;
+module_param(smc_owner, uint, 0444);
+MODULE_PARM_DESC(smc_owner, "SMC owner: 2 for SIP, 50 for the trusted OS");
+
+static unsigned int smc_svc = TZLOG_SMC_SVC_INFO;
+module_param(smc_svc, uint, 0444);
+MODULE_PARM_DESC(smc_svc, "service number within the owner");
+
+static bool smc32;
+module_param(smc32, bool, 0444);
+MODULE_PARM_DESC(smc32, "use the 32-bit calling convention instead of 64-bit");
+
 static unsigned long base = TZLOG_IMEM_BASE;
 module_param(base, ulong, 0444);
 MODULE_PARM_DESC(base, "physical address to map when scm=0");
@@ -113,9 +125,9 @@ static int tzlog_fetch(void)
 	if (!scm)
 		return 0;
 
-	fn = ARM_SMCCC_CALL_VAL(ARM_SMCCC_FAST_CALL, ARM_SMCCC_SMC_64,
-				TZLOG_SMC_OWNER_SIP,
-				(TZLOG_SMC_SVC_INFO << 8) | smc_cmd);
+	fn = ARM_SMCCC_CALL_VAL(ARM_SMCCC_FAST_CALL,
+				smc32 ? ARM_SMCCC_SMC_32 : ARM_SMCCC_SMC_64,
+				smc_owner, (smc_svc << 8) | smc_cmd);
 	arm_smccc_smc(fn, smc_arginfo,
 		      smc_arg0 == ~0UL ? virt_to_phys(tzlog_buf) : smc_arg0,
 		      smc_arg1 == ~0UL ? size : smc_arg1,
