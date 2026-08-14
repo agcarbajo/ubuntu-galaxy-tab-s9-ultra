@@ -83,6 +83,7 @@ export default class Gts9uFingerprintOverlay extends Extension {
 
     disable() {
         this._active = false;
+        this._stopHidePoll();
         this._stopBrightnessPoll();
         this._stopSafetyTimeout();
         if (this._busId) {
@@ -111,6 +112,7 @@ export default class Gts9uFingerprintOverlay extends Extension {
     }
 
     Show() {
+        this._stopHidePoll();
         this._active = true;
         Main.panel.statusArea.quickSettings?.menu?.close();
         Main.overview.hide();
@@ -125,13 +127,51 @@ export default class Gts9uFingerprintOverlay extends Extension {
     }
 
     Hide() {
-        this._active = false;
-        this._stopBrightnessPoll();
         this._stopSafetyTimeout();
+        if (this._panelFodActive()) {
+            this._startHidePoll();
+            return;
+        }
+        this._finishHide();
+    }
+
+    _finishHide() {
+        this._active = false;
+        this._stopHidePoll();
+        this._stopBrightnessPoll();
         this._actor.hide();
         this._shade.hide();
         this._dbus?.emit_property_changed(
             'Visible', new GLib.Variant('b', false));
+    }
+
+    _panelFodActive() {
+        const mode = this._readBacklight('fod_mode');
+        return Number.isFinite(mode) && mode !== 0;
+    }
+
+    _startHidePoll() {
+        if (this._hidePollId)
+            return;
+
+        // Keep the shade above the desktop until the DDIC has really left
+        // fingerprint HBM. Otherwise one frame of global HBM is visible when
+        // the compositor overlay disappears before the kernel-side cleanup.
+        this._hidePollId = GLib.timeout_add(
+            GLib.PRIORITY_DEFAULT, 50, () => {
+                if (this._panelFodActive())
+                    return GLib.SOURCE_CONTINUE;
+                this._hidePollId = 0;
+                this._finishHide();
+                return GLib.SOURCE_REMOVE;
+            });
+    }
+
+    _stopHidePoll() {
+        if (this._hidePollId) {
+            GLib.source_remove(this._hidePollId);
+            this._hidePollId = 0;
+        }
     }
 
     _orientation() {
@@ -194,12 +234,17 @@ export default class Gts9uFingerprintOverlay extends Extension {
 
         // Samsung's official ANA38407 tables map normal mode to 420 cd/m2 at
         // WRDISBV 2047. The fingerprint FlatZ path is capped around 650 cd/m2;
-        // 900 cd/m2 belongs to the separate outdoor-HBM range. Compensate
-        // luminance, not the raw backlight code. The white target is stacked
-        // above this multiplier and therefore keeps full fingerprint HBM.
+        // 900 cd/m2 belongs to the separate outdoor-HBM range. Convert the
+        // desired luminance ratio back to an sRGB component before expressing
+        // it as a black overlay opacity. Applying the linear ratio directly to
+        // encoded pixels makes the desktop far darker than its pre-FOD level.
+        // The white target is stacked above the shade and keeps full FOD HBM.
         const normalNits = brightness / maximum * 420;
         const ratio = Math.max(0, Math.min(1, normalNits / 650));
-        return Math.round(255 * (1 - ratio));
+        const encodedRatio = ratio <= 0.0031308
+            ? 12.92 * ratio
+            : 1.055 * Math.pow(ratio, 1 / 2.4) - 0.055;
+        return Math.round(255 * (1 - encodedRatio));
     }
 
     _updateShade() {

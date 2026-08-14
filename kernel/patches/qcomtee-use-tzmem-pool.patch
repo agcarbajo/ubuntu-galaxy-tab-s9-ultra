@@ -1,15 +1,6 @@
 diff --git a/drivers/tee/qcomtee/shm.c b/drivers/tee/qcomtee/shm.c
 --- a/drivers/tee/qcomtee/shm.c
 +++ b/drivers/tee/qcomtee/shm.c
-@@ -27,7 +27,7 @@
-  * requires a size larger than %MAX_INBOUND_BUFFER_SIZE, the user should
-  * consider using another form of shared memory with QTEE.
-  */
--#define MAX_INBOUND_BUFFER_SIZE SZ_4M
-+#define MAX_INBOUND_BUFFER_SIZE SZ_16M
- 
- /**
-  * qcomtee_msg_buffers_alloc() - Allocate inbound and outbound buffers.
 @@ -97,7 +97,12 @@ void qcomtee_msg_buffers_free(struct qcomtee_object_invoke_ctx *oic)
  	tee_shm_free(oic->out_shm);
  }
@@ -19,8 +10,8 @@ diff --git a/drivers/tee/qcomtee/shm.c b/drivers/tee/qcomtee/shm.c
 + * Keep ordinary QTEE messages on the proven page-backed path. Large client
 + * memory objects cannot be allocated there when they exceed MAX_ORDER, so
 + * those are backed by DMA-coherent CMA memory through qcom_tzmem instead.
-+ * The larger inbound ceiling is needed for the compat AppLoader's signed
-+ * split-image buffer and does not alter its TrustZone signature checks.
++ * The compat AppLoader receives large signed images through a memory object,
++ * while the message itself retains upstream's 4 MiB ceiling.
 + */
 +#define QCOMTEE_SHM_POOL_MAX_SIZE	SZ_32M
 +#define QCOMTEE_PAGE_SHM_MAX_SIZE	SZ_4M

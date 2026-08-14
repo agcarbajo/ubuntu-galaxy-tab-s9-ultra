@@ -11,9 +11,9 @@
 #define QSEECOM_COMPAT_APP_LOADER_UID UINT32_C(122)
 #define QSEECOM_COMPAT_LOOKUP_TA_OP UINT32_C(2)
 
-int main(void)
+int main(int argc, char **argv)
 {
-	static const char app_name[] = "securefp";
+	const char *app_name = "securefp";
 	struct qcomtee_object *root = QCOMTEE_OBJECT_NULL;
 	struct qcomtee_object *client_env = QCOMTEE_OBJECT_NULL;
 	struct qcomtee_object *app_loader = QCOMTEE_OBJECT_NULL;
@@ -22,6 +22,17 @@ int main(void)
 	qcomtee_result_t result = -1;
 	int transport_ret;
 	int exit_code = 1;
+
+	if (argc > 2) {
+		fprintf(stderr, "Usage: %s [TA-name]\n", argv[0]);
+		return 64;
+	}
+	if (argc == 2)
+		app_name = argv[1];
+	if (!app_name[0] || strlen(app_name) > 63 || strchr(app_name, '/')) {
+		fprintf(stderr, "FAIL: invalid TA name\n");
+		return 64;
+	}
 
 	root = test_get_root();
 	if (root == QCOMTEE_OBJECT_NULL) {
@@ -58,8 +69,8 @@ int main(void)
 		goto out;
 	}
 	if (result != QCOMTEE_OK) {
-		fprintf(stderr, "ABSENT/REJECTED: lookupTA(securefp) result %d\n",
-			result);
+		fprintf(stderr, "ABSENT/REJECTED: lookupTA(%s) result %d\n",
+			app_name, result);
 		exit_code = 2;
 		goto out;
 	}
@@ -71,8 +82,8 @@ int main(void)
 		goto out;
 	}
 
-	printf("FOUND: preloaded TA securefp is available via UID 122.\n");
-	printf("No operation was invoked on securefp; releasing its controller.\n");
+	printf("FOUND: preloaded TA %s is available via UID 122.\n", app_name);
+	printf("No operation was invoked; releasing its controller.\n");
 	exit_code = 0;
 
 out:

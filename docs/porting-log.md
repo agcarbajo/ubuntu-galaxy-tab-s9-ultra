@@ -5305,3 +5305,52 @@ modules   7528c67b18c6a0a842f069bc8aa54203f7adfd1f40a7980d8d909d2fa502521a
 El siguiente bloqueo ya no está en panel ni táctil: TrustZone sigue sin
 publicar el objeto lógico `securefp`, así que todavía no se instala ni anuncia
 un dispositivo funcional en `fprintd`.
+
+## Sesión 83 — TA `dualfp` aceptada y transporte BAUTH
+
+Fecha: 2026-08-14. Se comprobó primero que no existía una mezcla de firmware:
+la partición activa `apnhlos` coincide byte a byte con el `NON-HLOS.bin`
+oficial analizado (SHA-256 `1aa9de73…`) y la partición `tz` con el `tz.mbn`
+oficial (`865b32e1…`). Quedan descartados una versión incompatible y el
+antirollback como explicación del rechazo anterior.
+
+El análisis de todas las imágenes divididas de `NON-HLOS` identificó dos piezas
+distintas. `fingerpr.b00`–`b08` ensambla un motor Qualcomm QFP genérico de
+13.725.784 bytes. `dualfp.b00`–`b08` ensambla 19.927.128 bytes y contiene la
+implementación Samsung/Egis del EL721, BAUTH, matching y plantillas. El nombre
+`securefp` usado por `libsfp_teegw` es lógico; no es el nombre de la imagen que
+había que cargar.
+
+El límite upstream de 4 MiB del mensaje QTEE impedía probar `dualfp` con
+`loadFromBuffer`. En lugar de agrandar el mensaje se reservó un objeto de
+memoria TEE, se copió allí la imagen firmada y se llamó a `loadFromRegion` del
+AppLoader UID 122. TrustZone aceptó `dualfp`, devolvió su controlador
+QSEEComCompat y la descargó limpiamente. La tablet permaneció estable, QCOMTEE
+volvió a quedar descargado y `sensor_power` siguió en cero.
+
+También se reconstruyó el sobre `sendRequest` y los dos objetos de memoria que
+Samsung usa para `BAuth_Type_Check`. El transporte devuelve éxito (`0`) tanto
+con UID 0 como con UID 1000, mientras la TA devuelve `29`; no se ejecutó ninguna
+captura. El resultado es coherente con el EL721 físicamente apagado en la imagen
+actual y confirma que la siguiente frontera ya está en alimentación/protocolo,
+no en localizar o autenticar la TA.
+
+El overlay stock aclara además que el X910 no usa el supuesto LDO2 como
+regulador Linux: `etspi-ldoPin` es TLMM GPIO91 y `etspi-sleepPin` es GPIO155.
+El controlador se corrigió para mapear ambas líneas mediante una tabla GPIO de
+plataforma creada después del arranque. Su adquisición y conmutación siguen
+siendo diferidas hasta una operación explícita, por lo que no se vuelve a
+modificar el DTB que provocaba resets tempranos. El objeto compila limpio con
+Clang 22; esta nueva secuencia todavía no se flashea ni se activa sin una vía de
+recuperación física disponible.
+
+La pila completa se reconstruyó desde cero sobre Linux 7.2-rc3 con Clang 22.
+La compilación tardó 575 segundos, confirmó `FINGERPRINT_EGIS_EL721=y`,
+`QCOMTEE=m` y no contiene ya el probe/cargador `securefp` específico del kernel.
+Los artefactos preparados, todavía sin flashear, son:
+
+```text
+Image.gz  d5021f8c99332149454a3c79fbfa7f648d10ae4abc9b8e1b15ffae5bc93e8e56
+DTB       613b3bb7729d55d1c60aaeda348a098163b79aed1efbf24cdcc582ff0d58ccc4
+config    db2503329105ca65454354262958ea9515e2028961e4c3c02e18625bc81e0c78
+```

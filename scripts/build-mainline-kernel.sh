@@ -93,19 +93,13 @@ fi
 # ---------------------------------------------------------------------------
 
 board_dts=$kernel_tree/arch/arm64/boot/dts/qcom/sm8550-samsung-gts9uwifi.dts
-if [ "$fingerprint_sensor" = 1 ]; then
-	install -m 0644 "$dts/sm8550-samsung-gts9uwifi.dts" "$board_dts"
-	# The repository default is deliberately inert after an early boot-loop.
-	# Opt-in builds enable the device only for controlled layer-by-layer tests.
-	sed -i '/compatible = "egistec,el721";/,/^\t};/ \
-		s/status = "disabled";/status = "okay";/' \
-		"$board_dts"
-else
-	# Recovery builds use the exact last physically booted board description.
-	git -C "$repo" show \
-		"$fingerprint_baseline:kernel/dts/sm8550-samsung-gts9uwifi.dts" \
-		> "$board_dts"
-fi
+# Keep the exact last physically booted board description for every build.
+# Adding the EL721 GPIO description to vendor_boot makes Samsung ABL reset before
+# Linux can persist a log.  The restricted EL721 compatibility device is
+# therefore created by its driver after boot and does not mutate the DTB.
+git -C "$repo" show \
+	"$fingerprint_baseline:kernel/dts/sm8550-samsung-gts9uwifi.dts" \
+	> "$board_dts"
 
 if ! grep -q 'sm8550-samsung-gts9uwifi.dtb' \
 	"$kernel_tree/arch/arm64/boot/dts/qcom/Makefile"; then
@@ -190,21 +184,9 @@ if ! grep -q 'QCOMTEE_SHM_POOL_MAX_SIZE' \
 	git -C "$kernel_tree" apply --recount \
 		"$pat/qcomtee-use-tzmem-pool.patch"
 fi
-if ! grep -q 'probe_securefp' \
-	"$kernel_tree/drivers/tee/qcomtee/call.c"; then
-	git -C "$kernel_tree" apply --recount \
-		"$pat/qcomtee-add-securefp-probe.patch"
-fi
-if ! grep -q 'load_securefp' \
-	"$kernel_tree/drivers/tee/qcomtee/call.c"; then
-	git -C "$kernel_tree" apply --recount \
-		"$pat/qcomtee-add-securefp-loader.patch"
-fi
-if ! grep -q 'securefp_name' \
-	"$kernel_tree/drivers/tee/qcomtee/call.c"; then
-	git -C "$kernel_tree" apply --recount \
-		"$pat/qcomtee-add-securefp-name-param.patch"
-fi
+# TA discovery and loading live in the userspace QTEE bridge.  Keep the kernel
+# transport generic: the old module parameters were diagnostic-only and
+# hard-coded the `fingerpr` engine instead of Samsung's EL721 `dualfp` TA.
 
 # Upstream HI847 currently only binds through ACPI and assumes platform power
 # resources.  The X910 exposes it through CCI/DT and needs explicit VDDIO,

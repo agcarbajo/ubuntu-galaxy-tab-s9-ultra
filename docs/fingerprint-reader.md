@@ -11,16 +11,16 @@ instalará ni anunciará soporte en GNOME hasta disponer de un backend seguro pa
 - Sensor: EgisTec EL721, identificado por el overlay R03 y el controlador GPL
   oficial de Samsung para la familia `el7xx`.
 - Tipo: lector óptico bajo el panel AMOLED.
-- Alimentación: LDO2 del PM8550B a 3,3 V (`VDD_BTP_3P3`).
-- Enable/reset: TLMM GPIO155.
+- Alimentación de 3,3 V: TLMM GPIO91 (`etspi-ldoPin`).
+- Enable/reset: TLMM GPIO155 (`etspi-sleepPin`).
 - Modelo comunicado por Samsung: `X916`.
 - Posición stock:
   `16.70,0.00,9.10,9.10,14.80,14.80,12.00,12.00,5.00`.
 
 El sensor trabaja en modo seguro. El controlador Linux de Samsung no contiene
 el algoritmo de reconocimiento ni una ruta normal para obtener imágenes: el
-registro, la comparación y las plantillas se delegan en la aplicación firmada
-`securefp` dentro de TrustZone.
+registro, la comparación y las plantillas se delegan en aplicaciones firmadas
+dentro de TrustZone.
 
 La cadena del firmware oficial está identificada con precisión:
 
@@ -30,19 +30,24 @@ fingerprint-service
   → libsfp_teegw
   → libQSEEComAPI (objetos)
   → AppLoader compatible, UID 122
-  → lookupTA("securefp")
+  → nombre lógico "securefp"
+  → TA firmada dualfp
 ```
 
 El servicio Samsung solicita el nombre lógico `securefp`, pero no existe un
 fichero `securefp.mbn` en `system`, `vendor`, `odm` ni en el APEX biométrico. La
 ruta `fpta` admite una actualización u override, pero está vacía en este
-firmware; `authnr.mbn` pertenece al autenticador y no es el matcher de huellas.
-El `NON-HLOS.bin` stock sí contiene una imagen firmada dividida
-`fingerpr.b00`–`fingerpr.b08`, pero ese binario no contiene la cadena
-`securefp` y QTEE rechaza su carga dinámica tanto con el nombre `securefp` como
-con `fingerpr`. Por tanto aún no está demostrado que sea el objeto solicitado
-por la HAL; el arranque Android puede publicar `securefp` mediante otra fase o
-dependencia de TrustZone.
+firmware. El análisis completo de `NON-HLOS.bin` resolvió la ambigüedad:
+`fingerpr.b00`–`b08` contiene el motor QFP genérico, mientras
+`dualfp.b00`–`b08` contiene la implementación Samsung/Egis del EL721, BAUTH,
+matching y plantillas. `authnr.mbn` es otro autenticador que referencia tanto
+`securefp` como `dualfp`, no el matcher principal.
+
+La imagen ensamblada `dualfp` mide 19.927.128 bytes. El AppLoader compatible
+UID 122 la acepta con `loadFromRegion` y devuelve un controlador QSEEComCompat
+válido; la descarga posterior también termina correctamente. Esto demuestra
+que la TA segura necesaria está presente y es ejecutable desde Ubuntu, aunque
+`lookupTA("securefp")` no publique un alias ni antes ni después de la carga.
 
 La imagen oficial contiene además el servicio biométrico de Samsung y las
 bibliotecas Egis, pero dependen de Bionic, Binder, la AIDL biométrica de Android
@@ -71,9 +76,9 @@ La implementación separa cuatro responsabilidades:
 2. `CONFIG_TEE=y` mantiene la infraestructura común. En builds experimentales,
    `CONFIG_QCOMTEE=m` empaqueta el transporte de objetos QTEE de Qualcomm; al
    cargarlo manualmente publica `/dev/tee0`. El transporte Qualcomm Diagnostics
-   y el AppLoader UID 122 están validados físicamente. Los mensajes de hasta
-   4 MiB conservan el allocator upstream; sólo los objetos mayores usan CMA
-   mediante `qcom_tzmem`, con limpieza explícita al liberarlos.
+   y el AppLoader UID 122 están validados físicamente. Los mensajes conservan
+   el límite upstream de 4 MiB; las TA mayores se entregan con un objeto de memoria TEE
+   mediante `loadFromRegion`, sin inflar el mensaje ni duplicar 20 MiB en CMA.
 3. `panel-samsung-ana38407.c` ofrece el modo de alto brillo requerido por
    un lector óptico. Conserva el brillo solicitado por GNOME, lo restaura al
    terminar y fuerza la limpieza después de 15 segundos. Una extensión de
@@ -133,7 +138,7 @@ El dispositivo de plataforma expone estos atributos:
 | `name` | lectura | `EL721` |
 | `model` | lectura | `X916` |
 | `position` | lectura | metadatos geométricos del overlay stock |
-| `power` | lectura/escritura | estado y control del raíl/enable |
+| `sensor_power` | lectura/escritura | estado y control de GPIO91/GPIO155 |
 | `reset` | escritura | reset controlado; sólo acepta `1` |
 | `reset_count` | lectura | resets ejecutados desde el arranque |
 
@@ -208,7 +213,7 @@ El futuro backend de `fprintd` debe tratar cada lectura como una transacción:
    exclusión Goodix de esa zona;
 3. encender y, si procede, resetear el EL721;
 4. mostrar la máscara/objetivo de GNOME y activar `fod_mode`;
-5. solicitar la captura o comparación a `securefp` mediante QTEE;
+5. solicitar la captura o comparación a `dualfp` mediante QTEE;
 6. en un bloque de limpieza incondicional, quitar círculo y HBM, apagar el
    sensor y reactivar el tacto.
 
@@ -236,14 +241,14 @@ test -c /dev/tee0
 fp_vendor=$(grep -l '^EGISTEC$' /sys/bus/platform/devices/*/vendor | head -n1)
 test -n "$fp_vendor"
 fp_sysfs=${fp_vendor%/vendor}
-for attr in vendor name model position power; do
+for attr in vendor name model position sensor_power; do
 	printf '%s: ' "$attr"
 	cat "$fp_sysfs/$attr"
 done
 dmesg | grep -Ei 'egis|el721|qcomtee|fingerprint'
 ```
 
-El resultado esperado antes de iniciar una operación es `power=0`. La mera
+El resultado esperado antes de iniciar una operación es `sensor_power=0`. La mera
 existencia de estos nodos sólo valida infraestructura; no demuestra que se
 pueda registrar o reconocer una huella.
 
@@ -256,9 +261,9 @@ incluso si una orden falla:
 fp_vendor=$(grep -l '^EGISTEC$' /sys/bus/platform/devices/*/vendor | head -n1)
 test -n "$fp_vendor"
 fp_sysfs=${fp_vendor%/vendor}
-trap 'printf 0 > "$fp_sysfs/power"' EXIT
-printf 1 > "$fp_sysfs/power"
-cat "$fp_sysfs/power"
+trap 'printf 0 > "$fp_sysfs/sensor_power"' EXIT
+printf 1 > "$fp_sysfs/sensor_power"
+cat "$fp_sysfs/sensor_power"
 printf 1 > "$fp_sysfs/reset"
 cat "$fp_sysfs/reset_count"
 ```
@@ -299,9 +304,9 @@ autenticación en GDM y en las cuatro orientaciones cuando exista el backend.
 La consulta de sólo lectura con las herramientas oficiales `quic-teec` ya
 confirma QTEE 5.2.0, Qualcomm Diagnostics y el AppLoader compatible UID 122.
 `lookupTA("securefp")` devuelve `2` tanto desde clientes de usuario como desde
-el entorno privilegiado interno del driver: el objeto no está publicado en
-este estado de TrustZone. Ninguna prueba obtiene el objeto de aplicación ni
-invoca una operación biométrica.
+el entorno privilegiado interno del driver: el alias no está publicado en
+este estado de TrustZone. Esto ya no bloquea la carga porque UID 122 acepta la
+imagen firmada `dualfp` y devuelve directamente su controlador compatible.
 
 `scripts/probe-qtee-securefp.c` implementa exactamente esa consulta. Se compila
 contra `quic-teec` `736419e25a2036aac3292a10a93e394a90750ca3` y QCBOR
@@ -309,12 +314,26 @@ contra `quic-teec` `736419e25a2036aac3292a10a93e394a90750ca3` y QCBOR
 `lookupTA("securefp")` y libera el controlador devuelto sin obtener el objeto de
 aplicación ni enviarle una operación.
 
-`scripts/probe-qtee-load-securefp.c` reconstruye la imagen dividida stock con
-los offsets ELF que utiliza el driver Qualcomm y ejercita `loadFromBuffer`.
-La ampliación CMA permite transportar sus 13.725.784 bytes, pero el AppLoader
-devuelve `1` con los nombres `securefp` y `fingerpr`, también desde el cliente
-privilegiado del kernel. Es un rechazo de TrustZone posterior al transporte,
-no un fallo de memoria, firma AVB o acceso a `/dev/tee0`.
+`scripts/probe-qtee-load-securefp.c` reconstruye una imagen dividida stock con
+los offsets ELF que utiliza Qualcomm. Recibe por separado el nombre base de los
+segmentos y el nombre de carga. Para `dualfp` reserva un objeto de memoria
+TEE y usa `loadFromRegion`; QTEE aceptó los 19.927.128 bytes como `dualfp` y los
+descargó limpiamente. El probe ofrece además `--type-check`: la petición llega
+a la TA (`invoke result 0`), pero con el sensor aún sin alimentación física la
+TA devuelve `29`. No se inicia captura, registro ni comparación.
+
+Se verificó que las particiones activas de la tablet coinciden byte a byte con
+el firmware analizado: `apnhlos` coincide con `NON-HLOS.bin` (SHA-256
+`1aa9de73…`) y `tz` con `tz.mbn` (`865b32e1…`). El resultado no se debe a una
+mezcla de versiones o a antirollback.
+
+Las herramientas auxiliares se mantienen en `scripts/` y no se instalan en la
+imagen final: `probe-el721-abi.c` comprueba que la ABI restringida sólo expone
+el modelo, `probe-qtee-securefp.c` consulta un nombre lógico, y
+`probe-qtee-load-ta.c` permite cargar y descargar una TA pequeña ya ensamblada.
+`probe-stock-qseecom.c` conserva el experimento equivalente para enlazar contra
+la biblioteca Bionic stock. Ninguna registra plantillas ni se usa como backend
+de autenticación.
 
 Sólo cuando exista un backend seguro se instalará `fprintd` y se validarán, en
 este orden:
@@ -332,12 +351,15 @@ autenticación por huella se considera no disponible.
 ## Bloqueo actual y siguiente paso
 
 `libfprint` no incluye soporte para el EL721 y el sensor no entrega imágenes a
-Linux. El transporte QTEE, el AppLoader, los búferes grandes, la iluminación
-óptica y la señal/supresión FOD de Goodix ya están comprobados; el bloqueo
-actual es reproducir la fase del
-arranque Android que hace visible el objeto lógico `securefp`. Hay que aislar
-esa dependencia —probablemente dentro de la cadena AuthFW/TrustZone— antes de
-crear el puente mínimo hacia `fprintd`. Las plantillas y la comparación deben
-permanecer en el entorno seguro. `fprintd` no se añade ni se habilita mientras
-falte ese backend: mostrar una opción de huella en GNOME sin poder completarla
-sería un falso positivo de compatibilidad.
+Linux. Transporte QTEE, AppLoader, carga de `dualfp`, iluminación óptica y
+señal/supresión FOD de Goodix están comprobados. El bloqueo actual se ha
+reducido a encender de forma segura el EL721 después del arranque y completar
+el protocolo BAUTH sobre el controlador ya obtenido. El driver prepara un
+dispositivo de plataforma tardío y mapea GPIO91/GPIO155 sin modificar el DTB;
+esta nueva alimentación diferida debe validarse físicamente antes de enviar
+comandos de captura.
+
+Después se implementará el puente mínimo hacia `libfprint`/`fprintd`. Las
+plantillas y la comparación permanecerán en TrustZone. `fprintd` no se añade ni
+se habilita mientras falte ese backend: mostrar una opción de huella en GNOME
+sin poder completarla sería un falso positivo de compatibilidad.

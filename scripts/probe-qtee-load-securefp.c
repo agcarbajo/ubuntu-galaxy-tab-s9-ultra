@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-3-Clause
-// Load Samsung's signed split fingerprint TA without invoking it.
+// Load Samsung's signed split fingerprint TA and optionally query its type.
 
 #include <elf.h>
 #include <errno.h>
@@ -12,10 +12,29 @@
 
 #define QSEECOM_COMPAT_APP_LOADER_UID UINT32_C(122)
 #define QSEECOM_COMPAT_LOOKUP_TA_OP UINT32_C(2)
+#define QSEECOM_COMPAT_LOAD_REGION_OP UINT32_C(0)
 #define QSEECOM_COMPAT_LOAD_BUFFER_OP UINT32_C(1)
-#define FINGERPRINT_TA_BASENAME "fingerpr"
+#define QSEECOM_COMPAT_SEND_REQUEST_OP UINT32_C(0)
+#define QSEECOM_COMPAT_UNLOAD_OP UINT32_C(2)
 #define FINGERPRINT_TA_NAME "securefp"
 #define FINGERPRINT_TA_SEGMENTS 9
+#define MAX_DIST_NAME_SIZE 4096U
+#define DUALFP_TYPE_CHECK_COMMAND UINT32_C(16)
+#define DUALFP_MESSAGE_SIZE 64U
+#define QCOMTEE_MAX_INBOUND_BUFFER_SIZE (4U * 1024U * 1024U)
+
+static void store_u32(unsigned char *buffer, size_t offset, uint32_t value)
+{
+	memcpy(buffer + offset, &value, sizeof(value));
+}
+
+static uint32_t load_u32(const unsigned char *buffer, size_t offset)
+{
+	uint32_t value;
+
+	memcpy(&value, buffer + offset, sizeof(value));
+	return value;
+}
 
 static int read_at(const char *path, void *buffer, size_t size)
 {
@@ -63,17 +82,17 @@ static int file_size(const char *path, size_t *size)
 }
 
 static int split_path(char *path, size_t path_size, const char *directory,
-		      unsigned int segment)
+		      const char *basename, unsigned int segment)
 {
 	int ret;
 
 	ret = snprintf(path, path_size, "%s/%s.b%02u", directory,
-		       FINGERPRINT_TA_BASENAME, segment);
+		       basename, segment);
 	return ret < 0 || (size_t)ret >= path_size ? -1 : 0;
 }
 
-static int assemble_ta(const char *directory, unsigned char **image_out,
-		       size_t *image_size_out)
+static int assemble_ta(const char *directory, const char *basename,
+		       unsigned char **image_out, size_t *image_size_out)
 {
 	Elf64_Ehdr header;
 	Elf64_Phdr phdr[FINGERPRINT_TA_SEGMENTS];
@@ -83,10 +102,10 @@ static int assemble_ta(const char *directory, unsigned char **image_out,
 	size_t image_size;
 	unsigned int i;
 
-	if (split_path(path, sizeof(path), directory, 0) ||
+	if (split_path(path, sizeof(path), directory, basename, 0) ||
 	    file_size(path, &segment_size[0]) ||
 	    segment_size[0] < sizeof(header) + sizeof(phdr)) {
-		fprintf(stderr, "FAIL: invalid %s.b00\n", FINGERPRINT_TA_BASENAME);
+		fprintf(stderr, "FAIL: invalid %s.b00\n", basename);
 		return -1;
 	}
 	if (read_at(path, &header, sizeof(header)))
@@ -115,7 +134,7 @@ static int assemble_ta(const char *directory, unsigned char **image_out,
 	}
 
 	for (i = 1; i < FINGERPRINT_TA_SEGMENTS; i++) {
-		if (split_path(path, sizeof(path), directory, i) ||
+		if (split_path(path, sizeof(path), directory, basename, i) ||
 		    file_size(path, &segment_size[i])) {
 			fprintf(stderr, "FAIL: missing split TA segment b%02u\n", i);
 			return -1;
@@ -143,7 +162,7 @@ static int assemble_ta(const char *directory, unsigned char **image_out,
 		size_t offset = i ? phdr[i].p_offset : 0;
 
 		if (offset > image_size || segment_size[i] > image_size - offset ||
-		    split_path(path, sizeof(path), directory, i) ||
+		    split_path(path, sizeof(path), directory, basename, i) ||
 		    read_at(path, image + offset, segment_size[i])) {
 			fprintf(stderr, "FAIL: cannot assemble segment b%02u\n", i);
 			free(image);
@@ -154,15 +173,14 @@ static int assemble_ta(const char *directory, unsigned char **image_out,
 	*image_out = image;
 	*image_size_out = image_size;
 	printf("Assembled signed %s TA: %zu bytes.\n",
-	       FINGERPRINT_TA_BASENAME, image_size);
+	       basename, image_size);
 	return 0;
 }
 
-static int lookup_ta(struct qcomtee_object *app_loader,
+static int lookup_ta(struct qcomtee_object *app_loader, const char *name,
 		     struct qcomtee_object **controller,
 		     qcomtee_result_t *result)
 {
-	static const char name[] = FINGERPRINT_TA_NAME;
 	struct qcomtee_param params[2] = { 0 };
 
 	params[0].attr = QCOMTEE_UBUF_INPUT;
@@ -176,27 +194,144 @@ static int lookup_ta(struct qcomtee_object *app_loader,
 	return 0;
 }
 
+static void report_dist_output(const unsigned char *buffer, size_t size)
+{
+	size_t first = size;
+	size_t last = 0;
+	size_t i;
+
+	for (i = 0; i < size; i++) {
+		if (!buffer[i])
+			continue;
+		if (first == size)
+			first = i;
+		last = i;
+	}
+	if (first == size) {
+		fprintf(stderr, "Distribution output is all zero.\n");
+		return;
+	}
+	fprintf(stderr,
+		"Distribution output has nonzero bytes at offsets %zu..%zu:",
+		first, last);
+	for (i = first; i <= last && i < first + 64; i++)
+		fprintf(stderr, " %02x", buffer[i]);
+	fputc('\n', stderr);
+}
+
+static int type_check_ta(struct qcomtee_object *controller,
+			 struct qcomtee_object *root)
+{
+	struct qcomtee_object *input = QCOMTEE_OBJECT_NULL;
+	struct qcomtee_object *output = QCOMTEE_OBJECT_NULL;
+	struct qcomtee_param params[10] = { 0 };
+	unsigned char request[DUALFP_MESSAGE_SIZE] = { 0 };
+	unsigned char response[DUALFP_MESSAGE_SIZE] = { 0 };
+	unsigned char request_out[DUALFP_MESSAGE_SIZE] = { 0 };
+	unsigned char response_out[DUALFP_MESSAGE_SIZE] = { 0 };
+	uint32_t embedded_offsets[] = { 4, 16 };
+	uint32_t is_64_bit = 1;
+	unsigned char *input_data;
+	unsigned char *output_data;
+	uint32_t trustlet_result;
+	uint32_t payload_result;
+	qcomtee_result_t result = QCOMTEE_ERROR;
+	int ret = -1;
+
+	if (qcomtee_memory_object_alloc(8, root, &input) ||
+	    qcomtee_memory_object_alloc(8, root, &output)) {
+		fprintf(stderr, "FAIL: could not allocate TypeCheck buffers\n");
+		goto out;
+	}
+	input_data = qcomtee_memory_object_addr(input);
+	output_data = qcomtee_memory_object_addr(output);
+	memset(input_data, 0, 8);
+	memset(output_data, 0, 8);
+
+	/* Reconstructed from BAuth_Type_Check in Samsung's arm64 gateway. */
+	store_u32(request, 0, DUALFP_TYPE_CHECK_COMMAND);
+	store_u32(request, 12, 8);
+	store_u32(request, 24, 8);
+	store_u32(input_data, 0, DUALFP_TYPE_CHECK_COMMAND);
+	/* BAuth_SessionOpen selects Samsung's dual-fingerprint path with type 1. */
+	store_u32(input_data, 4, 1);
+
+	params[0].attr = QCOMTEE_UBUF_INPUT;
+	params[0].ubuf.addr = request;
+	params[0].ubuf.size = sizeof(request);
+	params[1].attr = QCOMTEE_UBUF_INPUT;
+	params[1].ubuf.addr = response;
+	params[1].ubuf.size = sizeof(response);
+	params[2].attr = QCOMTEE_UBUF_INPUT;
+	params[2].ubuf.addr = embedded_offsets;
+	params[2].ubuf.size = sizeof(embedded_offsets);
+	params[3].attr = QCOMTEE_UBUF_INPUT;
+	params[3].ubuf.addr = &is_64_bit;
+	params[3].ubuf.size = sizeof(is_64_bit);
+	params[4].attr = QCOMTEE_UBUF_OUTPUT;
+	params[4].ubuf.addr = request_out;
+	params[4].ubuf.size = sizeof(request_out);
+	params[5].attr = QCOMTEE_UBUF_OUTPUT;
+	params[5].ubuf.addr = response_out;
+	params[5].ubuf.size = sizeof(response_out);
+	params[6].attr = QCOMTEE_OBJREF_INPUT;
+	params[6].object = input;
+	params[7].attr = QCOMTEE_OBJREF_INPUT;
+	params[7].object = output;
+	params[8].attr = QCOMTEE_OBJREF_INPUT;
+	params[8].object = QCOMTEE_OBJECT_NULL;
+	params[9].attr = QCOMTEE_OBJREF_INPUT;
+	params[9].object = QCOMTEE_OBJECT_NULL;
+
+	if (qcomtee_object_invoke(controller,
+				  QSEECOM_COMPAT_SEND_REQUEST_OP,
+				  params, 10, &result)) {
+		fprintf(stderr, "FAIL: TypeCheck transport error\n");
+		goto out;
+	}
+	trustlet_result = load_u32(response_out, 4);
+	payload_result = load_u32(output_data, 0);
+	printf("TypeCheck invoke result %u; trustlet=%u, payload=%u, sensor=%u.\n",
+	       result, trustlet_result, payload_result,
+	       load_u32(output_data, 4));
+	ret = result == QCOMTEE_OK && !trustlet_result && !payload_result ? 0 : -1;
+
+out:
+	qcomtee_memory_object_release(output);
+	qcomtee_memory_object_release(input);
+	return ret;
+}
+
 int main(int argc, char **argv)
 {
 	static const char name[] = FINGERPRINT_TA_NAME;
+	const char *basename;
 	const char *load_name;
-	char dist_name[64] = { 0 };
+	char dist_name[MAX_DIST_NAME_SIZE] = { 0 };
 	struct qcomtee_object *root = QCOMTEE_OBJECT_NULL;
 	struct qcomtee_object *client_env = QCOMTEE_OBJECT_NULL;
 	struct qcomtee_object *app_loader = QCOMTEE_OBJECT_NULL;
 	struct qcomtee_object *controller = QCOMTEE_OBJECT_NULL;
+	struct qcomtee_object *memory_object = QCOMTEE_OBJECT_NULL;
 	struct qcomtee_param params[4] = { 0 };
 	unsigned char *image = NULL;
 	size_t image_size = 0;
 	qcomtee_result_t result = QCOMTEE_ERROR;
+	const char *load_method = "loadFromBuffer";
+	int loaded_here = 0;
+	int run_type_check = 0;
 	int exit_code = 1;
 
-	if (argc < 2 || argc > 3) {
-		fprintf(stderr, "usage: %s DIRECTORY_WITH_FINGERPR_SPLITS [LOAD_NAME]\n",
+	if (argc < 4 || argc > 5 ||
+	    (argc == 5 && strcmp(argv[4], "--type-check"))) {
+		fprintf(stderr,
+			"usage: %s SPLIT_DIRECTORY BASENAME LOAD_NAME [--type-check]\n",
 			argv[0]);
 		return 64;
 	}
-	load_name = argc == 3 ? argv[2] : name;
+	basename = argv[2];
+	load_name = argv[3];
+	run_type_check = argc == 5;
 	root = test_get_root();
 	if (root == QCOMTEE_OBJECT_NULL)
 		goto out;
@@ -208,7 +343,7 @@ int main(int argc, char **argv)
 	if (app_loader == QCOMTEE_OBJECT_NULL)
 		goto out;
 
-	if (lookup_ta(app_loader, &controller, &result)) {
+	if (lookup_ta(app_loader, name, &controller, &result)) {
 		fprintf(stderr, "FAIL: initial lookupTA transport error\n");
 		goto out;
 	}
@@ -223,39 +358,113 @@ int main(int argc, char **argv)
 	printf("lookupTA(%s) returned %u; trying the signed stock image.\n",
 	       name, result);
 
-	if (assemble_ta(argv[1], &image, &image_size))
+	if (assemble_ta(argv[1], basename, &image, &image_size))
 		goto out;
-	params[0].attr = QCOMTEE_UBUF_INPUT;
-	params[0].ubuf.addr = image;
-	params[0].ubuf.size = image_size;
-	params[1].attr = QCOMTEE_UBUF_INPUT;
-	params[1].ubuf.addr = (void *)load_name;
-	params[1].ubuf.size = strlen(load_name);
-	params[2].attr = QCOMTEE_UBUF_OUTPUT;
-	params[2].ubuf.addr = dist_name;
-	params[2].ubuf.size = sizeof(dist_name);
-	params[3].attr = QCOMTEE_OBJREF_OUTPUT;
-	if (qcomtee_object_invoke(app_loader, QSEECOM_COMPAT_LOAD_BUFFER_OP,
-				  params, 4, &result)) {
-		fprintf(stderr, "FAIL: loadFromBuffer transport error\n");
-		goto out;
+	if (image_size > QCOMTEE_MAX_INBOUND_BUFFER_SIZE) {
+		load_method = "loadFromRegion";
+		if (qcomtee_memory_object_alloc(image_size, root,
+						&memory_object)) {
+			fprintf(stderr,
+				"FAIL: could not allocate %zu-byte TEE memory object\n",
+				image_size);
+			goto out;
+		}
+		memcpy(qcomtee_memory_object_addr(memory_object), image,
+		       image_size);
+		params[0].attr = QCOMTEE_UBUF_INPUT;
+		params[0].ubuf.addr = (void *)load_name;
+		params[0].ubuf.size = strlen(load_name);
+		params[1].attr = QCOMTEE_OBJREF_INPUT;
+		params[1].object = memory_object;
+		params[2].attr = QCOMTEE_OBJREF_OUTPUT;
+		if (qcomtee_object_invoke(app_loader,
+					  QSEECOM_COMPAT_LOAD_REGION_OP,
+					  params, 3, &result)) {
+			fprintf(stderr, "FAIL: loadFromRegion transport error\n");
+			goto out;
+		}
+		controller = params[2].object;
+	} else {
+		params[0].attr = QCOMTEE_UBUF_INPUT;
+		params[0].ubuf.addr = image;
+		params[0].ubuf.size = image_size;
+		params[1].attr = QCOMTEE_UBUF_INPUT;
+		params[1].ubuf.addr = (void *)load_name;
+		params[1].ubuf.size = strlen(load_name);
+		params[2].attr = QCOMTEE_UBUF_OUTPUT;
+		params[2].ubuf.addr = dist_name;
+		params[2].ubuf.size = sizeof(dist_name);
+		params[3].attr = QCOMTEE_OBJREF_OUTPUT;
+		if (qcomtee_object_invoke(app_loader,
+					  QSEECOM_COMPAT_LOAD_BUFFER_OP,
+					  params, 4, &result)) {
+			fprintf(stderr, "FAIL: loadFromBuffer transport error\n");
+			goto out;
+		}
+		controller = params[3].object;
 	}
-	controller = params[3].object;
 	if (result != QCOMTEE_OK || controller == QCOMTEE_OBJECT_NULL) {
-		fprintf(stderr, "REJECTED: loadFromBuffer(%s) result %u\n",
-			load_name, result);
+		fprintf(stderr, "REJECTED: %s(%s) result %u\n",
+			load_method, load_name, result);
+		if (!strcmp(load_method, "loadFromBuffer")) {
+			fprintf(stderr, "Distribution output: %zu bytes\n",
+				params[2].ubuf.size);
+			report_dist_output((const unsigned char *)dist_name,
+					   sizeof(dist_name));
+		}
 		exit_code = 2;
 		goto out;
 	}
 	printf("LOADED: QTEE accepted Samsung's signed %s image as %s.\n",
-	       FINGERPRINT_TA_BASENAME, load_name);
-	printf("No application object or biometric operation was requested.\n");
+	       basename, load_name);
+	printf("No biometric operation was requested.\n");
+	{
+		static const char *const lookup_names[] = {
+			FINGERPRINT_TA_NAME,
+			"dualfp",
+		};
+		size_t i;
+
+		for (i = 0; i < sizeof(lookup_names) / sizeof(lookup_names[0]); i++) {
+			struct qcomtee_object *found = QCOMTEE_OBJECT_NULL;
+			qcomtee_result_t lookup_result = QCOMTEE_ERROR;
+
+			if (lookup_ta(app_loader, lookup_names[i], &found,
+				      &lookup_result)) {
+				fprintf(stderr, "WARN: lookupTA(%s) transport error\n",
+					lookup_names[i]);
+			} else {
+				printf("lookupTA(%s) after load returned %u (%s).\n",
+				       lookup_names[i], lookup_result,
+				       found == QCOMTEE_OBJECT_NULL ? "no object" :
+				       "controller object");
+			}
+			qcomtee_object_refs_dec(found);
+		}
+	}
 	if (dist_name[0])
 		printf("Distribution name: %s\n", dist_name);
-	exit_code = 0;
+	loaded_here = 1;
+	exit_code = run_type_check ? type_check_ta(controller, root) != 0 : 0;
 
 out:
+	if (loaded_here && controller != QCOMTEE_OBJECT_NULL) {
+		qcomtee_result_t unload_result = QCOMTEE_ERROR;
+
+		if (qcomtee_object_invoke(controller,
+					  QSEECOM_COMPAT_UNLOAD_OP,
+					  NULL, 0, &unload_result) ||
+		    unload_result != QCOMTEE_OK) {
+			fprintf(stderr, "WARN: unload(%s) result %d\n",
+				load_name, unload_result);
+			exit_code = 1;
+		} else {
+			printf("UNLOADED: %s; no TA request was invoked.\n",
+			       load_name);
+		}
+	}
 	free(image);
+	qcomtee_memory_object_release(memory_object);
 	qcomtee_object_refs_dec(controller);
 	qcomtee_object_refs_dec(app_loader);
 	qcomtee_object_refs_dec(client_env);

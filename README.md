@@ -35,7 +35,7 @@ from one TWRP-flashable ZIP; a microSD is not required after installation.
 | USB-C DisplayPort | ✅ | External video output |
 | Cameras and flash | ✅ | Four cameras, autofocus and flashlight work; colour tuning remains a future improvement |
 | Ambient light sensor | ❌ | No usable lux data from the sensor DSP |
-| Fingerprint reader | 🟡 | Optical HBM, the GNOME target and Goodix FOD press/touch isolation are validated; secure EL721 enrolment/login remain unavailable |
+| Fingerprint reader | 🟡 | Optical HBM, FOD touch isolation and the signed EL721 TrustZone app are validated; enrolment/login remain unavailable |
 | Waydroid | ❓ | Not tested |
 
 ✅ working on the physical tablet · 🟡 experimental or partially validated ·

@@ -16,6 +16,7 @@
 #include <linux/err.h>
 #include <linux/fs.h>
 #include <linux/gpio/consumer.h>
+#include <linux/gpio/machine.h>
 #include <linux/ioctl.h>
 #include <linux/kref.h>
 #include <linux/miscdevice.h>
@@ -25,7 +26,6 @@
 #include <linux/platform_device.h>
 #include <linux/pm.h>
 #include <linux/property.h>
-#include <linux/regulator/consumer.h>
 #include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/uaccess.h>
@@ -33,7 +33,8 @@
 #define EL721_VENDOR			"EGISTEC"
 #define EL721_DEFAULT_NAME		"EL721"
 #define EL721_DEFAULT_MODEL		"X916"
-#define EL721_DEFAULT_POSITION		"unknown"
+#define EL721_DEFAULT_POSITION						\
+	"16.70,0.00,9.10,9.10,14.80,14.80,12.00,12.00,5.00"
 
 #define EL721_MODEL_INFO_LEN		10
 #define EL721_NAME_LEN			16
@@ -83,7 +84,7 @@ struct egis_ioc_transfer {
 
 struct el721_data {
 	struct device *dev;
-	struct regulator *vdd;
+	struct gpio_desc *ldo_gpio;
 	struct gpio_desc *enable_gpio;
 	struct miscdevice miscdev;
 	/* Serializes power sequencing, ioctl state and device removal. */
@@ -108,6 +109,42 @@ static void el721_free(struct kref *ref)
 	kfree(el721);
 }
 
+static int el721_prepare_hardware_locked(struct el721_data *el721)
+{
+	int ret;
+
+	/*
+	 * Do not request or drive either resource during probe.  Qualcomm's secure
+	 * firmware still owns the EL721 transport while Linux boots, and touching
+	 * GPIO155 before an authenticated operation can reset the tablet.  The
+	 * metadata and compatibility node remain available while the hardware is
+	 * acquired lazily on the first explicit power request.
+	 */
+	if (!el721->ldo_gpio) {
+		el721->ldo_gpio = devm_gpiod_get(el721->dev, "ldo",
+						 GPIOD_ASIS);
+		if (IS_ERR(el721->ldo_gpio)) {
+			ret = PTR_ERR(el721->ldo_gpio);
+			el721->ldo_gpio = NULL;
+			return dev_err_probe(el721->dev, ret,
+					     "failed to get LDO GPIO\n");
+		}
+	}
+
+	if (!el721->enable_gpio) {
+		el721->enable_gpio = devm_gpiod_get(el721->dev, "enable",
+						    GPIOD_ASIS);
+		if (IS_ERR(el721->enable_gpio)) {
+			ret = PTR_ERR(el721->enable_gpio);
+			el721->enable_gpio = NULL;
+			return dev_err_probe(el721->dev, ret,
+					     "failed to get enable GPIO\n");
+		}
+	}
+
+	return 0;
+}
+
 static int el721_power_on_locked(struct el721_data *el721)
 {
 	int ret;
@@ -115,13 +152,20 @@ static int el721_power_on_locked(struct el721_data *el721)
 	if (el721->powered)
 		return 0;
 
-	ret = regulator_enable(el721->vdd);
+	ret = el721_prepare_hardware_locked(el721);
 	if (ret)
 		return ret;
 
-	/* Samsung's EL721 sequence: VDD, 2.3 ms, enable, 1.1 ms, 5 ms. */
-	usleep_range(2300, 2350);
-	gpiod_set_value_cansleep(el721->enable_gpio, 1);
+	/* Exact EL721 GPIO sequence from Samsung's shipping X910 driver. */
+	ret = gpiod_direction_output(el721->ldo_gpio, 1);
+	if (ret)
+		return ret;
+	usleep_range(2100, 2150);
+	ret = gpiod_direction_output(el721->enable_gpio, 1);
+	if (ret) {
+		gpiod_set_value_cansleep(el721->ldo_gpio, 0);
+		return ret;
+	}
 	usleep_range(1100, 1150);
 	usleep_range(5000, 5050);
 	el721->powered = true;
@@ -131,16 +175,12 @@ static int el721_power_on_locked(struct el721_data *el721)
 
 static int el721_power_off_locked(struct el721_data *el721)
 {
-	int ret;
-
-	/* Holding enable low keeps the sensor quiescent even if VDD is shared. */
-	gpiod_set_value_cansleep(el721->enable_gpio, 0);
 	if (!el721->powered)
 		return 0;
 
-	ret = regulator_disable(el721->vdd);
-	if (ret)
-		return ret;
+	/* Holding enable low keeps the sensor quiescent even if VDD is shared. */
+	gpiod_set_value_cansleep(el721->enable_gpio, 0);
+	gpiod_set_value_cansleep(el721->ldo_gpio, 0);
 
 	el721->powered = false;
 	return 0;
@@ -163,8 +203,8 @@ static int el721_reset_control_locked(struct el721_data *el721, u32 enabled)
 {
 	if (enabled > 1)
 		return -EINVAL;
-	if (enabled && !el721->powered)
-		return -EHOSTDOWN;
+	if (!el721->powered)
+		return enabled ? -EHOSTDOWN : 0;
 
 	gpiod_set_value_cansleep(el721->enable_gpio, enabled);
 	return 0;
@@ -372,7 +412,7 @@ static ssize_t power_store(struct device *dev,
 
 	return ret ? ret : count;
 }
-static DEVICE_ATTR_RW(power);
+static DEVICE_ATTR(sensor_power, 0600, power_show, power_store);
 
 static ssize_t reset_count_show(struct device *dev,
 				struct device_attribute *attr, char *buf)
@@ -415,7 +455,7 @@ static struct attribute *el721_attrs[] = {
 	&dev_attr_name.attr,
 	&dev_attr_model.attr,
 	&dev_attr_position.attr,
-	&dev_attr_power.attr,
+	&dev_attr_sensor_power.attr,
 	&dev_attr_reset_count.attr,
 	&dev_attr_reset.attr,
 	NULL,
@@ -453,24 +493,6 @@ static int el721_probe(struct platform_device *pdev)
 	mutex_init(&el721->lock);
 	kref_init(&el721->refcount);
 	platform_set_drvdata(pdev, el721);
-
-	el721->vdd = devm_regulator_get(dev, "vdd");
-	if (IS_ERR(el721->vdd)) {
-		ret = dev_err_probe(dev, PTR_ERR(el721->vdd),
-				    "failed to get VDD supply\n");
-		goto err_put;
-	}
-
-	el721->enable_gpio = devm_gpiod_get(dev, "enable", GPIOD_OUT_LOW);
-	if (IS_ERR(el721->enable_gpio)) {
-		ret = dev_err_probe(dev, PTR_ERR(el721->enable_gpio),
-				    "failed to get enable GPIO\n");
-		goto err_put;
-	}
-
-	ret = regulator_set_load(el721->vdd, 100000);
-	if (ret < 0)
-		dev_warn(dev, "failed to set VDD load: %d\n", ret);
 
 	el721_read_string(dev, "egistec,name", "etspi-chipid",
 			  EL721_DEFAULT_NAME, el721->name,
@@ -511,8 +533,6 @@ err_misc:
 	mutex_unlock(&el721->lock);
 	misc_deregister(&el721->miscdev);
 err_load:
-	regulator_set_load(el721->vdd, 0);
-err_put:
 	platform_set_drvdata(pdev, NULL);
 	kref_put(&el721->refcount, el721_free);
 	return ret;
@@ -532,7 +552,6 @@ static void el721_remove(struct platform_device *pdev)
 
 	device_remove_group(&pdev->dev, &el721_attr_group);
 	misc_deregister(&el721->miscdev);
-	regulator_set_load(el721->vdd, 0);
 	platform_set_drvdata(pdev, NULL);
 	kref_put(&el721->refcount, el721_free);
 }
@@ -588,7 +607,68 @@ static struct platform_driver el721_driver = {
 		.pm = pm_sleep_ptr(&el721_pm_ops),
 	},
 };
-module_platform_driver(el721_driver);
+
+static struct platform_device *el721_fallback_device;
+
+static struct gpiod_lookup_table el721_fallback_gpios = {
+	.dev_id = "egis-el721",
+	.table = {
+		GPIO_LOOKUP("f100000.pinctrl", 91, "ldo", GPIO_ACTIVE_HIGH),
+		GPIO_LOOKUP("f100000.pinctrl", 155, "enable", GPIO_ACTIVE_HIGH),
+		{ }
+	},
+};
+
+static int __init el721_init(void)
+{
+	struct device_node *node;
+	int ret;
+
+	ret = platform_driver_register(&el721_driver);
+	if (ret)
+		return ret;
+
+	/*
+	 * Samsung ABL resets before Linux when the EL721 GPIO description is
+	 * added to vendor_boot.  Publish the restricted userspace ABI from a
+	 * software platform device when firmware supplied no safe DT node.  A
+	 * lookup table maps the two stock TLMM lines, but they are not requested or
+	 * driven until userspace starts an authenticated operation after boot.
+	 */
+	node = of_find_compatible_node(NULL, NULL, "egistec,el721");
+	if (!node)
+		node = of_find_compatible_node(NULL, NULL, "etspi,el7xx");
+	if (node) {
+		of_node_put(node);
+		return 0;
+	}
+
+	gpiod_add_lookup_table(&el721_fallback_gpios);
+	el721_fallback_device =
+		platform_device_register_simple("egis-el721",
+						PLATFORM_DEVID_NONE, NULL, 0);
+	if (IS_ERR(el721_fallback_device)) {
+		ret = PTR_ERR(el721_fallback_device);
+		el721_fallback_device = NULL;
+		gpiod_remove_lookup_table(&el721_fallback_gpios);
+		platform_driver_unregister(&el721_driver);
+		return ret;
+	}
+
+	return 0;
+}
+
+static void __exit el721_exit(void)
+{
+	if (el721_fallback_device) {
+		platform_device_unregister(el721_fallback_device);
+		gpiod_remove_lookup_table(&el721_fallback_gpios);
+	}
+	platform_driver_unregister(&el721_driver);
+}
+
+module_init(el721_init);
+module_exit(el721_exit);
 
 MODULE_DESCRIPTION("Secure-world companion driver for EgisTec EL721");
 MODULE_AUTHOR("Ubuntu Galaxy Tab S9 Ultra port contributors");
