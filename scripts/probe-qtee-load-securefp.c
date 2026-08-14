@@ -22,12 +22,14 @@
 #define DUALFP_TYPE_CHECK_COMMAND UINT32_C(16)
 #define DUALFP_MESSAGE_SIZE 64U
 /*
- * Samsung's gateway declares an 8-byte payload but backs each embedded buffer
- * with a whole dmabuf page.  The TA rejects an exactly-8-byte mapping with 29,
- * the same "invalid parameter" code the stock host code returns for a missing
- * or undersized buffer, so reproduce the page-sized allocation.
+ * Samsung's gateway declares an 8-byte payload, but the TA does not take that
+ * length at face value: before dispatching any command it re-registers each
+ * embedded pointer as a shared buffer of exactly 0x2a4000 bytes, and answers 29
+ * for the whole request if that registration fails.  The stock host gets away
+ * with declaring 8 because its dmabuf allocations are far larger.  Both buffers
+ * must therefore be backed by at least this much memory.
  */
-#define DUALFP_SHARED_BUFFER_SIZE 4096U
+#define DUALFP_SHARED_BUFFER_SIZE 0x2a4000U
 #define DUALFP_TYPE_CHECK_PAYLOAD 8U
 #define QCOMTEE_MAX_INBOUND_BUFFER_SIZE (4U * 1024U * 1024U)
 #define EL721_SENSOR_NAME UINT32_C(21)

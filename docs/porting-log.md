@@ -5417,3 +5417,59 @@ transaccional un quinto argumento con ese selector, porque lo caro es cargar los
 
 La tablet queda con el kernel nuevo arrancado, `sensor_power=0`, QCOMTEE
 descargado y el sistema en `running`.
+
+## Sesión 85 — resuelto el `29`: la TA exige shared buffers de 0x2a4000
+
+Fecha: 2026-08-14. El `29` que bloqueaba las tres últimas sesiones no venía del
+sensor ni del sobre de la petición. Se resolvió desensamblando la propia TA: su
+imagen ensamblada es un ELF **sin cifrar**, y sus cadenas y su código son
+legibles.
+
+El despachador (`0xb03c`) valida la petición antes de mirar el `cmd_id` y
+escribe `29` en `rsp[4]` si esa validación falla. La comprobación previa
+(`0x4420`) reconstruye los punteros de 64 bits que hay en `cmd[4]` y `cmd[16]` y
+llama a `0x4280` con un tamaño fijo de `0x2a4000`:
+
+```text
+4280:  bl   0x1b0                 ; qsee_register_shared_buffer(ptr, 0x2a4000)
+42b4:  cbz  w0, ok
+42b8:  log  "FAIL_REGISTER_SB(%d)"
+42cc:  log  "clean up shared buffer"
+42dc:  mov  w0, #0x1d             ; 29
+```
+
+Es decir, la TA vuelve a registrar cada búfer embebido como shared buffer de
+2.768.896 bytes. El gateway stock declara 8 bytes de payload pero respalda esos
+punteros con asignaciones `dmabuf` mucho mayores, así que allí el registro
+funciona. Reservando los dos objetos de memoria TEE con ese tamaño exacto y
+manteniendo la longitud declarada en 8, la TA **acepta y ejecuta** el comando:
+
+```text
+TypeCheck name=21: invoke result 0; trustlet=0, payload=0, sensor=0.
+```
+
+El sobre de respuesta vuelve a ceros, que es exactamente lo que el host stock
+interpreta como éxito. Antes de llegar aquí se descartaron, sobre la tablet
+física, la alimentación, el enum de nombre (barrido `0`–`40`), el nombre de
+carga y el tamaño de página; y el volcado de los búferes devueltos demostró que
+QTEE sí inyecta punteros reales en los offsets 4 y 16.
+
+El desensamblado aclaró además dos cosas que se habían supuesto mal. El `21` no
+es un enum que se pase: es el **ID que la TA lee del sensor por SPI**. Su
+`type_check` de la familia Egis (`0x17dc`) hace hasta tres transferencias de 4
+bytes y exige `rx[42]==0x07` y `rx[46]==0x15` para declarar `ET721` y devolver
+el tipo `8`; si no, registra `Type check Fail !!!` y devuelve `0`. Y el selector
+por familia (`0x1d64`) sólo acepta `sensor_name == 21`, con hasta 40 reintentos:
+cualquier otro valor cae en `invalid sensor_name parameter`.
+
+Queda por tanto un bloqueo nuevo y bien delimitado: `TypeCheck` devuelve tipo
+`0`, con resultado idéntico con `sensor_power=1` y con el sensor apagado, así
+que el SPI de TrustZone no está alcanzando el chip. Ese bus no es de Linux —en
+el árbol stock `etspi,el7xx` cuelga de `soc`, no de un controlador SPI, y la TA
+lleva su propio `sec_tzspi_*` y su propio control TLMM—, por lo que el port no
+tiene dónde intervenir a ciegas. La TA sí registra el motivo
+(`gpio control tz_open error : %d`, `Sensor is not ready!!`, los bytes leídos)
+en el log de TrustZone, que este kernel todavía no expone; instrumentarlo es el
+siguiente paso.
+
+La tablet queda con `sensor_power=0`, QCOMTEE descargado y el sistema estable.
