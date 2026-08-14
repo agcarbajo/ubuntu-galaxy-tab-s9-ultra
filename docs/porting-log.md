@@ -5577,3 +5577,34 @@ resultado y devuelve tipo `0`; todo lo que el port controla coincide con stock; 
 no hay visibilidad dentro de TrustZone para decidir si el fallo está en su SPI o
 en que el sensor no responde. Sin esa visibilidad —o sin medir físicamente los
 raíles del sensor— cualquier cambio adicional en el port sería adivinar.
+
+## Sesión 88 — agotadas las palancas del port sobre el EL721
+
+Fecha: 2026-08-14. Ronda final de intentos sobre `TypeCheck`, todos negativos y
+anotados para no repetirlos:
+
+- **Pulso de reset previo.** La HAL stock, antes de pedir el tipo, se asegura de
+  que el dispositivo esté abierto (`EgisOptSensorControl::SensorType` comprueba
+  un flag y llama a su método de apertura). Lo único físico de esa ruta es la
+  secuencia LDO/enable más un reset. Alimentando el sensor y dando dos pulsos de
+  reset antes de la consulta, `TypeCheck` sigue devolviendo tipo `0`.
+- **Relojes del SE sujetos.** Sin efecto, y además Linux nunca los apagó: la
+  línea de comandos ya lleva `clk_ignore_unused`; venían apagados del
+  bootloader.
+- **Estado de arranque.** `/proc/cmdline` no trae ningún parámetro de estado
+  seguro (`verifiedbootstate`, warranty, lock) que permitiera comprobar desde
+  aquí si TrustZone está degradando funciones por el bootloader desbloqueado.
+  ABL sí añade sus parámetros Samsung (`hdm.status=NONE`, `sec_sysup.edtbo_ver`,
+  etc.), pero ninguno indica ese estado.
+
+Con esto se agotan las palancas del port. El resumen honesto del bloqueo es:
+la TA se carga, acepta la petición, ejecuta `TypeCheck`, escribe su resultado y
+declara «sensor no identificado»; todo lo que Linux controla coincide con stock;
+los pines del bus están reservados a TrustZone en ambos árboles y no son
+observables; y no existe ruta conocida para leer el log de TrustZone en este
+firmware. No queda ninguna hipótesis comprobable desde el port.
+
+Lo que sí decidiría el asunto es una prueba que no depende del port: confirmar
+que el lector responde en este mismo aparato bajo Android stock. Si responde, el
+problema está en el entorno que ofrecemos a la TA y merece seguir; si no
+responde, ninguna cantidad de trabajo en el port lo arreglará.
