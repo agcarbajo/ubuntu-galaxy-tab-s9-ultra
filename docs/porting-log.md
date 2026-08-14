@@ -5330,10 +5330,12 @@ volvió a quedar descargado y `sensor_power` siguió en cero.
 
 También se reconstruyó el sobre `sendRequest` y los dos objetos de memoria que
 Samsung usa para `BAuth_Type_Check`. El transporte devuelve éxito (`0`) tanto
-con UID 0 como con UID 1000, mientras la TA devuelve `29`; no se ejecutó ninguna
-captura. El resultado es coherente con el EL721 físicamente apagado en la imagen
-actual y confirma que la siguiente frontera ya está en alimentación/protocolo,
-no en localizar o autenticar la TA.
+con UID 0 como con UID 1000. El análisis posterior de `SensorInfo` confirmó el
+mapeo stock exacto `EL721 → nombre 21 → tipo 8`; al repetir la petición con el
+identificador correcto `21`, la TA conserva el resultado `29` mientras el
+sensor físico está apagado. Esto descarta el enum incorrecto y deja como
+siguiente prueba la misma consulta después de la alimentación diferida. No se
+ejecutó ninguna captura.
 
 El overlay stock aclara además que el X910 no usa el supuesto LDO2 como
 regulador Linux: `etspi-ldoPin` es TLMM GPIO91 y `etspi-sleepPin` es GPIO155.
@@ -5354,3 +5356,8 @@ Image.gz  d5021f8c99332149454a3c79fbfa7f648d10ae4abc9b8e1b15ffae5bc93e8e56
 DTB       613b3bb7729d55d1c60aaeda348a098163b79aed1efbf24cdcc582ff0d58ccc4
 config    db2503329105ca65454354262958ea9515e2028961e4c3c02e18625bc81e0c78
 ```
+
+Quedó además preparado `test-el721-type-check.sh` para la primera validación
+del kernel nuevo. Encapsula alimentación, carga de QCOMTEE, `TypeCheck` y
+limpieza incondicional, y se niega a operar si encuentra el sensor o TEE ya
+activos. No se ejecuta sobre la imagen actualmente arrancada.

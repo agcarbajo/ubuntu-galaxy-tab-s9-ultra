@@ -22,6 +22,7 @@
 #define DUALFP_TYPE_CHECK_COMMAND UINT32_C(16)
 #define DUALFP_MESSAGE_SIZE 64U
 #define QCOMTEE_MAX_INBOUND_BUFFER_SIZE (4U * 1024U * 1024U)
+#define EL721_SENSOR_NAME UINT32_C(21)
 
 static void store_u32(unsigned char *buffer, size_t offset, uint32_t value)
 {
@@ -253,8 +254,8 @@ static int type_check_ta(struct qcomtee_object *controller,
 	store_u32(request, 12, 8);
 	store_u32(request, 24, 8);
 	store_u32(input_data, 0, DUALFP_TYPE_CHECK_COMMAND);
-	/* BAuth_SessionOpen selects Samsung's dual-fingerprint path with type 1. */
-	store_u32(input_data, 4, 1);
+	/* SensorInfo maps the stock model string "EL721" to sensor-name enum 21. */
+	store_u32(input_data, 4, EL721_SENSOR_NAME);
 
 	params[0].attr = QCOMTEE_UBUF_INPUT;
 	params[0].ubuf.addr = request;

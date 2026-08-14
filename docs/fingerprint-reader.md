@@ -319,8 +319,11 @@ los offsets ELF que utiliza Qualcomm. Recibe por separado el nombre base de los
 segmentos y el nombre de carga. Para `dualfp` reserva un objeto de memoria
 TEE y usa `loadFromRegion`; QTEE aceptó los 19.927.128 bytes como `dualfp` y los
 descargó limpiamente. El probe ofrece además `--type-check`: la petición llega
-a la TA (`invoke result 0`), pero con el sensor aún sin alimentación física la
-TA devuelve `29`. No se inicia captura, registro ni comparación.
+a la TA (`invoke result 0`). La HAL stock identifica `EL721` con el enum de
+nombre `21` y lo traduce al tipo de sensor `8`; el probe reproduce ese mapeo
+exacto. Con el sensor físicamente apagado, la TA aún devuelve `29`, por lo que
+el siguiente ensayo debe repetir la consulta tras la alimentación diferida.
+No se inicia captura, registro ni comparación.
 
 Se verificó que las particiones activas de la tablet coinciden byte a byte con
 el firmware analizado: `apnhlos` coincide con `NON-HLOS.bin` (SHA-256
@@ -363,3 +366,9 @@ Después se implementará el puente mínimo hacia `libfprint`/`fprintd`. Las
 plantillas y la comparación permanecerán en TrustZone. `fprintd` no se añade ni
 se habilita mientras falte ese backend: mostrar una opción de huella en GNOME
 sin poder completarla sería un falso positivo de compatibilidad.
+
+`scripts/test-el721-type-check.sh` deja preparada esa prueba física como una
+transacción única. Rechaza un sensor o `/dev/tee0` ya activos, comprueba los
+nueve segmentos firmados y garantiza mediante `trap` que GPIO91/GPIO155 vuelvan
+a cero y que QCOMTEE se descargue incluso si `TypeCheck` falla. No activa HBM,
+no solicita una captura y no registra datos biométricos.
