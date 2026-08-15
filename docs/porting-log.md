@@ -5900,3 +5900,111 @@ sacó en vivo justo antes de escribir, `gpt-sda-20260815-044329.bin`
 - **El peligro de `twrp.flags` está confirmado en vivo**: `/dev/block/sda` es
   la UFS interna —`userdata` es `sda34`— y `sda1` es `modemst1`. La entrada
   «USB-OTG» del menú de TWRP apunta ahí y está marcada `wipeingui`.
+
+---
+
+## Sesión 94 — `repack.zip` es un callejón sin salida, y el aparato queda pidiendo recovery
+
+Fecha: 2026-08-15. Sesión con saldo negativo: el Hito 1 seguía válido al
+empezar y al terminar la tablet arranca siempre en TWRP. Nada se ha perdido
+—las particiones, `super` y el respaldo están intactos— pero conviene dejar
+escrito qué se probó y, sobre todo, en qué orden **no** hay que probarlo.
+
+### Confirmado: One UI restaura el recovery de stock
+
+Tras cerrar el Hito 1 se arrancó One UI y después `adb reboot recovery`.
+Contestó el recovery **de stock**: se identifica como `product:gts9uwifixx`
+frente al `product:twrp_gts9u` de TWRP, enumera como `18d1:d001` en vez de
+`18d1:6860`, y su `adb shell` muere con `Could not set SELinux context for
+subprocess` y SIGABRT. Queda confirmado en este firmware.
+
+### `repack.zip` no sirve en este aparato
+
+Se instaló con TWRP, tras respaldar el juego de arranque completo de One UI
+con el hash comparado en los dos lados. Resultado:
+
+- **Reescribió `boot`** (`bb7be3ce…` → `495aaeb2…`), como anunciaba su
+  `anykernel.sh`.
+- **No pudo tocar `vbmeta`**, porque esa partición es de solo lectura para el
+  kernel: vive en otro LUN, `sde15`, y `blockdev --getro` devuelve 1.
+- Desde entonces el aparato arranca siempre en recovery.
+
+Que hiciera sólo la mitad es lo peor que podía pasar: deja un `boot` que ya no
+cuadra con un `vbmeta` que sigue exigiendo verificación.
+
+### La cadena de errores de diagnóstico, que es lo aprovechable
+
+Se persiguió el síntoma equivocado durante tres ciclos:
+
+1. **Parchear el `vbmeta` firmado byte a byte fue un error.** Se copió el
+   `vbmeta` de la propia tablet y se puso `02` en el offset 123 para dejar
+   `flags=2`. Es lo que hace `patch_vbmeta_flag` de AnyKernel, pero sólo vale
+   en aparatos cuyo ABL no revalida la firma del propio vbmeta. Aquí el
+   resultado es una imagen firmada con la firma rota.
+2. **Restaurar `boot` tampoco arregló nada**, aun quedando byte a byte igual
+   que en el estado que arrancaba.
+3. **El `vbmeta` del port tampoco.** `port/sources/samsung-gts9u/vbmeta.img`
+   son 4096 bytes con magic `AVB0`, `flags=00000002` y bloques de
+   autenticación y auxiliar **a cero**: un vbmeta vacío y sin firmar, de
+   `avbtool 1.3.0`. Es la forma correcta, y el ABL lo acepta —lo dice él
+   mismo—, pero el aparato siguió yendo a recovery.
+
+Lo que debió hacerse primero, y ahora es la lección: **leer el log del ABL
+antes de flashear nada**. Está en `/proc/last_kmsg`, con las líneas marcadas
+`[ ABL ]`, y cuenta el arranque entero.
+
+### Lo que dice el ABL, que es lo que de verdad pasa
+
+```text
+[ ABL ] BootReason: 1
+[ ABL ] Recovery Mode, Reset param!
+[ ABL ] Booting Into Recovery Mode
+[ ABL ] BootMode = 2
+```
+
+**El bootloader ni siquiera intenta arrancar el sistema**: le piden recovery y
+va a recovery. Todo el rato se estuvo arreglando una cadena de arranque que
+nadie estaba rechazando. De hecho, sobre el vbmeta sin firmar el propio ABL
+dice `(Booting) AUTHENTICATE fail but allow Vbmeta binary: vbmeta`, y sigue.
+Los arranques que sí llegaron al sistema se distinguen por `BootReason: 14`
+con `PARAM Flag is PARAM_BOOT_CHARGING` y `Booting Into Mission Mode`.
+
+El byte 0 de la partición `param` vale `0x02`, que es el mismo valor que el
+ABL llama `BootMode = 2`; `1` es download y `0` es normal. El ABL dice que lo
+resetea al entrar en recovery, pero **sigue valiendo 2 ya estando dentro**, así
+que ese reset no cuaja y el bucle se realimenta. `param` sí es escribible
+(`blockdev --getro` = 0).
+
+Se probó además la vía oficial de TWRP: escribir `reboot system` en
+`/cache/recovery/openrecoveryscript`. TWRP **consumió** el fichero —desaparece
+tras ejecutarlo— y aun así volvió a recovery. Ni el reinicio desde modo
+Download rompe el bucle.
+
+### Estado en que queda
+
+- Particionado del Hito 1 **intacto**: `userdata` 375,5 GiB y `linuxroot`
+  563,3 GiB con su ext4 `UBTS9U_UFS`.
+- `super` entero: las siete particiones lógicas montan, y `/system` da
+  `ro.build.display.id=BP2A.250605.031.A3.X910XXS5DZA1`.
+- `boot`, `vendor_boot`, `init_boot` y `dtbo` byte a byte como el respaldo
+  previo a `repack.zip`.
+- `vbmeta` es ahora el del port, sin firmar y con `flags=2`. Se deja así a
+  propósito: es lo que el instalador de Ubuntu exige, y el ABL lo admite.
+- TWRP en `recovery`, accesible por adb como root.
+- Respaldos nuevos en `D:\gts9u-backup\oneui-boot-set\`: `boot`,
+  `vendor_boot`, `init_boot`, `dtbo` y `vbmeta` de stock, con hash verificado.
+  Es además **la pareja de One UI que faltaba para el Hito 3**.
+
+### Por dónde seguir
+
+1. **Arranque en frío**, que no exige escribir nada: apagar del todo con Power
+   y volver a encender. Los arranques buenos traen `BootReason: 14`, que huele
+   a arranque en frío frente al `1` de los reinicios en caliente.
+2. Si eso no basta, **poner a cero el byte 0 de `param`**
+   (`dd if=/dev/zero of=/dev/block/by-name/param bs=1 count=1 conv=notrunc`) y
+   reiniciar por `sysrq` para no pasar por el userspace de TWRP.
+3. Como último recurso, Odin con el BL, que reescribe `param.bin` entero.
+
+Y para el Hito 2: `repack.zip` queda descartado. Conservar TWRP habrá que
+resolverlo de otra forma, o asumir un ciclo de heimdall cada vez, que ya es
+barato: `usbipd attach` más `heimdall flash --RECOVERY … --no-reboot`.
