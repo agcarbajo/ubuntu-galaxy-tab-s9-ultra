@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Compose paints everything.  This theme exists only so the window that
+         appears before the first frame follows the system's light/dark choice
+         instead of flashing white behind a dark app.  There is no framework
+         style that is both DayNight and NoActionBar, so the bar is turned off
+         by hand. -->
+    <style name="Theme.BootSwitcher" parent="android:Theme.DeviceDefault.DayNight">
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowBackground">?android:attr/colorBackground</item>
+    </style>
+</resources>

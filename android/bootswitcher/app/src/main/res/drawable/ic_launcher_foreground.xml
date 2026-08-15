@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Two arrows round a circle: the two systems taking turns. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,30c-13.3,0 -24,10.7 -24,24h-8l11,13 11,-13h-8c0,-9.9 8.1,-18 18,-18 3.3,0 6.4,0.9 9.1,2.5l3,-5.2C62.4,31.2 58.3,30 54,30z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,78c13.3,0 24,-10.7 24,-24h8l-11,-13 -11,13h8c0,9.9 -8.1,18 -18,18 -3.3,0 -6.4,-0.9 -9.1,-2.5l-3,5.2C45.6,76.8 49.7,78 54,78z" />
+</vector>
