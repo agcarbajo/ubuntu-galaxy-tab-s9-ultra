@@ -18,6 +18,12 @@ import {QuickToggle, SystemIndicator} from 'resource:///org/gnome/shell/ui/quick
 const STATUS_HELPER = '/usr/libexec/tab-companion-boot-status';
 const SWITCH_HELPER = '/usr/libexec/tab-companion-boot-switch';
 
+// GJS does not hand out promises for async GIO methods until they are
+// promisified.  Without this, `await proc.communicate_utf8_async(null, null)`
+// throws "At least 3 arguments required, but only 2 passed", the refresh dies,
+// and the toggle stays hidden forever with no visible symptom.
+Gio._promisify(Gio.Subprocess.prototype, 'communicate_utf8_async');
+
 // The same built-in catalogue the app uses, for the same reason: shipping .mo
 // files for three visible strings is more machinery than it is worth, and this
 // keeps the extension translated without a build step.
@@ -71,8 +77,12 @@ class DualBootToggle extends QuickToggle {
 
     async _run(argv, cancellable = null) {
         const proc = Gio.Subprocess.new(argv, Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE);
+        // Promisified, this resolves to [stdout, stderr] — verified on the
+        // tablet rather than assumed, because reading the wrong element gives
+        // an empty string and looks exactly like a command that printed
+        // nothing.
         const [stdout] = await proc.communicate_utf8_async(null, cancellable);
-        return {ok: proc.get_successful(), stdout};
+        return {ok: proc.get_successful(), stdout: stdout ?? ''};
     }
 
     async _refresh() {

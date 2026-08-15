@@ -292,7 +292,6 @@ class CompanionWindow(Adw.ApplicationWindow):
             title=_("Show in quick settings"),
             subtitle=_("Adds a button to the system menu that restarts into the other system."),
         )
-        self._seed_shell_extension()
         self.boot_tile_row.set_active(self._shell_extension_enabled())
         self.boot_tile_row.connect("notify::active", self._boot_tile_toggled)
         shortcut.add(self.boot_tile_row)
@@ -435,20 +434,6 @@ class CompanionWindow(Adw.ApplicationWindow):
     # list of enabled ones in its own setting.  Editing that list is the whole
     # of turning it on and off; there is no separate switch to flip.
     SHELL_EXTENSION_UUID = "dualboot@agcarbajo.github.io"
-
-    def _seed_shell_extension(self):
-        """Turn the entry on the first time, without touching a later choice."""
-        if self.settings.get_boolean("dualboot-tile-seeded"):
-            return
-        try:
-            shell = Gio.Settings.new("org.gnome.shell")
-        except GLib.Error:
-            return
-        enabled = list(shell.get_strv("enabled-extensions"))
-        if self.SHELL_EXTENSION_UUID not in enabled:
-            enabled.append(self.SHELL_EXTENSION_UUID)
-            shell.set_strv("enabled-extensions", enabled)
-        self.settings.set_boolean("dualboot-tile-seeded", True)
 
     def _shell_extension_enabled(self):
         try:
