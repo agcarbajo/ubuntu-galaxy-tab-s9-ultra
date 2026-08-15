@@ -244,35 +244,28 @@ class CompanionWindow(Adw.ApplicationWindow):
 
         page = self._page()
 
-        current = Adw.PreferencesGroup(
-            title=_("Current system"),
+        # One list, not two: which system is running and which one you can
+        # switch to are the same question asked from either side.
+        self.boot_systems = Adw.PreferencesGroup(
+            title=_("Systems"),
             description=_(
-                "Ubuntu and Android share this tablet by taking turns on the "
-                "four boot partitions."
+                "Ubuntu and Android take turns on the four boot partitions. "
+                "The tablet restarts into the one you choose; your files stay "
+                "where they are."
             ),
         )
-        self.boot_current_row = Adw.ActionRow(
+        self.boot_loading_row = Adw.ActionRow(
             title=_("Reading…"),
             subtitle=_("Checking the boot partitions."),
         )
-        self.boot_current_row.add_prefix(Gtk.Image(icon_name="drive-harddisk-symbolic"))
-        current.add(self.boot_current_row)
-        page.add(current)
+        self.boot_systems.add(self.boot_loading_row)
+        page.add(self.boot_systems)
 
         self.boot_storage = Adw.PreferencesGroup(
             title=_("Storage"),
             description=_("Each system has its own share of the internal storage."),
         )
         page.add(self.boot_storage)
-
-        self.boot_others = Adw.PreferencesGroup(
-            title=_("Switch system"),
-            description=_(
-                "The tablet restarts into the system you choose. Your files "
-                "stay where they are: only the boot partitions change."
-            ),
-        )
-        page.add(self.boot_others)
 
         self.boot_progress = Adw.PreferencesGroup()
         self.boot_progress_label = Gtk.Label(
@@ -459,8 +452,11 @@ class CompanionWindow(Adw.ApplicationWindow):
         boot_sets.read_status(self._boot_status_ready)
 
     def _boot_status_ready(self, status):
+        if self.boot_loading_row is not None:
+            self.boot_systems.remove(self.boot_loading_row)
+            self.boot_loading_row = None
         for row in self._boot_rows:
-            self.boot_others.remove(row)
+            self.boot_systems.remove(row)
         self._boot_rows = []
         for row in self._boot_storage_rows:
             self.boot_storage.remove(row)
@@ -468,8 +464,12 @@ class CompanionWindow(Adw.ApplicationWindow):
 
         if status.get("error"):
             self.boot_stack.set_visible_child_name("content")
-            self.boot_current_row.set_title(_("Could not read the system"))
-            self.boot_current_row.set_subtitle(status["error"])
+            row = Adw.ActionRow(
+                title=_("Could not read the system"),
+                subtitle=status["error"],
+            )
+            self.boot_systems.add(row)
+            self._boot_rows.append(row)
             return False
 
         sets = status.get("sets", [])
@@ -482,28 +482,27 @@ class CompanionWindow(Adw.ApplicationWindow):
             return False
         self.boot_stack.set_visible_child_name("content")
 
-        label = next((s["label"] for s in sets if s["id"] == current), None)
-        if label:
-            self.boot_current_row.set_title(label)
-            self.boot_current_row.set_subtitle(
-                _("The four boot partitions match this system.")
+        if current is None:
+            row = Adw.ActionRow(
+                title=_("Unknown system"),
+                subtitle=_("The boot partitions do not match any stored set."),
             )
-        else:
-            self.boot_current_row.set_title(_("Unknown system"))
-            self.boot_current_row.set_subtitle(
-                _("The boot partitions do not match any stored set.")
-            )
+            row.add_prefix(Gtk.Image(icon_name="dialog-warning-symbolic"))
+            self.boot_systems.add(row)
+            self._boot_rows.append(row)
 
-        widget = self._storage_widget(status.get("storage", {}))
-        if widget is not None:
-            self.boot_storage.add(widget)
-            self._boot_storage_rows.append(widget)
-
-        for entry in sets:
-            if entry["id"] == current:
-                continue
+        # The running system first: it is the answer to "where am I", and the
+        # rest of the list is then plainly "where else can I go".
+        for entry in sorted(sets, key=lambda e: e["id"] != current):
             row = Adw.ActionRow(title=entry["label"])
-            if entry["complete"]:
+            row.add_prefix(Gtk.Image(icon_name=self._icon_for(entry["id"])))
+
+            if entry["id"] == current:
+                row.set_subtitle(_("In use now"))
+                badge = Gtk.Image(icon_name="object-select-symbolic", valign=Gtk.Align.CENTER)
+                badge.add_css_class("accent")
+                row.add_suffix(badge)
+            elif entry["complete"]:
                 row.set_subtitle(_("Ready to boot."))
                 button = Gtk.Button(
                     label=_("Restart into this system"),
@@ -514,9 +513,20 @@ class CompanionWindow(Adw.ApplicationWindow):
                 row.add_suffix(button)
             else:
                 row.set_subtitle(_("Its images are missing or the wrong size."))
-            self.boot_others.add(row)
+
+            self.boot_systems.add(row)
             self._boot_rows.append(row)
+
+        widget = self._storage_widget(status.get("storage", {}))
+        if widget is not None:
+            self.boot_storage.add(widget)
+            self._boot_storage_rows.append(widget)
         return False
+
+    @staticmethod
+    def _icon_for(set_id):
+        return ("computer-symbolic" if "ubuntu" in set_id.lower()
+                else "phone-symbolic")
 
     def _boot_switch_clicked(self, button, set_id):
         button.set_sensitive(False)
