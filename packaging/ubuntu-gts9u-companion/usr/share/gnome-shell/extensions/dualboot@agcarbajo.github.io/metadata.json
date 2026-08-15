@@ -1,0 +1,8 @@
+{
+  "uuid": "dualboot@agcarbajo.github.io",
+  "name": "Dual boot",
+  "description": "Restart into the other system installed on this tablet from the quick settings.",
+  "shell-version": ["45", "46", "47", "48"],
+  "url": "https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra",
+  "version": 1
+}

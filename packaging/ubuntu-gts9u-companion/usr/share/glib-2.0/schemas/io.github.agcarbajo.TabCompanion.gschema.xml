@@ -1,6 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <schemalist gettext-domain="ubuntu-gts9u-companion">
   <schema id="io.github.agcarbajo.TabCompanion" path="/io/github/agcarbajo/TabCompanion/">
+    <!-- The quick settings entry is on by default, but GNOME keeps the list of
+         enabled extensions per user and a system default would replace it
+         wholesale.  So the app adds itself once and records that it has, which
+         leaves a later "off" alone instead of switching it back on. -->
+    <key name="dualboot-tile-seeded" type="b"><default>false</default></key>
     <key name="gesture-single-press" type="s"><default>'none'</default></key>
     <key name="gesture-double-press" type="s"><default>'none'</default></key>
     <key name="gesture-long-press" type="s"><default>'none'</default></key>

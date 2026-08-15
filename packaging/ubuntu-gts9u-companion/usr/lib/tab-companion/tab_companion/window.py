@@ -2,7 +2,7 @@
 
 import os
 
-from gi.repository import Adw, Gio, GLib, Gtk
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 
 from . import VERSION
 from . import boot_sets
@@ -287,6 +287,17 @@ class CompanionWindow(Adw.ApplicationWindow):
         self.boot_progress.set_visible(False)
         page.add(self.boot_progress)
 
+        shortcut = Adw.PreferencesGroup(title=_("Shortcut"))
+        self.boot_tile_row = Adw.SwitchRow(
+            title=_("Show in quick settings"),
+            subtitle=_("Adds a button to the system menu that restarts into the other system."),
+        )
+        self._seed_shell_extension()
+        self.boot_tile_row.set_active(self._shell_extension_enabled())
+        self.boot_tile_row.connect("notify::active", self._boot_tile_toggled)
+        shortcut.add(self.boot_tile_row)
+        page.add(shortcut)
+
         self.boot_stack.add_named(page, "content")
         self.boot_stack.set_visible_child_name("content")
 
@@ -295,31 +306,169 @@ class CompanionWindow(Adw.ApplicationWindow):
         self._boot_refresh()
         return self.boot_stack
 
-    def _storage_row(self, title, info, subtitle):
-        """A labelled bar; Adwaita has no storage widget, so this is built by hand."""
+    def _storage_widget(self, store):
+        """One bar for the whole disk, split by system.
+
+        Adwaita has no storage widget, so this is drawn: a single rounded bar
+        whose width is the internal storage, divided in proportion to each
+        system's partition.  Linux shows what it uses inside its own share;
+        Android's share is drawn plain, because its usage genuinely cannot be
+        read from here — it encrypts its data — and a bar that guessed would be
+        worse than one that admits it.
+        """
+        linux = store.get("ubuntu")
+        android = store.get("android")
+        total = (linux["total"] if linux else 0) + (android["total"] if android else 0)
+        if not total:
+            return None
+
+        # Muted so the bar reads as one object, not two competing colours.
+        used_rgba = Gdk.RGBA()
+        used_rgba.parse("#3584e4")
+        free_rgba = Gdk.RGBA()
+        free_rgba.parse("#3584e4")
+        free_rgba.alpha = 0.28
+        android_rgba = Gdk.RGBA()
+        android_rgba.parse("#26a269")
+        android_rgba.alpha = 0.55
+
+        segments = []
+        if linux:
+            if linux["known"] and linux["used"]:
+                segments.append((linux["used"] / total, used_rgba))
+                segments.append(((linux["total"] - linux["used"]) / total, free_rgba))
+            else:
+                segments.append((linux["total"] / total, free_rgba))
+        if android:
+            segments.append((android["total"] / total, android_rgba))
+
         box = Gtk.Box(
             orientation=Gtk.Orientation.VERTICAL,
-            spacing=6,
-            margin_top=12,
-            margin_bottom=12,
+            spacing=10,
+            margin_top=14,
+            margin_bottom=14,
             margin_start=12,
             margin_end=12,
         )
-        heading = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        heading.append(Gtk.Label(label=title, css_classes=["heading"], xalign=0, hexpand=True))
-        heading.append(Gtk.Label(label=self._format_size(info["total"]), css_classes=["dim-label"]))
-        box.append(heading)
 
-        bar = Gtk.LevelBar(
-            min_value=0,
-            max_value=1,
-            value=(info["used"] / info["total"]) if info["known"] and info["total"] else 0,
-        )
-        bar.set_size_request(-1, 10)
-        box.append(bar)
+        # Without hexpand a DrawingArea is allocated no width at all, and the
+        # bar silently draws into nothing.
+        area = Gtk.DrawingArea(content_height=18, hexpand=True)
+        area.set_draw_func(self._draw_storage_bar, segments)
+        box.append(area)
 
-        box.append(Gtk.Label(label=subtitle, css_classes=["dim-label", "caption"], xalign=0, wrap=True))
+        legend = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=18)
+        if linux:
+            legend.append(self._legend_item(
+                used_rgba,
+                "Linux",
+                _("{used} of {total} used").format(
+                    used=self._format_size(linux["used"]),
+                    total=self._format_size(linux["total"]),
+                ),
+            ))
+        if android:
+            legend.append(self._legend_item(
+                android_rgba,
+                "Android",
+                self._format_size(android["total"]),
+            ))
+        box.append(legend)
+
+        box.append(Gtk.Label(
+            label=_("Android's usage cannot be read from Linux: it encrypts its data."),
+            css_classes=["dim-label", "caption"],
+            xalign=0,
+            wrap=True,
+        ))
         return box
+
+    @staticmethod
+    def _draw_storage_bar(_area, cr, width, height, segments):
+        radius = height / 2
+        cr.new_path()
+        cr.arc(radius, radius, radius, 1.5708, 4.7124)
+        cr.arc(width - radius, radius, radius, 4.7124, 1.5708)
+        cr.close_path()
+        cr.clip()
+
+        cr.set_source_rgba(0.5, 0.5, 0.5, 0.18)
+        cr.rectangle(0, 0, width, height)
+        cr.fill()
+
+        x = 0.0
+        for fraction, rgba in segments:
+            span = width * fraction
+            cr.set_source_rgba(rgba.red, rgba.green, rgba.blue, rgba.alpha)
+            cr.rectangle(x, 0, span, height)
+            cr.fill()
+            x += span
+
+        # A hairline where the two systems meet, so the split is readable even
+        # when the colours sit close together.
+        if len(segments) > 1:
+            boundary = width * sum(f for f, _ in segments[:-1])
+            cr.set_source_rgba(1, 1, 1, 0.55)
+            cr.rectangle(boundary - 1, 0, 2, height)
+            cr.fill()
+
+    @staticmethod
+    def _legend_item(rgba, title, detail):
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        dot = Gtk.DrawingArea(content_width=12, content_height=12, valign=Gtk.Align.CENTER)
+
+        def draw_dot(_area, cr, width, height, _data=None):
+            cr.set_source_rgba(rgba.red, rgba.green, rgba.blue, max(rgba.alpha, 0.75))
+            cr.arc(width / 2, height / 2, min(width, height) / 2, 0, 6.2832)
+            cr.fill()
+
+        dot.set_draw_func(draw_dot)
+        row.append(dot)
+
+        text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        text.append(Gtk.Label(label=title, css_classes=["heading"], xalign=0))
+        text.append(Gtk.Label(label=detail, css_classes=["dim-label", "caption"], xalign=0))
+        row.append(text)
+        return row
+
+    # The quick settings entry is a GNOME Shell extension, and GNOME keeps the
+    # list of enabled ones in its own setting.  Editing that list is the whole
+    # of turning it on and off; there is no separate switch to flip.
+    SHELL_EXTENSION_UUID = "dualboot@agcarbajo.github.io"
+
+    def _seed_shell_extension(self):
+        """Turn the entry on the first time, without touching a later choice."""
+        if self.settings.get_boolean("dualboot-tile-seeded"):
+            return
+        try:
+            shell = Gio.Settings.new("org.gnome.shell")
+        except GLib.Error:
+            return
+        enabled = list(shell.get_strv("enabled-extensions"))
+        if self.SHELL_EXTENSION_UUID not in enabled:
+            enabled.append(self.SHELL_EXTENSION_UUID)
+            shell.set_strv("enabled-extensions", enabled)
+        self.settings.set_boolean("dualboot-tile-seeded", True)
+
+    def _shell_extension_enabled(self):
+        try:
+            shell = Gio.Settings.new("org.gnome.shell")
+        except GLib.Error:
+            return False
+        return self.SHELL_EXTENSION_UUID in shell.get_strv("enabled-extensions")
+
+    def _boot_tile_toggled(self, row, _param):
+        try:
+            shell = Gio.Settings.new("org.gnome.shell")
+        except GLib.Error:
+            return
+        enabled = list(shell.get_strv("enabled-extensions"))
+        if row.get_active():
+            if self.SHELL_EXTENSION_UUID not in enabled:
+                enabled.append(self.SHELL_EXTENSION_UUID)
+        else:
+            enabled = [uuid for uuid in enabled if uuid != self.SHELL_EXTENSION_UUID]
+        shell.set_strv("enabled-extensions", enabled)
 
     def _boot_refresh(self):
         boot_sets.read_status(self._boot_status_ready)
@@ -360,26 +509,10 @@ class CompanionWindow(Adw.ApplicationWindow):
                 _("The boot partitions do not match any stored set.")
             )
 
-        store = status.get("storage", {})
-        if "ubuntu" in store:
-            info = store["ubuntu"]
-            used = self._format_size(info["used"])
-            free = self._format_size(info["total"] - info["used"])
-            row = self._storage_row(
-                "Linux",
-                info,
-                _("{used} used, {free} free").format(used=used, free=free),
-            )
-            self.boot_storage.add(row)
-            self._boot_storage_rows.append(row)
-        if "android" in store:
-            row = self._storage_row(
-                "Android",
-                store["android"],
-                _("Its usage cannot be read from Linux: Android encrypts its data."),
-            )
-            self.boot_storage.add(row)
-            self._boot_storage_rows.append(row)
+        widget = self._storage_widget(status.get("storage", {}))
+        if widget is not None:
+            self.boot_storage.add(widget)
+            self._boot_storage_rows.append(widget)
 
         for entry in sets:
             if entry["id"] == current:

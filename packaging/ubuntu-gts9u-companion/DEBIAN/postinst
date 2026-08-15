@@ -19,4 +19,10 @@ if command -v systemctl >/dev/null 2>&1; then
 	systemctl --global enable tab-companion-haptics-enable.service >/dev/null 2>&1 || true
 fi
 
+# The dual boot quick settings entry ships enabled, but it is NOT seeded from
+# here.  A dconf default for org.gnome.shell enabled-extensions replaces the
+# whole list rather than adding to it, which would silently switch off
+# ubuntu-dock and the desktop icons for every fresh account.  The app appends
+# itself to whatever the user already has, once, on first run.
+
 exit 0
