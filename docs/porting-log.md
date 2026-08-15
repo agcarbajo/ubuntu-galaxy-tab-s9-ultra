@@ -5715,3 +5715,103 @@ funcionando: capturar bajo One UI el estado del hardware mientras el lector
 opera —relojes, votos de interconnect, configuración de los pads `gpio36`–`39`
 y estado de los raíles del PMIC— y compararlo con el nuestro. Eso exige poder
 arrancar Android, que pasa a ser el siguiente objetivo por sí mismo.
+
+---
+
+## Sesión 92 — por qué One UI no arranca tras TWRP, y preparación del reparto
+
+Fecha: 2026-08-15. No se escribió nada en la tablet: esta sesión resuelve el
+problema abierto que condicionaba el ciclo de pruebas y deja el utillaje listo.
+
+### El problema abierto era el cifrado, no el arranque
+
+Síntoma: se flashea One UI, después TWRP, y One UI deja de arrancar aunque se
+reinicie a sistema desde el recovery. La causa es FBE. Una vez TWRP está en
+`recovery`, Android ya no puede descifrar `userdata` y se va a recovery en
+bucle. La solución es una sola cosa, y es la que el hilo del propio aparato
+documenta tres veces:
+
+**En TWRP, `Wipe → Format Data`.** No «Wipe», y sobre todo no «Factory reset».
+
+- El mantenedor del port, preguntado si tras instalar TWRP sigue haciendo falta
+  formatear datos y flashear `repack.zip`, responde «yep»; y su receta para
+  instalar LineageOS empieza por «Format data (**not wipe**) in twrp».
+- Un usuario con el síntoma exacto: «the solution is just that when you get into
+  TWRP you go wipe → format data».
+- Otro (`flamadiddle`, Tab S9 Ultra) probó «factory reset» en lugar de «format
+  data»: obtuvo `Failed to mount /data` y siguió en bucle. Ese error es
+  justamente lo que distingue las dos opciones: «factory reset» intenta vaciar
+  el contenido de `/data`, que exige descifrarla; «format data» rehace la
+  partición y `metadata`, y Android regenera las claves en el arranque
+  siguiente.
+
+Encaja con la mina nº 1 ya anotada para el Hito 4 —hay que borrar también
+`metadata`—, sólo que muerde antes de lo previsto: en el primer ciclo, no en el
+instalador.
+
+### Dos minas del Hito 4 eran falsas para este TWRP
+
+Se desempaquetó el ramdisk de `TWRP-gts9u-V2.img` (boot image v2, gzip+cpio) en
+lugar de seguir suponiendo:
+
+- **`sgdisk` sí viene**: `/system/bin/sgdisk`, ELF aarch64, 181 520 bytes, de
+  `external/gptfdisk`. No hay que empaquetar ningún binario estático. La mina
+  nº 3 queda retirada.
+- **`bash` también viene**: `/system/bin/bash`, aarch64, GNU bash de verdad.
+  La aritmética de 32 bits de `mksh` (sesión 35) se esquiva re-ejecutando el
+  cuerpo del instalador bajo `bash`, en vez de contorsionar las cuentas.
+  `/system/bin/sh` sigue siendo `mksh`, así que la comprobación con `mksh` del
+  banco de pruebas se queda como está.
+- Están además `make_f2fs`, `mke2fs`, `e2fsdroid`, `resize2fs` y `sload_f2fs`.
+
+### Un peligro en `twrp.flags`
+
+Ese TWRP hereda del árbol del Fold 5 esta línea:
+
+```text
+/usb-otg  vfat  /dev/block/sda1  /dev/block/sda  flags=...;storage;wipeingui;removable
+```
+
+En esta tablet `/dev/block/sda` **es la UFS interna** —`userdata` es `sda34`,
+comprobado por `adb` contra `by-name`—, así que la entrada «USB-OTG» del menú
+apunta al disco interno y está marcada `wipeingui`. No se toca esa entrada, y
+conviene comprobar a qué resuelve de verdad ya dentro de TWRP.
+
+### Qué hace `repack.zip` exactamente
+
+Es un **AnyKernel3** del equipo OrangeFox (1 865 371 bytes, SHA-256
+`262827a2…f06a`). De todo el script sólo hay dos líneas activas, `split_boot` y
+`flash_boot`, sobre `block=/dev/block/bootdevice/by-name/boot`, con
+`patch_vbmeta_flag=auto`. Es decir: **reescribe `boot`** y pone el flag de
+verificación desactivada en `vbmeta`. Conviene tenerlo presente porque el Hito 3
+va precisamente de alternar `boot`, y porque el flag de `vbmeta` toca al Hito 2:
+el instalador escribe su propio `vbmeta` si el recovery lo expone escribible, y
+sólo exige `flags=2` cuando está en solo lectura. Cuál de los dos casos aplica
+se sabe con `blockdev --getro` en cuanto haya TWRP.
+
+### Cosas que resultaron no ser lo que parecían
+
+- Las imágenes de arranque de `D:\gts9u-backup\` son **las de Ubuntu**, no las
+  de One UI: `vendor_boot.img` lleva `root=LABEL=UBTS9U_UFS` en su línea de
+  comandos. Sirven como una de las dos parejas del Hito 3; la de One UI sale del
+  AP de DZA1.
+- En la GPT, `userdata` tiene **el mismo valor como tipo y como GUID único**,
+  `1B81E7E6-F50D-419B-A739-2AEEF8DA3335`. Es manía del PIT de Samsung, y se
+  reproduce al recrear la entrada.
+
+### Utillaje preparado
+
+- `scripts/repartition-ufs.sh`: parte `userdata` en `userdata` + `linuxroot`
+  por porcentaje, sobre ADB, con la tablet en TWRP. Inspecciona por defecto y
+  exige `--write` y `--backup-dir`. Toda la aritmética ocurre en `bash` en el
+  PC y a la tablet sólo le llegan números de sector literales, que es la forma
+  limpia de no volver a pisar la aritmética de 32 bits.
+- `TWRP-gts9u-V2-odin.tar`, generado a partir de la `.img` del proyecto. El
+  fichero interno **debe** llamarse `recovery.img` o Odin responde «unassigned
+  file»; con bloque de 512 y sin relleno de registro sale de 109 577 728 bytes,
+  exactamente el tamaño del `.tar` que publica el mantenedor.
+
+### Estado
+
+Tablet intacta, en One UI 8, sin root (`uid=2000`), FBE activo
+(`ro.crypto.type=file`), bootloader desbloqueado. Nada flasheado todavía.
