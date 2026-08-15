@@ -6087,3 +6087,74 @@ botones.
 Allí se escribió que «el bootloader ni siquiera intenta arrancar el sistema».
 Era cierto sólo mientras `param` pedía recovery. Limpiada la bandera, el ABL sí
 lo intenta; lo que fallaba estaba una capa más arriba.
+
+---
+
+## Sesión 96 — v0.27 instala en `linuxroot` y Android conserva su partición
+
+Fecha: 2026-08-15. Primera instalación sobre la UFS partida. **La validación en
+hardware del Hito 2 está pendiente**: esta entrada cubre sólo la instalación.
+
+### El instalador elige destino
+
+`configs/twrp/ubuntu-update-binary` pasa a escribir la raíz en `linuxroot` si
+esa partición existe, y en `userdata` si no. El respaldo no es un resto: es lo
+que hace que **el mismo ZIP de instalación sirva por sí solo** a quien quiera
+Linux en toda la UFS, sin necesitar el de reparticionar. Quedan así dos
+artefactos independientes, uno para partir y otro para instalar, y el segundo
+vale también en solitario.
+
+Cambios asociados: la guarda de «el ZIP está en el destino» sólo aplica cuando
+el destino es `userdata` —en una tablet partida el ZIP puede vivir en el
+`/data` de Android sin riesgo—; la ruta de actualización por overlay cae a
+`userdata` si `linuxroot` existe pero no es la raíz instalada; y la línea de
+contrato pasa a `writes boot init_boot vendor_boot dtbo vbmeta linuxroot
+userdata only`, con `validate-bundle.sh` al día.
+
+La selección se probó **con `mksh`**, que es el shell con el que TWRP ejecuta
+`update-binary`, no con `bash`: los cuatro casos —ambas, sólo `userdata`, sólo
+`linuxroot`, ninguna— salen bien. El banco imprime además `2147483647 + 1` y
+obtiene `-2147483648`, que confirma que se está probando en el shell de 32 bits
+y no en uno cómodo. Ese fue el fallo de método de la sesión 35.
+
+### La release
+
+v0.27, reutilizando kernel y rootfs y regenerando imagen, bundle y ZIP. Todas
+las comprobaciones estáticas en verde, incluida la del contrato nuevo.
+`ubuntu-24.04-gts9uwifi-v0.27-sm-x910-twrp.zip`, SHA-256 `281d9a9a…`.
+
+### La instalación, medida
+
+Enviada por `adb sideload` desde TWRP. Del log del instalador:
+
+```text
+Installing into linuxroot.
+vbmeta is read-only but already has AVB flags 2; preserving it.
+Ubuntu will be written into linuxroot (3605 MiB).
+Writing the Ubuntu root filesystem. This takes several minutes.
+Verifying the written root filesystem...
+The root filesystem matches the image byte for byte.
+Writing boot... init_boot... vendor_boot... dtbo...
+Updater process ended with RC=0
+```
+
+Comprobado después contra las particiones: `linuxroot` con etiqueta
+`UBTS9U_UFS` y limpia; `boot` da `5f33dcd5…` y `vendor_boot` `ded9ae5d…`,
+idénticos a los que produjo la build; `vbmeta` conservado.
+
+**La `userdata` de Android sigue intacta.** Leída en crudo ya no muestra el
+magic de f2fs sino texto cifrado, que es lo correcto: Android la tiene con
+cifrado de metadatos, así que verla ilegible desde TWRP es la prueba de que
+está puesta y no de que se haya roto.
+
+Un aviso del log que no es un fallo del instalador: TWRP cierra con
+`operation_end - status=1` porque después intenta montar `/data` para su propia
+interfaz y no puede descifrarla. El instalador ya había terminado con `RC=0`.
+
+### Estado
+
+Ubuntu instalado en `linuxroot`; One UI no arranca porque sus cuatro imágenes
+de arranque son ahora las de Ubuntu, que es lo previsto y lo que resuelve el
+Hito 3. La vuelta es un `dd` desde TWRP con las de
+`D:\gts9u-backup\oneui-boot-set\`, respaldadas con hash verificado en ambos
+lados.
