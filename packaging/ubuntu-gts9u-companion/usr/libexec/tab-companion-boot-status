@@ -1,0 +1,24 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+"""Report which system the boot partitions currently hold.
+
+Reading a block device needs root, so this runs through polkit — but only to
+read, which is why its action is allowed without a password while switching
+asks for one.
+"""
+
+import json
+import sys
+
+sys.path.insert(0, "/usr/lib/tab-companion")
+
+from tab_companion import boot_core  # noqa: E402
+
+
+def main():
+    print(json.dumps(boot_core.status()))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

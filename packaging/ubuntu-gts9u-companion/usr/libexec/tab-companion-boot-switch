@@ -1,0 +1,36 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+"""Replace the four boot partitions with one stored set, then optionally reboot.
+
+Separate from tab-companion-boot-status on purpose: pkexec authorises by
+executable path, so the read-only helper can be allowed silently while this one
+asks for a password.
+"""
+
+import subprocess
+import sys
+
+sys.path.insert(0, "/usr/lib/tab-companion")
+
+from tab_companion import boot_core  # noqa: E402
+
+
+def main(argv):
+    if len(argv) < 2:
+        boot_core.emit("error", "Falta el nombre del sistema.")
+        return 2
+
+    set_id = argv[1]
+    reboot = "--reboot" in argv[2:]
+
+    if not boot_core.write_set(set_id, boot_core.emit):
+        return 1
+
+    if reboot:
+        boot_core.emit("step", "Reiniciando…")
+        subprocess.run(["systemctl", "reboot"], check=False)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

@@ -3,6 +3,7 @@
 from gi.repository import Adw, Gio, GLib, Gtk
 
 from . import VERSION
+from . import boot_sets
 from .actions import ACTIONS, action_index, action_label
 from .hardware import HardwareClient
 from .i18n import _, N_
@@ -188,6 +189,10 @@ class CompanionWindow(Adw.ApplicationWindow):
         self.view_stack.add_titled_with_icon(
             self._haptics_page(), "haptics", _("Haptics"), "phone-symbolic"
         )
+        if boot_sets.available():
+            self.view_stack.add_titled_with_icon(
+                self._system_page(), "system", _("System"), "computer-symbolic"
+            )
         switcher = Adw.ViewSwitcherBar(stack=self.view_stack, reveal=True)
         toolbar.set_content(self.view_stack)
         toolbar.add_bottom_bar(switcher)
@@ -199,6 +204,131 @@ class CompanionWindow(Adw.ApplicationWindow):
         page.set_margin_top(18)
         page.set_margin_bottom(18)
         return page
+
+    # -- the other installed system -----------------------------------------
+
+    def _system_page(self):
+        """Which system boots next, and the way to change it.
+
+        The tablet holds two systems that take turns on the same four boot
+        partitions.  Everything privileged happens in the libexec helpers
+        behind polkit; this page only asks and reports.
+        """
+        page = self._page()
+
+        current = Adw.PreferencesGroup(
+            title=_("Current system"),
+            description=_(
+                "Ubuntu and Android share this tablet by taking turns on the "
+                "four boot partitions."
+            ),
+        )
+        self.boot_current_row = Adw.ActionRow(
+            title=_("Reading…"),
+            subtitle=_("Checking the boot partitions."),
+        )
+        self.boot_current_row.add_prefix(Gtk.Image(icon_name="computer-symbolic"))
+        current.add(self.boot_current_row)
+        page.add(current)
+
+        self.boot_others = Adw.PreferencesGroup(
+            title=_("Switch system"),
+            description=_(
+                "The tablet restarts into the system you choose. Your files "
+                "stay where they are: only the boot partitions change."
+            ),
+        )
+        page.add(self.boot_others)
+
+        self.boot_progress = Adw.PreferencesGroup()
+        self.boot_progress_label = Gtk.Label(
+            wrap=True,
+            xalign=0,
+            margin_top=6,
+            margin_bottom=6,
+            margin_start=12,
+            margin_end=12,
+        )
+        self.boot_progress.add(self.boot_progress_label)
+        self.boot_progress.set_visible(False)
+        page.add(self.boot_progress)
+
+        self._boot_rows = []
+        self._boot_refresh()
+        return page
+
+    def _boot_refresh(self):
+        boot_sets.read_status(self._boot_status_ready)
+
+    def _boot_status_ready(self, status):
+        for row in self._boot_rows:
+            self.boot_others.remove(row)
+        self._boot_rows = []
+
+        if status.get("error"):
+            self.boot_current_row.set_title(_("Could not read the system"))
+            self.boot_current_row.set_subtitle(status["error"])
+            return False
+
+        sets = status.get("sets", [])
+        current = status.get("current")
+        label = next((s["label"] for s in sets if s["id"] == current), None)
+
+        if label:
+            self.boot_current_row.set_title(label)
+            self.boot_current_row.set_subtitle(
+                _("The four boot partitions match this system.")
+            )
+        else:
+            self.boot_current_row.set_title(_("Unknown system"))
+            self.boot_current_row.set_subtitle(
+                _("The boot partitions do not match any stored set.")
+            )
+
+        for entry in sets:
+            if entry["id"] == current:
+                continue
+            row = Adw.ActionRow(title=entry["label"])
+            if entry["complete"]:
+                row.set_subtitle(_("Ready to boot."))
+                button = Gtk.Button(
+                    label=_("Restart into this system"),
+                    valign=Gtk.Align.CENTER,
+                    css_classes=["suggested-action"],
+                )
+                button.connect("clicked", self._boot_switch_clicked, entry["id"])
+                row.add_suffix(button)
+            else:
+                row.set_subtitle(_("Its images are missing or the wrong size."))
+            self.boot_others.add(row)
+            self._boot_rows.append(row)
+
+        if not self._boot_rows:
+            row = Adw.ActionRow(
+                title=_("No other system installed"),
+                subtitle=_("Only one set of boot images is stored on this tablet."),
+            )
+            self.boot_others.add(row)
+            self._boot_rows.append(row)
+        return False
+
+    def _boot_switch_clicked(self, button, set_id):
+        button.set_sensitive(False)
+        self.boot_progress.set_visible(True)
+        self.boot_progress_label.set_text(_("Writing the boot partitions…"))
+        boot_sets.switch(set_id, True, self._boot_progress, self._boot_finished)
+
+    def _boot_progress(self, event):
+        self.boot_progress_label.set_text(event.get("message", ""))
+        return False
+
+    def _boot_finished(self, ok):
+        if not ok:
+            self.boot_progress_label.set_text(
+                _("It did not finish. Nothing was restarted; check the message above.")
+            )
+            self._boot_refresh()
+        return False
 
     def _pen_page(self):
         page = self._page()
