@@ -46,13 +46,87 @@ object BootSets {
 
     const val ROOT_DIR = "/sdcard/BootSets"
 
-    /** Friendly names for the sets this port creates; anything else uses its id. */
+    /**
+     * Last-resort names, deliberately without version numbers.
+     *
+     * A real name comes from `name.txt`, stamped by whichever system is
+     * running — see [runningSystemName].  Guessing a version here is how a
+     * tablet on One UI 7 ends up being told it runs One UI 8.
+     */
     private val KNOWN_LABELS = mapOf(
-        "ubuntu" to "Ubuntu 24.04",
-        "oneui" to "One UI 8",
+        "ubuntu" to "Ubuntu",
+        "oneui" to "Android",
         "lineage" to "LineageOS",
         "lineageos" to "LineageOS",
     )
+
+    /**
+     * What the system running right now calls itself.
+     *
+     * One UI encodes its version as major*10000 + minor*100 + patch, so 80000
+     * is 8.0.  LineageOS publishes its own property.  Anything else falls back
+     * to the Android release number, which is always there.
+     */
+    fun runningSystemName(): String {
+        fun prop(name: String): String =
+            Root.run("getprop $name").output.trim().takeIf { it.isNotEmpty() } ?: ""
+
+        prop("ro.lineage.display.version").takeIf { it.isNotEmpty() }?.let {
+            return "LineageOS $it"
+        }
+        prop("ro.lineage.version").takeIf { it.isNotEmpty() }?.let {
+            return "LineageOS $it"
+        }
+
+        val release = prop("ro.build.version.release").ifEmpty { "?" }
+        val oneui = prop("ro.build.version.oneui").toIntOrNull()
+        if (oneui != null && oneui > 0) {
+            val major = oneui / 10000
+            val minor = (oneui % 10000) / 100
+            return if (minor == 0) "One UI $major" else "One UI $major.$minor"
+        }
+        return "Android $release"
+    }
+
+    /**
+     * The Linux side's real name, read out of its own root filesystem.
+     *
+     * Each system keeps its own copy of the sets, and neither can write into
+     * the other's: Android's /sdcard is encrypted and Ubuntu never sees it.
+     * But root here can mount linuxroot read-only and simply ask, which beats
+     * showing a name nobody chose.
+     */
+    fun linuxSystemName(): String {
+        val mount = "/mnt/gts9u-linuxroot"
+        val result = Root.run(
+            "mkdir -p $mount",
+            "mount -o ro -t ext4 /dev/block/by-name/linuxroot $mount 2>/dev/null || true",
+            "grep -m1 '^PRETTY_NAME=' $mount/etc/os-release 2>/dev/null || true",
+            "umount $mount 2>/dev/null || true",
+            "rmdir $mount 2>/dev/null || true",
+        )
+        val line = result.output.lineSequence()
+            .firstOrNull { it.startsWith("PRETTY_NAME=") } ?: return ""
+        return line.removePrefix("PRETTY_NAME=").trim().trim('"')
+    }
+
+    /**
+     * Writes the running system's real name into its own set.
+     *
+     * Each system can only name itself, so both labels become true once each
+     * has booted at least once.  Until then the generic fallback is used, which
+     * is vague but never wrong.
+     */
+    fun stampRunningName(set: BootSet) = writeName(set, runningSystemName())
+
+    /** Records a set's name, leaving it alone when nothing has changed. */
+    fun writeName(set: BootSet, name: String) {
+        if (name.isBlank()) return
+        val file = "${set.dir}/name.txt"
+        val existing = Root.run("cat \"$file\" 2>/dev/null || true").output.trim()
+        if (existing == name) return
+        Root.run("printf '%s\\n' \"$name\" > \"$file\"")
+    }
 
     // -- reading -------------------------------------------------------------
 
@@ -118,6 +192,38 @@ object BootSets {
                 here != null && here == set.hashes[set.file(part)]
             }
         }
+    }
+
+    // -- storage -------------------------------------------------------------
+
+    data class Share(val total: Long, val used: Long, val known: Boolean)
+
+    /**
+     * How the internal storage is split, mirrored from the Linux side.
+     *
+     * Android can measure its own userdata because it is mounted here; it
+     * cannot see inside linuxroot's ext4, so only that partition's size is
+     * honest and the UI says so rather than drawing a guess.
+     */
+    fun storage(): Map<String, Share> {
+        val out = mutableMapOf<String, Share>()
+
+        // Android's df is toybox: it has no -B, and reports 1K blocks.
+        val df = Root.run("df -k /data | tail -1").output.trim().split(Regex("\\s+"))
+        if (df.size >= 4) {
+            val total = df[1].toLongOrNull()
+            val used = df[2].toLongOrNull()
+            if (total != null && used != null && total > 0) {
+                out["android"] = Share(total * 1024, used * 1024, known = true)
+            }
+        }
+
+        val sectors = Root.run("cat /sys/class/block/sda35/size 2>/dev/null || echo 0")
+            .output.trim().toLongOrNull() ?: 0L
+        // /sys counts 512-byte sectors whatever the disk's logical size is.
+        if (sectors > 0) out["linux"] = Share(sectors * 512, 0, known = false)
+
+        return out
     }
 
     // -- writing -------------------------------------------------------------

@@ -64,7 +64,9 @@ class BootSwitchTile : TileService() {
         val set = target ?: return
         // The tile can be tapped over a lock screen, and neither the dialog nor
         // the reboot should happen behind one.
-        unlockAndRun { confirm(set) }
+        unlockAndRun {
+            if (Prefs(this).skipConfirmation) switch(set) else confirm(set)
+        }
     }
 
     private fun confirm(set: BootSets.BootSet) {

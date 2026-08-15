@@ -31,12 +31,51 @@ PARTITIONS = (
     ("dtbo", 16777216),
 )
 
+# Last-resort names, deliberately without version numbers.  A real name comes
+# from name.txt, written by whichever system is running; guessing a version
+# here is how a tablet on One UI 7 ends up being told it runs One UI 8.
 KNOWN_LABELS = {
-    "ubuntu": "Ubuntu 24.04",
-    "oneui": "One UI",
+    "ubuntu": "Ubuntu",
+    "oneui": "Android",
     "lineage": "LineageOS",
     "lineageos": "LineageOS",
 }
+
+
+def running_system_name():
+    """What the system running right now calls itself."""
+    try:
+        with open("/etc/os-release", "r", encoding="utf-8") as handle:
+            for line in handle:
+                if line.startswith("PRETTY_NAME="):
+                    return line.split("=", 1)[1].strip().strip('"')
+    except OSError:
+        pass
+    return ""
+
+
+def stamp_running_name(set_id):
+    """Records the running system's real name in its own set.
+
+    Each system can only name itself: Ubuntu cannot read Android's /sdcard,
+    which is metadata-encrypted.  Android returns the favour by mounting
+    linuxroot read-only and asking, so both labels end up true.
+    """
+    name = running_system_name()
+    if not name:
+        return
+    path = os.path.join(SETS_DIR, set_id, "name.txt")
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            if handle.readline().strip() == name:
+                return
+    except OSError:
+        pass
+    try:
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(name + "\n")
+    except OSError:
+        pass
 
 
 def device_for(name):
@@ -183,8 +222,15 @@ def storage():
 
 
 def status():
-    sets = discover()
     live = live_hashes()
+    current = identify(live, discover())
+
+    # Only the running system knows its own name, so it writes it down while it
+    # can; the list is then re-read so the label reported is the one on disk.
+    if current is not None:
+        stamp_running_name(current)
+
+    sets = discover()
     return {
         "current": identify(live, sets),
         "sets": [

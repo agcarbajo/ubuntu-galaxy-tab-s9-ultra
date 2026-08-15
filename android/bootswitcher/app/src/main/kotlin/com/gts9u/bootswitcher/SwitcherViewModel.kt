@@ -15,6 +15,7 @@ data class UiState(
     val hasRoot: Boolean = false,
     val current: BootSets.BootSet? = null,
     val sets: List<BootSets.BootSet> = emptyList(),
+    val storage: Map<String, BootSets.Share> = emptyMap(),
     val busy: Boolean = false,
     val log: List<String> = emptyList(),
     /** Set once every partition is written and verified, so the UI can offer the reboot. */
@@ -36,9 +37,29 @@ class SwitcherViewModel : ViewModel() {
 
         val result = withContext(Dispatchers.IO) {
             if (!Root.available()) return@withContext null
-            val sets = BootSets.discover()
+            var sets = BootSets.discover()
             val live = BootSets.liveHashes()
-            sets to BootSets.identify(live, sets)
+            val current = BootSets.identify(live, sets)
+
+            // Only the running system knows its own name, so it writes it down
+            // while it can; the list is then re-read so the label shown is the
+            // one on disk rather than a guess.
+            if (current != null) {
+                BootSets.stampRunningName(current)
+
+                // The Linux set cannot name itself from here, so it is asked
+                // directly: its filesystem is readable with root.
+                val linuxSet = sets.firstOrNull {
+                    it.id != current.id && it.id.lowercase().contains("ubuntu")
+                }
+                if (linuxSet != null) {
+                    BootSets.linuxSystemName().takeIf { it.isNotBlank() }?.let {
+                        BootSets.writeName(linuxSet, it)
+                    }
+                }
+                sets = BootSets.discover()
+            }
+            Triple(sets, BootSets.identify(live, sets), BootSets.storage())
         }
 
         if (result == null) {
@@ -53,8 +74,16 @@ class SwitcherViewModel : ViewModel() {
             return@launch
         }
 
-        val (sets, current) = result
-        _state.update { it.copy(loading = false, hasRoot = true, sets = sets, current = current) }
+        val (sets, current, storage) = result
+        _state.update {
+            it.copy(
+                loading = false,
+                hasRoot = true,
+                sets = sets,
+                current = current,
+                storage = storage,
+            )
+        }
     }
 
     fun switchTo(set: BootSets.BootSet) = viewModelScope.launch {
