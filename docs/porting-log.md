@@ -5815,3 +5815,88 @@ se sabe con `blockdev --getro` en cuanto haya TWRP.
 
 Tablet intacta, en One UI 8, sin root (`uid=2000`), FBE activo
 (`ro.crypto.type=file`), bootloader desbloqueado. Nada flasheado todavía.
+
+---
+
+## Sesión 93 — Hito 1: la UFS queda partida en dos y One UI arranca
+
+Fecha: 2026-08-15. `userdata` pasa a ser dos particiones y Android vuelve a
+arrancar en la suya. El problema abierto de la sesión 92 queda además
+confirmado en hardware: era el cifrado, y `Format Data` lo resuelve.
+
+### Flasheo de TWRP sin Odin gráfico
+
+`usbipd-win` ya estaba instalado, así que el «WSL no ve el USB» de las notas
+tiene arreglo: `usbipd bind --force` más `usbipd attach --wsl` exponen la
+tablet dentro de WSL, y ahí `heimdall` 1.4.2 habla con ella. Copiar el par de
+claves de `~/.android` de Windows a `/root/.android` de WSL evita tener que
+autorizar la depuración a mano en la pantalla.
+
+Dos cosas que costaron tiempo y conviene no repetir:
+
+- **`--no-reboot` y `--resume` van en pareja.** Se lanzó `print-pit
+  --no-reboot`, que deja la sesión Odin abierta, y después un `flash` sin
+  `--resume`. El propio `heimdall help` lo advierte. El resultado no es que
+  falle esa orden: deja el protocolo del aparato sin poder reabrirse, y ni
+  `--resume`, ni sesión nueva, ni reciclar el enganche USB lo recuperan. Hay
+  que apagar y volver a entrar en Download con los botones.
+- **Del modo Download sólo se sale con botones.** No hay orden de heimdall ni
+  de Odin que salte a recovery. La única vía software candidata era escribir el
+  *bootloader control block* en `misc` —que sí es flasheable, está en el PIT en
+  el offset 25356—, pero es mecanismo AOSP genérico, sin confirmar en un ABL de
+  Samsung, y además exigiría una sesión Odin viva. No ahorra el reinicio.
+
+Con la secuencia correcta —una sola invocación, `heimdall flash --RECOVERY
+TWRP-gts9u-V2.img --no-reboot`— la escritura fue limpia, y desde Download se
+entra a TWRP con Volumen Abajo + Power y acto seguido Volumen Arriba + Power.
+
+### El reparto
+
+`scripts/repartition-ufs.sh` con `--android-percent 40`. Comprobó contra el
+aparato el GUID del disco, el nombre, el tipo y el sector inicial de la entrada
+34, y que no existiese ya una entrada 35, antes de escribir:
+
+| Entrada | Antes | Después |
+|---|---|---|
+| 34 `userdata` | 3 626 496 – 249 716 726, 938,8 GiB | 3 626 496 – 102 062 079, **375,5 GiB** |
+| 35 `linuxroot` | no existía | 102 062 080 – 249 716 726, **563,3 GiB** |
+
+El script tenía un fallo que **cazó su propio guardián**: corre en WSL pero
+llama al `adb.exe` de Windows, al que le pasaba la ruta de destino en formato
+WSL. El `adb pull` del respaldo fallaba y abortaba antes de tocar la tabla.
+Buen resultado por el motivo equivocado; ahora convierte con `wslpath -w`.
+
+Verificado después de reiniciar a recovery para que el kernel relea la tabla:
+`sda34` mide 403 192 152 064 bytes y `sda35` 604 793 434 112, exactamente lo
+calculado. `by-name/linuxroot` aparece solo, sin tocar ningún `fstab`, y
+también lo ve Android una vez arrancado.
+
+`twrp format data` dejó `userdata` en f2fs (magic `10 20 f5 f2`) y **formateó
+también `metadata`**, que es literalmente lo que hacía falta. `linuxroot` se
+creó con `mke2fs -t ext4 -m 0 -L UBTS9U_UFS`: monta, se lista —sólo
+`lost+found`— y desmonta sin quejas.
+
+### Criterio de éxito, cumplido
+
+One UI 8 arranca, se configura y ve sus 376 GiB con 370 libres. El bootloader
+sigue desbloqueado (`flash.locked=0`, `orange`) y el híbrido intacto: `abl`
+`X910XXS5CYG1` bajo sistema `X910XXS5DZA1`. `ro.crypto.state=encrypted` y
+`ro.crypto.type=file`: Android regeneró sus claves FBE, que era la prueba de
+fondo. No se tocó `super`, ni la cadena del bootloader, ni `efs`, `persist` o
+`modem`.
+
+La GPT quedó respaldada dos veces: el `gpt-sda.bin` anterior y el que el script
+sacó en vivo justo antes de escribir, `gpt-sda-20260815-044329.bin`
+(`3b71a2d0…`).
+
+### Dos medidas que condicionan el Hito 2
+
+- **`vbmeta` está en solo lectura desde TWRP** (`blockdev --getro` = 1) y sus
+  flags AVB, leídas en el offset 120, son `00000000` con magic `AVB0`. El
+  instalador de Ubuntu, cuando `vbmeta` no es escribible, exige `flags=2` y
+  aborta si no las tiene. Así que **abortará** tal y como está el aparato.
+  `repack.zip` pone ese flag, y pasa a ser requisito previo del Hito 2, no una
+  comodidad para conservar TWRP.
+- **El peligro de `twrp.flags` está confirmado en vivo**: `/dev/block/sda` es
+  la UFS interna —`userdata` es `sda34`— y `sda1` es `modemst1`. La entrada
+  «USB-OTG» del menú de TWRP apunta ahí y está marcada `wipeingui`.
