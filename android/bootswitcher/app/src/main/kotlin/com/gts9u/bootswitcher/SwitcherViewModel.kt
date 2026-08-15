@@ -10,20 +10,15 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-data class SetStatus(
-    val system: BootSets.System,
-    val complete: Boolean,
-)
-
 data class UiState(
     val loading: Boolean = true,
     val hasRoot: Boolean = false,
-    val current: BootSets.System? = null,
-    val sets: List<SetStatus> = emptyList(),
+    val current: BootSets.BootSet? = null,
+    val sets: List<BootSets.BootSet> = emptyList(),
     val busy: Boolean = false,
     val log: List<String> = emptyList(),
     /** Set once every partition is written and verified, so the UI can offer the reboot. */
-    val readyToReboot: BootSets.System? = null,
+    val readyToReboot: BootSets.BootSet? = null,
     val error: String? = null,
 )
 
@@ -41,9 +36,9 @@ class SwitcherViewModel : ViewModel() {
 
         val result = withContext(Dispatchers.IO) {
             if (!Root.available()) return@withContext null
+            val sets = BootSets.discover()
             val live = BootSets.liveHashes()
-            val sets = BootSets.System.entries.associateWith { BootSets.setHashes(it) }
-            Triple(live, sets, BootSets.identify(live, sets))
+            sets to BootSets.identify(live, sets)
         }
 
         if (result == null) {
@@ -58,24 +53,15 @@ class SwitcherViewModel : ViewModel() {
             return@launch
         }
 
-        val (_, sets, current) = result
-        _state.update { s ->
-            s.copy(
-                loading = false,
-                hasRoot = true,
-                current = current,
-                sets = BootSets.System.entries.map { system ->
-                    SetStatus(system, complete = (sets[system]?.size ?: 0) == BootSets.PARTITIONS.size)
-                },
-            )
-        }
+        val (sets, current) = result
+        _state.update { it.copy(loading = false, hasRoot = true, sets = sets, current = current) }
     }
 
-    fun switchTo(system: BootSets.System) = viewModelScope.launch {
+    fun switchTo(set: BootSets.BootSet) = viewModelScope.launch {
         _state.update { it.copy(busy = true, log = emptyList(), error = null, readyToReboot = null) }
 
         val ok = withContext(Dispatchers.IO) {
-            BootSets.write(system) { progress ->
+            BootSets.write(set) { progress ->
                 when (progress) {
                     is BootSets.Progress.Step ->
                         _state.update { it.copy(log = it.log + progress.message) }
@@ -87,13 +73,15 @@ class SwitcherViewModel : ViewModel() {
             }
         }
 
-        _state.update { it.copy(busy = false, readyToReboot = if (ok) system else null) }
-        if (ok) refresh0(system)
-    }
-
-    /** After a successful write the live partitions are the target's, so say so. */
-    private fun refresh0(system: BootSets.System) {
-        _state.update { it.copy(current = system) }
+        _state.update {
+            it.copy(
+                busy = false,
+                readyToReboot = if (ok) set else null,
+                // After a verified write the live partitions really are this
+                // set's, so the card stops claiming the old system.
+                current = if (ok) set else it.current,
+            )
+        }
     }
 
     fun reboot() = viewModelScope.launch {

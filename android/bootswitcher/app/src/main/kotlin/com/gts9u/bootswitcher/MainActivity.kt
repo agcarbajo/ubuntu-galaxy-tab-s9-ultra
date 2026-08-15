@@ -6,17 +6,17 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -51,7 +51,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 
@@ -66,7 +65,7 @@ class MainActivity : ComponentActivity() {
 /**
  * The theme.
  *
- * This wants to be `MaterialExpressiveTheme` with an expressive [MotionScheme],
+ * This wants to be `MaterialExpressiveTheme` with an expressive `MotionScheme`,
  * and cannot be yet: in material3 1.4.0 both are `internal`, and every 1.5.0
  * alpha that makes them public requires AGP 9.1 and compileSdk 37.  Until that
  * toolchain move is made, the expressive feel is carried by what stable does
@@ -86,15 +85,21 @@ fun BootSwitcherTheme(content: @Composable () -> Unit) {
     MaterialTheme(colorScheme = scheme, content = content)
 }
 
+/** Ubuntu gets the desktop glyph; every Android ROM gets the Android one. */
+private fun iconFor(set: BootSets.BootSet): ImageVector =
+    if (set.id.lowercase().contains("ubuntu")) Icons.Filled.Computer else Icons.Filled.Android
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SwitcherScreen(vm: SwitcherViewModel = viewModel()) {
     val state by vm.state.collectAsStateWithLifecycle()
 
-    Scaffold(
-        topBar = { TopAppBar(title = { Text("Arranque dual") }) },
-    ) { inner ->
-        Surface(Modifier.fillMaxSize().padding(inner)) {
+    Scaffold(topBar = { TopAppBar(title = { Text("Arranque dual") }) }) { inner ->
+        Surface(
+            Modifier
+                .fillMaxSize()
+                .padding(inner)
+        ) {
             Column(
                 Modifier
                     .fillMaxSize()
@@ -104,25 +109,31 @@ fun SwitcherScreen(vm: SwitcherViewModel = viewModel()) {
             ) {
                 CurrentSystemCard(state)
 
-                if (state.busy || state.log.isNotEmpty()) {
-                    ProgressCard(state)
+                if (state.busy || state.log.isNotEmpty()) ProgressCard(state)
+
+                state.sets.forEach { set ->
+                    SystemCard(
+                        set = set,
+                        isCurrent = state.current?.id == set.id,
+                        enabled = !state.busy && set.complete,
+                        onSwitch = { vm.switchTo(set) },
+                    )
                 }
 
-                if (state.hasRoot) {
-                    state.sets.forEach { set ->
-                        SystemCard(
-                            set = set,
-                            isCurrent = state.current == set.system,
-                            enabled = !state.busy && set.complete,
-                            onSwitch = { vm.switchTo(set.system) },
-                        )
-                    }
+                if (state.hasRoot && state.sets.isEmpty()) {
+                    Text(
+                        "No hay ningún juego en ${BootSets.ROOT_DIR}. Cada sistema es " +
+                            "una carpeta con boot.img, init_boot.img, vendor_boot.img y dtbo.img.",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
                 }
 
                 AnimatedVisibility(state.readyToReboot != null) {
                     Button(
                         onClick = { vm.reboot() },
-                        modifier = Modifier.fillMaxWidth().height(64.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(64.dp),
                         shape = RoundedCornerShape(20.dp),
                     ) {
                         Icon(Icons.Filled.RestartAlt, contentDescription = null)
@@ -134,7 +145,9 @@ fun SwitcherScreen(vm: SwitcherViewModel = viewModel()) {
                 FilledTonalButton(
                     onClick = { vm.refresh() },
                     enabled = !state.busy,
-                    modifier = Modifier.fillMaxWidth().height(56.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp),
                     shape = RoundedCornerShape(18.dp),
                 ) {
                     Icon(Icons.Filled.Refresh, contentDescription = null)
@@ -143,9 +156,11 @@ fun SwitcherScreen(vm: SwitcherViewModel = viewModel()) {
                 }
 
                 Text(
-                    "Las imágenes se leen de ${BootSets.ROOT_DIR}. Sólo se tocan " +
-                        "boot, init_boot, vendor_boot y dtbo; vbmeta no se toca nunca, " +
-                        "porque cambiarlo borraría los datos de Android.",
+                    "Las imágenes se leen de ${BootSets.ROOT_DIR}. Sólo se tocan boot, " +
+                        "init_boot, vendor_boot y dtbo; vbmeta no se toca nunca, porque " +
+                        "cambiarlo borraría los datos de Android. El sistema de Android " +
+                        "vive en super, que esta app tampoco toca: por eso One UI y " +
+                        "LineageOS se turnan en ese hueco en vez de convivir.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -156,36 +171,33 @@ fun SwitcherScreen(vm: SwitcherViewModel = viewModel()) {
 
 @Composable
 private fun CurrentSystemCard(state: UiState) {
+    val current = state.current
     val (title, body, icon) = when {
         state.loading -> Triple("Comprobando…", "Leyendo las particiones de arranque.", Icons.Filled.Refresh)
         !state.hasRoot -> Triple("Sin root", state.error ?: "Esta app necesita root.", Icons.Filled.Warning)
-        state.current == null -> Triple(
+        current == null -> Triple(
             "Sistema desconocido",
-            "Las particiones no coinciden con ninguno de los dos juegos guardados.",
+            "Las particiones no coinciden con ningún juego guardado.",
             Icons.Filled.Warning,
         )
         else -> Triple(
-            "Ahora arranca ${state.current.label}",
+            "Ahora arranca ${current.label}",
             "Las cuatro particiones coinciden con el juego guardado.",
-            if (state.current == BootSets.System.UBUNTU) Icons.Filled.Computer else Icons.Filled.Android,
+            iconFor(current),
         )
     }
 
+    val good = state.hasRoot && current != null
     Card(
         Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(28.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (state.hasRoot && state.current != null)
-                MaterialTheme.colorScheme.primaryContainer
-            else
-                MaterialTheme.colorScheme.errorContainer,
+            containerColor = if (good) MaterialTheme.colorScheme.primaryContainer
+            else MaterialTheme.colorScheme.errorContainer,
         ),
     ) {
-        Row(
-            Modifier.padding(24.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(icon, contentDescription = null, Modifier.height(40.dp).width(40.dp))
+        Row(Modifier.padding(24.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(icon, contentDescription = null, Modifier.size(40.dp))
             Spacer(Modifier.width(20.dp))
             Column {
                 Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
@@ -198,7 +210,7 @@ private fun CurrentSystemCard(state: UiState) {
 
 @Composable
 private fun SystemCard(
-    set: SetStatus,
+    set: BootSets.BootSet,
     isCurrent: Boolean,
     enabled: Boolean,
     onSwitch: () -> Unit,
@@ -206,22 +218,17 @@ private fun SystemCard(
     Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(28.dp)) {
         Column(Modifier.padding(24.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    if (set.system == BootSets.System.UBUNTU) Icons.Filled.Computer else Icons.Filled.Android,
-                    contentDescription = null,
-                )
+                Icon(iconFor(set), contentDescription = null)
                 Spacer(Modifier.width(16.dp))
-                Text(set.system.label, style = MaterialTheme.typography.titleLarge)
+                Text(set.label, style = MaterialTheme.typography.titleLarge)
                 Spacer(Modifier.width(12.dp))
-                if (isCurrent) {
-                    Icon(Icons.Filled.Check, contentDescription = "en uso")
-                }
+                if (isCurrent) Icon(Icons.Filled.Check, contentDescription = "en uso")
             }
 
             Spacer(Modifier.height(8.dp))
             Text(
                 if (set.complete) "Juego completo y con los tamaños correctos."
-                else "Faltan imágenes en ${BootSets.dirFor(set.system)}.",
+                else "Faltan imágenes o tienen tamaños raros en ${set.dir}.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -230,10 +237,12 @@ private fun SystemCard(
             Button(
                 onClick = onSwitch,
                 enabled = enabled && !isCurrent,
-                modifier = Modifier.fillMaxWidth().height(56.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp),
                 shape = RoundedCornerShape(18.dp),
             ) {
-                Text(if (isCurrent) "Ya está puesto" else "Cambiar a ${set.system.label}")
+                Text(if (isCurrent) "Ya está puesto" else "Cambiar a ${set.label}")
             }
         }
     }
@@ -245,10 +254,8 @@ private fun ProgressCard(state: UiState) {
         Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(28.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (state.error != null)
-                MaterialTheme.colorScheme.errorContainer
-            else
-                MaterialTheme.colorScheme.secondaryContainer,
+            containerColor = if (state.error != null) MaterialTheme.colorScheme.errorContainer
+            else MaterialTheme.colorScheme.secondaryContainer,
         ),
     ) {
         Column(Modifier.padding(24.dp)) {
@@ -256,9 +263,7 @@ private fun ProgressCard(state: UiState) {
                 LinearProgressIndicator(Modifier.fillMaxWidth())
                 Spacer(Modifier.height(16.dp))
             }
-            state.log.forEach { line ->
-                Text(line, style = MaterialTheme.typography.bodyMedium)
-            }
+            state.log.forEach { Text(it, style = MaterialTheme.typography.bodyMedium) }
         }
     }
 }

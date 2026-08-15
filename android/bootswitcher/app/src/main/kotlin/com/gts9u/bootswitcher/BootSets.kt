@@ -1,14 +1,23 @@
 package com.gts9u.bootswitcher
 
 /**
- * Switching between Ubuntu and One UI on this tablet means replacing four
- * partitions and nothing else.
+ * Switching systems on this tablet means replacing four partitions.
  *
- * `vbmeta` is deliberately absent.  One UI runs fine with the unsigned
- * flags=2 vbmeta that Ubuntu needs, so it never has to change — and it must
- * not, because rewriting it invalidates the key Android derives for its
- * metadata-encrypted /data, which costs a full wipe of Android's user data
+ * The sets are discovered rather than hardcoded: every directory under
+ * [ROOT_DIR] that holds the four images is a system the tablet can boot, so
+ * adding LineageOS is dropping a folder in, not editing this file.
+ *
+ * `vbmeta` is deliberately not in the list.  One UI runs fine with the
+ * unsigned flags=2 vbmeta that Ubuntu needs, so it never has to change — and
+ * it must not, because rewriting it invalidates the key Android derives for
+ * its metadata-encrypted /data, which costs a full wipe of Android's user data
  * every single time.
+ *
+ * What this app does NOT do is move `super`.  Two Android ROMs — One UI and
+ * LineageOS — share that partition, so they cannot both be installed at once;
+ * swapping their boot sets alone would boot a kernel against the other ROM's
+ * system.  The pairing that works is Ubuntu against whichever Android is
+ * installed.
  */
 object BootSets {
 
@@ -24,17 +33,26 @@ object BootSets {
         val device: String get() = "/dev/block/by-name/$name"
     }
 
-    enum class System(val id: String, val label: String) {
-        UBUNTU("ubuntu", "Ubuntu 24.04"),
-        ONEUI("oneui", "One UI 8"),
+    /** One bootable system: a directory of images plus a name to show. */
+    data class BootSet(
+        val id: String,
+        val label: String,
+        val complete: Boolean,
+        val hashes: Map<String, String>,
+    ) {
+        val dir: String get() = "$ROOT_DIR/$id"
+        fun file(part: Partition): String = "$dir/${part.name}.img"
     }
 
-    /** Where the two sets of images live on the tablet. */
     const val ROOT_DIR = "/sdcard/BootSets"
 
-    fun dirFor(system: System): String = "$ROOT_DIR/${system.id}"
-
-    fun fileFor(system: System, part: Partition): String = "${dirFor(system)}/${part.name}.img"
+    /** Friendly names for the sets this port creates; anything else uses its id. */
+    private val KNOWN_LABELS = mapOf(
+        "ubuntu" to "Ubuntu 24.04",
+        "oneui" to "One UI 8",
+        "lineage" to "LineageOS",
+        "lineageos" to "LineageOS",
+    )
 
     // -- reading -------------------------------------------------------------
 
@@ -45,32 +63,59 @@ object BootSets {
         return parseSums(result.output, PARTITIONS.map { it.device })
     }
 
+    /** Every directory under [ROOT_DIR], whether or not its images are usable. */
+    fun discover(): List<BootSet> {
+        val listing = Root.run("ls -1 $ROOT_DIR 2>/dev/null || true")
+        val ids = listing.output.lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() && !it.contains('/') }
+            .toList()
+
+        return ids.sorted().map { id ->
+            val label = KNOWN_LABELS[id.lowercase()] ?: id.replaceFirstChar { it.uppercase() }
+            val hashes = hashesOf(id)
+            BootSet(
+                id = id,
+                label = readLabel(id) ?: label,
+                complete = hashes.size == PARTITIONS.size,
+                hashes = hashes,
+            )
+        }
+    }
+
+    /** An optional `name.txt` lets a set say what it wants to be called. */
+    private fun readLabel(id: String): String? {
+        val r = Root.run("cat \"$ROOT_DIR/$id/name.txt\" 2>/dev/null || true")
+        val line = r.output.lineSequence().firstOrNull()?.trim()
+        return line?.takeIf { it.isNotEmpty() && it.length <= 40 }
+    }
+
     /**
      * sha256 of a stored set, or an empty map when the set is incomplete.
      *
      * A missing or short file has to be caught here, before anything is
      * written: half a set on disk would otherwise become half a set on the
-     * partitions, and the tablet would boot neither system.
+     * partitions, and the tablet would boot no system at all.
      */
-    fun setHashes(system: System): Map<String, String> {
-        val files = PARTITIONS.map { fileFor(system, it) }
+    private fun hashesOf(id: String): Map<String, String> {
+        val files = PARTITIONS.map { "$ROOT_DIR/$id/${it.name}.img" }
         val checks = PARTITIONS.map { part ->
-            val f = fileFor(system, part)
-            "[ -f \"$f\" ] || { echo \"FALTA $f\"; exit 1; }\n" +
-                "[ \"\$(stat -c %s \"$f\")\" = \"${part.bytes}\" ] || { echo \"TAMANO $f\"; exit 1; }"
+            val f = "$ROOT_DIR/$id/${part.name}.img"
+            "[ -f \"$f\" ] || exit 1\n" +
+                "[ \"\$(stat -c %s \"$f\")\" = \"${part.bytes}\" ] || exit 1"
         }
         val result = Root.run(*(checks + files.map { "sha256sum \"$it\"" }).toTypedArray())
         if (!result.ok) return emptyMap()
         return parseSums(result.output, files)
     }
 
-    /** Which system the four live partitions correspond to, if any. */
-    fun identify(live: Map<String, String>, sets: Map<System, Map<String, String>>): System? {
+    /** Which stored set the four live partitions correspond to, if any. */
+    fun identify(live: Map<String, String>, sets: List<BootSet>): BootSet? {
         if (live.size != PARTITIONS.size) return null
-        return System.entries.firstOrNull { system ->
-            val stored = sets[system] ?: return@firstOrNull false
-            stored.size == PARTITIONS.size && PARTITIONS.all { part ->
-                live[part.device] != null && live[part.device] == stored[fileFor(system, part)]
+        return sets.firstOrNull { set ->
+            set.complete && PARTITIONS.all { part ->
+                val here = live[part.device]
+                here != null && here == set.hashes[set.file(part)]
             }
         }
     }
@@ -84,35 +129,30 @@ object BootSets {
     }
 
     /**
-     * Writes one system's set, verifying every partition by reading it back.
+     * Writes one set, verifying every partition by reading it back.
      *
      * Nothing reboots here.  A caller that has seen [Progress.Failed] must be
      * able to stop, because a tablet with three of four partitions replaced
-     * still boots the system it is on — but only until it is restarted.
+     * still runs the system it is on — but only until it is restarted.
      */
-    fun write(system: System, log: (Progress) -> Unit): Boolean {
-        val stored = setHashes(system)
-        if (stored.size != PARTITIONS.size) {
-            log(Progress.Failed("El juego de ${system.label} está incompleto o tiene tamaños raros."))
+    fun write(set: BootSet, log: (Progress) -> Unit): Boolean {
+        if (!set.complete) {
+            log(Progress.Failed("El juego de ${set.label} está incompleto o tiene tamaños raros."))
             return false
         }
 
         for (part in PARTITIONS) {
-            val file = fileFor(system, part)
-            val expected = stored[file]
+            val file = set.file(part)
+            val expected = set.hashes[file]
             log(Progress.Step("Escribiendo ${part.name}…"))
 
-            val write = Root.run(
-                "dd if=\"$file\" of=\"${part.device}\" bs=4M",
-                "sync",
-            )
+            val write = Root.run("dd if=\"$file\" of=\"${part.device}\" bs=4M", "sync")
             if (!write.ok) {
                 log(Progress.Failed("No pude escribir ${part.name}: ${write.output.take(200)}"))
                 return false
             }
 
-            val reread = Root.run("sha256sum ${part.device}")
-            val got = parseSums(reread.output, listOf(part.device))[part.device]
+            val got = parseSums(Root.run("sha256sum ${part.device}").output, listOf(part.device))[part.device]
             if (got == null || got != expected) {
                 log(Progress.Failed("${part.name} no coincide al releerla. No reinicies: revísalo."))
                 return false
