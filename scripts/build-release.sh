@@ -84,7 +84,7 @@ bash "$repo/scripts/validate-bundle.sh" "$zip"
 		"$(git -C "$base/linux-mainline" rev-parse HEAD)"
 	printf 'port_revision: %s\n' "$(git -C "$repo" rev-parse HEAD)"
 	printf '\n'
-	printf 'install_target: internal UFS, userdata partition\n'
+	printf 'install_target: internal UFS, linuxroot if present, else userdata\n'
 	printf 'rootfs_image_sha256: %s\n' \
 		"$(sha256sum "$image" | cut -d' ' -f1)"
 	printf 'rootfs_image_bytes: %s\n' "$(stat -c %s "$image")"

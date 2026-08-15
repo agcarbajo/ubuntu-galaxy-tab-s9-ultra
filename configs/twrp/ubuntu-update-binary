@@ -10,8 +10,9 @@
 # It writes boot, init_boot, vendor_boot and dtbo.  It writes vbmeta only when
 # the recovery kernel exposes it read-write; otherwise it requires AVB flags 2
 # and preserves the existing vbmeta.  When the ZIP carries a root filesystem
-# image it also writes that image into the existing userdata partition, whose
-# Android contents are replaced by Ubuntu.
+# image it also writes that image into `linuxroot` if that partition exists,
+# and otherwise into `userdata`, whose Android contents are then replaced by
+# Ubuntu.
 #
 # What it never does, on any path: create, delete, move or resize a partition;
 # run mkfs, wipefs, sgdisk, parted or format anything; touch super, recovery,
@@ -22,7 +23,7 @@
 # Machine-readable contract, asserted by scripts/validate-bundle.sh.  Prose in
 # the comments above can be reworded freely; this line is what identifies the
 # installer, so a build cannot silently package a different one.
-# GTS9U-INSTALLER-CONTRACT: writes boot init_boot vendor_boot dtbo vbmeta userdata only
+# GTS9U-INSTALLER-CONTRACT: writes boot init_boot vendor_boot dtbo vbmeta linuxroot userdata only
 
 OUTFD=$2
 ZIPFILE=$3
@@ -126,11 +127,16 @@ fs_label() {
 # The Ubuntu root filesystem target
 # ---------------------------------------------------------------------------
 #
-# Ubuntu's root filesystem goes into the partition Android calls userdata,
-# because it is the only partition on this tablet big enough for a desktop and
-# because using it needs no change to the partition table.  Android's user data
-# is replaced; Android's system image in super is not touched, so the way back
-# is a factory reset from Download Mode, not a repartition.
+# Ubuntu's root filesystem goes into `linuxroot` when that partition exists,
+# and into the partition Android calls `userdata` when it does not.
+#
+# That fallback is the whole point, not a leftover.  A tablet that has been
+# split by the repartitioning ZIP gets Ubuntu beside Android, and one that has
+# never been split gets Ubuntu over Android's user data — which is what
+# somebody who only wants Linux on the whole UFS is asking for, and it means
+# they need no repartitioning step at all.  Either way the partition table is
+# not touched here, Android's system image in super is not touched, and the way
+# back is an Odin flash.
 
 HAS_ROOTFS_IMAGE=0
 if zip_has rootfs.img; then
@@ -139,23 +145,34 @@ if zip_has rootfs.img; then
         abort "the ZIP carries rootfs.img without its ROOTFS-IMAGE manifest"
 fi
 
-DATA_TARGET="$(resolve_part userdata)" || DATA_TARGET=""
+ROOT_PART=linuxroot
+DATA_TARGET="$(resolve_part linuxroot)" || DATA_TARGET=""
+if [ -z "$DATA_TARGET" ]; then
+    ROOT_PART=userdata
+    DATA_TARGET="$(resolve_part userdata)" || DATA_TARGET=""
+fi
 
 if [ "$HAS_ROOTFS_IMAGE" -eq 1 ]; then
-    [ -n "$DATA_TARGET" ] || abort "no userdata partition to install Ubuntu into"
+    [ -n "$DATA_TARGET" ] || \
+        abort "no linuxroot or userdata partition to install Ubuntu into"
+    ui_print "Installing into $ROOT_PART."
 
     # The ZIP is read while its own filesystem is being overwritten if it sits
     # on the target.  TWRP's "internal storage" is exactly that partition, so
     # this is the likely mistake and not an exotic one; it would destroy the
-    # installer halfway through the write.
-    case "$ZIPFILE" in
-        /data/*|/sdcard/*|/mnt/sdcard/*|/storage/emulated/*)
-            ui_print "This ZIP is at $ZIPFILE, on the partition being replaced."
-            ui_print "Copy it to a microSD or a USB-OTG drive and flash it"
-            ui_print "from there."
-            abort "the ZIP is stored on the installation target"
-            ;;
-    esac
+    # installer halfway through the write.  It only applies when userdata is
+    # the target: on a split tablet Android keeps its own userdata and the ZIP
+    # may legitimately live there.
+    if [ "$ROOT_PART" = userdata ]; then
+        case "$ZIPFILE" in
+            /data/*|/sdcard/*|/mnt/sdcard/*|/storage/emulated/*)
+                ui_print "This ZIP is at $ZIPFILE, on the partition being replaced."
+                ui_print "Copy it to a microSD or a USB-OTG drive and flash it"
+                ui_print "from there."
+                abort "the ZIP is stored on the installation target"
+                ;;
+        esac
+    fi
 
     # Everything below counts in MiB, and that is not tidiness: TWRP runs this
     # script with mksh, whose arithmetic and test(1) are 32-bit signed.  A
@@ -168,14 +185,14 @@ if [ "$HAS_ROOTFS_IMAGE" -eq 1 ]; then
     [ "${#ROOTFS_SHA}" -eq 64 ] || abort "malformed rootfs image manifest"
     [ "$ROOTFS_MIB" -gt 0 ] 2>/dev/null || abort "malformed rootfs image size"
 
-    # Does userdata really extend past the end of the image?  Reading the last
-    # MiB the image will occupy answers that without naming the size of the
-    # partition, which is a number no shell here can hold: a partition that
+    # Does the target really extend past the end of the image?  Reading the
+    # last MiB the image will occupy answers that without naming the size of
+    # the partition, which is a number no shell here can hold: a partition that
     # stops short returns fewer bytes, or none at all.
     PROBE="$(dd if="$DATA_TARGET" bs=1M skip=$((ROOTFS_MIB - 1)) count=1 \
         2>/dev/null | wc -c)"
     [ "$PROBE" -eq 1048576 ] || \
-        abort "userdata is smaller than the $ROOTFS_MIB MiB image"
+        abort "$ROOT_PART is smaller than the $ROOTFS_MIB MiB image"
 
     # A partition that is still mounted would be written underneath a live
     # filesystem, and TWRP would then flush its own stale cache over what we
@@ -207,7 +224,7 @@ if [ "$HAS_ROOTFS_IMAGE" -eq 1 ]; then
 
     remaining="$(data_mountpoints)"
     [ -z "$remaining" ] || \
-        abort "userdata is still mounted at $remaining; nothing has been written"
+        abort "$ROOT_PART is still mounted at $remaining; nothing has been written"
 fi
 
 VBMETA_TARGET="$(resolve_part vbmeta)"
@@ -230,9 +247,21 @@ if zip_has ROOTFS-OVERLAY-SHA256SUMS; then
     [ "$HAS_ROOTFS_IMAGE" -eq 0 ] || \
         abort "the ZIP carries both a rootfs image and an overlay"
     HAS_ROOTFS_OVERLAY=1
-    [ -n "$DATA_TARGET" ] || abort "no userdata partition to update"
+    [ -n "$DATA_TARGET" ] || abort "no linuxroot or userdata partition to update"
+    # On a split tablet linuxroot exists but may not be the installed root, so
+    # fall back to userdata rather than refusing an update that would work.
+    if [ "$(fs_label "$DATA_TARGET")" != "$ROOTFS_LABEL" ] && \
+       [ "$ROOT_PART" = linuxroot ]; then
+        FALLBACK="$(resolve_part userdata)" || FALLBACK=""
+        if [ -n "$FALLBACK" ] && \
+           [ "$(fs_label "$FALLBACK")" = "$ROOTFS_LABEL" ]; then
+            ROOT_PART=userdata
+            DATA_TARGET="$FALLBACK"
+        fi
+    fi
     [ "$(fs_label "$DATA_TARGET")" = "$ROOTFS_LABEL" ] || \
-        abort "userdata does not hold an Ubuntu root labelled $ROOTFS_LABEL"
+        abort "$ROOT_PART does not hold an Ubuntu root labelled $ROOTFS_LABEL"
+    ui_print "Updating the Ubuntu root filesystem in $ROOT_PART."
 
     # Never mount a known-dirty rootfs read-write and then install a new boot
     # bundle over it.  A v0.8 test boot reached systemd but fell into the
@@ -281,10 +310,15 @@ fi
 ui_print "Planned writes: boot, init_boot, vendor_boot and dtbo."
 [ "$SKIP_VBMETA" -eq 1 ] || ui_print "vbmeta is writable and will also be updated."
 if [ "$HAS_ROOTFS_IMAGE" -eq 1 ]; then
-    ui_print "Ubuntu will be written into userdata ($ROOTFS_MIB MiB),"
-    ui_print "replacing everything Android kept there. The Android system"
-    ui_print "image, the bootloader chain, the calibration partitions and"
-    ui_print "the partition table are all left alone."
+    ui_print "Ubuntu will be written into $ROOT_PART ($ROOTFS_MIB MiB)."
+    if [ "$ROOT_PART" = userdata ]; then
+        ui_print "Everything Android kept there is replaced."
+    else
+        ui_print "Android keeps its own userdata untouched."
+    fi
+    ui_print "The Android system image, the bootloader chain, the"
+    ui_print "calibration partitions and the partition table are all"
+    ui_print "left alone."
 elif [ "$HAS_ROOTFS_OVERLAY" -eq 1 ]; then
     ui_print "Kernel modules, configuration and firmware will be updated"
     ui_print "on the installed Ubuntu root filesystem."
@@ -310,7 +344,7 @@ if [ "$HAS_ROOTFS_IMAGE" -eq 1 ]; then
     [ "$WRITTEN_SHA" = "$ROOTFS_SHA" ] || \
         abort "the root filesystem read back differently from the image"
     [ "$(fs_label "$DATA_TARGET")" = "$ROOTFS_LABEL" ] || \
-        abort "userdata does not read back as $ROOTFS_LABEL"
+        abort "$ROOT_PART does not read back as $ROOTFS_LABEL"
     ui_print "The root filesystem matches the image byte for byte."
 fi
 

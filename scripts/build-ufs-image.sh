@@ -133,7 +133,7 @@ install -m 0644 "$kernel_out/sm8550-samsung-gts9uwifi.dtb" \
 {
 	printf 'kernel_release=%s\n' "$kernel_release"
 	printf 'root_label=%s\n' "$root_label"
-	printf 'install_target=%s\n' 'internal UFS, userdata partition'
+	printf 'install_target=%s\n' 'internal UFS, linuxroot if present, else userdata'
 	printf 'kernel_image_sha256=%s\n' \
 		"$(sha256sum "$kernel_out/Image.gz" | cut -d' ' -f1)"
 	printf 'kernel_dtb_sha256=%s\n' \

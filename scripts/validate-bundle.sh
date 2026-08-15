@@ -233,7 +233,7 @@ if [ -n "$zip" ] && [ -f "$zip" ]; then
 		fail 'the packaged installer could not be read'
 	else
 		if printf '%s\n' "$installer" | \
-			grep -q '^# GTS9U-INSTALLER-CONTRACT: writes boot init_boot vendor_boot dtbo vbmeta userdata only$'; then
+			grep -q '^# GTS9U-INSTALLER-CONTRACT: writes boot init_boot vendor_boot dtbo vbmeta linuxroot userdata only$'; then
 			pass 'the packaged installer declares the expected contract'
 		else
 			fail 'the packaged installer does not declare the expected contract'
@@ -289,9 +289,12 @@ if [ -n "$zip" ] && [ -f "$zip" ]; then
 		# file would flag exactly the documentation that makes it safe.
 		#
 		# userdata left this list when the root filesystem moved into it, and
-		# it is the only name that did.  What replaces the guarantee for that
-		# one partition is the check below: no tool that could alter the
-		# partition table may appear anywhere in the installer.
+		# linuxroot joined it later as the preferred target on a tablet that
+		# has been split.  They are the only two names that may be written.
+		# What replaces the guarantee for them is the check below: no tool
+		# that could alter the partition table may appear anywhere in the
+		# installer, so choosing between the two can never become a change to
+		# the GPT.
 		code=$(printf '%s\n' "$installer" | sed 's/#.*//')
 		if printf '%s\n' "$code" | \
 			grep -qE '\b(super|pit|efs|persist|modem|modemst|md5|sbl|xbl|abl)\b'; then
