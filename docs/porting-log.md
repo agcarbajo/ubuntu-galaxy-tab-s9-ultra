@@ -6008,3 +6008,82 @@ Download rompe el bucle.
 Y para el Hito 2: `repack.zip` queda descartado. Conservar TWRP habrá que
 resolverlo de otra forma, o asumir un ciclo de heimdall cada vez, que ya es
 barato: `usbipd attach` más `heimdall flash --RECOVERY … --no-reboot`.
+
+---
+
+## Sesión 95 — el bucle de recovery lo pedía Android, y One UI convive con `flags=2`
+
+Fecha: 2026-08-15. Se sale del atasco de la sesión 94 y, de paso, cae el
+requisito que bloqueaba el Hito 2.
+
+### Un arranque en frío no lo arreglaba, y eso fue el dato bueno
+
+Apagar del todo y encender con el botón siguió entrando en TWRP. El log del
+ABL explicó por qué, nombrando la bandera:
+
+```text
+[ ABL ] BootReason: 0                            ← sin motivo de reinicio
+[ ABL ] PARAM Flag is PARAM_BOOT_RECOVERY_ENTER  ← lo pide la particion param
+[ ABL ] PonReason.KPDPWR = 1                     ← encendido con el boton
+[ ABL ] BootMode = 2
+```
+
+El byte 0 de `param` valía `0x02`, que es `PARAM_BOOT_RECOVERY_ENTER`, y
+**sobrevive a un apagado completo**. Los arranques buenos muestran ahí
+`PARAM_BOOT_CHARGING`. Poniéndolo a cero
+(`dd if=/dev/zero of=/dev/block/by-name/param bs=1 count=1 conv=notrunc`) y
+reiniciando por `sysrq` para no pasar por el userspace de TWRP, el ABL sí
+eligió `Booting Into Mission Mode`.
+
+### Quien pedía recovery era Android
+
+Ese arranque llegó al kernel y se cayó montando `/data`:
+
+```text
+init: [libfs_mgr] Failure while mounting metadata ... at /data: Invalid argument
+init: fs_mgr_mount_all suggested recovery, so wiping data via recovery with prompt.
+```
+
+Android no puede abrir el cifrado de metadatos, y **es él quien escribe
+`PARAM_BOOT_RECOVERY_ENTER`** para que el arranque siguiente vaya a recovery a
+borrar los datos. De ahí que `param` volviera a `0x02` solo. El bucle era:
+Android no monta `/data` → pide recovery → recovery no borra nada → repetir.
+
+La causa de fondo es que **la clave de cifrado de `metadata` está ligada al
+estado de verified boot**. Al cambiar `vbmeta` deja de poder derivarse. Eso
+refina la conclusión de la sesión 92: el «One UI no arranca tras TWRP» no es
+del recovery en sí, es de que cambió el estado de arranque verificado. El
+remedio es el mismo, `Format Data`, y lo pide el propio `init` por escrito.
+
+### Lo que esto desbloquea
+
+Tras `twrp format data`, **One UI arranca y funciona con el `vbmeta` sin firmar
+de `flags=2` puesto**. Es el mismo que el instalador de Ubuntu exige, así que:
+
+- **El requisito que bloqueaba el Hito 2 ya está cumplido**, y de forma
+  permanente mientras no se reflashee el firmware.
+- **El arranque dual no va a necesitar cambiar `vbmeta` entre sistemas**, que
+  era el riesgo serio que asomaba: cada cambio invalida el `/data` de Android.
+  Conviene no olvidarlo, porque implica que **tocar `vbmeta` en el futuro
+  cuesta un borrado de los datos de Android**.
+
+El `vbmeta` correcto es el vacío y sin firmar de `avbtool`
+(`port/sources/samsung-gts9u/vbmeta.img`, 4096 bytes, bloques de autenticación
+y auxiliar a cero). El ABL lo acepta explícitamente:
+`(Booting) AUTHENTICATE fail but allow Vbmeta binary`. Parchear el firmado de
+Samsung byte a byte no vale y además no arreglaba nada, porque el problema
+nunca estuvo en la cadena de arranque.
+
+### Estado
+
+One UI 8 `X910XXS5DZA1` arrancado y reconfigurado, `abl` `X910XXS5CYG1`,
+bootloader desbloqueado, FBE regenerado. `userdata` 376 GiB con 371 libres y
+`linuxroot` intacta. TWRP ha vuelto a perderse al arrancar One UI, como ya se
+sabía; recuperarlo es un `heimdall flash --RECOVERY` y la combinación de
+botones.
+
+### Corrección a la sesión 94
+
+Allí se escribió que «el bootloader ni siquiera intenta arrancar el sistema».
+Era cierto sólo mientras `param` pedía recovery. Limpiada la bandera, el ABL sí
+lo intenta; lo que fallaba estaba una capa más arriba.

@@ -113,6 +113,38 @@ Dos cosas que ese log deja claras y que ahorran experimentos:
 `blockdev --getro` = 1), así que sólo se escribe por Odin o heimdall, nunca
 desde TWRP.
 
+## `param` puede dejar el aparato clavado en recovery
+
+El byte 0 de la partición `param` es la bandera de modo de arranque que lee el
+ABL: `0x02` es `PARAM_BOOT_RECOVERY_ENTER`. **Sobrevive a un apagado
+completo**, así que un arranque en frío no rompe el bucle. Se ve en
+`/proc/last_kmsg` como `PARAM Flag is PARAM_BOOT_RECOVERY_ENTER` seguido de
+`BootMode = 2`; un arranque normal muestra `PARAM_BOOT_CHARGING`.
+
+Se limpia con
+`dd if=/dev/zero of=/dev/block/by-name/param bs=1 count=1 conv=notrunc`, y
+conviene reiniciar con `echo b > /proc/sysrq-trigger` para no pasar por el
+userspace de TWRP. Ni `adb reboot`, ni `reboot system` vía
+`/cache/recovery/openrecoveryscript` —que TWRP sí consume—, ni reiniciar desde
+modo Download rompen el bucle por sí solos.
+
+Pero antes de limpiarlo conviene saber **quién puso la bandera**: normalmente
+es Android. Cuando `fs_mgr` no puede montar el `/data` cifrado escribe
+`fs_mgr_mount_all suggested recovery, so wiping data via recovery with prompt`
+y deja pedido el recovery. Limpiar `param` sin arreglar la causa sólo consigue
+que el ciclo se repita una vez más.
+
+## Cambiar `vbmeta` cuesta el `/data` de Android
+
+La clave de cifrado de `metadata` está ligada al estado de verified boot. Al
+cambiar `vbmeta`, Android deja de poder derivarla, no monta `/data` y pide
+recovery. La única salida es `Format Data`, que borra `userdata` y `metadata`.
+
+La parte buena, comprobada: **One UI arranca y funciona con el `vbmeta` vacío y
+sin firmar de `flags=2`** que el instalador de Ubuntu exige. No hace falta
+alternar `vbmeta` entre sistemas, y el requisito del Hito 2 queda cumplido de
+forma permanente mientras no se reflashee el firmware.
+
 ## Lo que no hay que repetir: `repack.zip` del hilo de TWRP
 
 Es un AnyKernel3 con dos líneas activas, `split_boot` y `flash_boot` sobre
