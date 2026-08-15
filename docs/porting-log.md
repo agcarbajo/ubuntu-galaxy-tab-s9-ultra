@@ -6158,3 +6158,71 @@ de arranque son ahora las de Ubuntu, que es lo previsto y lo que resuelve el
 Hito 3. La vuelta es un `dd` desde TWRP con las de
 `D:\gts9u-backup\oneui-boot-set\`, respaldadas con hash verificado en ambos
 lados.
+
+---
+
+## Sesión 97 — el intercambio de arranque, y Android con root para hacerlo solo
+
+Fecha: 2026-08-15. Se valida el Hito 2 en hardware, se escribe el intercambio
+de sistemas y se roota Android para que el cambio no dependa de un PC.
+
+### Hito 2 validado
+
+Con la v0.28 instalada, comprobado por SSH: raíz en `/dev/sda35` **crecida a
+555 GiB** con 513 libres, `ubuntu-gts9u-companion` 0.10.8 y
+`ubuntu-gts9u-device` 2.29 instalados, `tab-companion-hardware` y
+`tab-companion-spen-pairing` corriendo, **ni un servicio fallido**, y ni rastro
+de `obs-studio`, `obs-plugins`, `vlc` ni `obs-v4l2-gts9u`. Entre los
+dispositivos de entrada aparecen `Wacom EMR Digitizer`, `Tab Companion virtual
+keyboard` y `Book Cover Keyboard Slim with AI Key (EF-DX920)`. El propietario
+confirmó a mano pantalla, brillo, táctil, WiFi, audio, cámara, rotación,
+suspensión, S Pen y teclado.
+
+`ubuntu-gts9u-desktop-user.service` aparece `inactive (dead)` y **eso es
+correcto**: no lleva `RemainAfterExit` a propósito, para que el `.path` pueda
+volver a dispararlo. Su registro muestra que corrió bien y vinculó los relés de
+cámara a `agcar`.
+
+### `scripts/swap-boot-set.sh`
+
+Alterna las cuatro particiones que separan los dos sistemas —`boot`,
+`init_boot`, `vendor_boot` y `dtbo`— desde TWRP por ADB, verificando cada
+imagen por tamaño antes de enviarla, por hash tras enviarla, y releyendo la
+partición después de escribir.
+
+**`vbmeta` queda deliberadamente fuera de esa lista.** One UI funciona con el
+vbmeta sin firmar de `flags=2` que Ubuntu necesita, así que no hay que
+alternarlo; y como cambiarlo invalida la clave de `metadata` de Android, cada
+cambio costaría un borrado completo de sus datos. Dejarlo quieto es lo que hace
+barato cambiar de sistema.
+
+Los dos juegos quedan respaldados con hash comparado en ambos lados, en
+`D:\gts9u-backup\{ubuntu,oneui}-boot-set\`.
+
+### Android rooteado con Magisk
+
+El fichero a parchear es **`init_boot.img`**, no `boot.img`: este aparato tiene
+partición `init_boot`, así que ahí vive el ramdisk con el init de primera
+etapa. Se confirmó extrayéndolo del AP de One UI 8 y comparándolo con el que se
+sacó de la propia tablet: **idénticos**, `c5bff79e…`.
+
+Magisk v30.7 —cuyas notas citan soporte de Android 16 QPR2— parchea sin
+quejarse: `Stock boot image detected`, `Patching ramdisk`, `Pre-init storage
+partition: sda28`. La imagen resultante se escribió en `init_boot` con
+heimdall, sin botones, porque a modo Download se llega con `adb reboot
+download` desde One UI.
+
+Root confirmado: `uid=0(root) context=u:r:magisk:s0`, y **las cuatro
+particiones de arranque son escribibles por root**. Eso es lo que hace viable
+la idea real: una app de Android que escriba el juego de Ubuntu y reinicie, sin
+PC y sin modo Download.
+
+Una trampa que costó varios intentos: **una petición de superusuario que caduca
+queda guardada como denegada**. El primer `su` se dejó expirar los 10 segundos
+del plazo, y a partir de ahí Magisk rechazaba en seco con
+`su: request rejected (2000)` sin volver a preguntar. Se arregla en la pestaña
+Superusuario, activando el interruptor de la entrada `[SharedUID] Shell`.
+
+También conviene saber que en este One UI `which su` y `which magisk` devuelven
+rutas en `/product/bin`: son los binarios que Magisk inyecta por su montaje
+systemless, no los de Samsung.
