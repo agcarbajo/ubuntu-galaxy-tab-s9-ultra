@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Two arrows round a circle: the two systems taking turns. Quick settings
+     tint this, so it is a single-colour path on a 24dp canvas. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="#FFFFFF">
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M12,5c-3.87,0 -7,3.13 -7,7H2.5l3.5,4 3.5,-4H7c0,-2.76 2.24,-5 5,-5 0.95,0 1.83,0.27 2.59,0.72l1.02,-1.72C14.55,5.37 13.32,5 12,5z" />
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M12,19c3.87,0 7,-3.13 7,-7h2.5l-3.5,-4 -3.5,4H17c0,2.76 -2.24,5 -5,5 -0.95,0 -1.83,-0.27 -2.59,-0.72l-1.02,1.72C9.45,18.63 10.68,19 12,19z" />
+</vector>

@@ -1,4 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Arranque dual</string>
+
+    <string name="tile_label">Arranque dual</string>
+    <string name="tile_unavailable">No hay otro sistema</string>
+    <string name="tile_confirm_title">¿Reiniciar en %1$s?</string>
+    <string name="tile_confirm_message">Se escribirán las cuatro particiones de arranque y la tablet se reiniciará. Tus archivos se quedan donde están.</string>
+    <string name="tile_confirm_ok">Reiniciar</string>
+    <string name="tile_writing">Escribiendo las particiones de arranque…</string>
+    <string name="tile_failed">No se completó. No se ha reiniciado nada.</string>
 </resources>

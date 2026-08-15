@@ -1,7 +1,10 @@
 package com.gts9u.bootswitcher
 
+import android.app.StatusBarManager
+import android.content.ComponentName
 import android.os.Build
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -21,6 +24,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Android
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Computer
@@ -142,6 +146,8 @@ fun SwitcherScreen(vm: SwitcherViewModel = viewModel()) {
                     }
                 }
 
+                AddTileButton(enabled = !state.busy)
+
                 FilledTonalButton(
                     onClick = { vm.refresh() },
                     enabled = !state.busy,
@@ -166,6 +172,51 @@ fun SwitcherScreen(vm: SwitcherViewModel = viewModel()) {
                 )
             }
         }
+    }
+}
+
+/**
+ * Asks the system to offer the quick settings tile.
+ *
+ * One UI keeps its own quick settings layout, so writing AOSP's
+ * `sysui_qs_tiles` does nothing: SystemUI puts it straight back. This is the
+ * supported route — the system shows its own prompt and the owner accepts it.
+ */
+@Composable
+private fun AddTileButton(enabled: Boolean) {
+    val context = LocalContext.current
+
+    FilledTonalButton(
+        onClick = {
+            val manager = context.getSystemService(StatusBarManager::class.java) ?: return@FilledTonalButton
+            manager.requestAddTileService(
+                ComponentName(context, BootSwitchTile::class.java),
+                context.getString(R.string.tile_label),
+                android.graphics.drawable.Icon.createWithResource(context, R.drawable.ic_tile_dualboot),
+                context.mainExecutor,
+                { result ->
+                    val message = when (result) {
+                        StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ADDED ->
+                            "Añadido a los ajustes rápidos."
+                        StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ALREADY_ADDED ->
+                            "Ya estaba en los ajustes rápidos."
+                        StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_NOT_ADDED ->
+                            "No se añadió."
+                        else -> "El sistema no aceptó la petición."
+                    }
+                    Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                },
+            )
+        },
+        enabled = enabled,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(56.dp),
+        shape = RoundedCornerShape(18.dp),
+    ) {
+        Icon(Icons.Filled.Add, contentDescription = null)
+        Spacer(Modifier.width(12.dp))
+        Text("Añadir a los ajustes rápidos")
     }
 }
 
