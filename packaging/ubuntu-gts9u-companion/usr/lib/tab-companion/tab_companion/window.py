@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: MIT
 
+import os
+
 from gi.repository import Adw, Gio, GLib, Gtk
 
 from . import VERSION
@@ -191,12 +193,18 @@ class CompanionWindow(Adw.ApplicationWindow):
         )
         if boot_sets.available():
             self.view_stack.add_titled_with_icon(
-                self._system_page(), "system", _("System"), "computer-symbolic"
+                self._system_page(), "dualboot", _("Dualboot"), "drive-multidisk-symbolic"
             )
         switcher = Adw.ViewSwitcherBar(stack=self.view_stack, reveal=True)
         toolbar.set_content(self.view_stack)
         toolbar.add_bottom_bar(switcher)
         self.set_content(toolbar)
+
+        # Opening straight on a page is only for photographing the UI on a
+        # headless compositor, where there is no pointer to click a tab with.
+        initial = os.environ.get("TAB_COMPANION_PAGE")
+        if initial and self.view_stack.get_child_by_name(initial) is not None:
+            self.view_stack.set_visible_child_name(initial)
 
     @staticmethod
     def _page():
@@ -205,15 +213,35 @@ class CompanionWindow(Adw.ApplicationWindow):
         page.set_margin_bottom(18)
         return page
 
-    # -- the other installed system -----------------------------------------
+    # -- dual boot -----------------------------------------------------------
+
+    @staticmethod
+    def _format_size(value):
+        """Sizes people recognise: GB as the disk is sold, not GiB."""
+        gb = value / 1_000_000_000
+        if gb >= 100:
+            return f"{gb:.0f} GB"
+        return f"{gb:.1f} GB"
 
     def _system_page(self):
-        """Which system boots next, and the way to change it.
+        """Which system boots next, how much room each has, and how to swap.
 
-        The tablet holds two systems that take turns on the same four boot
-        partitions.  Everything privileged happens in the libexec helpers
-        behind polkit; this page only asks and reports.
+        Everything privileged happens in the libexec helpers behind polkit;
+        this page only asks and reports.  It has two faces: the dual-boot one,
+        and a plain explanation for a tablet that only carries Linux.
         """
+        self.boot_stack = Gtk.Stack(vexpand=True)
+
+        self.boot_empty = Adw.StatusPage(
+            icon_name="drive-multidisk-symbolic",
+            title=_("Dual boot is not set up"),
+            description=_(
+                "This tablet only has Linux installed. When Android shares the "
+                "storage with it, this page lets you restart into either system."
+            ),
+        )
+        self.boot_stack.add_named(self.boot_empty, "empty")
+
         page = self._page()
 
         current = Adw.PreferencesGroup(
@@ -227,9 +255,15 @@ class CompanionWindow(Adw.ApplicationWindow):
             title=_("Reading…"),
             subtitle=_("Checking the boot partitions."),
         )
-        self.boot_current_row.add_prefix(Gtk.Image(icon_name="computer-symbolic"))
+        self.boot_current_row.add_prefix(Gtk.Image(icon_name="drive-harddisk-symbolic"))
         current.add(self.boot_current_row)
         page.add(current)
+
+        self.boot_storage = Adw.PreferencesGroup(
+            title=_("Storage"),
+            description=_("Each system has its own share of the internal storage."),
+        )
+        page.add(self.boot_storage)
 
         self.boot_others = Adw.PreferencesGroup(
             title=_("Switch system"),
@@ -253,9 +287,39 @@ class CompanionWindow(Adw.ApplicationWindow):
         self.boot_progress.set_visible(False)
         page.add(self.boot_progress)
 
+        self.boot_stack.add_named(page, "content")
+        self.boot_stack.set_visible_child_name("content")
+
         self._boot_rows = []
+        self._boot_storage_rows = []
         self._boot_refresh()
-        return page
+        return self.boot_stack
+
+    def _storage_row(self, title, info, subtitle):
+        """A labelled bar; Adwaita has no storage widget, so this is built by hand."""
+        box = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=6,
+            margin_top=12,
+            margin_bottom=12,
+            margin_start=12,
+            margin_end=12,
+        )
+        heading = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        heading.append(Gtk.Label(label=title, css_classes=["heading"], xalign=0, hexpand=True))
+        heading.append(Gtk.Label(label=self._format_size(info["total"]), css_classes=["dim-label"]))
+        box.append(heading)
+
+        bar = Gtk.LevelBar(
+            min_value=0,
+            max_value=1,
+            value=(info["used"] / info["total"]) if info["known"] and info["total"] else 0,
+        )
+        bar.set_size_request(-1, 10)
+        box.append(bar)
+
+        box.append(Gtk.Label(label=subtitle, css_classes=["dim-label", "caption"], xalign=0, wrap=True))
+        return box
 
     def _boot_refresh(self):
         boot_sets.read_status(self._boot_status_ready)
@@ -264,16 +328,27 @@ class CompanionWindow(Adw.ApplicationWindow):
         for row in self._boot_rows:
             self.boot_others.remove(row)
         self._boot_rows = []
+        for row in self._boot_storage_rows:
+            self.boot_storage.remove(row)
+        self._boot_storage_rows = []
 
         if status.get("error"):
+            self.boot_stack.set_visible_child_name("content")
             self.boot_current_row.set_title(_("Could not read the system"))
             self.boot_current_row.set_subtitle(status["error"])
             return False
 
         sets = status.get("sets", [])
         current = status.get("current")
-        label = next((s["label"] for s in sets if s["id"] == current), None)
 
+        # One system is not a dual boot, so say that instead of showing an
+        # empty switcher the owner cannot act on.
+        if len(sets) < 2:
+            self.boot_stack.set_visible_child_name("empty")
+            return False
+        self.boot_stack.set_visible_child_name("content")
+
+        label = next((s["label"] for s in sets if s["id"] == current), None)
         if label:
             self.boot_current_row.set_title(label)
             self.boot_current_row.set_subtitle(
@@ -284,6 +359,27 @@ class CompanionWindow(Adw.ApplicationWindow):
             self.boot_current_row.set_subtitle(
                 _("The boot partitions do not match any stored set.")
             )
+
+        store = status.get("storage", {})
+        if "ubuntu" in store:
+            info = store["ubuntu"]
+            used = self._format_size(info["used"])
+            free = self._format_size(info["total"] - info["used"])
+            row = self._storage_row(
+                "Linux",
+                info,
+                _("{used} used, {free} free").format(used=used, free=free),
+            )
+            self.boot_storage.add(row)
+            self._boot_storage_rows.append(row)
+        if "android" in store:
+            row = self._storage_row(
+                "Android",
+                store["android"],
+                _("Its usage cannot be read from Linux: Android encrypts its data."),
+            )
+            self.boot_storage.add(row)
+            self._boot_storage_rows.append(row)
 
         for entry in sets:
             if entry["id"] == current:
@@ -300,14 +396,6 @@ class CompanionWindow(Adw.ApplicationWindow):
                 row.add_suffix(button)
             else:
                 row.set_subtitle(_("Its images are missing or the wrong size."))
-            self.boot_others.add(row)
-            self._boot_rows.append(row)
-
-        if not self._boot_rows:
-            row = Adw.ActionRow(
-                title=_("No other system installed"),
-                subtitle=_("Only one set of boot images is stored on this tablet."),
-            )
             self.boot_others.add(row)
             self._boot_rows.append(row)
         return False

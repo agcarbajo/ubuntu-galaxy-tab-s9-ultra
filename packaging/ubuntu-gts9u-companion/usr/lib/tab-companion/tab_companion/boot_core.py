@@ -143,6 +143,45 @@ def identify(live, sets):
     return None
 
 
+def _partition_bytes(node):
+    """Size of a partition, from sysfs, in bytes.
+
+    /sys reports in 512-byte sectors no matter what the disk's logical sector
+    size is, which on this UFS is 4096 — so the number here is eight times the
+    GPT's, and multiplying by 512 is what puts it back.
+    """
+    try:
+        with open(f"/sys/class/block/{node}/size", "r", encoding="ascii") as handle:
+            return int(handle.read().strip()) * 512
+    except OSError:
+        return 0
+
+
+def storage():
+    """How much room each system has, and how much of it is used.
+
+    Ubuntu's own usage comes from the filesystem it is running on.  Android's
+    cannot be read from here at all: its userdata is metadata-encrypted, so
+    only the size of the partition is honest, and the UI says so rather than
+    inventing a number.
+    """
+    info = {}
+
+    try:
+        stat = os.statvfs("/")
+        total = stat.f_blocks * stat.f_frsize
+        free = stat.f_bavail * stat.f_frsize
+        info["ubuntu"] = {"total": total, "used": total - free, "known": True}
+    except OSError:
+        pass
+
+    android_total = _partition_bytes("sda34")
+    if android_total:
+        info["android"] = {"total": android_total, "used": 0, "known": False}
+
+    return info
+
+
 def status():
     sets = discover()
     live = live_hashes()
@@ -152,6 +191,7 @@ def status():
             {"id": s["id"], "label": s["label"], "complete": s["complete"]}
             for s in sets
         ],
+        "storage": storage(),
     }
 
 
