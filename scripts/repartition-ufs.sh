@@ -162,7 +162,15 @@ out="$backup_dir/gpt-sda-$stamp.bin"
 echo
 echo '=== respaldo de la GPT viva ==='
 sh_ "sgdisk --backup=/tmp/gpt-live.bin $disk" || die 'sgdisk --backup fallo.'
-adb_ pull /tmp/gpt-live.bin "$out" >/dev/null || die 'no pude traerme el respaldo.'
+# adb is the Windows binary even when this script runs under WSL, so the
+# destination has to be handed over as a Windows path.  Passing it /mnt/d/...
+# makes the pull fail, and the guard below then aborts before anything is
+# written — which is the right outcome, but for the wrong reason.
+case "$adb" in
+	*.exe) out_host=$(wslpath -w "$out" 2>/dev/null || echo "$out") ;;
+	*) out_host=$out ;;
+esac
+adb_ pull /tmp/gpt-live.bin "$out_host" >/dev/null || die 'no pude traerme el respaldo.'
 [ -s "$out" ] || die 'el respaldo de la GPT vino vacio.'
 echo "guardada en $out ($(stat -c %s "$out") bytes)"
 echo "sha256 $(sha256sum "$out" | cut -d' ' -f1)"
