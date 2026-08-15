@@ -58,6 +58,70 @@ port Ubuntu no se introduce en él.
 - Con Git Bash en Windows, `wsl.exe` sufre conversión de rutas MSYS; exportar
   `MSYS_NO_PATHCONV=1` antes de invocarlo.
 
+## Flashear sin Odin gráfico, y cómo saber qué arranca el aparato
+
+**El USB de la tablet sí llega a WSL.** `usbipd-win` está instalado en esta
+máquina; el «WSL no ve el USB» de las notas antiguas se resuelve con
+`usbipd bind --force --busid 1-4` —requiere administrador— y
+`usbipd attach --wsl --busid 1-4`, que no lo requiere. Hace falta una sesión de
+WSL 2 viva o `attach` falla. Al cambiar el aparato de modo cambia su
+`VID:PID`, y el enlace hay que rehacerlo para la identidad nueva.
+
+Copiar `~/.android/adbkey{,.pub}` de Windows a `/root/.android` de WSL evita
+tener que autorizar la depuración tocando la pantalla.
+
+**La identidad USB dice en qué modo está sin mirar la pantalla:**
+
+| `VID:PID` | Modo |
+|---|---|
+| `04e8:6860` | One UI arrancado (MTP + módem + ADB) |
+| `04e8:685d` | Modo Download |
+| `18d1:6860` | TWRP (`product:twrp_gts9u`, `model:SM_X710`) |
+| `18d1:d001` | Recovery de stock (`product:gts9uwifixx`; su `adb shell` muere con SIGABRT) |
+
+**heimdall 1.4.2 flashea bien este aparato**, pero `--no-reboot` y `--resume`
+van en pareja: tras una orden con `--no-reboot` la siguiente **debe** llevar
+`--resume`. Saltárselo no falla sólo esa orden, deja el protocolo del aparato
+sin poder reabrirse, y no lo recupera ni una sesión nueva ni reciclar el
+enganche USB. Sólo se sale apagando y volviendo a entrar en Download con los
+botones. Lo mejor es una sola invocación que haga todo.
+
+Del modo Download **no se sale a recovery por software**. No hay orden de
+heimdall ni de Odin que lo haga: es Volumen Abajo + Power hasta que se apague
+y, seguido, Volumen Arriba + Power.
+
+**Antes de flashear nada para arreglar un arranque, leer el log del ABL.**
+Está en `/proc/last_kmsg`, en las líneas marcadas `[ ABL ]`, y cuenta el
+arranque entero: qué modo eligió, qué particiones cargó y si aceptó cada
+binario. Ahí se ve que el bootloader anuncia `BootReason`, `Booting Into
+Mission Mode` o `Booting Into Recovery Mode` y `BootMode = N`. Saltarse esto
+costó tres ciclos de flasheo arreglando una cadena de arranque que nadie
+estaba rechazando.
+
+Dos cosas que ese log deja claras y que ahorran experimentos:
+
+- **El ABL acepta un `vbmeta` sin firmar**: dice
+  `(Booting) AUTHENTICATE fail but allow Vbmeta binary: vbmeta` y sigue. El
+  vbmeta correcto es uno vacío hecho con `avbtool make_vbmeta_image --flags 2`
+  —4096 bytes, bloques de autenticación y auxiliar a cero—, como el de
+  `port/sources/samsung-gts9u/vbmeta.img`.
+- **Parchear un `vbmeta` firmado byte a byte no vale aquí.** Poner `02` en el
+  offset 120 de la imagen de Samsung deja una firma rota. Es lo que hace
+  `patch_vbmeta_flag` de AnyKernel, y sólo funciona en ABLs que no revalidan.
+
+**`vbmeta` es de solo lectura para el kernel** (`sde15`, otro LUN,
+`blockdev --getro` = 1), así que sólo se escribe por Odin o heimdall, nunca
+desde TWRP.
+
+## Lo que no hay que repetir: `repack.zip` del hilo de TWRP
+
+Es un AnyKernel3 con dos líneas activas, `split_boot` y `flash_boot` sobre
+`boot`, más `patch_vbmeta_flag=auto`. En este aparato hace **sólo la mitad**:
+reescribe `boot` y no puede tocar `vbmeta`, que es de solo lectura. El
+resultado es un `boot` que ya no cuadra con un `vbmeta` que sigue exigiendo
+verificación. No arregla la restauración del recovery de stock —que en este
+firmware sí ocurre, comprobado— y deja el aparato peor de lo que estaba.
+
 ## Trampas del empaquetado ya conocidas
 
 - **[pmOS]** El ramdisk genérico de `init_boot` debe ser **LZ4 legacy**, no
