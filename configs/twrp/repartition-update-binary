@@ -58,6 +58,12 @@ abort() {
     exit 1
 }
 
+# Sector counts here are far past what mksh's 32-bit arithmetic can multiply,
+# so even the pretty-printing goes through awk.
+gib() {
+    awk -v s="$1" 'BEGIN { printf "%.1f GiB", s * 4096 / 1073741824 }'
+}
+
 LABEL="$(unzip -p "$ZIPFILE" BUNDLE-LABEL 2>/dev/null)"
 [ -n "$LABEL" ] || LABEL="SM-X910 UFS repartitioner"
 ui_print "---------------------------------------"
@@ -111,10 +117,31 @@ UD_LAST="$(echo "$INFO" | sed -n 's/^Last sector: \([0-9]*\).*/\1/p')"
     abort "userdata starts at $UD_FIRST, not at $EXPECT_UD_START"
 [ -n "$UD_LAST" ] || abort "cannot read where userdata ends"
 
-if sgdisk --info=35 "$DISK" 2>/dev/null | grep -q '^Partition name'; then
-    ui_print "GPT entry 35 already exists, so this tablet is already split."
-    ui_print "Flash the Ubuntu installation ZIP instead."
-    abort "already repartitioned"
+# Flashing this twice is not a mistake worth shouting about — it is what
+# happens when somebody reruns the whole procedure, or is not sure whether they
+# already did this step.  A tablet that is already split is the outcome this
+# ZIP exists to produce, so it says so and exits happy.  Anything *else* in
+# entry 35 is a partition this ZIP did not create and will not touch.
+INFO35="$(sgdisk --info=35 "$DISK" 2>/dev/null)"
+LR_NAME="$(echo "$INFO35" | sed -n "s/^Partition name: '\(.*\)'\$/\1/p")"
+LR_TYPE="$(echo "$INFO35" | sed -n 's/^Partition GUID code: \([0-9A-Fa-f-]*\).*/\1/p')"
+
+if [ -n "$LR_NAME" ]; then
+    if [ "$LR_NAME" = linuxroot ] && [ "$LR_TYPE" = "$LR_GUID" ]; then
+        LR_SECTORS="$(echo "$INFO35" | \
+            sed -n 's/^Partition size: \([0-9]*\).*/\1/p')"
+        ui_print "---------------------------------------"
+        ui_print " This tablet is already split."
+        ui_print " linuxroot is there, $(gib "${LR_SECTORS:-0}")."
+        ui_print " Nothing to do; the table is untouched."
+        ui_print ""
+        ui_print " Flash the Ubuntu installation ZIP next."
+        ui_print "---------------------------------------"
+        exit 0
+    fi
+    ui_print "GPT entry 35 exists and is called '$LR_NAME', which this ZIP"
+    ui_print "did not create. Refusing to touch it."
+    abort "unexpected partition in GPT entry 35"
 fi
 
 # ---------------------------------------------------------------------------
@@ -150,10 +177,6 @@ UD_NEW_LAST=$1
 LR_FIRST=$2
 ANDROID_SECTORS=$3
 LINUX_SECTORS=$4
-
-gib() {
-    awk -v s="$1" 'BEGIN { printf "%.1f GiB", s * 4096 / 1073741824 }'
-}
 
 ui_print "Splitting userdata $PERCENT% Android / $((100 - PERCENT))% Linux:"
 ui_print "  userdata   $(gib "$ANDROID_SECTORS")"

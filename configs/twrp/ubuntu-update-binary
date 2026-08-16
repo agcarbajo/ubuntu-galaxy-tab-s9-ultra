@@ -14,6 +14,12 @@
 # and otherwise into `userdata`, whose Android contents are then replaced by
 # Ubuntu.
 #
+# On a split tablet it also seeds the dual-boot sets inside the root filesystem
+# it just wrote, in the one moment when both systems' boot images exist at once
+# — Android's are still in the partitions, Ubuntu's are in the ZIP — and reads
+# Android's name by mounting `super`'s system read-only.  All of that is best
+# effort and never fails the installation.
+#
 # What it never does, on any path: create, delete, move or resize a partition;
 # run mkfs, wipefs, sgdisk, parted or format anything; touch super, recovery,
 # the bootloader chain, PIT/GPT, EFS, persist, modem or any calibration
@@ -111,6 +117,154 @@ zip_has() {
 for file in boot.img init_boot.img vendor_boot.img dtbo.img vbmeta.img; do
     zip_has "$file" || abort "ZIP is missing $file"
 done
+
+BOOT_SETS_DIR=/var/lib/gts9u-boot-sets
+SUPER_MOUNT=/tmp/gts9u-super
+
+# Is the tablet currently set to boot this port's Ubuntu?
+#
+# It matters because the images about to be saved as "the way back to Android"
+# are simply whatever is in the boot partitions, and on a reinstall over an
+# existing dual boot that is Ubuntu.  Saving those under Android's name would
+# produce a switcher entry that claims to be One UI and boots Linux.
+#
+# The marker is not incidental: `root=LABEL=UBTS9U_UFS` in vendor_boot's kernel
+# command line is the thing that makes this an Ubuntu boot image at all.
+# Samsung's says nothing of the sort.
+booting_ubuntu() {
+    node="$(resolve_part vendor_boot)" || return 1
+    dd if="$node" bs=4096 count=1 2>/dev/null | tr -d '\0' | \
+        grep -q "root=LABEL=$ROOTFS_LABEL"
+}
+
+# What the installed Android calls itself, read from its own build.prop.
+#
+# Best effort by design: it only decides a label.  When it finds nothing the
+# set is left unnamed and whichever Android boots first writes its own name.
+android_name() {
+    for node in /dev/block/mapper/system /dev/block/mapper/system_a \
+                /dev/block/mapper/system_b; do
+        [ -e "$node" ] || continue
+        mkdir -p "$SUPER_MOUNT" 2>/dev/null
+        mount -o ro "$node" "$SUPER_MOUNT" 2>/dev/null || continue
+
+        for prop in "$SUPER_MOUNT/system/build.prop" "$SUPER_MOUNT/build.prop"; do
+            [ -f "$prop" ] || continue
+
+            value="$(sed -n 's/^ro\.lineage\.display\.version=//p' "$prop" | head -n 1)"
+            [ -n "$value" ] || \
+                value="$(sed -n 's/^ro\.lineage\.version=//p' "$prop" | head -n 1)"
+            if [ -n "$value" ]; then
+                umount "$SUPER_MOUNT" 2>/dev/null
+                echo "LineageOS $value"
+                return 0
+            fi
+
+            # One UI encodes its version as major*10000 + minor*100 + patch,
+            # so 80000 is 8.0.  Small enough for mksh to divide safely.
+            oneui="$(sed -n 's/^ro\.build\.version\.oneui=//p' "$prop" | head -n 1)"
+            case "$oneui" in
+                ''|*[!0-9]*) ;;
+                *)
+                    umount "$SUPER_MOUNT" 2>/dev/null
+                    minor=$(( (oneui % 10000) / 100 ))
+                    if [ "$minor" -eq 0 ]; then
+                        echo "One UI $(( oneui / 10000 ))"
+                    else
+                        echo "One UI $(( oneui / 10000 )).$minor"
+                    fi
+                    return 0
+                    ;;
+            esac
+
+            release="$(sed -n 's/^ro\.build\.version\.release=//p' "$prop" | head -n 1)"
+            if [ -n "$release" ]; then
+                umount "$SUPER_MOUNT" 2>/dev/null
+                echo "Android $release"
+                return 0
+            fi
+        done
+
+        umount "$SUPER_MOUNT" 2>/dev/null
+    done
+    return 1
+}
+
+# Seeds the dual-boot sets inside the Ubuntu root filesystem just written.
+#
+# Called with the boot partitions still holding Android's images.  Never
+# aborts: everything here is a convenience that the switchers can rebuild
+# themselves from a running system.
+seed_boot_sets() {
+    if booting_ubuntu; then
+        ui_print "The boot partitions already hold Ubuntu, so there is no"
+        ui_print "Android boot set to save. Save it from Android instead."
+        SEED_ANDROID=0
+    else
+        SEED_ANDROID=1
+    fi
+
+    mkdir -p "$ROOTFS_MOUNT" 2>/dev/null
+    if grep -q " $ROOTFS_MOUNT " /proc/mounts 2>/dev/null; then
+        umount "$ROOTFS_MOUNT" 2>/dev/null
+    fi
+    if ! mount -t ext4 -o rw "$DATA_TARGET" "$ROOTFS_MOUNT" 2>/dev/null; then
+        ui_print "Cannot mount the new root filesystem to save the boot sets."
+        return 0
+    fi
+
+    # The four images are 216 MiB together, and the freshly written filesystem
+    # is only as large as the image until it grows on the first boot.  Asking
+    # is cheaper than filling somebody's new root filesystem.
+    free_kb="$(df -k "$ROOTFS_MOUNT" 2>/dev/null | tail -n 1 | awk '{print $4}')"
+    case "$free_kb" in
+        ''|*[!0-9]*) free_kb=0 ;;
+    esac
+    if [ "$free_kb" -lt 262144 ]; then
+        ui_print "Not enough room in the new root filesystem for the boot"
+        ui_print "sets yet. Save them from either system once it has grown."
+        umount "$ROOTFS_MOUNT" 2>/dev/null
+        return 0
+    fi
+
+    ui_print "Saving the boot sets for switching systems..."
+    mkdir -p "$ROOTFS_MOUNT$BOOT_SETS_DIR/ubuntu" 2>/dev/null
+    for part in boot init_boot vendor_boot dtbo; do
+        unzip -p "$ZIPFILE" "$part.img" \
+            > "$ROOTFS_MOUNT$BOOT_SETS_DIR/ubuntu/$part.img" 2>/dev/null || {
+                ui_print "Could not save the Ubuntu boot set."
+                rm -rf "$ROOTFS_MOUNT$BOOT_SETS_DIR/ubuntu"
+                break
+            }
+    done
+
+    if [ "$SEED_ANDROID" -eq 1 ]; then
+        mkdir -p "$ROOTFS_MOUNT$BOOT_SETS_DIR/android" 2>/dev/null
+        for part in boot init_boot vendor_boot dtbo; do
+            node="$(resolve_part "$part")" || continue
+            dd if="$node" of="$ROOTFS_MOUNT$BOOT_SETS_DIR/android/$part.img" \
+                bs=4M 2>/dev/null || {
+                    ui_print "Could not save the Android boot set."
+                    rm -rf "$ROOTFS_MOUNT$BOOT_SETS_DIR/android"
+                    break
+                }
+        done
+        if [ -d "$ROOTFS_MOUNT$BOOT_SETS_DIR/android" ]; then
+            name="$(android_name)" || name=""
+            if [ -n "$name" ]; then
+                echo "$name" > "$ROOTFS_MOUNT$BOOT_SETS_DIR/android/name.txt"
+                ui_print "Android is $name; you can switch back to it."
+            else
+                ui_print "Saved the Android boot set; it will name itself on"
+                ui_print "its first boot."
+            fi
+        fi
+    fi
+
+    sync
+    umount "$ROOTFS_MOUNT" 2>/dev/null
+    return 0
+}
 
 fs_label() {
     # This TWRP ships neither blkid nor findfs, and has no /dev/disk/by-label,
@@ -346,6 +500,23 @@ if [ "$HAS_ROOTFS_IMAGE" -eq 1 ]; then
     [ "$(fs_label "$DATA_TARGET")" = "$ROOTFS_LABEL" ] || \
         abort "$ROOT_PART does not read back as $ROOTFS_LABEL"
     ui_print "The root filesystem matches the image byte for byte."
+fi
+
+# ---------------------------------------------------------------------------
+# The way back to Android, saved while it is still there
+# ---------------------------------------------------------------------------
+#
+# The four boot partitions still hold Android's images at this point, and in a
+# few lines they will not.  This is the only moment in the whole procedure when
+# both systems' boot images exist somewhere at once, so it is where the sets
+# the dual-boot switchers read are seeded.
+#
+# None of this is allowed to fail the installation.  A tablet with Ubuntu on it
+# and no saved Android set is inconvenient; a tablet with a half-written boot
+# partition is bricked until the next flash.
+
+if [ "$HAS_ROOTFS_IMAGE" -eq 1 ] && [ "$ROOT_PART" = linuxroot ]; then
+    seed_boot_sets
 fi
 
 for part in boot init_boot vendor_boot dtbo; do

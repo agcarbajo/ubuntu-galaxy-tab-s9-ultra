@@ -74,15 +74,16 @@ object BootState {
         // Without a usable note the partitions are the only evidence — unless
         // the running system says its own name and some *other* set answers to
         // it, which can only mean a switch was staged and the note was lost.
-        // Re-recording it here is what makes the app self-heal after its data
-        // is cleared, rather than quietly claiming to be a system it is not.
+        // That is what keeps the app honest after its data is cleared, instead
+        // of quietly claiming to be a system it is not.
+        //
+        // Deliberately not written back. This is a read, and a read that
+        // leaves a "switch staged" note behind makes the app's own state hard
+        // to account for later — the answer is recomputed from the same two
+        // facts every time anyway, so storing it buys nothing.
         val name = BootSets.runningSystemName()
         val byName = sets.firstOrNull { it.label == name && it.id != nextBoot?.id }
-        if (byName != null && nextBoot != null) {
-            prefs.stagedFrom = byName.id
-            prefs.stagedTarget = nextBoot.id
-            return byName
-        }
+        if (byName != null && nextBoot != null) return byName
         return nextBoot
     }
 }
