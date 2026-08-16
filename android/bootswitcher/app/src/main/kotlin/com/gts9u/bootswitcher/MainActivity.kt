@@ -169,7 +169,11 @@ fun SwitcherScreen(vm: SwitcherViewModel = viewModel()) {
                 }
 
                 SectionTitle(stringResource(R.string.section_settings))
-                SettingsCard(enabled = !state.busy, onRefresh = { vm.refresh() })
+                SettingsCard(
+                    enabled = !state.busy,
+                    canSwitch = state.canSwitch,
+                    onRefresh = { vm.refresh() },
+                )
                 Spacer(Modifier.height(8.dp))
             }
         }
@@ -520,14 +524,24 @@ private fun LegendItem(colour: Color, title: String, detail: String) {
     }
 }
 
+/**
+ * The settings, minus the ones that would configure nothing.
+ *
+ * Both the skip-confirmation switch and the add-tile row exist only to set up
+ * the quick settings tile, and that tile has nothing to switch to on a tablet
+ * with a single system. Showing them there would be offering a preference
+ * about something that cannot happen. Rechecking stays: it is how a tablet
+ * that has just been given a second system notices.
+ */
 @Composable
-private fun SettingsCard(enabled: Boolean, onRefresh: () -> Unit) {
+private fun SettingsCard(enabled: Boolean, canSwitch: Boolean, onRefresh: () -> Unit) {
     val context = LocalContext.current
     val prefs = remember { Prefs(context) }
     var skip by remember { mutableStateOf(prefs.skipConfirmation) }
 
     Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp)) {
         Column {
+            if (canSwitch) {
             Row(
                 Modifier
                     .fillMaxWidth()
@@ -558,6 +572,7 @@ private fun SettingsCard(enabled: Boolean, onRefresh: () -> Unit) {
             HorizontalDivider(Modifier.padding(horizontal = 20.dp))
             AddTileRow()
             HorizontalDivider(Modifier.padding(horizontal = 20.dp))
+            }
 
             TextButton(
                 onClick = onRefresh,

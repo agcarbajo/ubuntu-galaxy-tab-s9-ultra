@@ -43,6 +43,15 @@ data class UiState(
     /** Written but not yet booted: only a restart is missing. */
     val staged: Boolean
         get() = running != null && nextBoot != null && running.id != nextBoot.id
+
+    /**
+     * Whether there is anywhere to switch to.
+     *
+     * With a single system the quick settings tile has nothing to offer, so
+     * the settings that only configure it are hidden rather than shown broken.
+     */
+    val canSwitch: Boolean
+        get() = sets.count { it.complete } >= 2
 }
 
 class SwitcherViewModel(app: Application) : AndroidViewModel(app) {
