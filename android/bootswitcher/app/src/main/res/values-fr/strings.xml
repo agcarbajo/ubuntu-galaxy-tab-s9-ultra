@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="about">À propos</string>
+    <string name="close">Fermer</string>
+
+    <string name="section_systems">Systèmes</string>
+    <string name="section_storage">Stockage</string>
+    <string name="section_settings">Paramètres</string>
+
+    <string name="hero_checking">Vérification…</string>
+    <string name="hero_checking_body">Lecture des partitions de démarrage.</string>
+    <string name="hero_no_root">Pas de root</string>
+    <string name="hero_unknown">Système inconnu</string>
+    <string name="hero_unknown_body">Les partitions de démarrage ne correspondent à aucun système enregistré.</string>
+    <string name="hero_running">Vous utilisez</string>
+    <string name="hero_next">%1$s démarrera au prochain redémarrage.</string>
+
+    <string name="state_in_use">Utilisé actuellement</string>
+    <string name="state_next_boot">Démarrera au prochain redémarrage</string>
+    <string name="state_ready">Prêt à démarrer</string>
+    <string name="state_incomplete">Des images manquent ou ont une taille anormale</string>
+
+    <string name="action_stage">Changer au prochain redémarrage</string>
+    <string name="action_reboot">Redémarrer</string>
+    <string name="action_cancel">Annuler</string>
+
+    <string name="storage_used_of">%1$s sur %2$s</string>
+    <string name="storage_note">L’utilisation de Linux n’est pas lisible depuis Android : sa partition est en ext4.</string>
+
+    <string name="settings_skip_title">Redémarrer sans demander</string>
+    <string name="settings_skip_body">Le bouton des réglages rapides change de système dès que vous le touchez.</string>
+    <string name="settings_add_tile">Ajouter aux réglages rapides</string>
+    <string name="settings_refresh">Vérifier à nouveau</string>
+
+    <string name="tile_added">Ajouté aux réglages rapides.</string>
+    <string name="tile_already_added">Il y était déjà.</string>
+    <string name="tile_rejected">Il n’a pas été ajouté.</string>
+    <string name="tile_request_failed">Le système a refusé la demande.</string>
+
+    <string name="error_no_root">Pas d’accès root. Accordez-le à cette application dans Magisk, et rappelez-vous qu’une demande laissée expirer est enregistrée comme refusée.</string>
+
+    <string name="progress_title">Écriture des partitions de démarrage</string>
+    <string name="progress_done_title">Terminé</string>
+    <string name="progress_failed_title">Arrêté</string>
+    <string name="progress_staged">%1$s démarrera au prochain redémarrage.</string>
+    <string name="progress_reverted">Rien ne change : %1$s continue de démarrer.</string>
+    <string name="progress_incomplete">Le jeu de %1$s est incomplet ou ses images ont une taille anormale.</string>
+    <string name="progress_write_failed">Impossible d’écrire %1$s.</string>
+    <string name="progress_mismatch">%1$s ne correspond pas à la relecture. Ne redémarrez pas : vérifiez d’abord.</string>
+
+    <string name="about_what">Bascule entre les systèmes installés sur cette Galaxy Tab S9 Ultra en remplaçant les quatre partitions de démarrage, puis en redémarrant.</string>
+    <string name="about_checks">Chaque image est vérifiée par sa taille avant d’être écrite, et la partition est relue ensuite. Si quelque chose ne correspond pas, tout s’arrête et rien ne redémarre.</string>
+    <string name="about_untouched">Les images sont lues depuis %1$s. Seules boot, init_boot, vendor_boot et dtbo sont écrites ; vbmeta et super ne sont jamais touchées : la première effacerait les données d’Android et la seconde contient son système.</string>
+    <string name="about_project">Fait partie du portage d’Ubuntu 24.04 pour le SM-X910.\ngithub.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra</string>
+
+    <string name="tile_unavailable">Aucun autre système</string>
+    <string name="tile_confirm_title">Redémarrer sur %1$s ?</string>
+    <string name="tile_confirm_message">Les quatre partitions de démarrage seront écrites et la tablette redémarrera. Vos fichiers restent en place.</string>
+    <string name="tile_confirm_ok">Redémarrer</string>
+    <string name="tile_writing">Écriture des partitions de démarrage…</string>
+    <string name="tile_failed">Cela ne s’est pas terminé. Rien n’a redémarré.</string>
+</resources>

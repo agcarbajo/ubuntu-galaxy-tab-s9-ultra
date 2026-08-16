@@ -130,6 +130,17 @@ object BootSets {
 
     // -- reading -------------------------------------------------------------
 
+    /**
+     * Whether a set is the Linux side.
+     *
+     * Only used to pick an icon and to know who to ask for a name: this app
+     * cannot run on that system, so it is never the one running.
+     */
+    fun isLinux(set: BootSet): Boolean {
+        val id = set.id.lowercase()
+        return id.contains("ubuntu") || id.contains("linux") || id.contains("debian")
+    }
+
     /** sha256 of every boot partition as the tablet holds it right now. */
     fun liveHashes(): Map<String, String> {
         val result = Root.run(*PARTITIONS.map { "sha256sum ${it.device}" }.toTypedArray())
@@ -228,9 +239,18 @@ object BootSets {
 
     // -- writing -------------------------------------------------------------
 
+    /**
+     * Progress is reported as partitions, not as sentences.
+     *
+     * The set of partitions is fixed and known before anything starts, so the
+     * UI can draw all four up front and light them up one by one instead of
+     * growing a list of lines.  Messages carry string resource ids because
+     * this object has no Context and the app is translated.
+     */
     sealed interface Progress {
-        data class Step(val message: String) : Progress
-        data class Failed(val message: String) : Progress
+        data class Writing(val part: String) : Progress
+        data class Verified(val part: String) : Progress
+        data class Failed(val text: Int, val arg: String = "", val detail: String = "") : Progress
         data object Done : Progress
     }
 
@@ -243,27 +263,27 @@ object BootSets {
      */
     fun write(set: BootSet, log: (Progress) -> Unit): Boolean {
         if (!set.complete) {
-            log(Progress.Failed("El juego de ${set.label} está incompleto o tiene tamaños raros."))
+            log(Progress.Failed(R.string.progress_incomplete, set.label))
             return false
         }
 
         for (part in PARTITIONS) {
             val file = set.file(part)
             val expected = set.hashes[file]
-            log(Progress.Step("Escribiendo ${part.name}…"))
+            log(Progress.Writing(part.name))
 
             val write = Root.run("dd if=\"$file\" of=\"${part.device}\" bs=4M", "sync")
             if (!write.ok) {
-                log(Progress.Failed("No pude escribir ${part.name}: ${write.output.take(200)}"))
+                log(Progress.Failed(R.string.progress_write_failed, part.name, write.output.take(200)))
                 return false
             }
 
             val got = parseSums(Root.run("sha256sum ${part.device}").output, listOf(part.device))[part.device]
             if (got == null || got != expected) {
-                log(Progress.Failed("${part.name} no coincide al releerla. No reinicies: revísalo."))
+                log(Progress.Failed(R.string.progress_mismatch, part.name))
                 return false
             }
-            log(Progress.Step("${part.name} verificada."))
+            log(Progress.Verified(part.name))
         }
 
         log(Progress.Done)

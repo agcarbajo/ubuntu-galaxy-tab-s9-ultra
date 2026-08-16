@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="about">Acerca de</string>
+    <string name="close">Cerrar</string>
+
+    <string name="section_systems">Sistemas</string>
+    <string name="section_storage">Almacenamiento</string>
+    <string name="section_settings">Ajustes</string>
+
+    <string name="hero_checking">Comprobando…</string>
+    <string name="hero_checking_body">Leyendo las particiones de arranque.</string>
+    <string name="hero_no_root">Sin root</string>
+    <string name="hero_unknown">Sistema desconocido</string>
+    <string name="hero_unknown_body">Las particiones de arranque no coinciden con ningún sistema guardado.</string>
+    <string name="hero_running">Estás usando</string>
+    <string name="hero_next">Al reiniciar arrancará %1$s.</string>
+
+    <string name="state_in_use">En uso ahora</string>
+    <string name="state_next_boot">Arrancará en el próximo reinicio</string>
+    <string name="state_ready">Listo para arrancar</string>
+    <string name="state_incomplete">Le faltan imágenes o tienen un tamaño raro</string>
+
+    <string name="action_stage">Cambiar en el próximo reinicio</string>
+    <string name="action_reboot">Reiniciar</string>
+    <string name="action_cancel">Deshacer</string>
+
+    <string name="storage_used_of">%1$s de %2$s</string>
+    <string name="storage_note">El uso de Linux no se puede leer desde Android: su partición usa ext4.</string>
+
+    <string name="settings_skip_title">Reiniciar sin preguntar</string>
+    <string name="settings_skip_body">El botón de los ajustes rápidos cambia de sistema en cuanto lo tocas.</string>
+    <string name="settings_add_tile">Añadir a los ajustes rápidos</string>
+    <string name="settings_refresh">Volver a comprobar</string>
+
+    <string name="tile_added">Añadido a los ajustes rápidos.</string>
+    <string name="tile_already_added">Ya estaba en los ajustes rápidos.</string>
+    <string name="tile_rejected">No se añadió.</string>
+    <string name="tile_request_failed">El sistema no aceptó la petición.</string>
+
+    <string name="error_no_root">Sin acceso root. Concédeselo a esta app en Magisk, y recuerda que una petición que caduca queda guardada como denegada.</string>
+
+    <string name="progress_title">Escribiendo las particiones de arranque</string>
+    <string name="progress_done_title">Listo</string>
+    <string name="progress_failed_title">Se ha parado</string>
+    <string name="progress_staged">Al reiniciar arrancará %1$s.</string>
+    <string name="progress_reverted">No cambia nada: sigue arrancando %1$s.</string>
+    <string name="progress_incomplete">Al juego de %1$s le faltan imágenes o tienen un tamaño raro.</string>
+    <string name="progress_write_failed">No pude escribir %1$s.</string>
+    <string name="progress_mismatch">%1$s no coincide al releerla. No reinicies: revísalo antes.</string>
+
+    <string name="about_what">Cambia entre los sistemas instalados en este Galaxy Tab S9 Ultra reemplazando las cuatro particiones de arranque y reiniciando.</string>
+    <string name="about_checks">Cada imagen se comprueba por tamaño antes de escribirla y la partición se relee después. Si algo no coincide, para y no reinicia nada.</string>
+    <string name="about_untouched">Las imágenes se leen de %1$s. Sólo se escriben boot, init_boot, vendor_boot y dtbo; vbmeta y super no se tocan nunca: lo primero borraría los datos de Android y en lo segundo vive su sistema.</string>
+    <string name="about_project">Parte del port de Ubuntu 24.04 para SM-X910.\ngithub.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra</string>
+
+    <string name="tile_unavailable">No hay otro sistema</string>
+    <string name="tile_confirm_title">¿Reiniciar en %1$s?</string>
+    <string name="tile_confirm_message">Se escribirán las cuatro particiones de arranque y la tablet se reiniciará. Tus archivos se quedan donde están.</string>
+    <string name="tile_confirm_ok">Reiniciar</string>
+    <string name="tile_writing">Escribiendo las particiones de arranque…</string>
+    <string name="tile_failed">No se completó. No se ha reiniciado nada.</string>
+</resources>

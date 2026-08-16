@@ -25,6 +25,11 @@ class BootSwitchTile : TileService() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var target: BootSets.BootSet? = null
 
+    private var running: BootSets.BootSet? = null
+
+    /** True when the images are already on the partitions and only a restart is left. */
+    private var staged = false
+
     override fun onStartListening() {
         super.onStartListening()
         refresh()
@@ -36,14 +41,18 @@ class BootSwitchTile : TileService() {
     }
 
     private fun refresh() = scope.launch {
-        val found = withContext(Dispatchers.IO) {
+        val shot = withContext(Dispatchers.IO) {
             if (!Root.available()) return@withContext null
-            val sets = BootSets.discover()
-            val current = BootSets.identify(BootSets.liveHashes(), sets)
-            sets.firstOrNull { it.id != current?.id && it.complete }
+            BootState.read(this@BootSwitchTile)
         }
 
+        // The tile goes to the other system, which is whichever is not running
+        // — the same one the app offers, staged or not.
+        val found = shot?.sets?.firstOrNull { it.id != shot.running?.id && it.complete }
         target = found
+        running = shot?.running
+        staged = shot?.staged == true && shot.nextBoot?.id == found?.id
+
         qsTile?.apply {
             if (found == null) {
                 state = Tile.STATE_UNAVAILABLE
@@ -83,6 +92,13 @@ class BootSwitchTile : TileService() {
     }
 
     private fun switch(set: BootSets.BootSet) = scope.launch {
+        // Already written from the app: rewriting four identical partitions
+        // would only delay the restart.
+        if (staged) {
+            withContext(Dispatchers.IO) { BootSets.reboot() }
+            return@launch
+        }
+
         Toast.makeText(this@BootSwitchTile, R.string.tile_writing, Toast.LENGTH_SHORT).show()
 
         val ok = withContext(Dispatchers.IO) {
@@ -92,6 +108,9 @@ class BootSwitchTile : TileService() {
         }
 
         if (ok) {
+            // `running` was read before the write: afterwards the partitions
+            // report the new system and the old one is unrecoverable.
+            BootState.stage(this@BootSwitchTile, running, set)
             withContext(Dispatchers.IO) { BootSets.reboot() }
         } else {
             Toast.makeText(this@BootSwitchTile, R.string.tile_failed, Toast.LENGTH_LONG).show()

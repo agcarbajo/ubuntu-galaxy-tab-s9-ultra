@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="about">Info</string>
+    <string name="close">Schließen</string>
+
+    <string name="section_systems">Systeme</string>
+    <string name="section_storage">Speicher</string>
+    <string name="section_settings">Einstellungen</string>
+
+    <string name="hero_checking">Wird geprüft…</string>
+    <string name="hero_checking_body">Die Boot-Partitionen werden gelesen.</string>
+    <string name="hero_no_root">Kein Root</string>
+    <string name="hero_unknown">Unbekanntes System</string>
+    <string name="hero_unknown_body">Die Boot-Partitionen passen zu keinem gespeicherten System.</string>
+    <string name="hero_running">Du verwendest</string>
+    <string name="hero_next">Beim nächsten Neustart startet %1$s.</string>
+
+    <string name="state_in_use">Läuft gerade</string>
+    <string name="state_next_boot">Startet beim nächsten Neustart</string>
+    <string name="state_ready">Startbereit</string>
+    <string name="state_incomplete">Es fehlen Abbilder oder sie haben eine seltsame Größe</string>
+
+    <string name="action_stage">Beim nächsten Neustart wechseln</string>
+    <string name="action_reboot">Neu starten</string>
+    <string name="action_cancel">Rückgängig</string>
+
+    <string name="storage_used_of">%1$s von %2$s</string>
+    <string name="storage_note">Die Linux-Belegung lässt sich von Android aus nicht lesen: seine Partition nutzt ext4.</string>
+
+    <string name="settings_skip_title">Ohne Nachfrage neu starten</string>
+    <string name="settings_skip_body">Die Schnelleinstellungs-Kachel wechselt das System, sobald du sie antippst.</string>
+    <string name="settings_add_tile">Zu den Schnelleinstellungen hinzufügen</string>
+    <string name="settings_refresh">Erneut prüfen</string>
+
+    <string name="tile_added">Zu den Schnelleinstellungen hinzugefügt.</string>
+    <string name="tile_already_added">War dort bereits vorhanden.</string>
+    <string name="tile_rejected">Wurde nicht hinzugefügt.</string>
+    <string name="tile_request_failed">Das System hat die Anfrage nicht angenommen.</string>
+
+    <string name="error_no_root">Kein Root-Zugriff. Gewähre ihn dieser App in Magisk, und denk daran: eine Anfrage, die abläuft, wird als abgelehnt gespeichert.</string>
+
+    <string name="progress_title">Boot-Partitionen werden geschrieben</string>
+    <string name="progress_done_title">Fertig</string>
+    <string name="progress_failed_title">Abgebrochen</string>
+    <string name="progress_staged">Beim nächsten Neustart startet %1$s.</string>
+    <string name="progress_reverted">Nichts ändert sich: %1$s startet weiterhin.</string>
+    <string name="progress_incomplete">Dem Satz von %1$s fehlen Abbilder, oder sie haben eine seltsame Größe.</string>
+    <string name="progress_write_failed">%1$s konnte nicht geschrieben werden.</string>
+    <string name="progress_mismatch">%1$s stimmt beim Zurücklesen nicht überein. Nicht neu starten: erst prüfen.</string>
+
+    <string name="about_what">Wechselt zwischen den auf diesem Galaxy Tab S9 Ultra installierten Systemen, indem die vier Boot-Partitionen ersetzt werden und das Tablet neu startet.</string>
+    <string name="about_checks">Jedes Abbild wird vor dem Schreiben anhand seiner Größe geprüft, und die Partition wird danach zurückgelesen. Stimmt etwas nicht, wird abgebrochen und nichts startet neu.</string>
+    <string name="about_untouched">Die Abbilder werden aus %1$s gelesen. Geschrieben werden nur boot, init_boot, vendor_boot und dtbo; vbmeta und super werden nie angefasst: Ersteres würde die Daten von Android löschen, im Zweiten liegt sein System.</string>
+    <string name="about_project">Teil der Ubuntu-24.04-Portierung für das SM-X910.\ngithub.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra</string>
+
+    <string name="tile_unavailable">Kein anderes System</string>
+    <string name="tile_confirm_title">In %1$s neu starten?</string>
+    <string name="tile_confirm_message">Die vier Boot-Partitionen werden geschrieben und das Tablet startet neu. Deine Dateien bleiben, wo sie sind.</string>
+    <string name="tile_confirm_ok">Neu starten</string>
+    <string name="tile_writing">Boot-Partitionen werden geschrieben…</string>
+    <string name="tile_failed">Nicht abgeschlossen. Es wurde nichts neu gestartet.</string>
+</resources>

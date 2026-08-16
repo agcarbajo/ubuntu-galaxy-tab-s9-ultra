@@ -1,12 +1,78 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <string name="app_name">Arranque dual</string>
+<!--
+    Source language, and the fallback for any locale not translated below.
 
-    <string name="tile_label">Arranque dual</string>
-    <string name="tile_unavailable">No hay otro sistema</string>
-    <string name="tile_confirm_title">¿Reiniciar en %1$s?</string>
-    <string name="tile_confirm_message">Se escribirán las cuatro particiones de arranque y la tablet se reiniciará. Tus archivos se quedan donde están.</string>
-    <string name="tile_confirm_ok">Reiniciar</string>
-    <string name="tile_writing">Escribiendo las particiones de arranque…</string>
-    <string name="tile_failed">No se completó. No se ha reiniciado nada.</string>
+    The app is translated into the same languages as Tab Companion on the Linux
+    side — Spanish, French, German, Italian and Portuguese — because the two
+    are halves of one port and a tablet that switches between them should not
+    change language on the way across.
+
+    The app name is left untranslated on purpose: "Dualboot" is what the
+    feature is called on both systems.
+-->
+<resources>
+    <string name="app_name">Dualboot</string>
+    <string name="tile_label">Dualboot</string>
+
+    <string name="about">About</string>
+    <string name="close">Close</string>
+
+    <string name="section_systems">Systems</string>
+    <string name="section_storage">Storage</string>
+    <string name="section_settings">Settings</string>
+
+    <string name="hero_checking">Checking…</string>
+    <string name="hero_checking_body">Reading the boot partitions.</string>
+    <string name="hero_no_root">No root</string>
+    <string name="hero_unknown">Unknown system</string>
+    <string name="hero_unknown_body">The boot partitions do not match any saved system.</string>
+    <string name="hero_running">You are using</string>
+    <string name="hero_next">%1$s will start on the next restart.</string>
+
+    <string name="state_in_use">In use now</string>
+    <string name="state_next_boot">Starts on the next restart</string>
+    <string name="state_ready">Ready to start</string>
+    <string name="state_incomplete">Images are missing or have an odd size</string>
+
+    <string name="action_stage">Switch on next restart</string>
+    <string name="action_reboot">Restart</string>
+    <string name="action_cancel">Undo</string>
+
+    <string name="storage_android">Android</string>
+    <string name="storage_linux">Linux</string>
+    <string name="storage_used_of">%1$s of %2$s</string>
+    <string name="storage_note">Linux usage cannot be read from Android: its partition uses ext4.</string>
+
+    <string name="settings_skip_title">Restart without asking</string>
+    <string name="settings_skip_body">The quick settings button switches system as soon as you touch it.</string>
+    <string name="settings_add_tile">Add to quick settings</string>
+    <string name="settings_refresh">Check again</string>
+
+    <string name="tile_added">Added to quick settings.</string>
+    <string name="tile_already_added">It was already in quick settings.</string>
+    <string name="tile_rejected">It was not added.</string>
+    <string name="tile_request_failed">The system did not accept the request.</string>
+
+    <string name="error_no_root">No root access. Grant it to this app in Magisk, and remember that a request left to expire is saved as denied.</string>
+
+    <string name="progress_title">Writing the boot partitions</string>
+    <string name="progress_done_title">Done</string>
+    <string name="progress_failed_title">Stopped</string>
+    <string name="progress_staged">%1$s will start on the next restart.</string>
+    <string name="progress_reverted">Nothing changes: %1$s keeps starting.</string>
+    <string name="progress_incomplete">The %1$s set is incomplete or its images have an odd size.</string>
+    <string name="progress_write_failed">Could not write %1$s.</string>
+    <string name="progress_mismatch">%1$s does not match when read back. Do not restart: check it first.</string>
+
+    <string name="about_what">Switches between the systems installed on this Galaxy Tab S9 Ultra by replacing the four boot partitions and restarting.</string>
+    <string name="about_checks">Every image is checked by size before it is written, and the partition is read back afterwards. If anything does not match it stops, and nothing restarts.</string>
+    <string name="about_untouched">Images are read from %1$s. Only boot, init_boot, vendor_boot and dtbo are written; vbmeta and super are never touched — the first would wipe Android’s data and the second is where its system lives.</string>
+    <string name="about_project">Part of the Ubuntu 24.04 port for the SM-X910.\ngithub.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra</string>
+
+    <string name="tile_unavailable">No other system</string>
+    <string name="tile_confirm_title">Restart into %1$s?</string>
+    <string name="tile_confirm_message">The four boot partitions will be written and the tablet will restart. Your files stay where they are.</string>
+    <string name="tile_confirm_ok">Restart</string>
+    <string name="tile_writing">Writing the boot partitions…</string>
+    <string name="tile_failed">It did not finish. Nothing has restarted.</string>
 </resources>

@@ -1,6 +1,7 @@
 package com.gts9u.bootswitcher
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -13,17 +14,28 @@ import kotlinx.coroutines.withContext
 data class UiState(
     val loading: Boolean = true,
     val hasRoot: Boolean = false,
-    val current: BootSets.BootSet? = null,
+    /** The system this app is running on. */
+    val running: BootSets.BootSet? = null,
+    /** The system the boot partitions will start. */
+    val nextBoot: BootSets.BootSet? = null,
     val sets: List<BootSets.BootSet> = emptyList(),
     val storage: Map<String, BootSets.Share> = emptyMap(),
     val busy: Boolean = false,
-    val log: List<String> = emptyList(),
-    /** Set once every partition is written and verified, so the UI can offer the reboot. */
-    val readyToReboot: BootSets.BootSet? = null,
-    val error: String? = null,
-)
+    /** The partition being written right now, and the ones already verified. */
+    val writing: String? = null,
+    val written: List<String> = emptyList(),
+    /** True once a write has ended, so the progress dialog can show a verdict. */
+    val finished: Boolean = false,
+    val errorRes: Int? = null,
+    val errorArg: String = "",
+    val errorDetail: String = "",
+) {
+    /** Written but not yet booted: only a restart is missing. */
+    val staged: Boolean
+        get() = running != null && nextBoot != null && running.id != nextBoot.id
+}
 
-class SwitcherViewModel : ViewModel() {
+class SwitcherViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
@@ -33,87 +45,127 @@ class SwitcherViewModel : ViewModel() {
     }
 
     fun refresh() = viewModelScope.launch {
-        _state.update { it.copy(loading = true, error = null, readyToReboot = null, log = emptyList()) }
+        _state.update { it.copy(loading = true, errorRes = null) }
 
-        val result = withContext(Dispatchers.IO) {
+        val context = getApplication<Application>()
+        val snapshot = withContext(Dispatchers.IO) {
             if (!Root.available()) return@withContext null
-            var sets = BootSets.discover()
-            val live = BootSets.liveHashes()
-            val current = BootSets.identify(live, sets)
+
+            var shot = BootState.read(context)
 
             // Only the running system knows its own name, so it writes it down
-            // while it can; the list is then re-read so the label shown is the
-            // one on disk rather than a guess.
-            if (current != null) {
-                BootSets.stampRunningName(current)
+            // while it can.  Note this stamps the system we are *in*, not the
+            // one the partitions would boot: after a staged switch those are
+            // different, and naming the wrong set would make both labels lie.
+            shot.running?.let { running ->
+                BootSets.stampRunningName(running)
 
                 // The Linux set cannot name itself from here, so it is asked
-                // directly: its filesystem is readable with root.
-                val linuxSet = sets.firstOrNull {
-                    it.id != current.id && it.id.lowercase().contains("ubuntu")
-                }
-                if (linuxSet != null) {
-                    BootSets.linuxSystemName().takeIf { it.isNotBlank() }?.let {
-                        BootSets.writeName(linuxSet, it)
+                // directly: root can mount its filesystem read-only.
+                shot.sets.firstOrNull { BootSets.isLinux(it) }?.let { linux ->
+                    if (linux.id != running.id) {
+                        BootSets.linuxSystemName().takeIf { it.isNotBlank() }?.let {
+                            BootSets.writeName(linux, it)
+                        }
                     }
                 }
-                sets = BootSets.discover()
+                shot = BootState.read(context)
             }
-            Triple(sets, BootSets.identify(live, sets), BootSets.storage())
+            shot to BootSets.storage()
         }
 
-        if (result == null) {
+        if (snapshot == null) {
             _state.update {
-                it.copy(
-                    loading = false,
-                    hasRoot = false,
-                    error = "Sin acceso root. Concédeselo a esta app en Magisk, " +
-                        "y recuerda que una petición que caduca queda guardada como denegada.",
-                )
+                it.copy(loading = false, hasRoot = false, errorRes = R.string.error_no_root)
             }
             return@launch
         }
 
-        val (sets, current, storage) = result
+        val (shot, storage) = snapshot
         _state.update {
             it.copy(
                 loading = false,
                 hasRoot = true,
-                sets = sets,
-                current = current,
+                sets = shot.sets,
+                running = shot.running,
+                nextBoot = shot.nextBoot,
                 storage = storage,
             )
         }
     }
 
-    fun switchTo(set: BootSets.BootSet) = viewModelScope.launch {
-        _state.update { it.copy(busy = true, log = emptyList(), error = null, readyToReboot = null) }
+    /** Writes a set's images to the boot partitions without restarting. */
+    fun stage(set: BootSets.BootSet) = apply(set, thenReboot = false)
+
+    /**
+     * Restarts into a set, writing it first only if it is not already there.
+     *
+     * A staged switch has already done the writing, so this is just a restart:
+     * rewriting identical images would be four pointless partition writes.
+     */
+    fun rebootInto(set: BootSets.BootSet) = apply(set, thenReboot = true)
+
+    fun dismissProgress() {
+        _state.update { it.copy(finished = false, writing = null, written = emptyList()) }
+    }
+
+    private fun apply(set: BootSets.BootSet, thenReboot: Boolean) = viewModelScope.launch {
+        val before = _state.value
+
+        if (before.nextBoot?.id == set.id) {
+            if (thenReboot) withContext(Dispatchers.IO) { BootSets.reboot() }
+            return@launch
+        }
+
+        _state.update {
+            it.copy(
+                busy = true,
+                writing = null,
+                written = emptyList(),
+                finished = false,
+                errorRes = null,
+                errorArg = "",
+                errorDetail = "",
+            )
+        }
 
         val ok = withContext(Dispatchers.IO) {
             BootSets.write(set) { progress ->
                 when (progress) {
-                    is BootSets.Progress.Step ->
-                        _state.update { it.copy(log = it.log + progress.message) }
+                    is BootSets.Progress.Writing ->
+                        _state.update { it.copy(writing = progress.part) }
+                    is BootSets.Progress.Verified ->
+                        _state.update {
+                            it.copy(writing = null, written = it.written + progress.part)
+                        }
                     is BootSets.Progress.Failed ->
-                        _state.update { it.copy(log = it.log + progress.message, error = progress.message) }
-                    BootSets.Progress.Done ->
-                        _state.update { it.copy(log = it.log + "Las cuatro particiones coinciden.") }
+                        _state.update {
+                            it.copy(
+                                writing = null,
+                                errorRes = progress.text,
+                                errorArg = progress.arg,
+                                errorDetail = progress.detail,
+                            )
+                        }
+                    BootSets.Progress.Done -> Unit
                 }
             }
+        }
+
+        if (ok) {
+            // The partitions really are this set's now, so the note about what
+            // is still running has to be filed before the UI is told anything.
+            BootState.stage(getApplication(), before.running, set)
         }
 
         _state.update {
             it.copy(
                 busy = false,
-                readyToReboot = if (ok) set else null,
-                // After a verified write the live partitions really are this
-                // set's, so the card stops claiming the old system.
-                current = if (ok) set else it.current,
+                finished = true,
+                nextBoot = if (ok) set else it.nextBoot,
             )
         }
-    }
 
-    fun reboot() = viewModelScope.launch {
-        withContext(Dispatchers.IO) { BootSets.reboot() }
+        if (ok && thenReboot) withContext(Dispatchers.IO) { BootSets.reboot() }
     }
 }

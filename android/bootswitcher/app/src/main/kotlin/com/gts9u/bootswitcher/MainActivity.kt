@@ -8,7 +8,6 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
@@ -39,6 +38,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
@@ -64,12 +64,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -107,7 +107,7 @@ fun BootSwitcherTheme(content: @Composable () -> Unit) {
 }
 
 private fun iconFor(set: BootSets.BootSet): ImageVector =
-    if (set.id.lowercase().contains("ubuntu")) Icons.Filled.Computer else Icons.Filled.Android
+    if (BootSets.isLinux(set)) Icons.Filled.Computer else Icons.Filled.Android
 
 private fun formatSize(bytes: Long): String {
     val gb = bytes / 1_000_000_000.0
@@ -123,10 +123,10 @@ fun SwitcherScreen(vm: SwitcherViewModel = viewModel()) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Arranque dual") },
+                title = { Text(stringResource(R.string.app_name)) },
                 actions = {
                     IconButton(onClick = { showAbout = true }) {
-                        Icon(Icons.Filled.Info, contentDescription = "Acerca de")
+                        Icon(Icons.Filled.Info, contentDescription = stringResource(R.string.about))
                     }
                 },
             )
@@ -146,48 +146,31 @@ fun SwitcherScreen(vm: SwitcherViewModel = viewModel()) {
             ) {
                 HeroCard(state)
 
-                if (state.busy || state.log.isNotEmpty()) ProgressCard(state)
-
                 if (state.hasRoot && state.sets.isNotEmpty()) {
-                    SectionTitle("Sistemas")
-                    SystemsCard(state, onSwitch = { vm.switchTo(it) })
+                    SectionTitle(stringResource(R.string.section_systems))
+                    SystemsCard(
+                        state,
+                        onStage = { vm.stage(it) },
+                        onReboot = { vm.rebootInto(it) },
+                    )
                 }
 
                 if (state.storage.isNotEmpty()) {
-                    SectionTitle("Almacenamiento")
+                    SectionTitle(stringResource(R.string.section_storage))
                     StorageCard(state)
                 }
 
-                AnimatedVisibility(state.readyToReboot != null) {
-                    Button(
-                        onClick = { vm.reboot() },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(60.dp),
-                        shape = RoundedCornerShape(20.dp),
-                    ) {
-                        Icon(Icons.Filled.RestartAlt, contentDescription = null)
-                        Spacer(Modifier.width(12.dp))
-                        Text("Reiniciar ahora", style = MaterialTheme.typography.titleMedium)
-                    }
-                }
-
-                SectionTitle("Ajustes")
+                SectionTitle(stringResource(R.string.section_settings))
                 SettingsCard(enabled = !state.busy, onRefresh = { vm.refresh() })
-
-                Text(
-                    "Las imágenes se leen de ${BootSets.ROOT_DIR}. Sólo se tocan boot, " +
-                        "init_boot, vendor_boot y dtbo; vbmeta no se toca nunca, porque " +
-                        "cambiarlo borraría los datos de Android.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
                 Spacer(Modifier.height(8.dp))
             }
         }
     }
 
     if (showAbout) AboutDialog(onDismiss = { showAbout = false })
+    if (state.busy || state.finished) {
+        ProgressDialog(state, onDismiss = { vm.dismissProgress() })
+    }
 }
 
 @Composable
@@ -202,62 +185,98 @@ private fun SectionTitle(text: String) {
 
 @Composable
 private fun HeroCard(state: UiState) {
-    val current = state.current
+    val running = state.running
     val (title, body, icon) = when {
-        state.loading -> Triple("Comprobando…", "Leyendo las particiones de arranque.", Icons.Filled.Refresh)
-        !state.hasRoot -> Triple("Sin root", state.error ?: "Esta app necesita root.", Icons.Filled.Warning)
-        current == null -> Triple(
-            "Sistema desconocido",
-            "Las particiones no coinciden con ningún juego guardado.",
+        state.loading -> Triple(
+            stringResource(R.string.hero_checking),
+            stringResource(R.string.hero_checking_body),
+            Icons.Filled.Refresh,
+        )
+        !state.hasRoot -> Triple(
+            stringResource(R.string.hero_no_root),
+            stringResource(state.errorRes ?: R.string.error_no_root),
             Icons.Filled.Warning,
         )
-        else -> Triple("Ahora arranca", current.label, iconFor(current))
+        running == null -> Triple(
+            stringResource(R.string.hero_unknown),
+            stringResource(R.string.hero_unknown_body),
+            Icons.Filled.Warning,
+        )
+        else -> Triple(stringResource(R.string.hero_running), running.label, iconFor(running))
     }
 
-    val good = state.hasRoot && current != null
+    val good = state.hasRoot && running != null
+    // Checking is not a failure: asking for root can take a few seconds, and
+    // painting the card red while it waits reads as "something is wrong".
+    val bad = !state.loading && !good
     Card(
         Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(28.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (good) MaterialTheme.colorScheme.primaryContainer
-            else MaterialTheme.colorScheme.errorContainer,
+            containerColor = if (bad) MaterialTheme.colorScheme.errorContainer
+            else MaterialTheme.colorScheme.primaryContainer,
         ),
     ) {
-        Row(Modifier.padding(24.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                Modifier
-                    .size(56.dp)
-                    .clip(CircleShape),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(icon, contentDescription = null, Modifier.size(36.dp))
+        Column {
+            Row(Modifier.padding(24.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier
+                        .size(56.dp)
+                        .clip(CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(icon, contentDescription = null, Modifier.size(36.dp))
+                }
+                Spacer(Modifier.width(20.dp))
+                Column {
+                    Text(
+                        title,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        body,
+                        style = if (good) MaterialTheme.typography.headlineSmall
+                        else MaterialTheme.typography.bodyMedium,
+                        fontWeight = if (good) FontWeight.Bold else FontWeight.Normal,
+                    )
+                }
             }
-            Spacer(Modifier.width(20.dp))
-            Column {
-                Text(
-                    title,
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    body,
-                    style = if (good) MaterialTheme.typography.headlineSmall
-                    else MaterialTheme.typography.bodyMedium,
-                    fontWeight = if (good) FontWeight.Bold else FontWeight.Normal,
-                )
+
+            // A staged switch is the one thing that is true of the tablet but
+            // invisible on it, so it is said here rather than only in the list.
+            if (state.staged && state.nextBoot != null) {
+                HorizontalDivider(Modifier.padding(horizontal = 24.dp))
+                Row(
+                    Modifier.padding(horizontal = 24.dp, vertical = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(Icons.Filled.RestartAlt, contentDescription = null, Modifier.size(20.dp))
+                    Spacer(Modifier.width(12.dp))
+                    Text(
+                        stringResource(R.string.hero_next, state.nextBoot.label),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
             }
         }
     }
 }
 
 @Composable
-private fun SystemsCard(state: UiState, onSwitch: (BootSets.BootSet) -> Unit) {
+private fun SystemsCard(
+    state: UiState,
+    onStage: (BootSets.BootSet) -> Unit,
+    onReboot: (BootSets.BootSet) -> Unit,
+) {
     Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp)) {
         // The running system first: it answers "where am I", and the rest of
         // the list is then plainly "where else can I go".
-        val ordered = state.sets.sortedBy { it.id != state.current?.id }
+        val ordered = state.sets.sortedBy { it.id != state.running?.id }
         ordered.forEachIndexed { index, set ->
-            val isCurrent = set.id == state.current?.id
+            val isRunning = set.id == state.running?.id
+            val isNext = set.id == state.nextBoot?.id
+
             Row(
                 Modifier
                     .fillMaxWidth()
@@ -270,27 +289,57 @@ private fun SystemsCard(state: UiState, onSwitch: (BootSets.BootSet) -> Unit) {
                     Text(set.label, style = MaterialTheme.typography.titleMedium)
                     Text(
                         when {
-                            isCurrent -> "En uso ahora"
-                            set.complete -> "Listo para arrancar"
-                            else -> "Le faltan imágenes o tienen un tamaño raro"
+                            isRunning -> stringResource(R.string.state_in_use)
+                            isNext -> stringResource(R.string.state_next_boot)
+                            set.complete -> stringResource(R.string.state_ready)
+                            else -> stringResource(R.string.state_incomplete)
                         },
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = if (isNext && !isRunning) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
                 Spacer(Modifier.width(12.dp))
-                if (isCurrent) {
-                    Icon(
+
+                when {
+                    // Running and nothing pending: there is nowhere to go from
+                    // this row, so it only reports.
+                    isRunning && isNext -> Icon(
                         Icons.Filled.Check,
-                        contentDescription = "en uso",
+                        contentDescription = stringResource(R.string.state_in_use),
                         tint = MaterialTheme.colorScheme.primary,
                     )
-                } else if (set.complete) {
-                    FilledTonalButton(
-                        onClick = { onSwitch(set) },
+
+                    // Running while another system is staged: this is the only
+                    // way back, so undoing has to live here.
+                    isRunning -> TextButton(
+                        onClick = { onStage(set) },
                         enabled = !state.busy,
-                        shape = RoundedCornerShape(16.dp),
-                    ) { Text("Cambiar") }
+                    ) { Text(stringResource(R.string.action_cancel)) }
+
+                    set.complete -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        // Already written: greyed out, because pressing it
+                        // again would rewrite four identical partitions.
+                        FilledTonalButton(
+                            onClick = { onStage(set) },
+                            enabled = !state.busy && !isNext,
+                            shape = RoundedCornerShape(16.dp),
+                        ) { Text(stringResource(R.string.action_stage)) }
+
+                        Button(
+                            onClick = { onReboot(set) },
+                            enabled = !state.busy,
+                            shape = RoundedCornerShape(16.dp),
+                        ) {
+                            Icon(
+                                Icons.Filled.RestartAlt,
+                                contentDescription = null,
+                                Modifier.size(18.dp),
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(stringResource(R.string.action_reboot))
+                        }
+                    }
                 }
             }
             if (index != ordered.lastIndex) {
@@ -344,13 +393,27 @@ private fun StorageCard(state: UiState) {
             Spacer(Modifier.height(14.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
                 android?.let {
-                    LegendItem(androidUsed, "Android", "${formatSize(it.used)} de ${formatSize(it.total)}")
+                    LegendItem(
+                        androidUsed,
+                        stringResource(R.string.storage_android),
+                        stringResource(
+                            R.string.storage_used_of,
+                            formatSize(it.used),
+                            formatSize(it.total),
+                        ),
+                    )
                 }
-                linux?.let { LegendItem(linuxColor, "Linux", formatSize(it.total)) }
+                linux?.let {
+                    LegendItem(
+                        linuxColor,
+                        stringResource(R.string.storage_linux),
+                        formatSize(it.total),
+                    )
+                }
             }
             Spacer(Modifier.height(10.dp))
             Text(
-                "El uso de Linux no se puede leer desde Android: su partición usa ext4.",
+                stringResource(R.string.storage_note),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -395,9 +458,12 @@ private fun SettingsCard(enabled: Boolean, onRefresh: () -> Unit) {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text("Reiniciar sin preguntar", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "El botón de los ajustes rápidos cambia de sistema en cuanto lo tocas.",
+                        stringResource(R.string.settings_skip_title),
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    Text(
+                        stringResource(R.string.settings_skip_body),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -426,7 +492,7 @@ private fun SettingsCard(enabled: Boolean, onRefresh: () -> Unit) {
             ) {
                 Icon(Icons.Filled.Refresh, contentDescription = null)
                 Spacer(Modifier.width(12.dp))
-                Text("Volver a comprobar")
+                Text(stringResource(R.string.settings_refresh))
             }
         }
     }
@@ -442,24 +508,26 @@ private fun SettingsCard(enabled: Boolean, onRefresh: () -> Unit) {
 @Composable
 private fun AddTileRow() {
     val context = LocalContext.current
+    val label = stringResource(R.string.tile_label)
+    val added = stringResource(R.string.tile_added)
+    val already = stringResource(R.string.tile_already_added)
+    val rejected = stringResource(R.string.tile_rejected)
+    val failed = stringResource(R.string.tile_request_failed)
 
     TextButton(
         onClick = {
             val manager = context.getSystemService(StatusBarManager::class.java) ?: return@TextButton
             manager.requestAddTileService(
                 ComponentName(context, BootSwitchTile::class.java),
-                context.getString(R.string.tile_label),
+                label,
                 android.graphics.drawable.Icon.createWithResource(context, R.drawable.ic_tile_dualboot),
                 context.mainExecutor,
                 { result ->
                     val message = when (result) {
-                        StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ADDED ->
-                            "Añadido a los ajustes rápidos."
-                        StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ALREADY_ADDED ->
-                            "Ya estaba en los ajustes rápidos."
-                        StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_NOT_ADDED ->
-                            "No se añadió."
-                        else -> "El sistema no aceptó la petición."
+                        StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ADDED -> added
+                        StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ALREADY_ADDED -> already
+                        StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_NOT_ADDED -> rejected
+                        else -> failed
                     }
                     Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
                 },
@@ -472,7 +540,7 @@ private fun AddTileRow() {
     ) {
         Icon(Icons.Filled.Add, contentDescription = null)
         Spacer(Modifier.width(12.dp))
-        Text("Añadir a los ajustes rápidos")
+        Text(stringResource(R.string.settings_add_tile))
     }
 }
 
@@ -480,31 +548,29 @@ private fun AddTileRow() {
 private fun AboutDialog(onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Cerrar") } },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.close)) }
+        },
         icon = { Icon(Icons.Filled.Info, contentDescription = null) },
-        title = { Text("Arranque dual") },
+        title = { Text(stringResource(R.string.app_name)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    "Cambia entre los sistemas instalados en este Galaxy Tab S9 Ultra " +
-                        "reemplazando las cuatro particiones de arranque y reiniciando.",
+                    stringResource(R.string.about_what),
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Text(
-                    "Cada imagen se comprueba por tamaño antes de escribirla y la " +
-                        "partición se relee después. Si algo no coincide, para y no reinicia.",
+                    stringResource(R.string.about_checks),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(
-                    "Nunca toca vbmeta ni super: lo primero borraría los datos de " +
-                        "Android, y en lo segundo vive su sistema.",
+                    stringResource(R.string.about_untouched, BootSets.ROOT_DIR),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(
-                    "Parte del port de Ubuntu 24.04 para SM-X910.\n" +
-                        "github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra",
+                    stringResource(R.string.about_project),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -513,24 +579,129 @@ private fun AboutDialog(onDismiss: () -> Unit) {
     )
 }
 
+/**
+ * The four partitions, drawn up front and lit one by one.
+ *
+ * The whole job is known before it starts, so there is no reason to grow a
+ * list of lines under the rest of the screen: the steps are laid out from the
+ * first frame and only their state changes, which also keeps the layout from
+ * jumping while the tablet is being written to.
+ */
 @Composable
-private fun ProgressCard(state: UiState) {
-    Card(
-        Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (state.error != null) MaterialTheme.colorScheme.errorContainer
-            else MaterialTheme.colorScheme.secondaryContainer,
-        ),
-    ) {
-        Column(Modifier.padding(20.dp)) {
-            if (state.busy) {
-                LinearProgressIndicator(Modifier.fillMaxWidth())
-                Spacer(Modifier.height(14.dp))
+private fun ProgressDialog(state: UiState, onDismiss: () -> Unit) {
+    val failed = state.errorRes != null
+    val done = state.finished && !failed
+
+    AlertDialog(
+        // Dismissing mid-write would hide a job that keeps running.
+        onDismissRequest = { if (!state.busy) onDismiss() },
+        confirmButton = {
+            if (!state.busy) {
+                TextButton(onClick = onDismiss) { Text(stringResource(R.string.close)) }
             }
-            state.log.forEach {
-                Text(it, style = MaterialTheme.typography.bodyMedium)
+        },
+        icon = {
+            Icon(
+                if (failed) Icons.Filled.Warning else Icons.Filled.RestartAlt,
+                contentDescription = null,
+            )
+        },
+        title = {
+            Text(
+                stringResource(
+                    when {
+                        failed -> R.string.progress_failed_title
+                        done -> R.string.progress_done_title
+                        else -> R.string.progress_title
+                    }
+                )
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                val fraction = state.written.size / BootSets.PARTITIONS.size.toFloat()
+                LinearProgressIndicator(
+                    progress = { fraction },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(6.dp)
+                        .clip(RoundedCornerShape(3.dp)),
+                    color = if (failed) MaterialTheme.colorScheme.error
+                    else MaterialTheme.colorScheme.primary,
+                )
+                Spacer(Modifier.height(6.dp))
+
+                BootSets.PARTITIONS.forEach { part ->
+                    PartitionRow(
+                        name = part.name,
+                        verified = part.name in state.written,
+                        active = part.name == state.writing,
+                    )
+                }
+
+                Spacer(Modifier.height(6.dp))
+                when {
+                    failed -> {
+                        Text(
+                            stringResource(state.errorRes!!, state.errorArg),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                        if (state.errorDetail.isNotBlank()) {
+                            Text(
+                                state.errorDetail,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    done && state.nextBoot != null -> Text(
+                        stringResource(
+                            if (state.staged) R.string.progress_staged
+                            else R.string.progress_reverted,
+                            state.nextBoot.label,
+                        ),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+            }
+        },
+    )
+}
+
+@Composable
+private fun PartitionRow(name: String, verified: Boolean, active: Boolean) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(36.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.size(20.dp), contentAlignment = Alignment.Center) {
+            when {
+                verified -> Icon(
+                    Icons.Filled.Check,
+                    contentDescription = null,
+                    Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+                active -> CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                else -> Box(
+                    Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                ) {
+                    val idle = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
+                    Canvas(Modifier.fillMaxSize()) { drawRect(idle, size = size) }
+                }
             }
         }
+        Spacer(Modifier.width(14.dp))
+        Text(
+            name,
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (verified || active) MaterialTheme.colorScheme.onSurface
+            else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }

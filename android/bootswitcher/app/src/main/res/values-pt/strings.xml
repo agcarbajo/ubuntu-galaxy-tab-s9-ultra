@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="about">Acerca</string>
+    <string name="close">Fechar</string>
+
+    <string name="section_systems">Sistemas</string>
+    <string name="section_storage">Armazenamento</string>
+    <string name="section_settings">Definições</string>
+
+    <string name="hero_checking">A verificar…</string>
+    <string name="hero_checking_body">A ler as partições de arranque.</string>
+    <string name="hero_no_root">Sem root</string>
+    <string name="hero_unknown">Sistema desconhecido</string>
+    <string name="hero_unknown_body">As partições de arranque não correspondem a nenhum sistema guardado.</string>
+    <string name="hero_running">Está a usar</string>
+    <string name="hero_next">No próximo reinício arranca %1$s.</string>
+
+    <string name="state_in_use">Em uso agora</string>
+    <string name="state_next_boot">Arranca no próximo reinício</string>
+    <string name="state_ready">Pronto a arrancar</string>
+    <string name="state_incomplete">Faltam imagens ou têm um tamanho estranho</string>
+
+    <string name="action_stage">Mudar no próximo reinício</string>
+    <string name="action_reboot">Reiniciar</string>
+    <string name="action_cancel">Anular</string>
+
+    <string name="storage_used_of">%1$s de %2$s</string>
+    <string name="storage_note">O uso do Linux não se consegue ler a partir do Android: a sua partição usa ext4.</string>
+
+    <string name="settings_skip_title">Reiniciar sem perguntar</string>
+    <string name="settings_skip_body">O botão das definições rápidas muda de sistema assim que lhe tocas.</string>
+    <string name="settings_add_tile">Adicionar às definições rápidas</string>
+    <string name="settings_refresh">Verificar de novo</string>
+
+    <string name="tile_added">Adicionado às definições rápidas.</string>
+    <string name="tile_already_added">Já lá estava.</string>
+    <string name="tile_rejected">Não foi adicionado.</string>
+    <string name="tile_request_failed">O sistema não aceitou o pedido.</string>
+
+    <string name="error_no_root">Sem acesso root. Concede-o a esta aplicação no Magisk, e lembra-te de que um pedido que expira fica guardado como negado.</string>
+
+    <string name="progress_title">A escrever as partições de arranque</string>
+    <string name="progress_done_title">Pronto</string>
+    <string name="progress_failed_title">Parou</string>
+    <string name="progress_staged">No próximo reinício arranca %1$s.</string>
+    <string name="progress_reverted">Não muda nada: continua a arrancar %1$s.</string>
+    <string name="progress_incomplete">Ao conjunto de %1$s faltam imagens ou têm um tamanho estranho.</string>
+    <string name="progress_write_failed">Não consegui escrever %1$s.</string>
+    <string name="progress_mismatch">%1$s não corresponde ao ser relida. Não reinicies: verifica primeiro.</string>
+
+    <string name="about_what">Muda entre os sistemas instalados neste Galaxy Tab S9 Ultra substituindo as quatro partições de arranque e reiniciando.</string>
+    <string name="about_checks">Cada imagem é verificada pelo tamanho antes de ser escrita, e a partição é relida depois. Se algo não corresponder, pára e não reinicia nada.</string>
+    <string name="about_untouched">As imagens são lidas de %1$s. Só se escrevem boot, init_boot, vendor_boot e dtbo; vbmeta e super nunca se tocam: a primeira apagaria os dados do Android e na segunda vive o seu sistema.</string>
+    <string name="about_project">Parte do port do Ubuntu 24.04 para o SM-X910.\ngithub.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra</string>
+
+    <string name="tile_unavailable">Não há outro sistema</string>
+    <string name="tile_confirm_title">Reiniciar em %1$s?</string>
+    <string name="tile_confirm_message">Serão escritas as quatro partições de arranque e o tablet vai reiniciar. Os teus ficheiros ficam onde estão.</string>
+    <string name="tile_confirm_ok">Reiniciar</string>
+    <string name="tile_writing">A escrever as partições de arranque…</string>
+    <string name="tile_failed">Não ficou concluído. Não reiniciou nada.</string>
+</resources>
