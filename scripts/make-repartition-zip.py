@@ -67,7 +67,10 @@ def main() -> None:
     if not update_binary.is_file() or not updater_script.is_file():
         raise SystemExit("TWRP installer sources are missing")
 
-    contract = "# GTS9U-REPARTITION-CONTRACT: rewrites gpt entries 34 and 35 only"
+    contract = (
+        "# GTS9U-REPARTITION-CONTRACT: rewrites gpt entries 34 and 35 "
+        "and formats userdata and metadata only"
+    )
     text = update_binary.read_text(encoding="utf-8")
     if contract not in text.splitlines():
         raise SystemExit("the repartitioner does not carry its contract line")

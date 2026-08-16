@@ -14,26 +14,29 @@
 # of the table comes back byte for byte, which is what keeps an Odin restore a
 # one-step operation.
 #
-# What it never does: run mkfs, wipefs, parted or format anything; write to any
-# block device other than the GPT itself; or reboot.
+# It then recreates Android's data, because shortening `userdata` destroys it
+# either way: the filesystem inside describes a partition that no longer
+# reaches that far, Android cannot mount it, and it writes
+# PARAM_BOOT_RECOVERY_ENTER rather than boot.  So `userdata` is remade as f2fs
+# and `metadata` is emptied, which is exactly what TWRP's Format Data does and
+# what makes One UI regenerate its encryption keys.  That only ever happens in
+# the same pass that repartitions — see the comment further down for why it
+# must never run on a tablet that is merely already split.
 #
-# It does destroy Android's user data, unavoidably — the filesystem in
-# `userdata` is left describing a partition that no longer extends that far, so
-# Android cannot mount it afterwards.  That is why the last thing printed is an
-# instruction to run TWRP's own Format Data, which is also what regenerates the
-# FBE keys One UI needs to boot again.  Formatting is left to TWRP on purpose:
-# it asks for a typed confirmation, and this ZIP should not be the thing that
-# silently erases a tablet.
+# What it never does: touch any partition other than 34, 35 and metadata; write
+# to super, recovery, the bootloader chain, EFS, persist, modem or any
+# calibration partition; or reboot.
 
-# Machine-readable contract, asserted by scripts/validate-bundle.sh.  Prose
-# above can be reworded freely; this line is what identifies the installer, so
-# a build cannot silently package a different one.
-# GTS9U-REPARTITION-CONTRACT: rewrites gpt entries 34 and 35 only
+# Machine-readable contract, asserted by scripts/make-repartition-zip.py.
+# Prose above can be reworded freely; this line is what identifies the
+# installer, so a build cannot silently package a different one.
+# GTS9U-REPARTITION-CONTRACT: rewrites gpt entries 34 and 35 and formats userdata and metadata only
 
 OUTFD=$2
 ZIPFILE=$3
 
 DISK=/dev/block/sda
+BB=/dev/block/by-name
 
 # Samsung gives `userdata` the same value for its type GUID and its unique
 # GUID.  Both are reproduced on the partition we recreate, so the entry comes
@@ -275,19 +278,117 @@ NEW35_FIRST="$(echo "$CHECK35" | sed -n 's/^First sector: \([0-9]*\).*/\1/p')"
 [ "$NEW35_FIRST" = "$LR_FIRST" ] || \
     abort "linuxroot did not come back where it was asked for; restore $BACKUP"
 
+ui_print "The table now has userdata and linuxroot."
+
+# ---------------------------------------------------------------------------
+# Rehacer los datos de Android
+# ---------------------------------------------------------------------------
+#
+# Shortening `userdata` leaves inside it a filesystem that describes a
+# partition reaching further than the partition now does, so Android cannot
+# mount it and writes PARAM_BOOT_RECOVERY_ENTER instead — the recovery loop
+# this port already spent a session chasing.  It has to be recreated.
+#
+# This only ever runs in the same pass that did the repartitioning.  Doing it
+# on a tablet that is merely *already* split would erase a working Android,
+# and nothing on the partition can distinguish "just shortened" from "healthy
+# and encrypted": with metadata encryption the raw device is noise either way.
+#
+# What is recreated is what TWRP's Format Data recreates: a plain f2fs on
+# userdata and an empty ext4 on metadata.  The fine f2fs parameters do not
+# matter, because Android replaces the lot on first boot when it sets up
+# dm-default-key; what matters is that `metadata` comes back empty, since that
+# is where the keys it can no longer use are stored.
+
+part_node() {
+    if [ -e "$BB/$1" ]; then echo "$BB/$1"; else echo ""; fi
+}
+
+desmonta() {
+    node="$1"
+    real="$(readlink -f "$node" 2>/dev/null)" || real="$node"
+    while read dev mnt rest; do
+        case "$dev" in
+            "$node"|"$real") umount "$mnt" 2>/dev/null || umount -f "$mnt" 2>/dev/null ;;
+        esac
+    done < /proc/mounts
+}
+
+UD_NODE="$(part_node userdata)"
+MD_NODE="$(part_node metadata)"
+
+ui_print "Recreating Android's data partitions..."
+[ -n "$UD_NODE" ] || abort "userdata is not there after repartitioning"
+
+desmonta "$UD_NODE"
+[ -n "$MD_NODE" ] && desmonta "$MD_NODE"
+
+# El kernel sigue con la tabla vieja en memoria: formatear ahora escribiria un
+# sistema de ficheros dimensionado para la particion anterior.
+blockdev --rereadpt "$DISK" >/dev/null 2>&1
+sleep 1
+
+ESPERADO="$(awk -v s="$ANDROID_SECTORS" 'BEGIN { printf "%d", s * 4096 }')"
+REAL="$(blockdev --getsize64 "$UD_NODE" 2>/dev/null || echo 0)"
+
+if [ "$REAL" != "$ESPERADO" ]; then
+    ui_print "---------------------------------------"
+    ui_print " The table is written, but the running"
+    ui_print " kernel still reports the old size for"
+    ui_print " userdata, so it has NOT been formatted."
+    ui_print ""
+    ui_print " Finish by hand, it is two steps:"
+    ui_print "  1. Reboot -> Recovery."
+    ui_print "  2. Wipe -> Format Data."
+    ui_print ""
+    ui_print " Then flash the Ubuntu installation ZIP."
+    ui_print "---------------------------------------"
+    exit 0
+fi
+
+if [ -n "$MD_NODE" ]; then
+    ui_print "Emptying metadata, so Android makes new keys."
+    mke2fs -t ext4 -F -q "$MD_NODE" >/dev/null 2>&1 || \
+        ui_print "Could not format metadata; do Format Data in TWRP."
+fi
+
+ui_print "Formatting userdata..."
+if command -v make_f2fs >/dev/null 2>&1; then
+    make_f2fs -g android "$UD_NODE" >/dev/null 2>&1
+elif command -v mkfs.f2fs >/dev/null 2>&1; then
+    mkfs.f2fs -f "$UD_NODE" >/dev/null 2>&1
+else
+    ui_print "This recovery has no f2fs tool; do Format Data in TWRP."
+fi
+sync
+
+# La firma f2fs va en el offset 1024 y es F2F52010, que en disco se lee al
+# reves. Sin ella Android no montaria /data y volveriamos al bucle de recovery.
+MAGIC="$(dd if="$UD_NODE" bs=1 skip=1024 count=4 2>/dev/null | od -An -tx1 | tr -d ' \n')"
+if [ "$MAGIC" = "1020f5f2" ]; then
+    ui_print "userdata is f2fs again."
+    FORMATEADO=1
+else
+    ui_print "userdata did not come back as f2fs."
+    ui_print "Do Wipe -> Format Data in TWRP before continuing."
+    FORMATEADO=0
+fi
+
 ui_print "---------------------------------------"
-ui_print " The table now has userdata and linuxroot."
-ui_print " This ZIP does not reboot and does not format."
-ui_print ""
-ui_print " The running kernel still holds the old table,"
-ui_print " so the next two steps are not optional:"
-ui_print ""
-ui_print "  1. Reboot -> Recovery, to reread the table."
-ui_print "  2. Wipe -> Format Data. Android cannot mount"
-ui_print "     the shortened userdata until it is"
-ui_print "     recreated, and this is also what makes"
-ui_print "     One UI regenerate its encryption keys."
-ui_print ""
-ui_print " Then flash the Ubuntu installation ZIP."
+if [ "$FORMATEADO" = 1 ]; then
+    ui_print " Done. Android's data has been recreated"
+    ui_print " and it will make new encryption keys on"
+    ui_print " its next boot."
+    ui_print ""
+    ui_print " Everything Android kept in userdata is"
+    ui_print " gone, as warned."
+    ui_print ""
+    ui_print " Now flash the Ubuntu installation ZIP."
+else
+    ui_print " The table is split but the data was not"
+    ui_print " recreated. Do Wipe -> Format Data in TWRP,"
+    ui_print " then flash the Ubuntu installation ZIP."
+fi
+ui_print " This ZIP does not reboot."
 ui_print "---------------------------------------"
 exit 0

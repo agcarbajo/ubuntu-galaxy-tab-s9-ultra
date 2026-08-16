@@ -39,12 +39,45 @@ object BootSets {
         val label: String,
         val complete: Boolean,
         val hashes: Map<String, String>,
+        /** Where its images actually live; may be on the read-only Linux mount. */
+        val dir: String,
     ) {
-        val dir: String get() = "$ROOT_DIR/$id"
         fun file(part: Partition): String = "$dir/${part.name}.img"
     }
 
+    /**
+     * The two places a set can live.
+     *
+     * The installer seeds the sets inside Ubuntu's own root filesystem, and
+     * that partition is plain ext4 that root can mount from here — the app
+     * already does it to read Ubuntu's name.  So there is nothing to copy:
+     * Android reads the same images Ubuntu uses.
+     *
+     * `/sdcard/BootSets` stays as the place to override or add one by hand.
+     * Android cannot be given files there from recovery anyway, because that
+     * partition is metadata-encrypted and TWRP only sees noise.
+     */
     const val ROOT_DIR = "/sdcard/BootSets"
+    const val LINUX_MOUNT = "/mnt/gts9u-linuxroot"
+    const val LINUX_SETS = "$LINUX_MOUNT/var/lib/gts9u-boot-sets"
+
+    /**
+     * Mounts Ubuntu's root read-only, if it is not mounted already.
+     *
+     * Read-only throughout: this is the other system's filesystem and nothing
+     * here has any business writing to it.  A plain `ro` mount still replays
+     * the journal, which fails on a filesystem left dirty by a hard power-off,
+     * so `noload` is the fallback — it skips recovery and reads what is there.
+     */
+    fun mountLinuxRoot(): Boolean {
+        val result = Root.run(
+            "mkdir -p $LINUX_MOUNT",
+            "if grep -q ' $LINUX_MOUNT ' /proc/mounts; then exit 0; fi",
+            "mount -o ro -t ext4 /dev/block/by-name/linuxroot $LINUX_MOUNT 2>/dev/null || " +
+                "mount -o ro,noload -t ext4 /dev/block/by-name/linuxroot $LINUX_MOUNT",
+        )
+        return result.ok
+    }
 
     /**
      * Last-resort names, deliberately without version numbers.
@@ -119,9 +152,17 @@ object BootSets {
      */
     fun stampRunningName(set: BootSet) = writeName(set, runningSystemName())
 
-    /** Records a set's name, leaving it alone when nothing has changed. */
+    /**
+     * Records a set's name, leaving it alone when nothing has changed.
+     *
+     * Sets that live on Ubuntu's root are mounted read-only, so this quietly
+     * does nothing for them — and it should: the installer already wrote their
+     * name from the system that owns it, and this app has no business writing
+     * into the other system's filesystem.
+     */
     fun writeName(set: BootSet, name: String) {
         if (name.isBlank()) return
+        if (set.dir.startsWith(LINUX_MOUNT)) return
         val file = "${set.dir}/name.txt"
         val existing = Root.run("cat \"$file\" 2>/dev/null || true").output.trim()
         if (existing == name) return
@@ -148,29 +189,41 @@ object BootSets {
         return parseSums(result.output, PARTITIONS.map { it.device })
     }
 
-    /** Every directory under [ROOT_DIR], whether or not its images are usable. */
+    /**
+     * Every set the tablet can see, from either place.
+     *
+     * Ubuntu's copy is read first and Android's own second, so a directory
+     * placed by hand in `/sdcard/BootSets` wins over the seeded one: that is
+     * the only copy the owner can actually edit from here.
+     */
     fun discover(): List<BootSet> {
-        val listing = Root.run("ls -1 $ROOT_DIR 2>/dev/null || true")
-        val ids = listing.output.lineSequence()
-            .map { it.trim() }
-            .filter { it.isNotEmpty() && !it.contains('/') }
-            .toList()
+        mountLinuxRoot()
 
-        return ids.sorted().map { id ->
-            val label = KNOWN_LABELS[id.lowercase()] ?: id.replaceFirstChar { it.uppercase() }
-            val hashes = hashesOf(id)
+        val where = LinkedHashMap<String, String>()
+        for (base in listOf(LINUX_SETS, ROOT_DIR)) {
+            Root.run("ls -1 $base 2>/dev/null || true").output.lineSequence()
+                .map { it.trim() }
+                .filter { it.isNotEmpty() && !it.contains('/') }
+                .forEach { where[it] = base }
+        }
+
+        return where.keys.sorted().map { id ->
+            val dir = "${where[id]}/$id"
+            val fallback = KNOWN_LABELS[id.lowercase()] ?: id.replaceFirstChar { it.uppercase() }
+            val hashes = hashesOf(dir)
             BootSet(
                 id = id,
-                label = readLabel(id) ?: label,
+                label = readLabel(dir) ?: fallback,
                 complete = hashes.size == PARTITIONS.size,
                 hashes = hashes,
+                dir = dir,
             )
         }
     }
 
     /** An optional `name.txt` lets a set say what it wants to be called. */
-    private fun readLabel(id: String): String? {
-        val r = Root.run("cat \"$ROOT_DIR/$id/name.txt\" 2>/dev/null || true")
+    private fun readLabel(dir: String): String? {
+        val r = Root.run("cat \"$dir/name.txt\" 2>/dev/null || true")
         val line = r.output.lineSequence().firstOrNull()?.trim()
         return line?.takeIf { it.isNotEmpty() && it.length <= 40 }
     }
@@ -182,10 +235,10 @@ object BootSets {
      * written: half a set on disk would otherwise become half a set on the
      * partitions, and the tablet would boot no system at all.
      */
-    private fun hashesOf(id: String): Map<String, String> {
-        val files = PARTITIONS.map { "$ROOT_DIR/$id/${it.name}.img" }
+    private fun hashesOf(dir: String): Map<String, String> {
+        val files = PARTITIONS.map { "$dir/${it.name}.img" }
         val checks = PARTITIONS.map { part ->
-            val f = "$ROOT_DIR/$id/${part.name}.img"
+            val f = "$dir/${part.name}.img"
             "[ -f \"$f\" ] || exit 1\n" +
                 "[ \"\$(stat -c %s \"$f\")\" = \"${part.bytes}\" ] || exit 1"
         }
