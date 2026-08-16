@@ -1,0 +1,270 @@
+#!/sbin/sh
+# Split the internal UFS so Ubuntu can live beside Android, for the SM-X910
+# only.
+#
+# This is the ZIP form of scripts/repartition-ufs.sh, which does the same thing
+# over ADB from a build machine.  The logic is deliberately the same, guard for
+# guard; what changes is that everything runs on the tablet, so none of the
+# arithmetic may be done by the shell.
+#
+# It rewrites exactly two GPT entries: 34, which Samsung calls `userdata` and
+# which is shortened, and 35, which is created and called `linuxroot`.  No other
+# entry is read, moved or resized.  `super` keeps Android's system, the
+# bootloader chain and every calibration partition are untouched, and the rest
+# of the table comes back byte for byte, which is what keeps an Odin restore a
+# one-step operation.
+#
+# What it never does: run mkfs, wipefs, parted or format anything; write to any
+# block device other than the GPT itself; or reboot.
+#
+# It does destroy Android's user data, unavoidably — the filesystem in
+# `userdata` is left describing a partition that no longer extends that far, so
+# Android cannot mount it afterwards.  That is why the last thing printed is an
+# instruction to run TWRP's own Format Data, which is also what regenerates the
+# FBE keys One UI needs to boot again.  Formatting is left to TWRP on purpose:
+# it asks for a typed confirmation, and this ZIP should not be the thing that
+# silently erases a tablet.
+
+# Machine-readable contract, asserted by scripts/validate-bundle.sh.  Prose
+# above can be reworded freely; this line is what identifies the installer, so
+# a build cannot silently package a different one.
+# GTS9U-REPARTITION-CONTRACT: rewrites gpt entries 34 and 35 only
+
+OUTFD=$2
+ZIPFILE=$3
+
+DISK=/dev/block/sda
+
+# Samsung gives `userdata` the same value for its type GUID and its unique
+# GUID.  Both are reproduced on the partition we recreate, so the entry comes
+# back byte-identical apart from its size.
+UD_GUID=1B81E7E6-F50D-419B-A739-2AEEF8DA3335
+# 0FC63DAF-… is "Linux filesystem", which is what efs, bota, prism, optics and
+# omr already use on this device.
+LR_GUID=0FC63DAF-8483-4772-8E79-3D69D8477DE4
+# The disk is 4096 bytes per logical sector, so 512 sectors is 2 MiB.
+ALIGN=512
+EXPECT_DISK_GUID=98101B32-BBE2-4BF2-A06E-2BB33D000C20
+EXPECT_UD_START=3626496
+
+ui_print() {
+    echo "ui_print $1" >> /proc/self/fd/$OUTFD
+    echo "ui_print" >> /proc/self/fd/$OUTFD
+}
+
+abort() {
+    ui_print "ERROR: $1"
+    ui_print "Nothing has been repartitioned. Reboot to recovery, not system."
+    exit 1
+}
+
+LABEL="$(unzip -p "$ZIPFILE" BUNDLE-LABEL 2>/dev/null)"
+[ -n "$LABEL" ] || LABEL="SM-X910 UFS repartitioner"
+ui_print "---------------------------------------"
+ui_print " $LABEL"
+ui_print "---------------------------------------"
+
+# ---------------------------------------------------------------------------
+# It has to be this tablet, in recovery
+# ---------------------------------------------------------------------------
+
+DEVICE_CODENAME="$(getprop ro.product.device)"
+EM_MODEL="$(getprop ro.boot.em.model)"
+BOOTLOADER="$(getprop ro.bootloader)"
+
+case "$DEVICE_CODENAME" in
+    gts9u|gts9uwifi) ;;
+    *) abort "Expected gts9u/gts9uwifi; got '$DEVICE_CODENAME'" ;;
+esac
+
+if [ -n "$EM_MODEL" ] && [ "$EM_MODEL" != "SM-X910" ]; then
+    abort "Expected SM-X910; got '$EM_MODEL'"
+fi
+if [ -z "$EM_MODEL" ]; then
+    case "$BOOTLOADER" in
+        X910*) ui_print "em.model empty; X910 bootloader accepted" ;;
+        *) abort "Cannot positively identify SM-X910" ;;
+    esac
+fi
+
+command -v sgdisk >/dev/null 2>&1 || abort "this recovery has no sgdisk"
+[ -b "$DISK" ] || abort "$DISK is not a block device"
+
+# ---------------------------------------------------------------------------
+# It has to be the disk we think it is
+# ---------------------------------------------------------------------------
+
+DISK_GUID="$(sgdisk --print "$DISK" 2>/dev/null | \
+    sed -n 's/^Disk identifier (GUID): //p')"
+[ "$DISK_GUID" = "$EXPECT_DISK_GUID" ] || \
+    abort "the disk GUID is not $EXPECT_DISK_GUID; this is not the internal UFS"
+
+INFO="$(sgdisk --info=34 "$DISK" 2>/dev/null)"
+UD_NAME="$(echo "$INFO" | sed -n "s/^Partition name: '\(.*\)'\$/\1/p")"
+UD_TYPE="$(echo "$INFO" | sed -n 's/^Partition GUID code: \([0-9A-Fa-f-]*\).*/\1/p')"
+UD_FIRST="$(echo "$INFO" | sed -n 's/^First sector: \([0-9]*\).*/\1/p')"
+UD_LAST="$(echo "$INFO" | sed -n 's/^Last sector: \([0-9]*\).*/\1/p')"
+
+[ "$UD_NAME" = userdata ] || abort "GPT entry 34 is called '$UD_NAME', not userdata"
+[ "$UD_TYPE" = "$UD_GUID" ] || abort "GPT entry 34 does not have the expected type GUID"
+[ "$UD_FIRST" = "$EXPECT_UD_START" ] || \
+    abort "userdata starts at $UD_FIRST, not at $EXPECT_UD_START"
+[ -n "$UD_LAST" ] || abort "cannot read where userdata ends"
+
+if sgdisk --info=35 "$DISK" 2>/dev/null | grep -q '^Partition name'; then
+    ui_print "GPT entry 35 already exists, so this tablet is already split."
+    ui_print "Flash the Ubuntu installation ZIP instead."
+    abort "already repartitioned"
+fi
+
+# ---------------------------------------------------------------------------
+# The split
+# ---------------------------------------------------------------------------
+
+PERCENT="$(unzip -p "$ZIPFILE" ANDROID-PERCENT 2>/dev/null | tr -dc '0-9')"
+[ -n "$PERCENT" ] || abort "the ZIP does not say how to split the disk"
+
+# Every number below is computed by awk, and that is not a style choice.  TWRP
+# runs this script with mksh, whose arithmetic and test(1) are 32-bit signed:
+# a 1 TB model has around 244 million sectors here, and multiplying that by a
+# percentage overflows before the division ever happens.  awk works in doubles,
+# which hold every integer in play exactly.
+PLAN="$(awk -v first="$UD_FIRST" -v last="$UD_LAST" -v pct="$PERCENT" \
+    -v align="$ALIGN" 'BEGIN {
+        if (pct < 5 || pct > 95) exit 1
+        total = last - first + 1
+        android = int(total * pct / 100)
+        android = int(android / align) * align
+        if (android <= 0) exit 1
+        ud_last = first + android - 1
+        lr_first = ud_last + 1
+        linux = last - lr_first + 1
+        if (linux <= 0) exit 1
+        if (lr_first % align != 0) exit 1
+        printf "%d %d %d %d\n", ud_last, lr_first, android, linux
+    }')"
+[ -n "$PLAN" ] || abort "cannot work out a $PERCENT% split of this partition"
+
+set -- $PLAN
+UD_NEW_LAST=$1
+LR_FIRST=$2
+ANDROID_SECTORS=$3
+LINUX_SECTORS=$4
+
+gib() {
+    awk -v s="$1" 'BEGIN { printf "%.1f GiB", s * 4096 / 1073741824 }'
+}
+
+ui_print "Splitting userdata $PERCENT% Android / $((100 - PERCENT))% Linux:"
+ui_print "  userdata   $(gib "$ANDROID_SECTORS")"
+ui_print "  linuxroot  $(gib "$LINUX_SECTORS")"
+ui_print ""
+ui_print "Everything Android keeps in userdata is lost. Its system"
+ui_print "image, the bootloader and the calibration partitions are"
+ui_print "not touched."
+
+# ---------------------------------------------------------------------------
+# Back up the table before touching it
+# ---------------------------------------------------------------------------
+#
+# /tmp does not survive a reboot, and the partition this ZIP is about to
+# shorten is the likeliest place for the ZIP itself to be sitting.  So the
+# backup is written beside the ZIP when that is somewhere else, and the
+# operator is told where it went either way.
+
+backup_to() {
+    # A leftover from an earlier run would otherwise pass the size check below
+    # and be mistaken for the backup just taken.
+    rm -f "$1" 2>/dev/null
+    sgdisk --backup="$1" "$DISK" >/dev/null 2>&1 || return 1
+    [ -s "$1" ] || return 1
+    return 0
+}
+
+ZIPDIR="$(dirname "$ZIPFILE")"
+BACKUP=""
+case "$ZIPDIR" in
+    /data/*|/sdcard/*|/mnt/sdcard/*|/storage/emulated/*|/tmp*|"") ;;
+    *)
+        # Somewhere that survives a reboot, when the ZIP is on a microSD or an
+        # OTG drive.  A card mounted read-only is a good enough reason to fall
+        # back rather than to refuse the split.
+        if backup_to "$ZIPDIR/gpt-sda-before-split.bin"; then
+            BACKUP="$ZIPDIR/gpt-sda-before-split.bin"
+        fi
+        ;;
+esac
+if [ -z "$BACKUP" ]; then
+    backup_to /tmp/gpt-sda-before-split.bin || \
+        abort "cannot back up the partition table"
+    BACKUP=/tmp/gpt-sda-before-split.bin
+fi
+ui_print "Partition table backed up to $BACKUP"
+case "$BACKUP" in
+    /tmp/*)
+        ui_print "That is on a RAM disk and disappears at the next reboot."
+        ui_print "Pull it now if you want to keep it:"
+        ui_print "  adb pull $BACKUP"
+        ;;
+esac
+
+# ---------------------------------------------------------------------------
+# The one write
+# ---------------------------------------------------------------------------
+#
+# Deleting and recreating in a single sgdisk invocation matters: sgdisk applies
+# every option to the table it holds in memory and writes once at the end, so
+# the tablet never sees a table with entry 34 missing.  Split across two calls,
+# a failure between them would leave the disk without a userdata entry at all.
+
+ui_print "Rewriting GPT entries 34 and 35..."
+sgdisk \
+    --delete=34 \
+    --new=34:"$UD_FIRST":"$UD_NEW_LAST" \
+    --typecode=34:"$UD_GUID" \
+    --partition-guid=34:"$UD_GUID" \
+    --change-name=34:userdata \
+    --new=35:"$LR_FIRST":"$UD_LAST" \
+    --typecode=35:"$LR_GUID" \
+    --change-name=35:linuxroot \
+    "$DISK" >/dev/null 2>&1 || {
+        ui_print "sgdisk failed. The table is backed up at:"
+        ui_print "  $BACKUP"
+        ui_print "Restore it with: sgdisk --load-backup=$BACKUP $DISK"
+        abort "could not rewrite the partition table"
+    }
+sync
+
+# ---------------------------------------------------------------------------
+# Read it back
+# ---------------------------------------------------------------------------
+
+CHECK34="$(sgdisk --info=34 "$DISK" 2>/dev/null)"
+CHECK35="$(sgdisk --info=35 "$DISK" 2>/dev/null)"
+NEW34_LAST="$(echo "$CHECK34" | sed -n 's/^Last sector: \([0-9]*\).*/\1/p')"
+NEW35_NAME="$(echo "$CHECK35" | sed -n "s/^Partition name: '\(.*\)'\$/\1/p")"
+NEW35_FIRST="$(echo "$CHECK35" | sed -n 's/^First sector: \([0-9]*\).*/\1/p')"
+
+[ "$NEW34_LAST" = "$UD_NEW_LAST" ] || \
+    abort "userdata did not come back the size it was asked for; restore $BACKUP"
+[ "$NEW35_NAME" = linuxroot ] || \
+    abort "linuxroot is not there; restore $BACKUP"
+[ "$NEW35_FIRST" = "$LR_FIRST" ] || \
+    abort "linuxroot did not come back where it was asked for; restore $BACKUP"
+
+ui_print "---------------------------------------"
+ui_print " The table now has userdata and linuxroot."
+ui_print " This ZIP does not reboot and does not format."
+ui_print ""
+ui_print " The running kernel still holds the old table,"
+ui_print " so the next two steps are not optional:"
+ui_print ""
+ui_print "  1. Reboot -> Recovery, to reread the table."
+ui_print "  2. Wipe -> Format Data. Android cannot mount"
+ui_print "     the shortened userdata until it is"
+ui_print "     recreated, and this is also what makes"
+ui_print "     One UI regenerate its encryption keys."
+ui_print ""
+ui_print " Then flash the Ubuntu installation ZIP."
+ui_print "---------------------------------------"
+exit 0

@@ -6226,3 +6226,53 @@ Superusuario, activando el interruptor de la entrada `[SharedUID] Shell`.
 También conviene saber que en este One UI `which su` y `which magisk` devuelven
 rutas en `/product/bin`: son los binarios que Magisk inyecta por su montaje
 systemless, no los de Samsung.
+
+## Sesión 98 — el reparticionado como `.zip`, probado sobre un disco falso
+
+Hasta ahora dividir la UFS pedía un PC: `scripts/repartition-ufs.sh` por ADB
+desde TWRP. El instalador equivalente, `configs/twrp/repartition-update-binary`,
+hace lo mismo desde el propio aparato, y `scripts/make-repartition-zip.py` lo
+empaqueta con el porcentaje dentro. El reparto va escrito en el ZIP y no se
+pregunta en la tablet, porque TWRP no tiene forma de preguntar y una división
+no es algo que deba salir mal por un toque de más.
+
+Dos cosas cambian al mover la lógica al aparato.
+
+La primera es la aritmética. TWRP ejecuta el script con mksh, cuyo `$(( ))` y
+cuyo `test` son de 32 bits con signo. Un modelo de 1 TB tiene aquí unos 246
+millones de sectores, y multiplicar eso por un porcentaje desborda antes de
+llegar a la división. Todos los números los calcula `awk`, que trabaja en
+dobles y guarda exactos todos los enteros que salen.
+
+La segunda es que ya no hay un PC donde dejar el respaldo de la GPT. Se escribe
+al lado del ZIP cuando el ZIP está en una microSD o en un OTG, y a `/tmp` si
+no, avisando de que eso es un disco RAM. Un primer intento abortaba la
+instalación entera si ese directorio no era escribible; ahora recurre a `/tmp`,
+que es lo razonable: una tarjeta montada en solo lectura no es motivo para
+negarse a particionar.
+
+El borrado y la creación van en **una sola invocación de sgdisk**. sgdisk aplica
+todas las opciones sobre la tabla que tiene en memoria y escribe una vez al
+final, así que el aparato nunca llega a ver una tabla sin la entrada 34. Partido
+en dos llamadas, un fallo entre medias dejaría el disco sin `userdata`.
+
+### Probado sin tocar la tablet
+
+Como esta tablet ya está dividida, el guarda la rechazaría, y probar el camino
+bueno costaría los datos de One UI. Así que se montó un disco falso: un fichero
+disperso de 249 720 832 sectores en un loop con `-b 4096`, con el GUID de disco
+real y la entrada 34 en su sitio, y se ejecutó el instalador **con mksh**, que
+es el shell que usa TWRP, con `getprop` y `unzip` simulados.
+
+El 40/60 sale exacto: `userdata` 375,5 GiB, `linuxroot` 563,3 GiB, la segunda
+alineada a 512 sectores y los dos GUID de `userdata` reproducidos. Y lo que más
+importa: cargar el respaldo devuelve una tabla **byte a byte idéntica** a la de
+antes. Los cuatro rechazos también se comprobaron —tablet ya dividida, aparato
+que no es un X910, porcentaje absurdo, y disco que no es la UFS interna—, todos
+antes de escribir nada.
+
+Lo que el ZIP deliberadamente **no** hace es formatear. Acortar `userdata` deja
+dentro un sistema de ficheros que describe una partición que ya no llega hasta
+ahí, así que Android no puede montarlo y hay que rehacerlo; pero eso lo hace el
+Format Data de TWRP, que pide confirmación escrita. Este ZIP no debería ser lo
+que borra una tablet en silencio.
