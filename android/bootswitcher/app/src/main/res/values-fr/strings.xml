@@ -21,6 +21,7 @@
     <string name="state_incomplete">Des images manquent ou ont une taille anormale</string>
 
     <string name="action_stage">Changer au prochain redémarrage</string>
+    <string name="action_console">Afficher le détail</string>
     <string name="action_reboot">Redémarrer</string>
     <string name="action_cancel">Annuler</string>
 

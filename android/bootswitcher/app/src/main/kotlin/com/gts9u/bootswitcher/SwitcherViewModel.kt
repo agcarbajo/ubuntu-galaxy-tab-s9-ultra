@@ -26,9 +26,13 @@ data class UiState(
     val written: List<String> = emptyList(),
     /** True once a write has ended, so the progress dialog can show a verdict. */
     val finished: Boolean = false,
-    val errorRes: Int? = null,
-    val errorArg: String = "",
-    val errorDetail: String = "",
+    /** True once anything has been written this session: the console has something to show. */
+    val hasRun: Boolean = false,
+    /** Whether the progress dialog is on screen. Closing it does not discard the run. */
+    val showProgress: Boolean = false,
+    val runError: Int? = null,
+    val runErrorArg: String = "",
+    val runErrorDetail: String = "",
 ) {
     /** Written but not yet booted: only a restart is missing. */
     val staged: Boolean
@@ -45,7 +49,7 @@ class SwitcherViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun refresh() = viewModelScope.launch {
-        _state.update { it.copy(loading = true, errorRes = null) }
+        _state.update { it.copy(loading = true) }
 
         val context = getApplication<Application>()
         val snapshot = withContext(Dispatchers.IO) {
@@ -75,9 +79,7 @@ class SwitcherViewModel(app: Application) : AndroidViewModel(app) {
         }
 
         if (snapshot == null) {
-            _state.update {
-                it.copy(loading = false, hasRoot = false, errorRes = R.string.error_no_root)
-            }
+            _state.update { it.copy(loading = false, hasRoot = false) }
             return@launch
         }
 
@@ -105,8 +107,18 @@ class SwitcherViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun rebootInto(set: BootSets.BootSet) = apply(set, thenReboot = true)
 
+    /**
+     * Hides the progress dialog without throwing the run away.
+     *
+     * What happened is kept so the console button can bring it back: the whole
+     * point of hiding the detail is that it stays available.
+     */
     fun dismissProgress() {
-        _state.update { it.copy(finished = false, writing = null, written = emptyList()) }
+        _state.update { it.copy(showProgress = false) }
+    }
+
+    fun reopenProgress() {
+        _state.update { it.copy(showProgress = true) }
     }
 
     private fun apply(set: BootSets.BootSet, thenReboot: Boolean) = viewModelScope.launch {
@@ -123,9 +135,10 @@ class SwitcherViewModel(app: Application) : AndroidViewModel(app) {
                 writing = null,
                 written = emptyList(),
                 finished = false,
-                errorRes = null,
-                errorArg = "",
-                errorDetail = "",
+                showProgress = true,
+                runError = null,
+                runErrorArg = "",
+                runErrorDetail = "",
             )
         }
 
@@ -142,9 +155,9 @@ class SwitcherViewModel(app: Application) : AndroidViewModel(app) {
                         _state.update {
                             it.copy(
                                 writing = null,
-                                errorRes = progress.text,
-                                errorArg = progress.arg,
-                                errorDetail = progress.detail,
+                                runError = progress.text,
+                                runErrorArg = progress.arg,
+                                runErrorDetail = progress.detail,
                             )
                         }
                     BootSets.Progress.Done -> Unit
@@ -162,6 +175,7 @@ class SwitcherViewModel(app: Application) : AndroidViewModel(app) {
             it.copy(
                 busy = false,
                 finished = true,
+                hasRun = true,
                 nextBoot = if (ok) set else it.nextBoot,
             )
         }

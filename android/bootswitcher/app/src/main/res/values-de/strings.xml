@@ -21,6 +21,7 @@
     <string name="state_incomplete">Es fehlen Abbilder oder sie haben eine seltsame Größe</string>
 
     <string name="action_stage">Beim nächsten Neustart wechseln</string>
+    <string name="action_console">Details anzeigen</string>
     <string name="action_reboot">Neu starten</string>
     <string name="action_cancel">Rückgängig</string>
 

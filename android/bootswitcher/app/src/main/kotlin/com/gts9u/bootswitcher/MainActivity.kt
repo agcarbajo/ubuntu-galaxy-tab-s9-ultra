@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.RestartAlt
+import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -60,6 +61,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -119,6 +121,9 @@ private fun formatSize(bytes: Long): String {
 fun SwitcherScreen(vm: SwitcherViewModel = viewModel()) {
     val state by vm.state.collectAsStateWithLifecycle()
     var showAbout by remember { mutableStateOf(false) }
+    // Off by default: what matters is whether it worked, not which of the four
+    // partitions is being written. The console button is for when it didn't.
+    var showConsole by rememberSaveable { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -152,6 +157,10 @@ fun SwitcherScreen(vm: SwitcherViewModel = viewModel()) {
                         state,
                         onStage = { vm.stage(it) },
                         onReboot = { vm.rebootInto(it) },
+                        onConsole = {
+                            showConsole = true
+                            vm.reopenProgress()
+                        },
                     )
                 }
 
@@ -168,8 +177,13 @@ fun SwitcherScreen(vm: SwitcherViewModel = viewModel()) {
     }
 
     if (showAbout) AboutDialog(onDismiss = { showAbout = false })
-    if (state.busy || state.finished) {
-        ProgressDialog(state, onDismiss = { vm.dismissProgress() })
+    if (state.showProgress) {
+        ProgressDialog(
+            state,
+            showConsole = showConsole,
+            onToggleConsole = { showConsole = !showConsole },
+            onDismiss = { vm.dismissProgress() },
+        )
     }
 }
 
@@ -194,7 +208,7 @@ private fun HeroCard(state: UiState) {
         )
         !state.hasRoot -> Triple(
             stringResource(R.string.hero_no_root),
-            stringResource(state.errorRes ?: R.string.error_no_root),
+            stringResource(R.string.error_no_root),
             Icons.Filled.Warning,
         )
         running == null -> Triple(
@@ -268,6 +282,7 @@ private fun SystemsCard(
     state: UiState,
     onStage: (BootSets.BootSet) -> Unit,
     onReboot: (BootSets.BootSet) -> Unit,
+    onConsole: () -> Unit,
 ) {
     Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp)) {
         // The running system first: it answers "where am I", and the rest of
@@ -317,7 +332,18 @@ private fun SystemsCard(
                         enabled = !state.busy,
                     ) { Text(stringResource(R.string.action_cancel)) }
 
-                    set.complete -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    set.complete -> Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        // Only offered once there is something to look at.
+                        IconButton(onClick = onConsole, enabled = state.hasRun) {
+                            Icon(
+                                Icons.Filled.Terminal,
+                                contentDescription = stringResource(R.string.action_console),
+                            )
+                        }
+
                         // Already written: greyed out, because pressing it
                         // again would rewrite four identical partitions.
                         FilledTonalButton(
@@ -580,16 +606,25 @@ private fun AboutDialog(onDismiss: () -> Unit) {
 }
 
 /**
- * The four partitions, drawn up front and lit one by one.
+ * What is happening, and — only if asked — which partition it is happening to.
  *
- * The whole job is known before it starts, so there is no reason to grow a
- * list of lines under the rest of the screen: the steps are laid out from the
- * first frame and only their state changes, which also keeps the layout from
- * jumping while the tablet is being written to.
+ * The partition list is the useful thing exactly twice: while something is
+ * going wrong, and afterwards when working out what did. The rest of the time
+ * it is four lines of noise in front of a one-line answer, so it is folded
+ * away behind the console button and the verdict is what the dialog says.
+ *
+ * When it is shown, the whole job is already known, so all four are laid out
+ * from the first frame and only their state changes: nothing grows, and the
+ * layout does not jump while the tablet is being written to.
  */
 @Composable
-private fun ProgressDialog(state: UiState, onDismiss: () -> Unit) {
-    val failed = state.errorRes != null
+private fun ProgressDialog(
+    state: UiState,
+    showConsole: Boolean,
+    onToggleConsole: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val failed = state.runError != null
     val done = state.finished && !failed
 
     AlertDialog(
@@ -598,6 +633,16 @@ private fun ProgressDialog(state: UiState, onDismiss: () -> Unit) {
         confirmButton = {
             if (!state.busy) {
                 TextButton(onClick = onDismiss) { Text(stringResource(R.string.close)) }
+            }
+        },
+        dismissButton = {
+            IconButton(onClick = onToggleConsole) {
+                Icon(
+                    Icons.Filled.Terminal,
+                    contentDescription = stringResource(R.string.action_console),
+                    tint = if (showConsole) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         },
         icon = {
@@ -629,27 +674,28 @@ private fun ProgressDialog(state: UiState, onDismiss: () -> Unit) {
                     color = if (failed) MaterialTheme.colorScheme.error
                     else MaterialTheme.colorScheme.primary,
                 )
-                Spacer(Modifier.height(6.dp))
-
-                BootSets.PARTITIONS.forEach { part ->
-                    PartitionRow(
-                        name = part.name,
-                        verified = part.name in state.written,
-                        active = part.name == state.writing,
-                    )
+                if (showConsole) {
+                    Spacer(Modifier.height(6.dp))
+                    BootSets.PARTITIONS.forEach { part ->
+                        PartitionRow(
+                            name = part.name,
+                            verified = part.name in state.written,
+                            active = part.name == state.writing,
+                        )
+                    }
                 }
 
                 Spacer(Modifier.height(6.dp))
                 when {
                     failed -> {
                         Text(
-                            stringResource(state.errorRes!!, state.errorArg),
+                            stringResource(state.runError!!, state.runErrorArg),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.error,
                         )
-                        if (state.errorDetail.isNotBlank()) {
+                        if (state.runErrorDetail.isNotBlank() && showConsole) {
                             Text(
-                                state.errorDetail,
+                                state.runErrorDetail,
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )

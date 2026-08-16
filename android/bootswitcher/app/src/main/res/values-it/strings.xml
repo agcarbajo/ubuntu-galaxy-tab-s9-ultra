@@ -21,6 +21,7 @@
     <string name="state_incomplete">Mancano immagini o hanno una dimensione strana</string>
 
     <string name="action_stage">Cambia al prossimo riavvio</string>
+    <string name="action_console">Mostra il dettaglio</string>
     <string name="action_reboot">Riavvia</string>
     <string name="action_cancel">Annulla</string>
 

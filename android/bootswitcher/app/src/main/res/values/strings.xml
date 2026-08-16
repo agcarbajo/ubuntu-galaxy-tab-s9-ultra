@@ -35,6 +35,7 @@
     <string name="state_incomplete">Images are missing or have an odd size</string>
 
     <string name="action_stage">Switch on next restart</string>
+    <string name="action_console">Show the detail</string>
     <string name="action_reboot">Restart</string>
     <string name="action_cancel">Undo</string>
 
