@@ -61,7 +61,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -121,9 +120,6 @@ private fun formatSize(bytes: Long): String {
 fun SwitcherScreen(vm: SwitcherViewModel = viewModel()) {
     val state by vm.state.collectAsStateWithLifecycle()
     var showAbout by remember { mutableStateOf(false) }
-    // Off by default: what matters is whether it worked, not which of the four
-    // partitions is being written. The console button is for when it didn't.
-    var showConsole by rememberSaveable { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -151,16 +147,19 @@ fun SwitcherScreen(vm: SwitcherViewModel = viewModel()) {
             ) {
                 HeroCard(state)
 
+                // Nothing pops up any more, so this is where a run says it is
+                // happening and, more to the point, where it says it failed.
+                if (state.busy || state.runError != null) {
+                    RunCard(state, onConsole = { vm.reopenProgress() })
+                }
+
                 if (state.hasRoot && state.sets.isNotEmpty()) {
                     SectionTitle(stringResource(R.string.section_systems))
                     SystemsCard(
                         state,
                         onStage = { vm.stage(it) },
                         onReboot = { vm.rebootInto(it) },
-                        onConsole = {
-                            showConsole = true
-                            vm.reopenProgress()
-                        },
+                        onConsole = { vm.reopenProgress() },
                     )
                 }
 
@@ -177,14 +176,7 @@ fun SwitcherScreen(vm: SwitcherViewModel = viewModel()) {
     }
 
     if (showAbout) AboutDialog(onDismiss = { showAbout = false })
-    if (state.showProgress) {
-        ProgressDialog(
-            state,
-            showConsole = showConsole,
-            onToggleConsole = { showConsole = !showConsole },
-            onDismiss = { vm.dismissProgress() },
-        )
-    }
+    if (state.showProgress) ConsoleDialog(state, onDismiss = { vm.dismissProgress() })
 }
 
 @Composable
@@ -277,6 +269,62 @@ private fun HeroCard(state: UiState) {
     }
 }
 
+/**
+ * A run in progress, or the one that failed.
+ *
+ * Success says nothing here: the rows below already change to say which system
+ * boots next, and a card repeating it would be one more thing to dismiss. A
+ * failure is the opposite — it has to be impossible to miss, because the
+ * tablet may be holding three of four partitions from a system it is not
+ * running, and that only matters at the next restart.
+ */
+@Composable
+private fun RunCard(state: UiState, onConsole: () -> Unit) {
+    val failed = state.runError != null
+    Card(
+        Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (failed) MaterialTheme.colorScheme.errorContainer
+            else MaterialTheme.colorScheme.secondaryContainer,
+        ),
+    ) {
+        Row(
+            Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (failed) {
+                Icon(Icons.Filled.Warning, contentDescription = null)
+            } else {
+                CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+            }
+            Spacer(Modifier.width(16.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    stringResource(
+                        if (failed) R.string.progress_failed_title
+                        else R.string.progress_title
+                    ),
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                if (failed) {
+                    Text(
+                        stringResource(state.runError!!, state.runErrorArg),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+            Spacer(Modifier.width(12.dp))
+            IconButton(onClick = onConsole) {
+                Icon(
+                    Icons.Filled.Terminal,
+                    contentDescription = stringResource(R.string.action_console),
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun SystemsCard(
     state: UiState,
@@ -337,7 +385,10 @@ private fun SystemsCard(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         // Only offered once there is something to look at.
-                        IconButton(onClick = onConsole, enabled = state.hasRun) {
+                        IconButton(
+                            onClick = onConsole,
+                            enabled = state.hasRun || state.busy,
+                        ) {
                             Icon(
                                 Icons.Filled.Terminal,
                                 contentDescription = stringResource(R.string.action_console),
@@ -606,44 +657,27 @@ private fun AboutDialog(onDismiss: () -> Unit) {
 }
 
 /**
- * What is happening, and — only if asked — which partition it is happening to.
+ * Which partition is being written, for whoever asks.
  *
- * The partition list is the useful thing exactly twice: while something is
- * going wrong, and afterwards when working out what did. The rest of the time
- * it is four lines of noise in front of a one-line answer, so it is folded
- * away behind the console button and the verdict is what the dialog says.
+ * Never opened on its own.  Writing four partitions is a few seconds' work
+ * whose only interesting outcome is whether it worked, and the card on the
+ * screen says that already; a dialog appearing by itself would be something to
+ * dismiss rather than something to read.  This is here for the times it did
+ * not work, and for anyone who simply wants to watch.
  *
- * When it is shown, the whole job is already known, so all four are laid out
- * from the first frame and only their state changes: nothing grows, and the
- * layout does not jump while the tablet is being written to.
+ * The whole job is known before it starts, so all four rows are laid out from
+ * the first frame and only their state changes: nothing grows, and the layout
+ * does not jump while the tablet is being written to.
  */
 @Composable
-private fun ProgressDialog(
-    state: UiState,
-    showConsole: Boolean,
-    onToggleConsole: () -> Unit,
-    onDismiss: () -> Unit,
-) {
+private fun ConsoleDialog(state: UiState, onDismiss: () -> Unit) {
     val failed = state.runError != null
     val done = state.finished && !failed
 
     AlertDialog(
-        // Dismissing mid-write would hide a job that keeps running.
-        onDismissRequest = { if (!state.busy) onDismiss() },
+        onDismissRequest = onDismiss,
         confirmButton = {
-            if (!state.busy) {
-                TextButton(onClick = onDismiss) { Text(stringResource(R.string.close)) }
-            }
-        },
-        dismissButton = {
-            IconButton(onClick = onToggleConsole) {
-                Icon(
-                    Icons.Filled.Terminal,
-                    contentDescription = stringResource(R.string.action_console),
-                    tint = if (showConsole) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.close)) }
         },
         icon = {
             Icon(
@@ -674,15 +708,13 @@ private fun ProgressDialog(
                     color = if (failed) MaterialTheme.colorScheme.error
                     else MaterialTheme.colorScheme.primary,
                 )
-                if (showConsole) {
-                    Spacer(Modifier.height(6.dp))
-                    BootSets.PARTITIONS.forEach { part ->
-                        PartitionRow(
-                            name = part.name,
-                            verified = part.name in state.written,
-                            active = part.name == state.writing,
-                        )
-                    }
+                Spacer(Modifier.height(6.dp))
+                BootSets.PARTITIONS.forEach { part ->
+                    PartitionRow(
+                        name = part.name,
+                        verified = part.name in state.written,
+                        active = part.name == state.writing,
+                    )
                 }
 
                 Spacer(Modifier.height(6.dp))
@@ -693,7 +725,7 @@ private fun ProgressDialog(
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.error,
                         )
-                        if (state.runErrorDetail.isNotBlank() && showConsole) {
+                        if (state.runErrorDetail.isNotBlank()) {
                             Text(
                                 state.runErrorDetail,
                                 style = MaterialTheme.typography.bodySmall,

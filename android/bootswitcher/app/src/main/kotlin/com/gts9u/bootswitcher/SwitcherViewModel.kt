@@ -28,7 +28,13 @@ data class UiState(
     val finished: Boolean = false,
     /** True once anything has been written this session: the console has something to show. */
     val hasRun: Boolean = false,
-    /** Whether the progress dialog is on screen. Closing it does not discard the run. */
+    /**
+     * Whether the console is on screen.
+     *
+     * Only ever opened by asking for it: writing four partitions takes a few
+     * seconds and the card already says it is working, so a dialog in the way
+     * would be something to dismiss rather than something to read.
+     */
     val showProgress: Boolean = false,
     val runError: Int? = null,
     val runErrorArg: String = "",
@@ -108,10 +114,10 @@ class SwitcherViewModel(app: Application) : AndroidViewModel(app) {
     fun rebootInto(set: BootSets.BootSet) = apply(set, thenReboot = true)
 
     /**
-     * Hides the progress dialog without throwing the run away.
+     * Hides the console without throwing the run away.
      *
      * What happened is kept so the console button can bring it back: the whole
-     * point of hiding the detail is that it stays available.
+     * point of not showing the detail is that it stays available.
      */
     fun dismissProgress() {
         _state.update { it.copy(showProgress = false) }
@@ -135,7 +141,6 @@ class SwitcherViewModel(app: Application) : AndroidViewModel(app) {
                 writing = null,
                 written = emptyList(),
                 finished = false,
-                showProgress = true,
                 runError = null,
                 runErrorArg = "",
                 runErrorDetail = "",
