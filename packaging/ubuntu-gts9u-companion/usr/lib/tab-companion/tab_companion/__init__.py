@@ -1,4 +1,4 @@
 # SPDX-License-Identifier: MIT
 
 APP_ID = "io.github.agcarbajo.TabCompanion"
-VERSION = "0.10.8"
+VERSION = "1.0.0"

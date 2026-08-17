@@ -1255,10 +1255,74 @@ class HardwareService:
         self.execute_mapping("gesture-single-press")
         return GLib.SOURCE_REMOVE
 
+    FLASHLIGHT_SCHEMA = "io.github.agcarbajo.GTS9UFlashlight"
+    FLASHLIGHT_LED = "/sys/class/leds/white:flash/brightness"
+
+    def _flashlight_settings(self):
+        """The torch's shared state, or None when the device package is absent.
+
+        This lives in ubuntu-gts9u-device, which this package does not depend
+        on, so a missing schema has to be an ordinary answer rather than a
+        crash that would take the whole daemon with it.
+        """
+        if getattr(self, "_flashlight_gsettings", "unset") != "unset":
+            return self._flashlight_gsettings
+        source = Gio.SettingsSchemaSource.get_default()
+        schema = source.lookup(self.FLASHLIGHT_SCHEMA, True) if source else None
+        self._flashlight_gsettings = Gio.Settings(schema_id=self.FLASHLIGHT_SCHEMA) if schema else None
+        return self._flashlight_gsettings
+
+    def toggle_flashlight(self):
+        """Flip the torch, at the brightness the quick-settings slider chose.
+
+        `gts9u-flashlight toggle` would light it at the helper's own default and
+        ignore that slider, so the two halves are done here: read the LED, then
+        ask for the opposite.  Writing the result into the shared setting is
+        what lets the quick-settings tile and its status icon follow a shortcut
+        -- sysfs announces nothing when it is written, so without this the tile
+        would keep showing the state from before.
+        """
+        settings = self._flashlight_settings()
+        try:
+            lit = int(read_text(self.FLASHLIGHT_LED, "0") or 0) > 0
+        except ValueError:
+            lit = False
+
+        if lit:
+            argv = ["/usr/bin/gts9u-flashlight", "off"]
+        else:
+            level = settings.get_int("brightness") if settings is not None else 128
+            argv = ["/usr/bin/gts9u-flashlight", "on", str(max(1, level))]
+
+        try:
+            subprocess.Popen(argv, start_new_session=True)
+        except OSError as error:
+            print(f"Cannot toggle flashlight: {error}", flush=True)
+            return False
+
+        if settings is not None:
+            # The helper has not necessarily finished; the tile re-reads the LED
+            # when it sees this, so the value only has to be a nudge.
+            GLib.timeout_add(120, self._announce_flashlight, settings)
+        return True
+
+    def _announce_flashlight(self, settings):
+        try:
+            lit = int(read_text(self.FLASHLIGHT_LED, "0") or 0) > 0
+        except ValueError:
+            lit = False
+        settings.set_boolean("on", lit)
+        return GLib.SOURCE_REMOVE
+
     def execute_mapping(self, mapping):
         if mapping not in MAPPINGS and not mapping.startswith("gesture-"):
             return False
         action = self.settings.get_string(mapping)
+        if action == "nothing":
+            # The opposite of "none": the key was intercepted on purpose, and
+            # doing nothing with it is the point.  Reporting success is what
+            # stops the caller from falling back to the key's own behaviour.
+            return True
         if action == "none":
             default = DEFAULT_KEY_ACTIONS.get(mapping)
             if default is None:
@@ -1273,15 +1337,7 @@ class HardwareService:
             self.virtual_keyboard.tap(ACTION_KEYS[action])
             return True
         if action == "flashlight":
-            try:
-                subprocess.Popen(
-                    ["/usr/bin/gts9u-flashlight", "toggle"],
-                    start_new_session=True,
-                )
-                return True
-            except OSError as error:
-                print(f"Cannot toggle flashlight: {error}", flush=True)
-                return False
+            return self.toggle_flashlight()
         if action == "app" and target:
             app = Gio.DesktopAppInfo.new(target)
             if app is None:

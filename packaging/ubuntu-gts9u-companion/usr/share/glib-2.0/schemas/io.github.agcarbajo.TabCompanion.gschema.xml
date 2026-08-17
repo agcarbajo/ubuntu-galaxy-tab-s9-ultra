@@ -1,15 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <schemalist gettext-domain="ubuntu-gts9u-companion">
   <schema id="io.github.agcarbajo.TabCompanion" path="/io/github/agcarbajo/TabCompanion/">
-    <key name="gesture-single-press" type="s"><default>'none'</default></key>
-    <key name="gesture-double-press" type="s"><default>'none'</default></key>
-    <key name="gesture-long-press" type="s"><default>'none'</default></key>
-    <key name="gesture-swipe-up" type="s"><default>'none'</default></key>
-    <key name="gesture-swipe-down" type="s"><default>'none'</default></key>
-    <key name="gesture-swipe-left" type="s"><default>'none'</default></key>
-    <key name="gesture-swipe-right" type="s"><default>'none'</default></key>
-    <key name="gesture-circle-clockwise" type="s"><default>'none'</default></key>
-    <key name="gesture-circle-counterclockwise" type="s"><default>'none'</default></key>
+    <key name="gesture-single-press" type="s"><default>'nothing'</default></key>
+    <key name="gesture-double-press" type="s"><default>'nothing'</default></key>
+    <key name="gesture-long-press" type="s"><default>'nothing'</default></key>
+    <key name="gesture-swipe-up" type="s"><default>'nothing'</default></key>
+    <key name="gesture-swipe-down" type="s"><default>'nothing'</default></key>
+    <key name="gesture-swipe-left" type="s"><default>'nothing'</default></key>
+    <key name="gesture-swipe-right" type="s"><default>'nothing'</default></key>
+    <key name="gesture-circle-clockwise" type="s"><default>'nothing'</default></key>
+    <key name="gesture-circle-counterclockwise" type="s"><default>'nothing'</default></key>
     <key name="key-galaxy-ai" type="s"><default>'none'</default></key>
     <key name="key-dex" type="s"><default>'none'</default></key>
     <key name="key-finder" type="s"><default>'none'</default></key>
@@ -31,6 +31,7 @@
     <key name="last-pen-battery" type="i"><default>-1</default></key>
     <key name="ignore-finger-while-hovering" type="b"><default>true</default></key>
     <key name="disable-digitizer-when-docked" type="b"><default>false</default></key>
+    <key name="pen-dock-popup" type="b"><default>true</default></key>
     <key name="spen-remote-enabled" type="b"><default>true</default></key>
     <key name="spen-remote-mode" type="s"><default>'gestures'</default></key>
     <key name="pointer-sensitivity" type="i"><default>100</default></key>

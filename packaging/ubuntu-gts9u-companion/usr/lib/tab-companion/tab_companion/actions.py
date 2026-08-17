@@ -13,8 +13,24 @@ class Action:
     icon_name: str
 
 
-ACTIONS = (
-    Action("none", N_("Keep the default action"), "edit-clear-all-symbolic"),
+"""
+The two lists differ by one entry each, and the difference is real.
+
+A cover key already does something on its own, so leaving it alone is a
+meaningful choice: that is "none", which tells the daemon not to intercept the
+key at all.  A pen gesture has no such fallback -- nothing in the system reacts
+to a double press of the S Pen button -- so offering to "keep the default"
+promised something that does not exist.  The pen therefore starts at "nothing",
+and only the keyboard keeps "none".
+
+"nothing" means the opposite of "none" where a key is concerned: intercept it
+and then do nothing, which is how you silence a key that would otherwise act.
+"""
+
+DO_NOTHING = Action("nothing", N_("Do nothing"), "action-unavailable-symbolic")
+KEEP_DEFAULT = Action("none", N_("Default action"), "edit-clear-all-symbolic")
+
+_SHARED = (
     Action("app", N_("Open an application"), "application-x-executable-symbolic"),
     Action("key", N_("Simulate a key"), "input-keyboard-symbolic"),
     Action("screenshot", N_("Take a screenshot"), "camera-photo-symbolic"),
@@ -31,17 +47,41 @@ ACTIONS = (
     Action("command", N_("Run a command"), "utilities-terminal-symbolic"),
 )
 
+PEN_ACTIONS = (DO_NOTHING,) + _SHARED
+KEY_ACTIONS = (KEEP_DEFAULT, DO_NOTHING) + _SHARED
+
+# Kept for anything that just needs to know an identifier exists.
+ACTIONS = (KEEP_DEFAULT, DO_NOTHING) + _SHARED
 ACTION_IDS = tuple(action.action_id for action in ACTIONS)
 
 
-def action_index(action_id):
+def actions_for(setting):
+    """Which list a settings key chooses from.
+
+    The prefix is the whole rule: `key-*` is a cover key, everything else is a
+    pen gesture.  Passing the list around instead would mean threading it
+    through every row, button and dialog for no extra information.
+    """
+    return KEY_ACTIONS if setting.startswith("key-") else PEN_ACTIONS
+
+
+def action_for(setting, action_id):
+    """The action a stored identifier means, for this kind of setting.
+
+    A pen gesture saved as "none" by an older version lands on "nothing", which
+    is what it always did in practice: the pen had no default to keep.
+    """
+    for action in actions_for(setting):
+        if action.action_id == action_id:
+            return action
+    return actions_for(setting)[0]
+
+
+def action_index(setting, action_id):
     """Return a safe model index for a persisted action identifier."""
-    try:
-        return ACTION_IDS.index(action_id)
-    except ValueError:
-        return 0
+    return actions_for(setting).index(action_for(setting, action_id))
 
 
-def action_label(action_id):
+def action_label(setting, action_id):
     """Return the display label for a persisted action identifier."""
-    return _(ACTIONS[action_index(action_id)].label)
+    return _(action_for(setting, action_id).label)

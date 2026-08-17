@@ -6,7 +6,7 @@ from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 
 from . import VERSION
 from . import boot_sets
-from .actions import ACTIONS, action_index, action_label
+from .actions import action_for, action_label, actions_for
 from .hardware import HardwareClient
 from .i18n import _, N_
 from .key_selector import KeyChooser, chord_label
@@ -131,7 +131,7 @@ class ActionChooser(Adw.Window):
         choices.set_margin_bottom(12)
         choices.set_margin_start(12)
         choices.set_margin_end(12)
-        for action in ACTIONS:
+        for action in actions_for(setting):
             row = Adw.ActionRow(title=_(action.label), activatable=True)
             row.add_prefix(Gtk.Image(icon_name=action.icon_name))
             check = Gtk.Image(icon_name="object-select-symbolic")
@@ -676,6 +676,16 @@ class CompanionWindow(Adw.ApplicationWindow):
             Gio.SettingsBindFlags.DEFAULT,
         )
         behaviour.add(dock_disable)
+        dock_popup = Adw.SwitchRow(
+            title=_("Show the pen when it goes back in"),
+            subtitle=_("A panel slides in from the silo edge with the pen's charge, and follows the screen when it rotates."),
+        )
+        dock_popup.add_prefix(Gtk.Image(icon_name="view-reveal-symbolic"))
+        self.settings.bind(
+            "pen-dock-popup", dock_popup, "active",
+            Gio.SettingsBindFlags.DEFAULT,
+        )
+        behaviour.add(dock_popup)
         page.add(behaviour)
         page.add(remote)
 
@@ -894,8 +904,8 @@ class CompanionWindow(Adw.ApplicationWindow):
 
     def _action_button_content(self, setting):
         action_id = self.settings.get_string(setting)
-        action = ACTIONS[action_index(action_id)]
-        label = action_label(action_id)
+        action = action_for(setting, action_id)
+        label = action_label(setting, action_id)
         targets = self.settings.get_value("action-targets").unpack()
         target = targets.get(setting, "")
         icon = action.icon_name
@@ -971,9 +981,13 @@ class CompanionWindow(Adw.ApplicationWindow):
         window.set_default_size(560, 560)
         toolbar = Adw.ToolbarView()
         toolbar.add_top_bar(Adw.HeaderBar())
+        # Which of these has been tried on real hardware belongs in the README,
+        # not here: someone reading this list wants to know whether their cover
+        # is one of them, and a testing caveat next to every model answers a
+        # question they did not ask.
         group = Adw.PreferencesGroup(
             title=_("Samsung keyboard covers"),
-            description=_("Declared by the Galaxy Tab S9 Ultra firmware. Only EF-DX920 has been physically validated on this port."),
+            description=_("These covers work with this tablet."),
         )
         group.set_margin_top(18)
         group.set_margin_bottom(18)
@@ -985,8 +999,7 @@ class CompanionWindow(Adw.ApplicationWindow):
                 details.append(_("AI key"))
             if has_touchpad:
                 details.append(_("touchpad"))
-            support = _("Physically validated") if model == "EF-DX920" else _("Firmware-declared; not physically tested")
-            subtitle = f"{model} · {support}"
+            subtitle = model
             if details:
                 subtitle += " · " + ", ".join(details)
             row = Adw.ActionRow(title=name, subtitle=subtitle)

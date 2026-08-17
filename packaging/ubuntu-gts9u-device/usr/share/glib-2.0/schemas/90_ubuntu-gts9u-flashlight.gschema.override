@@ -15,4 +15,4 @@
 # comes from ubuntu-gts9u-companion, so that package must be installed for it
 # to appear — an unknown UUID in this list is ignored, not an error.
 [org.gnome.shell]
-enabled-extensions=['flashlight@ubuntu-gts9u', 'gts9u-fingerprint-overlay@agcarbajo', 'dualboot@agcarbajo.github.io']
+enabled-extensions=['flashlight@ubuntu-gts9u', 'gts9u-fingerprint-overlay@agcarbajo', 'dualboot@agcarbajo.github.io', 'spen-dock@agcarbajo.github.io']

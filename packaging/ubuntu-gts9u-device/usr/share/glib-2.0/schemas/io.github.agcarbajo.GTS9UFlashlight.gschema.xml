@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Shared ground between the quick-settings tile and whatever else turns the
+    torch on.  The LED itself is the truth; these keys exist so that a change
+    made by one side is *noticed* by the other.
+
+    Nothing in sysfs announces a write, so a shortcut writing straight to the
+    LED would leave the tile showing the opposite of reality until someone
+    reopened the menu.  Writing the resulting state here as well gives the tile
+    a change signal it can react to, and gsettings is the cheapest thing both
+    sides already have.
+
+    It lives in the device package because that is where the tile and the
+    helper live; the companion's daemon looks the schema up defensively, since
+    it does not depend on this package.
+-->
+<schemalist>
+  <schema id="io.github.agcarbajo.GTS9UFlashlight" path="/io/github/agcarbajo/GTS9UFlashlight/">
+    <key name="on" type="b">
+      <default>false</default>
+      <summary>Whether the torch was last seen lit</summary>
+      <description>
+        Written by whoever changed it, read as a hint that the LED should be
+        looked at again.  The LED remains the authority.
+      </description>
+    </key>
+    <key name="brightness" type="i">
+      <range min="1" max="255"/>
+      <default>128</default>
+      <summary>Level the torch turns on at</summary>
+      <description>
+        Applies to the tile's slider and to any shortcut mapped to the torch, so
+        turning it on from a pen gesture gives the brightness that was chosen in
+        the menu.
+      </description>
+    </key>
+  </schema>
+</schemalist>

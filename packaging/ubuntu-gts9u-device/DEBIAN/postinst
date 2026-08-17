@@ -75,6 +75,8 @@ case "$1" in
 				flashlight@ubuntu-gts9u || true
 			/usr/libexec/ubuntu-gts9u-enable-extension "$existing" \
 				gts9u-fingerprint-overlay@agcarbajo || true
+			/usr/libexec/ubuntu-gts9u-enable-extension "$existing" \
+				spen-dock@agcarbajo.github.io || true
 		done
 
 		# Apply the dynamic owner, device groups, linger and relay drop-in now too

@@ -1,0 +1,7 @@
+{
+  "uuid": "spen-dock@agcarbajo.github.io",
+  "name": "Tab Companion S Pen dock",
+  "description": "Shows the S Pen and its charge when the pen is put back in its silo, from the edge it went into",
+  "shell-version": ["46"],
+  "version": 1
+}

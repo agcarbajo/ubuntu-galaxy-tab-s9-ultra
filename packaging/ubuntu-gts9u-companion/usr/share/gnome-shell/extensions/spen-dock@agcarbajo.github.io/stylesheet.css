@@ -1,0 +1,32 @@
+/* Built from the shell's own OSD so the panel does not look like a guest:
+ * same dark translucent plate, same corner radius family, same text sizes. */
+.spen-dock-popup {
+  background-color: rgba(0, 0, 0, 0.82);
+  color: #ffffff;
+  border-radius: 22px;
+  padding: 16px 22px;
+  spacing: 16px;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.45);
+}
+
+.spen-dock-pen {
+  icon-size: 132px;
+  /* The artwork is a long thin pen; the icon box has to be wide enough that it
+   * is not squeezed into a square. */
+  width: 132px;
+  height: 40px;
+}
+
+.spen-dock-text {
+  spacing: 2px;
+}
+
+.spen-dock-title {
+  font-weight: bold;
+  font-size: 12pt;
+}
+
+.spen-dock-charge {
+  font-size: 10pt;
+  color: rgba(255, 255, 255, 0.75);
+}
