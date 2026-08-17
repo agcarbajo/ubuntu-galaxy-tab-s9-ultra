@@ -296,14 +296,39 @@ if [ -n "$zip" ] && [ -f "$zip" ]; then
 		# installer, so choosing between the two can never become a change to
 		# the GPT.
 		code=$(printf '%s\n' "$installer" | sed 's/#.*//')
+
+		# `super` is the one exception, and only for reading: the installer
+		# mounts Android's system read-only to learn what that Android calls
+		# itself, so the dual-boot entry says "One UI 8" instead of guessing.
+		# Reading it is allowed; writing it is not, and the two are told apart
+		# rather than lumped together — a blanket ban on the word would only
+		# have been satisfied by renaming a variable, which protects nothing.
+		super_lines=$(printf '%s\n' "$code" | grep -nE '\bsuper\b' || true)
+		super_bad=$(printf '%s\n' "$super_lines" | \
+			grep -vE 'SUPER_MOUNT|mount -o ro|umount|mapper/system' || true)
+		if [ -n "$(printf '%s' "$super_bad" | tr -d '[:space:]')" ]; then
+			fail 'installer names super outside a read-only mount'
+			printf '%s\n' "$super_bad" | head -5 | sed 's/^/      /'
+		else
+			pass 'super is only ever mounted read-only'
+		fi
+
 		if printf '%s\n' "$code" | \
-			grep -qE '\b(super|pit|efs|persist|modem|modemst|md5|sbl|xbl|abl)\b'; then
-			fail 'installer code references a partition it must never write'
+			grep -qE '\b(pit|efs|persist|modem|modemst|md5|sbl|xbl|abl)\b'; then
+			fail 'installer code references a partition it must never touch'
 			printf '%s\n' "$code" | \
-				grep -nE '\b(super|pit|efs|persist|modem|modemst)\b' | \
+				grep -nE '\b(pit|efs|persist|modem|modemst)\b' | \
 				head -5 | sed 's/^/      /'
 		else
-			pass 'installer code never names super, PIT, EFS, persist or modem'
+			pass 'installer code never names PIT, EFS, persist or modem'
+		fi
+
+		# Whatever else changes, nothing may write into super.
+		if printf '%s\n' "$code" | \
+			grep -qE '(dd +of=[^ ]*super|mkfs[^ ]* [^ ]*super|> *[^ ]*super)'; then
+			fail 'installer appears to write into super'
+		else
+			pass 'nothing in the installer writes into super'
 		fi
 
 		# The only writes must be dd into a resolved partition handle.  This is
