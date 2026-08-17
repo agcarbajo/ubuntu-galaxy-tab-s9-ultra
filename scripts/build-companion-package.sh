@@ -48,11 +48,11 @@ chown -R root:root "$staging"
 find "$staging" -type d -exec chmod 0755 {} +
 find "$staging" -type f -exec chmod 0644 {} +
 chmod 0755 "$staging/usr/bin/tab-companion" \
-	"$staging/usr/libexec/tab-companion-hardware" \
-	"$staging/usr/libexec/tab-companion-spen-pairing" \
-	"$staging/usr/libexec/tab-companion-enable-haptics" \
-	"$staging/usr/libexec/tab-companion-spen-permissions" \
 	"$staging/DEBIAN/postinst" "$staging/DEBIAN/postrm"
+# Everything in libexec is something polkit or the window runs, so mark the
+# whole directory rather than a list: the boot helpers were missing from the
+# list they were meant to be on, and shipped unexecutable because of it.
+find "$staging/usr/libexec" -type f -exec chmod 0755 {} +
 find "$staging" -exec touch -h -d '@0' {} +
 
 dpkg-deb --root-owner-group --build "$staging" "$deb"

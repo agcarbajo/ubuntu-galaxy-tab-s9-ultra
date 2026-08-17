@@ -20,9 +20,16 @@ partitions and restart it.  That is the same trade the Android side makes with
 import os
 import sys
 
+sys.path.insert(0, "/usr/lib/tab-companion")
 
-RULE = "/etc/polkit-1/rules.d/49-gts9u-boot-switch.rules"
-ACTION = "io.github.agcarbajo.TabCompanion.BootSwitch"
+from tab_companion import boot_core  # noqa: E402
+
+
+RULE = boot_core.NOASK_RULE
+# Exactly as BootSwitch.policy spells it.  A rule naming an action that does
+# not exist is not an error anywhere: polkit loads it, never matches it, and
+# the password prompt stays.  So the id is copied, not re-typed.
+ACTION = "io.github.agcarbajo.TabCompanion.boot-switch"
 
 CONTENT = f"""// Escrito por Tab Companion. Borrar este fichero devuelve la
 // peticion de contrasena al cambiar de sistema.
@@ -39,13 +46,17 @@ def main():
         print("usage: tab-companion-boot-noask on|off|status", file=sys.stderr)
         return 2
 
-    if sys.argv[1] == "status":
-        print("on" if os.path.exists(RULE) else "off")
-        return 0
-
+    # Even reading needs root: the directory the rule lives in is root:polkitd
+    # and 0750, so an unprivileged stat reports "off" whatever the truth is.
+    # The window does not come through here for that -- it reads the state out
+    # of tab-companion-boot-status, which polkit already lets it run for free.
     if os.geteuid() != 0:
         print("this has to run as root", file=sys.stderr)
         return 1
+
+    if sys.argv[1] == "status":
+        print("on" if boot_core.noask_enabled() else "off")
+        return 0
 
     if sys.argv[1] == "on":
         os.makedirs(os.path.dirname(RULE), exist_ok=True)

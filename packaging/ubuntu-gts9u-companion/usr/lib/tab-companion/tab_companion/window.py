@@ -290,11 +290,33 @@ class CompanionWindow(Adw.ApplicationWindow):
         shortcut.add(self.boot_tile_row)
         page.add(shortcut)
 
+        # Phrased as what it does, not as what it removes: a switch called
+        # "ask for the password" would read inverted against the helper it
+        # drives, and this is not a setting to be confused about.
+        self.boot_noask_group = Adw.PreferencesGroup(title=_("Password"))
+        self.boot_noask_row = Adw.SwitchRow(
+            title=_("Switch systems without the password"),
+            subtitle=_(
+                "There is no confirmation window: the password is the "
+                "confirmation. Without it, anyone holding the unlocked tablet "
+                "can restart it into the other system."
+            ),
+        )
+        self.boot_noask_row.add_prefix(Gtk.Image(icon_name="dialog-password-symbolic"))
+        self._updating_noask_switch = False
+        self.boot_noask_row.set_sensitive(False)
+        self.boot_noask_row.connect("notify::active", self._boot_noask_toggled)
+        self.boot_noask_group.add(self.boot_noask_row)
+        self.boot_noask_group.set_visible(boot_sets.noask_available())
+        page.add(self.boot_noask_group)
+
         self.boot_stack.add_named(page, "content")
         self.boot_stack.set_visible_child_name("content")
 
         self._boot_rows = []
         self._boot_storage_rows = []
+        # The switch is filled in by the same reading that fills the list;
+        # boot-status carries it, so it costs no second call and no prompt.
         self._boot_refresh()
         return self.boot_stack
 
@@ -462,6 +484,11 @@ class CompanionWindow(Adw.ApplicationWindow):
             self.boot_storage.remove(row)
         self._boot_storage_rows = []
 
+        # Absent when the reading failed, and then the switch stays untouched
+        # and insensitive rather than claiming a state nobody could read.
+        if "noask" in status:
+            self._boot_noask_settled(bool(status["noask"]))
+
         if status.get("error"):
             self.boot_stack.set_visible_child_name("content")
             row = Adw.ActionRow(
@@ -545,6 +572,27 @@ class CompanionWindow(Adw.ApplicationWindow):
             )
             self._boot_refresh()
         return False
+
+    def _boot_noask_settled(self, enabled):
+        """Where the switch lands, both on first reading and after a change.
+
+        It is set from the state read back off the system, never from the one
+        the tap asked for, so cancelling the password dialog reverts the row
+        by simply telling it the truth.
+        """
+        self._updating_noask_switch = True
+        self.boot_noask_row.set_active(enabled)
+        self._updating_noask_switch = False
+        self.boot_noask_row.set_sensitive(True)
+        return False
+
+    def _boot_noask_toggled(self, row, _param):
+        if self._updating_noask_switch:
+            return
+        # pkexec waits on a password dialog, which would freeze the window if
+        # it ran here.  The row stays insensitive until the answer comes back.
+        row.set_sensitive(False)
+        boot_sets.set_noask(row.get_active(), self._boot_noask_settled)
 
     def _pen_page(self):
         page = self._page()

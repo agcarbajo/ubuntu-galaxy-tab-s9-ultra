@@ -7,6 +7,7 @@ directly, which is the same boundary hardware.py draws for sysfs.
 """
 
 import json
+import os
 import subprocess
 import threading
 
@@ -15,13 +16,21 @@ from gi.repository import GLib
 
 STATUS_HELPER = "/usr/libexec/tab-companion-boot-status"
 SWITCH_HELPER = "/usr/libexec/tab-companion-boot-switch"
+NOASK_HELPER = "/usr/libexec/tab-companion-boot-noask"
 
 
 def available():
     """Whether this build carries the helpers at all."""
-    import os
-
     return os.path.exists(STATUS_HELPER) and os.path.exists(SWITCH_HELPER)
+
+
+def noask_available():
+    """Whether this build can also drop the password prompt.
+
+    Older device packages have the switch helpers but not this one, and the
+    row is hidden rather than shown broken.
+    """
+    return os.path.exists(NOASK_HELPER)
 
 
 def read_status(on_done):
@@ -43,6 +52,50 @@ def read_status(on_done):
         except Exception as error:  # noqa: BLE001 - surfaced in the UI
             result["error"] = str(error)
         GLib.idle_add(on_done, result)
+
+    threading.Thread(target=worker, daemon=True).start()
+
+
+def _noask_state():
+    """Reads the current state, blocking; False if anything goes wrong.
+
+    This goes through the status helper rather than the noask one because
+    reading the rule needs root either way, and boot-status is the reader
+    polkit already allows without a password.
+    """
+    try:
+        completed = subprocess.run(
+            ["pkexec", STATUS_HELPER],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if completed.returncode != 0:
+            return False
+        return bool(json.loads(completed.stdout).get("noask"))
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return False
+
+
+def set_noask(enabled, on_done):
+    """Turns the prompt off or back on, then reports what actually happened.
+
+    The callback gets the state read back from the system rather than the one
+    that was asked for, so a cancelled password dialog, a refusal or a crash
+    all land the same way: the switch ends up showing what is true.
+    """
+
+    def worker():
+        try:
+            subprocess.run(
+                ["pkexec", NOASK_HELPER, "on" if enabled else "off"],
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+        except (OSError, subprocess.SubprocessError):
+            pass
+        GLib.idle_add(on_done, _noask_state())
 
     threading.Thread(target=worker, daemon=True).start()
 
