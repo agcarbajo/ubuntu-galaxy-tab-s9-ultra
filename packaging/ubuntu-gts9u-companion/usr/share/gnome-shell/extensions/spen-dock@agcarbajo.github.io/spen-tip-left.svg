@@ -1,5 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="760" height="150" viewBox="0 0 760 150">
+<!--
+    Same drawing as the app's, cropped to the pen.
+
+    The original is 760x150 with the pen lying in a 698x30 band across the
+    middle, which is right for a hero image with room around it.  Here the
+    background of the panel hugs this box, so all that transparent space became
+    height the panel had to carry: the viewBox is tightened to the ink, plus a
+    pixel so nothing on the edge is clipped.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="700" height="32" viewBox="21 59 700 32">
   <defs><linearGradient id="body" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#77767b"/><stop offset="1" stop-color="#3d3846"/></linearGradient></defs>
   <g transform="translate(22 40)">
     <path d="M0 35 35 20v30z" fill="#241f31"/>

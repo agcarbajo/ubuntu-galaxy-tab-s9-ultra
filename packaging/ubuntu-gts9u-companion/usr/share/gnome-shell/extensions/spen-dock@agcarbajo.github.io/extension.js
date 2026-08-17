@@ -48,16 +48,16 @@ const EDGE_FOR_TRANSFORM = ['north', 'east', 'south', 'west'];
 // pen turns: the panel and the charge line stay in screen coordinates, which is
 // what keeps the text readable without a counter-rotation whose layout box
 // would not turn with it and would spill out of the rounded background.
-// The artwork is 760x150, so the short side follows the long one at almost
-// exactly a fifth of it; keeping that ratio is what stops the pen looking
-// stretched.  The panel grows with it, mostly sideways.
+// The artwork here is cropped to the pen itself, 700x32, so the box is the pen
+// and the panel's background has no transparent margin to carry.  Keeping that
+// ratio is what stops the pen looking stretched.
 //
 // The wanted length does not always fit.  These are logical pixels, and this
 // panel is 1480x924 of them, so a pen this long stood up on a side edge would
 // be taller than the screen -- hence the clamp at the point of use rather than
 // a constant that only works in landscape.
 const PEN_LONG_WANTED = 1050;
-const PEN_ASPECT = 150 / 760;
+const PEN_ASPECT = 32 / 700;
 const PEN_MIN = 160;
 // Padding of the panel plus a little air, so the pen never touches the rounded
 // edge of its own background.

@@ -1,11 +1,13 @@
 /* Built from the shell's own OSD so the panel does not look like a guest:
  * same dark translucent plate, same rounded corners, same text sizes. */
+/* The plate hugs its contents: little air above and below, and the charge line
+ * kept close under the pen rather than floating away from it. */
 .spen-dock-popup {
   background-color: rgba(0, 0, 0, 0.82);
   color: #ffffff;
-  border-radius: 24px;
-  padding: 16px 20px;
-  spacing: 10px;
+  border-radius: 22px;
+  padding: 9px 20px 7px 20px;
+  spacing: 2px;
   box-shadow: 0 3px 12px rgba(0, 0, 0, 0.45);
 }
 
