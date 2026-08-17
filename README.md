@@ -89,7 +89,7 @@ refuses to start if it finds itself sitting on it.
 
 ### Ubuntu beside Android
 
-1. Flash `gts9u-split-40-60.zip`. It shortens `userdata`, creates `linuxroot`
+1. Flash `gts9u-split-50-50.zip`. It shortens `userdata`, creates `linuxroot`
    beside it, and recreates Android's data so One UI can make fresh encryption
    keys on its next boot.
 2. Flash the installation ZIP. Finding `linuxroot`, it installs there and
@@ -99,12 +99,17 @@ refuses to start if it finds itself sitting on it.
 Here the ZIPs may sit on internal storage, because the partition being written
 is not the one they are on.
 
-The split ZIP is built with the share of `userdata` Android keeps, so other
-splits are one command away:
+The released ZIP splits it in half. The number in it is the share of `userdata`
+Android keeps, so any other split is one command away — build your own and flash
+that instead:
 
 ```bash
-python3 scripts/make-repartition-zip.py out/gts9u-split-40-60.zip --android-percent 40
+# 30 % Android, 70 % Ubuntu
+python3 scripts/make-repartition-zip.py out/gts9u-split-30-70.zip --android-percent 30
 ```
+
+Anything from 5 to 95 is accepted, and the installer on the tablet checks the
+same bounds.
 
 Flashing it on a tablet that is already split does nothing and says so, so
 there is no harm in running it twice.

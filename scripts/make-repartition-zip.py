@@ -50,8 +50,8 @@ def main() -> None:
     parser.add_argument(
         "--android-percent",
         type=int,
-        default=40,
-        help="share of the current userdata left to Android (default 40)",
+        default=50,
+        help="share of the current userdata left to Android (default 50)",
     )
     parser.add_argument("--label", default=None)
     args = parser.parse_args()
