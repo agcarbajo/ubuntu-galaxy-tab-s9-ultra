@@ -1130,17 +1130,59 @@ la duda de si el imán movía algo que no estuviéramos mirando:
   es lo que haría falta para leer «cerrada».
 - `SW_LID` no cambió, y ni logind ni upower vieron nada: `lid-is-closed: no`.
 
-Así que no hay señal sostenida que delate el cierre de esta funda, y la
-conclusión de planificación de arriba se mantiene: para la EF-DX920 el cierre
-sólo se puede deducir de que el conector se suelta, que es lo que se cree que
-hace el stock.
+De ahí se concluyó que no había señal alguna y que el cierre sólo podía deducirse
+de que el conector se suelta. **Era falso, y la sección siguiente lo corrige.**
+Queda escrito porque el error es instructivo: se descartó una vía entera —el
+digitalizador— por no haberla mirado, y toda la evidencia recogida era cierta
+pero incompleta. La dueña insistió en que en One UI funciona, y tenía razón.
 
-Descartado explícitamente por la dueña como solución (2026-08-17): usar el
-`attached` del pogo para sintetizar `SW_LID`. Funcionaría en esta funda, pero
-apagaría la pantalla también al quitar el teclado con la tablet en uso, y no
-serviría en las fundas con trackpad, que **no se desenganchan para cerrarse**.
-Esas son justamente las que sí podrían resolverse traduciendo el evento Hall del
-MCU, porque en ellas el enlace pogo sigue vivo con la tapa cerrada.
+### Resuelto: la tapa la ve el digitalizador, no el Hall
+
+Observando el stock con `getevent` (sin root: el usuario `shell` está en el grupo
+`input`), cerrar la funda de teclado emite esto:
+
+```
+/dev/input/event13: EV_SW  SW_MACHINE_COVER  00000001   <- cerrar
+/dev/input/event13: EV_SW  SW_MACHINE_COVER  00000000   <- abrir
+```
+
+`event13` es `sec_e-pen`. **El Hall no participa**: quien lo nota es el
+digitalizador, cuya rejilla cubre todo el panel. Por eso ningún GPIO se movía.
+
+El protocolo está en las fuentes de Samsung que ya están importadas
+(`work/stock-wacom`, `wacom_i2c.c:917` y `wacom_i2c_cover_handler`):
+
+| | |
+|---|---|
+| paquete | `(data[0] & 0x0F) == NOTI_PACKET` (13) |
+| subtipo | `data[1] == COVER_DETECT_PACKET` (10) |
+| estado | bit 7 de `data[3]`, 1 = cerrada |
+| switch | `SW_FLIP` = `0x10`, que es `SW_MACHINE_COVER` |
+
+Y el controlador **ya los manda bajo Ubuntu**, sin pedirle ningún modo de
+vigilancia. Capturado de los tracepoints de i2c, que sirven cuando el driver ha
+puesto su parser en línea y no hay símbolo donde poner un kprobe:
+
+```
+i2c_reply: i2c-12 a=056 l=16 [0d-0a-10-80-13-...]   bit 7 puesto   -> cerrada
+i2c_reply: i2c-12 a=056 l=16 [0d-0a-10-00-13-...]   bit 7 limpio   -> abierta
+```
+
+Lo único que faltaba era leerlos: la trama no es un informe de lápiz, así que
+caía en el descarte general de `samsung_wacom_irq`. El manejo va **antes** de la
+comprobación `pen_irq_disabled`, porque el lápiz vive en su hueco y ahí es
+justo donde se suprime el reporte, así que probado más tarde se perdería en el
+caso normal. Se emite `SW_MACHINE_COVER` —lo que significa el hardware— junto
+con `SW_LID`, que es el que atienden logind y GNOME.
+
+Comprobado en hardware con el kernel nuevo: cuatro cierres y cuatro aperturas,
+`book cover closed`/`open` en el log y `systemd-logind: Lid closed`/`Lid opened`
+en correspondencia exacta con cada uno. El digitalizador ya venía etiquetado
+`power-switch` por udev, así que no hizo falta ninguna regla.
+
+Nota para las fundas con trackpad, que no se desenganchan al cerrarse: no se han
+podido probar, pero al ir la señal por el digitalizador y no por el conector, no
+hay motivo para que se comporten distinto.
 
 ## Una tablet que no enciende puede ser modo emergencia
 

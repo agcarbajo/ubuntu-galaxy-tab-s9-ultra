@@ -135,6 +135,29 @@
 #define WACOM_GARAGE_DIRECTION_UP	0x01
 #define WACOM_GARAGE_DIRECTION_DOWN	0x02
 
+/*
+ * The book cover arrives here and nowhere else.  The tablet's own Hall sensor
+ * (TLMM 107, wired as gpio-keys SW_LID) answers the plain Book Cover, but the
+ * keyboard folio's magnet never reaches it: measured with the cover shut, that
+ * line reads inactive and its interrupt count stays at zero for a whole boot,
+ * and a sweep of all 207 pins finds nothing that holds a level either.
+ *
+ * The digitiser is what notices, which makes sense because its grid spans the
+ * whole panel.  Samsung's driver decodes exactly this (wacom_i2c.c: NOTI_PACKET
+ * 13, COVER_DETECT_PACKET 10, status in bit 7 of data[3]) and reports it as
+ * SW_FLIP, which is 0x10 -- the code mainline calls SW_MACHINE_COVER.
+ *
+ * Captured off the i2c tracepoints on this tablet, closing then opening:
+ *   [0d-0a-10-80-13-...]   bit 7 set   -> closed
+ *   [0d-0a-10-00-13-...]   bit 7 clear -> open
+ * The controller volunteers these with no survey mode asked for, so all that
+ * was missing is reading them: the frame is not a pen report, so it used to be
+ * dropped with everything else that is not.
+ */
+#define WACOM_PACKET_NOTI		0x0d
+#define WACOM_NOTI_COVER_DETECT		0x0a
+#define WACOM_COVER_CLOSED		BIT(7)
+
 enum samsung_wacom_charge_state {
 	WACOM_CHARGE_OFF = 0,
 	WACOM_CHARGE_START,
@@ -182,6 +205,7 @@ struct samsung_wacom {
 	struct timer_list prox_timer;
 	bool in_range;
 	bool docked;
+	bool cover_closed;
 	bool disable_when_docked;
 	bool pen_irq_disabled;
 	u8 garage_direction;
@@ -447,6 +471,40 @@ static bool samsung_wacom_handle_garage_reply(struct samsung_wacom *wacom,
 	return true;
 }
 
+static bool samsung_wacom_handle_cover_noti(struct samsung_wacom *wacom,
+					    const u8 *data)
+{
+	bool closed;
+
+	if ((data[0] & WACOM_PACKET_ID_MASK) != WACOM_PACKET_NOTI ||
+	    data[1] != WACOM_NOTI_COVER_DETECT)
+		return false;
+
+	closed = data[3] & WACOM_COVER_CLOSED;
+	/*
+	 * Claim the frame either way: it is a cover notification and never a pen
+	 * report, so passing it on would only get it dropped further down.
+	 */
+	if (closed == READ_ONCE(wacom->cover_closed))
+		return true;
+
+	WRITE_ONCE(wacom->cover_closed, closed);
+	/*
+	 * SW_MACHINE_COVER is what the hardware means and what stock reports.
+	 * SW_LID goes out with it because that is the one logind and GNOME act
+	 * on, and blanking the screen when the cover shuts is the whole point;
+	 * gpio-keys keeps reporting SW_LID for the plain cover, and the two
+	 * never contradict each other because each answers a different lid.
+	 */
+	input_report_switch(wacom->input, SW_MACHINE_COVER, closed);
+	input_report_switch(wacom->input, SW_LID, closed);
+	input_sync(wacom->input);
+	dev_info(&wacom->client->dev, "book cover %s\n",
+		 closed ? "closed" : "open");
+
+	return true;
+}
+
 static irqreturn_t samsung_wacom_pdct_irq(int irq, void *dev_id)
 {
 	struct samsung_wacom *wacom = dev_id;
@@ -709,6 +767,13 @@ static irqreturn_t samsung_wacom_irq(int irq, void *dev_id)
 	if (samsung_wacom_handle_garage_reply(wacom, data))
 		return IRQ_HANDLED;
 	/*
+	 * Ahead of the docked check on purpose: the pen normally lives in its
+	 * silo, and that is exactly when pen reporting is suppressed, so a cover
+	 * notification tested any later would be thrown away in the common case.
+	 */
+	if (samsung_wacom_handle_cover_noti(wacom, data))
+		return IRQ_HANDLED;
+	/*
 	 * Garage replies share this IRQ with coordinate packets.  Keep the line
 	 * enabled while docked and suppress only pen coordinates, otherwise a
 	 * fresh orientation/charge reply cannot be received after insertion.
@@ -914,6 +979,8 @@ static int samsung_wacom_probe(struct i2c_client *client)
 	input_set_capability(input, EV_KEY, BTN_TOUCH);
 	input_set_capability(input, EV_KEY, BTN_STYLUS);
 	input_set_capability(input, EV_SW, SW_PEN_INSERTED);
+	input_set_capability(input, EV_SW, SW_MACHINE_COVER);
+	input_set_capability(input, EV_SW, SW_LID);
 	input_set_abs_params(input, ABS_X, 0, features.x_max, 0, 0);
 	input_set_abs_params(input, ABS_Y, 0, features.y_max, 0, 0);
 	input_set_abs_params(input, ABS_PRESSURE, 0, features.pressure_max, 0, 0);
