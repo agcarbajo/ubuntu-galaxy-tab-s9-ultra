@@ -1,32 +1,39 @@
 /* Built from the shell's own OSD so the panel does not look like a guest:
- * same dark translucent plate, same corner radius family, same text sizes. */
+ * same dark translucent plate, same rounded corners, same text sizes. */
 .spen-dock-popup {
   background-color: rgba(0, 0, 0, 0.82);
   color: #ffffff;
-  border-radius: 22px;
-  padding: 16px 22px;
-  spacing: 16px;
+  border-radius: 24px;
+  padding: 16px 20px;
+  spacing: 10px;
   box-shadow: 0 3px 12px rgba(0, 0, 0, 0.45);
 }
 
+/* A background image rather than an icon: the artwork is 760x150, and St.Icon
+ * would render it into a square and squash it.  The size is set from the code,
+ * which also turns it on the sideways edges. */
 .spen-dock-pen {
-  icon-size: 132px;
-  /* The artwork is a long thin pen; the icon box has to be wide enough that it
-   * is not squeezed into a square. */
-  width: 132px;
-  height: 40px;
+  background-size: contain;
+  background-position: center;
 }
 
-.spen-dock-text {
-  spacing: 2px;
+.spen-dock-pen.tip-left {
+  background-image: url("spen-tip-left.svg");
 }
 
-.spen-dock-title {
-  font-weight: bold;
-  font-size: 12pt;
+.spen-dock-pen.tip-right {
+  background-image: url("spen-tip-right.svg");
 }
 
 .spen-dock-charge {
-  font-size: 10pt;
-  color: rgba(255, 255, 255, 0.75);
+  spacing: 6px;
+}
+
+.spen-dock-percent {
+  font-size: 13pt;
+  font-weight: bold;
+}
+
+.spen-dock-battery {
+  icon-size: 18px;
 }

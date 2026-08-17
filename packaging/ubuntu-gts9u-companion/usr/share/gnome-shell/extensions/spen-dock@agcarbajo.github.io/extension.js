@@ -3,12 +3,12 @@
 // The panel that One UI shows when the S Pen goes back in its silo: the pen
 // itself, the way round it went in, and how much charge it has.
 //
-// Two things decide where it appears.  The silo is on one physical edge of the
-// tablet -- the right one, holding it upright with the charging port down --
-// and that edge moves around the screen as the display rotates, so the panel
-// asks Mutter which way the display is turned and slides in from wherever that
-// edge currently is.  Everything else is the system's own OSD styling, so it
-// looks like it belongs.
+// Two things decide how it looks.  The silo is on one physical edge of the
+// tablet, and that edge moves around the screen as the display rotates, so the
+// panel asks Mutter which way the display is turned and slides in from wherever
+// that edge currently is.  And the contents are laid out against that edge
+// rather than against the screen: the pen lies along the edge, the charge sits
+// below it, and only the text is turned back upright so it still reads.
 
 import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
@@ -17,7 +17,7 @@ import GObject from 'gi://GObject';
 import St from 'gi://St';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
-import {Extension, gettext as _} from 'resource:///org/gnome/shell/extensions/extension.js';
+import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
 const BUS_NAME = 'io.github.agcarbajo.TabCompanion.Hardware';
 const OBJECT_PATH = '/io/github/agcarbajo/TabCompanion/Hardware';
@@ -27,43 +27,64 @@ const DISPLAY_PATH = '/org/gnome/Mutter/DisplayConfig';
 const SETTING = 'pen-dock-popup';
 const VISIBLE_MS = 2600;
 const SLIDE_MS = 260;
-const MARGIN = 28;
+const MARGIN = 24;
 
-// Where the silo is, per Mutter display transform.  Index is the transform:
-// 0 upright, 1 rotated 90, 2 upside down, 3 rotated 270.  Verified by rotating
-// the tablet through all four and watching which screen edge the pen went in
-// from; the flipped transforms (4-7) mirror the first four and are folded in
-// with a modulo, which is right because a mirrored panel does not move the
-// silo.
-const EDGE_FOR_TRANSFORM = ['east', 'south', 'west', 'north'];
+// Which screen edge the silo is on, per Mutter display transform: 0 upright,
+// 1 rotated 90, 2 upside down, 3 rotated 270.  Anchored on a measurement --
+// with the display at transform 0 the silo is the edge one step anticlockwise
+// from the charging port -- and stepped round from there.  The flipped
+// transforms (4-7) fold onto the first four with a modulo, which is right
+// because mirroring the panel does not move the silo.
+const EDGE_FOR_TRANSFORM = ['north', 'east', 'south', 'west'];
+
+// The pen lies along the edge, so it stands up on the sideways ones.  Only the
+// pen turns: the panel and the charge line stay in screen coordinates, which is
+// what keeps the text readable without a counter-rotation whose layout box
+// would not turn with it and would spill out of the rounded background.
+const PEN_LONG = 240;
+const PEN_SHORT = 48;
 
 const SPenDockPopup = GObject.registerClass({
     Signals: {'dismissed': {}},
 }, class SPenDockPopup extends St.BoxLayout {
-    constructor(extensionPath) {
+    constructor() {
         super({
             style_class: 'spen-dock-popup',
-            vertical: false,
+            vertical: true,
             reactive: true,
             track_hover: false,
             can_focus: false,
         });
 
-        this._path = extensionPath;
+        this.set_pivot_point(0.5, 0.5);
 
-        this._pen = new St.Icon({style_class: 'spen-dock-pen', y_align: Clutter.ActorAlign.CENTER});
-        this.add_child(this._pen);
+        // Two actors, because a rotated actor keeps the allocation it had: the
+        // outer box reserves the space the turned pen really needs, and the art
+        // inside it is what turns.  One actor would either squash the pen or
+        // hang it outside the rounded background.
+        this._penBox = new St.Widget({x_align: Clutter.ActorAlign.CENTER});
+        this._penArt = new St.Widget({style_class: 'spen-dock-pen'});
+        this._penArt.set_pivot_point(0.5, 0.5);
+        this._penBox.add_child(this._penArt);
+        this.add_child(this._penBox);
 
-        const text = new St.BoxLayout({
-            vertical: true,
+        this._charge = new St.BoxLayout({
+            style_class: 'spen-dock-charge',
+            vertical: false,
+            x_align: Clutter.ActorAlign.CENTER,
             y_align: Clutter.ActorAlign.CENTER,
-            style_class: 'spen-dock-text',
         });
-        this._title = new St.Label({style_class: 'spen-dock-title', text: _('S Pen')});
-        this._charge = new St.Label({style_class: 'spen-dock-charge'});
-        text.add_child(this._title);
-        text.add_child(this._charge);
-        this.add_child(text);
+        this._percent = new St.Label({
+            style_class: 'spen-dock-percent',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._batteryIcon = new St.Icon({
+            style_class: 'spen-dock-battery',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._charge.add_child(this._percent);
+        this._charge.add_child(this._batteryIcon);
+        this.add_child(this._charge);
 
         // A tap puts it away early, the same as the volume OSD.
         this.connect('button-press-event', () => {
@@ -82,17 +103,43 @@ const SPenDockPopup = GObject.registerClass({
     update(orientation, battery, charging) {
         // tip-left / tip-right is which way round the pen is sitting; showing
         // the wrong one is the sort of small lie that makes a panel feel fake.
-        const file = orientation === 'tip-right'
-            ? 'spen-tip-right.svg' : 'spen-tip-left.svg';
-        this._pen.gicon = Gio.FileIcon.new(
-            Gio.File.new_for_path(GLib.build_filenamev([this._path, file])));
+        // The artwork is the same file the app's own S Pen page uses.
+        const tipRight = orientation === 'tip-right';
+        this._penArt.remove_style_class_name(tipRight ? 'tip-left' : 'tip-right');
+        this._penArt.add_style_class_name(tipRight ? 'tip-right' : 'tip-left');
 
-        if (battery < 0)
-            this._charge.text = _('Charge unknown');
-        else if (charging)
-            this._charge.text = `${battery}% · ${_('charging')}`;
-        else
-            this._charge.text = `${battery}%`;
+        this._percent.text = battery < 0 ? '--%' : `${battery}%`;
+
+        // Yaru and Adwaita both carry the level icons in tens, and the charging
+        // variant is the one with the bolt through it.
+        const level = battery < 0 ? 100 : Math.min(100, Math.max(0, Math.round(battery / 10) * 10));
+        this._batteryIcon.icon_name = charging
+            ? `battery-level-${level}-charging-symbolic`
+            : `battery-level-${level}-symbolic`;
+    }
+
+    // Lay the panel out against the edge: the pen along it and nearest to it,
+    // the charge line just inside.  On the sideways edges the pen stands up and
+    // the panel runs across instead of down, which is the same arrangement seen
+    // from the edge -- and the text never turns, so it always reads.
+    setEdge(edge) {
+        const sideways = edge === 'east' || edge === 'west';
+        this.vertical = !sideways;
+
+        const boxW = sideways ? PEN_SHORT : PEN_LONG;
+        const boxH = sideways ? PEN_LONG : PEN_SHORT;
+        this._penBox.set_size(boxW, boxH);
+        this._penArt.set_size(PEN_LONG, PEN_SHORT);
+        this._penArt.set_position(
+            Math.round((boxW - PEN_LONG) / 2),
+            Math.round((boxH - PEN_SHORT) / 2));
+        this._penArt.rotation_angle_z = sideways ? 90 : 0;
+
+        // The pen is the half that touches the edge, so on the far edges it has
+        // to come second in screen order to still end up nearest.
+        const penFirst = edge === 'north' || edge === 'west';
+        this.set_child_at_index(this._penBox, penFirst ? 0 : 1);
+        this.set_child_at_index(this._charge, penFirst ? 1 : 0);
     }
 });
 
@@ -107,7 +154,7 @@ export default class SPenDockExtension extends Extension {
         this._wasDocked = null;
         this._timeoutId = 0;
 
-        this._popup = new SPenDockPopup(this.path);
+        this._popup = new SPenDockPopup();
         this._popup.opacity = 0;
         this._popup.visible = false;
         Main.layoutManager.addTopChrome(this._popup, {affectsInputRegion: true});
@@ -189,35 +236,45 @@ export default class SPenDockExtension extends Extension {
         this._show();
     }
 
-    _edgePosition() {
+    // Where the panel sits against its edge, and where it starts from so that
+    // it slides out of that edge rather than drifting in from a corner.  The
+    // panel itself is never rotated, so its footprint is simply its size.
+    _placement() {
         const monitor = Main.layoutManager.primaryMonitor;
         const edge = EDGE_FOR_TRANSFORM[this._transform % 4];
         const w = this._popup.width;
         const h = this._popup.height;
-        const cx = monitor.x + Math.round((monitor.width - w) / 2);
-        const cy = monitor.y + Math.round((monitor.height - h) / 2);
+        const centredX = Math.round(monitor.x + (monitor.width - w) / 2);
+        const centredY = Math.round(monitor.y + (monitor.height - h) / 2);
 
         switch (edge) {
         case 'north':
-            return {rest: [cx, monitor.y + MARGIN], from: [cx, monitor.y - h]};
+            return {edge,
+                rest: [centredX, monitor.y + MARGIN],
+                from: [centredX, monitor.y - h]};
         case 'south':
-            return {rest: [cx, monitor.y + monitor.height - h - MARGIN],
-                from: [cx, monitor.y + monitor.height]};
+            return {edge,
+                rest: [centredX, monitor.y + monitor.height - h - MARGIN],
+                from: [centredX, monitor.y + monitor.height]};
         case 'west':
-            return {rest: [monitor.x + MARGIN, cy], from: [monitor.x - w, cy]};
+            return {edge,
+                rest: [monitor.x + MARGIN, centredY],
+                from: [monitor.x - w, centredY]};
         default:
-            return {rest: [monitor.x + monitor.width - w - MARGIN, cy],
-                from: [monitor.x + monitor.width, cy]};
+            return {edge,
+                rest: [monitor.x + monitor.width - w - MARGIN, centredY],
+                from: [monitor.x + monitor.width, centredY]};
         }
     }
 
     _show() {
         this._cancelTimeout();
+        // The arrangement decides the size, so the edge is applied before the
+        // placement asks how big the panel turned out to be.
+        this._popup.setEdge(EDGE_FOR_TRANSFORM[this._transform % 4]);
         this._popup.visible = true;
-        // The size is only known once it has been laid out, and the slide needs
-        // it, so the position is set after a forced allocation pass.
         this._popup.get_parent()?.queue_relayout();
-        const {rest, from} = this._edgePosition();
+        const {rest, from} = this._placement();
 
         this._popup.remove_all_transitions();
         this._popup.set_position(from[0], from[1]);
@@ -241,7 +298,7 @@ export default class SPenDockExtension extends Extension {
         this._cancelTimeout();
         if (!this._popup?.visible)
             return;
-        const {from} = this._edgePosition();
+        const {from} = this._placement();
         this._popup.remove_all_transitions();
         this._popup.ease({
             x: from[0],
