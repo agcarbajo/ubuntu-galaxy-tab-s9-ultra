@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!--
-    Same drawing as the app's, cropped to the pen.  See spen-tip-left.svg: this
-    one is mirrored, so the ink sits at a different x and the crop follows it,
-    keeping both files the same 700x32 so the pen is the same size whichever
-    way round it went in.
--->
 <svg xmlns="http://www.w3.org/2000/svg" width="700" height="32" viewBox="39 59 700 32">
+  <!--
+      Nothing may go between the XML declaration and this tag; see
+      spen-tip-left.svg.  This one is mirrored, so the ink sits at a different x
+      and the crop follows it, keeping both files the same 700x32 so the pen is
+      the same size whichever way round it went in.
+  -->
   <defs><linearGradient id="body" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#77767b"/><stop offset="1" stop-color="#3d3846"/></linearGradient></defs>
   <g transform="translate(738 40) scale(-1 1)">
     <path d="M0 35 35 20v30z" fill="#241f31"/>

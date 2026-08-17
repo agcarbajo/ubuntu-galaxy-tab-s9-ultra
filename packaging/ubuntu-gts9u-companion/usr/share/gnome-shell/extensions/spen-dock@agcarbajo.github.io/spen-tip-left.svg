@@ -1,14 +1,17 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!--
-    Same drawing as the app's, cropped to the pen.
-
-    The original is 760x150 with the pen lying in a 698x30 band across the
-    middle, which is right for a hero image with room around it.  Here the
-    background of the panel hugs this box, so all that transparent space became
-    height the panel had to carry: the viewBox is tightened to the ink, plus a
-    pixel so nothing on the edge is clipped.
--->
 <svg xmlns="http://www.w3.org/2000/svg" width="700" height="32" viewBox="21 59 700 32">
+  <!--
+      Nothing may go between the XML declaration and this tag: gdk-pixbuf sniffs
+      the head of the file to decide what it is, and a comment there is enough
+      for it to give up with "couldn't recognize the image file format", which
+      shows up as a pen-shaped hole in the panel.
+
+      Same drawing as the app's, cropped to the pen.  The original is 760x150
+      with the pen lying in a 698x30 band across the middle; the panel's
+      background hugs this box, so all that transparent space was height the
+      panel had to carry.  The viewBox is tightened to the ink, plus a pixel so
+      nothing on the edge is clipped.
+  -->
   <defs><linearGradient id="body" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#77767b"/><stop offset="1" stop-color="#3d3846"/></linearGradient></defs>
   <g transform="translate(22 40)">
     <path d="M0 35 35 20v30z" fill="#241f31"/>
