@@ -29,6 +29,13 @@ const VISIBLE_MS = 2600;
 const SLIDE_MS = 260;
 const MARGIN = 24;
 
+// The driver clears the pen's direction the instant it senses the pen and only
+// fills it in once the garage answers over i2c.  Measured on this tablet, that
+// takes about 1.07 s, twice running, so the panel waits for the real direction
+// instead of drawing the fallback and flipping the pen over in front of you.
+// The cap is what keeps a silent garage from swallowing the panel entirely.
+const ORIENTATION_WAIT_MS = 1500;
+
 // Which screen edge the silo is on, per Mutter display transform: 0 upright,
 // 1 rotated 90, 2 upside down, 3 rotated 270.  Anchored on a measurement --
 // with the display at transform 0 the silo is the edge one step anticlockwise
@@ -41,8 +48,11 @@ const EDGE_FOR_TRANSFORM = ['north', 'east', 'south', 'west'];
 // pen turns: the panel and the charge line stay in screen coordinates, which is
 // what keeps the text readable without a counter-rotation whose layout box
 // would not turn with it and would spill out of the rounded background.
-const PEN_LONG = 240;
-const PEN_SHORT = 48;
+// The artwork is 760x150, so the short side follows the long one at almost
+// exactly a fifth of it; keeping that ratio is what stops the pen looking
+// stretched.  The panel grows with it, mostly sideways.
+const PEN_LONG = 420;
+const PEN_SHORT = Math.round(PEN_LONG * 150 / 760);
 
 const SPenDockPopup = GObject.registerClass({
     Signals: {'dismissed': {}},
@@ -153,6 +163,7 @@ export default class SPenDockExtension extends Extension {
         this._transform = 0;
         this._wasDocked = null;
         this._timeoutId = 0;
+        this._pendingId = 0;
 
         this._popup = new SPenDockPopup();
         this._popup.opacity = 0;
@@ -181,6 +192,7 @@ export default class SPenDockExtension extends Extension {
         // The panel must not outlive a lock or a session switch, so this tears
         // everything down rather than just hiding it.
         this._cancelTimeout();
+        this._cancelPending();
         if (this._displayId) {
             Gio.DBus.session.signal_unsubscribe(this._displayId);
             this._displayId = 0;
@@ -224,16 +236,65 @@ export default class SPenDockExtension extends Extension {
         const was = this._wasDocked;
         this._wasDocked = docked;
 
-        if (!docked || was === docked || was === null)
+        // Pulling the pen out again cancels a panel that has not appeared yet.
+        if (!docked) {
+            this._cancelPending();
+            return;
+        }
+
+        // Already up: keep it honest, in case the direction or the charge lands
+        // after it appeared.
+        if (this._popup.visible) {
+            this._refresh();
+            return;
+        }
+
+        // Waiting for the direction: show the moment it arrives.
+        if (this._pendingId) {
+            if (this._orientation() !== 'unknown')
+                this._showNow();
+            return;
+        }
+
+        if (was === docked || was === null)
             return;
         if (!this._settings.get_boolean(SETTING))
             return;
 
+        if (this._orientation() !== 'unknown') {
+            this._showNow();
+            return;
+        }
+        this._pendingId = GLib.timeout_add(
+            GLib.PRIORITY_DEFAULT, ORIENTATION_WAIT_MS, () => {
+                this._pendingId = 0;
+                this._showNow();
+                return GLib.SOURCE_REMOVE;
+            });
+    }
+
+    _orientation() {
+        return this._proxy.get_cached_property('PenOrientation')?.unpack() ?? 'unknown';
+    }
+
+    _showNow() {
+        this._cancelPending();
+        this._refresh();
+        this._show();
+    }
+
+    _cancelPending() {
+        if (this._pendingId) {
+            GLib.source_remove(this._pendingId);
+            this._pendingId = 0;
+        }
+    }
+
+    _refresh() {
         this._popup.update(
-            this._proxy.get_cached_property('PenOrientation')?.unpack() ?? 'unknown',
+            this._orientation(),
             this._proxy.get_cached_property('PenBattery')?.unpack() ?? -1,
             this._proxy.get_cached_property('PenCharging')?.unpack() ?? false);
-        this._show();
     }
 
     // Where the panel sits against its edge, and where it starts from so that
