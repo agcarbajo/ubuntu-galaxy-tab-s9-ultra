@@ -1184,6 +1184,44 @@ Nota para las fundas con trackpad, que no se desenganchan al cerrarse: no se han
 podido probar, pero al ir la señal por el digitalizador y no por el conector, no
 hay motivo para que se comporten distinto.
 
+### Y por qué parecía no funcionar en la pantalla de bloqueo
+
+Síntoma: con la sesión bloqueada, cerrar la funda no hacía nada. Sonaba a
+permisos o a un ajuste de GNOME, y no era ninguna de las dos cosas: **logind
+ignora la tapa durante `HoldoffTimeoutSec` después de cada resume**, 30 s por
+omisión. A la pantalla de bloqueo se llega justo al despertar, así que casi
+cualquier cierre cae dentro de esa ventana.
+
+No hace falta creerlo: correlacionando en un arranque entero cada «Lid closed»
+con el resume anterior, salen **once de once**.
+
+```
+13:05:53   136,0 s tras el resume   suspendio
+13:06:03     7,0 s                  ignorado
+13:09:12   196,0 s                  suspendio
+13:09:17     2,0 s                  ignorado
+13:26:00     5,0 s                  ignorado
+```
+
+Cuidado al diagnosticar esto: el driver **sí** emite el evento y logind **sí**
+escribe «Lid closed» en el diario. Lo único que falta es el «Suspending...», así
+que mirando sólo si el evento llega parece que todo va bien.
+
+Y cuidado con `loginctl lock-session` como forma de reproducirlo: en esta sesión
+(`Type=tty`) no bloqueó nada y `LockedHint` se quedó en `no`, con lo que la
+primera medida fue en realidad otra vez el caso desbloqueado. Hay que bloquear a
+mano y comprobarlo por el `ScreenSaver` de GNOME, no por `LockedHint`.
+
+`11-gts9u-lid-holdoff.conf` lo baja a 5 s. La gracia existe para una tapa que se
+re-anuncie al despertar y vuelva a dormir el equipo; ninguno de los dos
+informadores de aquí lo hace —el digitalizador manda paquete sólo cuando el
+estado cambia, y gpio-keys sólo se lee en un flanco real—, pero se dejan 5 s en
+vez de 0 para que el resume tenga un momento de asentarse. Comprobado: un cierre
+a 9 s de un resume ahora suspende, y durmió 25 s hasta que se abrió la funda.
+
+Un drop-in de `logind.conf.d` no se aplica en caliente, así que hace falta
+reiniciar (o reiniciar logind **y** el gestor de sesión).
+
 ## Una tablet que no enciende puede ser modo emergencia
 
 El 2026-08-03 la tablet «no arrancaba»: pantalla negra tras reiniciar. No era
