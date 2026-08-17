@@ -1,0 +1,66 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: MIT
+"""Lets the owner switch systems without typing the password every time.
+
+On Ubuntu there is no confirmation window: the password polkit asks for *is*
+the confirmation.  Removing it therefore means telling polkit that an active
+local session may run the switch outright, which is done with a rule file.
+
+Turning it on and off is itself a privileged action, guarded by its own polkit
+action.  That asymmetry is the point: giving away a password prompt should
+cost a password prompt, so nothing but a person at the tablet can arrange for
+the tablet to stop asking.
+
+What this grants is narrow — the boot switch action and nothing else — but it
+is still real: with it on, anyone with the tablet unlocked can replace the boot
+partitions and restart it.  That is the same trade the Android side makes with
+"restart without asking", and it is off until asked for.
+"""
+
+import os
+import sys
+
+
+RULE = "/etc/polkit-1/rules.d/49-gts9u-boot-switch.rules"
+ACTION = "io.github.agcarbajo.TabCompanion.BootSwitch"
+
+CONTENT = f"""// Escrito por Tab Companion. Borrar este fichero devuelve la
+// peticion de contrasena al cambiar de sistema.
+polkit.addRule(function(action, subject) {{
+    if (action.id == "{ACTION}" && subject.local && subject.active) {{
+        return polkit.Result.YES;
+    }}
+}});
+"""
+
+
+def main():
+    if len(sys.argv) != 2 or sys.argv[1] not in ("on", "off", "status"):
+        print("usage: tab-companion-boot-noask on|off|status", file=sys.stderr)
+        return 2
+
+    if sys.argv[1] == "status":
+        print("on" if os.path.exists(RULE) else "off")
+        return 0
+
+    if os.geteuid() != 0:
+        print("this has to run as root", file=sys.stderr)
+        return 1
+
+    if sys.argv[1] == "on":
+        os.makedirs(os.path.dirname(RULE), exist_ok=True)
+        with open(RULE, "w", encoding="utf-8") as handle:
+            handle.write(CONTENT)
+        os.chmod(RULE, 0o644)
+    else:
+        try:
+            os.remove(RULE)
+        except FileNotFoundError:
+            pass
+
+    print("on" if os.path.exists(RULE) else "off")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

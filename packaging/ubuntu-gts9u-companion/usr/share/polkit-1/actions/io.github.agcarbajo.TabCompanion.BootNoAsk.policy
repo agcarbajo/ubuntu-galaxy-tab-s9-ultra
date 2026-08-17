@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<!--
+    Cambiar si hace falta contrasena para cambiar de sistema.
+
+    Va aparte de BootSwitch a proposito, y siempre pide autenticacion: es la
+    accion que puede quitarle la autenticacion a la otra, asi que no puede
+    heredar el permiso que concede.
+-->
+<policyconfig>
+  <vendor>Ubuntu port for SM-X910</vendor>
+  <vendor_url>https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra</vendor_url>
+
+  <action id="io.github.agcarbajo.TabCompanion.BootNoAsk">
+    <description>Change whether switching systems asks for the password</description>
+    <description xml:lang="es">Cambiar si se pide la contraseña para cambiar de sistema</description>
+    <message>Authentication is required to change whether switching systems asks for a password</message>
+    <message xml:lang="es">Se requiere autenticación para cambiar si se pide la contraseña al cambiar de sistema</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/tab-companion-boot-noask</annotate>
+    <annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>
+  </action>
+</policyconfig>
