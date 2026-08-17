@@ -1,0 +1,18 @@
+# Stop the docked S Pen from waking the tablet a second after it suspends.
+#
+# The pen is a power_supply, and power_supply_register() marks every supply as a
+# system wakeup source.  While the pen sits in its silo charging, the driver
+# reports charge changes, and each power_supply_changed() counts as a wakeup
+# event: measured on hardware, one every ~20 s with the tablet idle and nothing
+# else firing.  Suspend therefore ended almost as soon as it began -- entry and
+# exit one second apart -- and pressing the power key again just repeated it.
+#
+# The pen's own dock GPIO is not the culprit and is left alone: across a
+# suspend cycle its interrupt count did not move while the power_supply wakeup
+# counter did.
+#
+# A charging accessory has no business waking the tablet, so the supply keeps
+# reporting its state -- the battery indicator still works -- but stops being a
+# reason to come out of suspend.  The proper fix is no_wakeup_source in the
+# driver's power_supply_desc, which needs a kernel; this needs a reboot at most.
+ACTION=="add", SUBSYSTEM=="power_supply", KERNEL=="gts9u-spen", ATTR{power/wakeup}="disabled"

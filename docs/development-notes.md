@@ -1110,6 +1110,38 @@ síntoma parece un pin reservado y no lo es. Resuelto: `CONFIG_GPIO_CDEV_V1=y`
 está en `config-ubuntu-desktop.fragment`. Queda como aviso porque el fallo es
 mudo y muy fácil de confundir con un problema de hardware.
 
+### Vuelto a medir el 2026-08-17, ahora sobre los 207 pines
+
+La medida anterior miraba tres pines elegidos a mano. Esta barre **todos** los
+que expone `/sys/kernel/debug/gpio` —207— muestreándolos cada 0,4 s mientras la
+dueña abría y cerraba la EF-DX920 varias veces. Confirma lo de arriba y cierra
+la duda de si el imán movía algo que no estuviéramos mirando:
+
+- Con la funda **cerrada**, `gpio107` lee `in high`. La línea es activo-bajo, así
+  que «high» es *no hay imán delante*. El sensor no está roto ni pillado: está
+  diciendo que no ve nada.
+- Su interrupción (`279:` … `107 Edge Book Cover`) sigue a **0** después de un
+  arranque entero. Cuidado al leer `/proc/interrupts` aquí: el 107 que aparece a
+  la derecha es el número de GPIO, no una cuenta, y confundirlo hace creer que el
+  Hall dispara constantemente.
+- Los únicos pines que se movieron —73, 85, 86, 95 y 207— son **pulsos que
+  vuelven solos en menos de un segundo**, cháchara del pogo al enganchar y
+  desenganchar. Ninguno se queda en un nivel mientras la funda está cerrada, que
+  es lo que haría falta para leer «cerrada».
+- `SW_LID` no cambió, y ni logind ni upower vieron nada: `lid-is-closed: no`.
+
+Así que no hay señal sostenida que delate el cierre de esta funda, y la
+conclusión de planificación de arriba se mantiene: para la EF-DX920 el cierre
+sólo se puede deducir de que el conector se suelta, que es lo que se cree que
+hace el stock.
+
+Descartado explícitamente por la dueña como solución (2026-08-17): usar el
+`attached` del pogo para sintetizar `SW_LID`. Funcionaría en esta funda, pero
+apagaría la pantalla también al quitar el teclado con la tablet en uso, y no
+serviría en las fundas con trackpad, que **no se desenganchan para cerrarse**.
+Esas son justamente las que sí podrían resolverse traduciendo el evento Hall del
+MCU, porque en ellas el enlace pogo sigue vivo con la tapa cerrada.
+
 ## Una tablet que no enciende puede ser modo emergencia
 
 El 2026-08-03 la tablet «no arrancaba»: pantalla negra tras reiniciar. No era
@@ -1196,6 +1228,40 @@ durante la suspensión, así que esa pulsación llega —para ese reloj— apena
 segundos después de haberse emitido la suspensión, por mucho que el equipo haya
 dormido horas. Descartar las pulsaciones dentro de esa ventana resuelve el caso
 sin necesidad de escuchar `PrepareForSleep`.
+
+### Y el lápiz cargando la despertaba un segundo después
+
+Síntoma: tocas el botón, la pantalla se apaga, y a los pocos segundos vuelve;
+insistir no cambia nada. Parece cosa del botón, y no lo es.
+
+`power_supply_register()` marca **toda** fuente de energía como fuente de
+despertar del sistema. El S Pen es una `power_supply`, así que mientras está en
+su hueco cargando, cada `power_supply_changed()` del driver cuenta como evento
+de despertar. Medido en reposo, con la funda cerrada y sin tocar nada: uno cada
+~20 s. Suspensión entrando a las 11:46:21 y saliendo a las 11:46:22.
+
+Cómo se atribuye sin adivinar, que es lo que costó en su día con el teclado:
+
+- diferencia de `/sys/kernel/debug/wakeup_sources` a los lados de un ciclo: sólo
+  `gts9u-spen` se movió (39 → 40). `11-002a` se quedó en 58, así que el pogo no
+  era;
+- el IRQ del dock del lápiz (`gts9u-spen-dock`) **no** se movió, así que no es
+  que sacaran el lápiz: es la notificación de carga;
+- protocolo `wakeup_count`: leer `/sys/power/wakeup_count` y volver a escribirlo
+  falla con `EBUSY` cuando hay eventos pendientes. Con el lápiz desactivado como
+  fuente, 40 s en reposo y el contador no se movió ni una vez.
+
+Arreglado desde userspace con `90-gts9u-spen-no-wakeup.rules`, que pone
+`power/wakeup` a `disabled` en la `power_supply` del lápiz. Sigue informando de
+la carga —el indicador de batería no se toca—, sólo deja de ser motivo para
+salir de la suspensión. Comprobado en hardware: **161 s dormida** hasta que la
+dueña pulsó el botón, `wakeup_count` clavado y `pm_wakeup_irq=21`.
+
+Lo correcto de verdad es `no_wakeup_source` en el `power_supply_desc` del
+driver, pero eso pide kernel; la regla pide un reinicio como mucho. Ojo si algún
+día se toca: el resto de `power_supply` del aparato (`sm5714-battery`,
+`sm5714-usb`, `tcpm-source-psy-8-0033`) son fuentes de despertar por el mismo
+motivo, y en 40 s de reposo no emitieron nada, así que no se tocan.
 
 ## El build del kernel es incremental, y por eso las releases no eran reproducibles
 
