@@ -14,8 +14,8 @@ android {
 		// than the One UI 8 it ships with.
 		minSdk = 34
 		targetSdk = 35
-		versionCode = 1
-		versionName = "0.1"
+		versionCode = 100
+		versionName = "1.0.0"
 	}
 
 	buildTypes {
