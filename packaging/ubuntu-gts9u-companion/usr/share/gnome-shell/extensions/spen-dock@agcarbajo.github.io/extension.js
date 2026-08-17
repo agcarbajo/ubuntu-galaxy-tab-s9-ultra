@@ -51,8 +51,17 @@ const EDGE_FOR_TRANSFORM = ['north', 'east', 'south', 'west'];
 // The artwork is 760x150, so the short side follows the long one at almost
 // exactly a fifth of it; keeping that ratio is what stops the pen looking
 // stretched.  The panel grows with it, mostly sideways.
-const PEN_LONG = 420;
-const PEN_SHORT = Math.round(PEN_LONG * 150 / 760);
+//
+// The wanted length does not always fit.  These are logical pixels, and this
+// panel is 1480x924 of them, so a pen this long stood up on a side edge would
+// be taller than the screen -- hence the clamp at the point of use rather than
+// a constant that only works in landscape.
+const PEN_LONG_WANTED = 1050;
+const PEN_ASPECT = 150 / 760;
+const PEN_MIN = 160;
+// Padding of the panel plus a little air, so the pen never touches the rounded
+// edge of its own background.
+const PANEL_SLACK = 56;
 
 const SPenDockPopup = GObject.registerClass({
     Signals: {'dismissed': {}},
@@ -132,17 +141,23 @@ const SPenDockPopup = GObject.registerClass({
     // the charge line just inside.  On the sideways edges the pen stands up and
     // the panel runs across instead of down, which is the same arrangement seen
     // from the edge -- and the text never turns, so it always reads.
-    setEdge(edge) {
+    setEdge(edge, available) {
         const sideways = edge === 'east' || edge === 'west';
         this.vertical = !sideways;
 
-        const boxW = sideways ? PEN_SHORT : PEN_LONG;
-        const boxH = sideways ? PEN_LONG : PEN_SHORT;
+        // As long as asked for, or as long as the screen allows along the axis
+        // the pen actually lies on.
+        const long = Math.max(PEN_MIN,
+            Math.min(PEN_LONG_WANTED, Math.round(available - PANEL_SLACK)));
+        const short = Math.round(long * PEN_ASPECT);
+
+        const boxW = sideways ? short : long;
+        const boxH = sideways ? long : short;
         this._penBox.set_size(boxW, boxH);
-        this._penArt.set_size(PEN_LONG, PEN_SHORT);
+        this._penArt.set_size(long, short);
         this._penArt.set_position(
-            Math.round((boxW - PEN_LONG) / 2),
-            Math.round((boxH - PEN_SHORT) / 2));
+            Math.round((boxW - long) / 2),
+            Math.round((boxH - short) / 2));
         this._penArt.rotation_angle_z = sideways ? 90 : 0;
 
         // The pen is the half that touches the edge, so on the far edges it has
@@ -331,8 +346,14 @@ export default class SPenDockExtension extends Extension {
     _show() {
         this._cancelTimeout();
         // The arrangement decides the size, so the edge is applied before the
-        // placement asks how big the panel turned out to be.
-        this._popup.setEdge(EDGE_FOR_TRANSFORM[this._transform % 4]);
+        // placement asks how big the panel turned out to be.  The pen lies
+        // along the edge, so what limits its length is the screen's extent in
+        // that direction, not always its width.
+        const edge = EDGE_FOR_TRANSFORM[this._transform % 4];
+        const monitor = Main.layoutManager.primaryMonitor;
+        const along = (edge === 'east' || edge === 'west')
+            ? monitor.height : monitor.width;
+        this._popup.setEdge(edge, along - 2 * MARGIN);
         this._popup.visible = true;
         this._popup.get_parent()?.queue_relayout();
         const {rest, from} = this._placement();
