@@ -1222,6 +1222,99 @@ a 9 s de un resume ahora suspende, y durmió 25 s hasta que se abrió la funda.
 Un drop-in de `logind.conf.d` no se aplica en caliente, así que hace falta
 reiniciar (o reiniciar logind **y** el gestor de sesión).
 
+## La tablet estaba tibia en reposo por dos motivos independientes
+
+Síntoma: poca autonomía y calor con un uso ligero. Medido en reposo, con la
+pantalla encendida y sólo un navegador abierto: **32 % de CPU ocupada** y
+zonas térmicas a **57–63 °C** sin que nadie pidiera nada.
+
+### 1. No había escalado de frecuencia en absoluto
+
+Ni `/sys/devices/system/cpu/cpufreq`, ni políticas, ni `schedutil`: ocho núcleos
+a la frecuencia que dejara el firmware. Todo cuelga de una línea de dmesg:
+
+```
+platform 17d91000.cpufreq: deferred probe pending:
+    qcom-cpufreq-hw: Failed to find icc paths
+```
+
+`qcom-cpufreq-hw` resuelve las rutas de interconexión que nombran los nodos de
+CPU antes de registrar nada. Decodificando esa propiedad por phandle salen tres
+proveedores:
+
+| phandle | proveedor | driver |
+|---|---|---|
+| `0x7` | `gem-noc` | `qnoc-sm8550` |
+| `0x8` | `mc-virt` | `qnoc-sm8550` |
+| `0x9` | `epss-l3` | **ninguno** |
+
+El tercero lo lleva `INTERCONNECT_QCOM_OSM_L3`, que el config heredado dejaba en
+`=m`. Como este puerto no instala árbol de módulos —sólo hay tres `.ko` en la
+tablet— ese módulo no existía, `17d90000.interconnect` se quedó sin driver, una
+ruta no resolvió, y el probe se aplazó para siempre. Es exactamente la trampa
+que ya avisa la cabecera de `config-ubuntu-desktop.fragment`, otra vez.
+
+Con `=y`: tres políticas, una por clúster, `307–2016` / `499–2803` /
+`595–2956 MHz`, gobernador `schedutil`, y el kernel construyendo modelo
+energético.
+
+Para diagnosticarlo: `/sys/kernel/debug/devices_deferred` dice quién se quedó
+aplazado y por qué, que es más directo que rebuscar en dmesg.
+
+### 2. Los cuatro relés de cámara transmitían sin que nadie mirara
+
+`ubuntu-gts9u-camera-relays` mantiene cuatro tuberías GStreamer que sacan 640×480
+de libcamera, **lo reescalan a 1280×960 en software** y lo empujan a 30 fps a los
+nodos de v4l2loopback. Parándolos y volviéndolos a arrancar:
+
+| | CPU ocupada | temperaturas más altas |
+|---|---|---|
+| con los relés | 32,30 % | 58,0 / 57,2 / 55,2 °C |
+| sin ellos | **1,76 %** | **40,2 / 40,2 / 40,2 °C** |
+
+Es decir **2,4 núcleos de 8 y unos 17 °C** de coste fijo.
+
+Cuidado al medir esto con el cargador puesto: al parar los relés la corriente
+*subió* de 866 a 1450 mA, porque con menos CPU entra más corriente en la batería.
+`current_now` no mide el consumo del sistema mientras carga; hay que mirar CPU y
+temperatura, o desenchufar.
+
+**Aviso de método, porque costó tres medidas malas:** `v4l2-relayd` se bifurca.
+Lanzarlo y medir el pid devuelto da `0,0 %` siempre, porque el que trabaja es el
+hijo. Con eso llegué a concluir que la tubería sólo corría bajo demanda, y era
+falso: hay que sumar la CPU de **todos** los procesos con ese nombre. Un `0 %`
+que encaja con la hipótesis conviene comprobarlo dos veces.
+
+Medido bien, un solo relé en reposo, con nadie leyendo el nodo:
+
+| tubería de salida | CPU de un relé |
+|---|---|
+| 1280×960 @30, splash como estaba | 106,8 % |
+| 1280×960 @30, splash arreglado | 60,6 % |
+| **640×480 @30, splash arreglado** | **2,2 %** |
+| 640×480 @15, splash arreglado | 1,1 % |
+
+Dos cosas distintas, entonces:
+
+- **El reescalado no aportaba nada.** A `pipewiresrc` se le piden 640×480, así que
+  publicar 1280×960 sólo interpolaba, y pagaba el escalador, una conversión a
+  YUY2 y unos 73 MB/s de copia por cámara, treinta veces por segundo.
+- **La tubería de reposo convertía cada fotograma.** El parche 0002 dejó
+  `imagefreeze is-live=true` *después* del `videoconvert`, así que el PNG negro se
+  reconvertía en cada repetición. Poniendo la conversión antes de congelar, se
+  hace una vez. Eso era la mitad del coste en reposo.
+
+Resultado en la tablet, antes y después, misma sesión:
+
+| | CPU de los relés | CPU global | temperaturas |
+|---|---|---|---|
+| 1280×960 | 230,0 % | 31,07 % | 58,4 / 58,4 / 56,0 °C |
+| 640×480 + splash | **8,1 %** | **2,48 %** | **39,8 / 39,8 / 39,0 °C** |
+
+Los cuatro nodos siguen anunciando captura y PipeWire los sigue viendo. Es
+prácticamente todo el margen que había: parar los relés del todo daba 1,76 % y
+40,2 °C, así que las cámaras ya no cuestan nada apreciable por estar disponibles.
+
 ## Una tablet que no enciende puede ser modo emergencia
 
 El 2026-08-03 la tablet «no arrancaba»: pantalla negra tras reiniciar. No era

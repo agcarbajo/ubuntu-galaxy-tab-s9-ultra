@@ -94,3 +94,23 @@ CONFIG_TEE=y
 # W9002 and W9007A.  Carrying them would only make it ambiguous which driver a
 # future failure came from.
 CONFIG_TOUCHSCREEN_SAMSUNG_WACOM_W90XX=y
+
+# --- CPU frequency scaling ---------------------------------------------------
+# Without this the tablet has no cpufreq at all: no /sys/.../cpufreq, no
+# policies, no schedutil, and eight cores pinned at whatever frequency the
+# firmware left them on.  It idles warm — 57 to 63 C doing nothing — for that
+# reason alone.
+#
+# The chain is only visible from one line of dmesg:
+#
+#   platform 17d91000.cpufreq: deferred probe pending:
+#       qcom-cpufreq-hw: Failed to find icc paths
+#
+# qcom-cpufreq-hw resolves the interconnect paths named by the CPU nodes before
+# it registers anything.  Those name three providers, by phandle: gem-noc (0x7),
+# mc-virt (0x8) and epss-l3 (0x9).  The first two bind to qnoc-sm8550; the third
+# is driven by INTERCONNECT_QCOM_OSM_L3, which the inherited config leaves at =m
+# — so 17d90000.interconnect never got a driver, one path never resolved, and the
+# probe deferred for the rest of the boot.  Exactly the failure mode this
+# fragment's header warns about, one more time.
+CONFIG_INTERCONNECT_QCOM_OSM_L3=y

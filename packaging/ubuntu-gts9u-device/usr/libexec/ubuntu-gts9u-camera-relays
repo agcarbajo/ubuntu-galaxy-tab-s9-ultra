@@ -40,11 +40,31 @@ done
 [ "$pipewire_pid" != 0 ]
 kill -0 "$pipewire_pid"
 
+# 640x480 is what pipewiresrc is asked for above, so publishing 1280x960 only
+# interpolated it -- and paid for the scaler, a YUY2 conversion and 73 MB/s of
+# memcpy per camera, thirty times a second, forever.  Measured cost of one relay
+# sitting idle with nothing reading it:
+#
+#   1280x960 @30, splash as it was   106.8 %  of a core
+#   1280x960 @30, splash fixed        60.6 %
+#    640x480 @30, splash fixed         2.2 %
+#
+# All four still advertise CAPTURE at 640x480, which is the resolution the frames
+# actually carry.  The four together came to 235 % of a core; that was 2.4 of the
+# eight cores and about 17 C, with the tablet doing nothing.
+caps="video/x-raw,format=YUY2,width=640,height=480,framerate=30/1"
+
+# The idle pipeline repeats one black frame.  Converting and scaling it *before*
+# imagefreeze means that work happens once instead of on every frame; leaving it
+# after the freeze was half of the idle cost above.  A 16x16 black PNG, the same
+# image v4l2-relayd ships as its default.
+splash="dataurisrc uri=data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAEElEQVQoz2NgGAWjYBTAAAADEAABaJFtwwAAAABJRU5ErkJggg== ! pngdec ! videoscale ! videoconvert ! capsfilter caps=video/x-raw,format=YUY2,width=640,height=480 ! imagefreeze is-live=true"
+
 for index in 0 1 2 3; do
 	node=$((20 + index))
-	input="pipewiresrc target-object=${sources[$index]} do-timestamp=true ! capsfilter caps=video/x-raw,format=RGBA,width=640,height=480 ! queue max-size-buffers=4 leaky=downstream ! videoconvert ! videoscale ! videorate ! capsfilter caps=video/x-raw,format=YUY2,width=1280,height=960,framerate=30/1"
-	output="appsrc name=appsrc is-live=true format=time block=false max-bytes=0 max-buffers=4 leaky-type=downstream caps=video/x-raw,format=YUY2,width=1280,height=960,framerate=30/1 ! videoconvert ! video/x-raw,format=YUY2,width=1280,height=960,framerate=30/1 ! v4l2sink name=v4l2sink device=/dev/video${node} sync=false"
-	/usr/bin/v4l2-relayd --input "$input" --output "$output" &
+	input="pipewiresrc target-object=${sources[$index]} do-timestamp=true ! capsfilter caps=video/x-raw,format=RGBA,width=640,height=480 ! queue max-size-buffers=4 leaky=downstream ! videoconvert ! videoscale ! videorate ! capsfilter caps=$caps"
+	output="appsrc name=appsrc is-live=true format=time block=false max-bytes=0 max-buffers=4 leaky-type=downstream caps=$caps ! videoconvert ! $caps ! v4l2sink name=v4l2sink device=/dev/video${node} sync=false"
+	/usr/bin/v4l2-relayd --input "$input" --output "$output" --splash "$splash" &
 	pids+=("$!")
 done
 
