@@ -184,10 +184,6 @@ LINUX_SECTORS=$4
 ui_print "Splitting userdata $PERCENT% Android / $((100 - PERCENT))% Linux:"
 ui_print "  userdata   $(gib "$ANDROID_SECTORS")"
 ui_print "  linuxroot  $(gib "$LINUX_SECTORS")"
-ui_print ""
-ui_print "Everything Android keeps in userdata is lost. Its system"
-ui_print "image, the bootloader and the calibration partitions are"
-ui_print "not touched."
 
 # ---------------------------------------------------------------------------
 # Back up the table before touching it
@@ -380,15 +376,11 @@ if [ "$FORMATEADO" = 1 ]; then
     ui_print " and it will make new encryption keys on"
     ui_print " its next boot."
     ui_print ""
-    ui_print " Everything Android kept in userdata is"
-    ui_print " gone, as warned."
-    ui_print ""
     ui_print " Now flash the Ubuntu installation ZIP."
 else
     ui_print " The table is split but the data was not"
     ui_print " recreated. Do Wipe -> Format Data in TWRP,"
     ui_print " then flash the Ubuntu installation ZIP."
 fi
-ui_print " This ZIP does not reboot."
 ui_print "---------------------------------------"
 exit 0

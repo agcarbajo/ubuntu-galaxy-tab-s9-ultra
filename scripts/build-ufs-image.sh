@@ -24,12 +24,17 @@ overlay=${OVERLAY_OUT_DIR:-$base/out/rootfs-overlay}
 out=${IMAGE_OUT:-$base/out/ubuntu-gts9uwifi-ufs.img}
 kernel_out=${KERNEL_OUT_DIR:-$base/out/kernel-gts9uwifi}
 kernel_release=${KERNEL_RELEASE:-$(cat "$kernel_out/kernel.release" 2>/dev/null || echo 7.2.0-rc3)}
-slack_mb=${ROOT_SLACK_MB:-512}
+slack_mb=${ROOT_SLACK_MB:-1152}
 root_label=${ROOT_LABEL:-UBTS9U_UFS}
 # The whole image travels inside the ZIP, and the owner has to download it and
 # write it through TWRP's unzip.  Keeping it small is what makes that bearable:
 # the filesystem is grown to the full partition on first boot anyway.
-max_mb=${UFS_IMAGE_MAX_MB:-4096}
+# Raised from 4096 deliberately.  The installer seeds two boot sets into this
+# filesystem before it grows, 216 MiB each, and it has to have room for both:
+# with less, Android's set is the one that fails, and that is the only one that
+# cannot be rebuilt afterwards.  The cost is small -- empty space compresses to
+# almost nothing, so 256 MiB of slack measured 784 KB in the ZIP.
+max_mb=${UFS_IMAGE_MAX_MB:-4608}
 
 test -d "$rootfs/etc" || { echo "missing rootfs: $rootfs" >&2; exit 1; }
 test -d "$rootfs/usr/lib/modules/$kernel_release" || \
@@ -84,7 +89,13 @@ truncate -s "${image_mb}M" "$out"
 # resize2fs on a 939 GiB partition would need an offline pass; with them the
 # online resize on first boot is a few seconds.  The value is 1 TiB in 4 KiB
 # blocks, which covers the 939 GiB userdata of every SM-X910 variant.
-mkfs.ext4 -q -F -L "$root_label" -e remount-ro \
+# -m 1 instead of the 5% default.  Two reasons.  The reserve is a percentage
+# held in the superblock, so it survives the resize: 5% of the 469 GiB this
+# filesystem grows into is 23 GiB the owner never gets back.  And before the
+# resize it ate 180 MiB of a 3.6 GiB image, which left df reporting zero
+# available and made the installer skip seeding the dual-boot sets every
+# single time -- the sets need 216 MiB and there were 118.
+mkfs.ext4 -q -F -L "$root_label" -e remount-ro -m 1 \
 	-E resize=268435456 "$out"
 
 mnt=$base/mnt/ufs

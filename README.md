@@ -4,7 +4,7 @@ Ubuntu 24.04 LTS arm64 for the Samsung Galaxy Tab S9 Ultra Wi-Fi
 (`SM-X910`, `gts9uwifi`), running GNOME 46 on Wayland and upstream Linux
 7.2-rc3.
 
-The current release is **v0.26**. It installs to the tablet's internal storage
+The current release is **v1.0.0-beta2**. It installs to the tablet's internal storage
 from one TWRP-flashable ZIP; a microSD is not required after installation.
 
 ## Hardware compatibility
@@ -46,7 +46,7 @@ The evidence and technical limitations for every component are documented in
 
 ## Tab Companion
 
-Tab Companion 0.10.8 is preinstalled and provides:
+Tab Companion 1.0.0 is preinstalled and provides:
 
 - S Pen battery, charging and dock status;
 - automatic dock-initiated BLE pairing, air gestures and an air-pointer mode;
@@ -76,6 +76,32 @@ split the UFS first.
 > its settings and its files. Android's system itself is not touched. Back up
 > anything you want to keep first.
 
+### Before you start
+
+Three things have to be in place first, all flashed with Odin from Download
+mode, into the `AP` slot:
+
+1. **An unlocked bootloader.** Once it is, `ro.boot.verifiedbootstate` reads
+   `orange`.
+2. **TWRP.**
+3. **A `vbmeta` with AVB verification disabled** — the one published alongside
+   TWRP.
+
+The third is the one that catches people out, because it is invisible until it
+bites. Flashing stock firmware puts back a `vbmeta` with verification enabled,
+and `vbmeta` lives on a read-only LUN that only the bootloader can write, so
+the installer cannot patch it from TWRP. It checks the flags instead and stops
+with:
+
+```
+ERROR: vbmeta is read-only and does not have AVB flags 2
+```
+
+That is the installer refusing to write a kernel the tablet would then decline
+to boot. Flash the disabled `vbmeta` and run it again. Note that changing
+`vbmeta` makes Android erase its own data on the next boot, which the warning
+above already covers.
+
 ### Ubuntu on the whole tablet
 
 1. Copy the installation ZIP to a microSD or a USB-OTG drive.
@@ -89,7 +115,7 @@ refuses to start if it finds itself sitting on it.
 
 ### Ubuntu beside Android
 
-1. Flash `gts9u-split-50-50.zip`. It shortens `userdata`, creates `linuxroot`
+1. Flash `gts9u-split.zip`. It shortens `userdata`, creates `linuxroot`
    beside it, and recreates Android's data so One UI can make fresh encryption
    keys on its next boot.
 2. Flash the installation ZIP. Finding `linuxroot`, it installs there and
@@ -99,17 +125,25 @@ refuses to start if it finds itself sitting on it.
 Here the ZIPs may sit on internal storage, because the partition being written
 is not the one they are on.
 
-The released ZIP splits it in half. The number in it is the share of `userdata`
-Android keeps, so any other split is one command away — build your own and flash
-that instead:
+The ZIP is generic and ships set to split the disk in half. The share is one
+file inside it, `ANDROID-PERCENT`, holding the percentage of `userdata` Android
+keeps. Changing the split means changing that number — open the ZIP in any
+archive manager and edit it, or:
 
 ```bash
-# 30 % Android, 70 % Ubuntu
-python3 scripts/make-repartition-zip.py out/gts9u-split-30-70.zip --android-percent 30
+printf '30
+' > ANDROID-PERCENT && zip gts9u-split.zip ANDROID-PERCENT
 ```
 
-Anything from 5 to 95 is accepted, and the installer on the tablet checks the
-same bounds.
+Nothing else needs touching: `SHA256SUMS` inside the ZIP covers the installer
+script alone, so editing the number invalidates nothing. Anything from 5 to 95
+is accepted, and the tablet checks the same bounds before it writes the table.
+
+Building a ZIP with the number already set works too:
+
+```bash
+python3 scripts/make-repartition-zip.py out/gts9u-split.zip --android-percent 30
+```
 
 Flashing it on a tablet that is already split does nothing and says so, so
 there is no harm in running it twice.
@@ -120,6 +154,12 @@ No PC needed. The **Dualboot** app on Android and Tab Companion's Dualboot page
 on Ubuntu each replace the four boot partitions and restart, and both offer a
 quick-settings toggle. Switching takes seconds and cannot lose data: nothing is
 moved, resized or reformatted. See [dual-boot.md](docs/dual-boot.md).
+
+> [!IMPORTANT]
+> **Android's side needs root.** The Dualboot app runs its work through `su`: it
+> has to mount `linuxroot` to read the saved boot sets and write the four boot
+> partitions to switch. Without Magisk it can do neither. Ubuntu's side needs no
+> such thing — it is already root there.
 
 Neither ZIP touches Samsung's bootloader, EFS, calibration or modem-related
 partitions, neither touches `super`, and neither reboots by itself. Full
