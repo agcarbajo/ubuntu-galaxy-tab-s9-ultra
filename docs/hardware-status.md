@@ -1,303 +1,310 @@
-# Estado de hardware del SM-X910 bajo Ubuntu 24.04
+# SM-X910 hardware status under Ubuntu 24.04
 
-Última actualización: 2026-08-14, tras validar la iluminación óptica y los
-eventos/supresión táctil FOD en hardware.
+Last updated: 2026-08-19, after validating dual boot against both One UI and
+LineageOS.
 
-Ubuntu **ya arranca** en la tablet. Esta matriz distingue explícitamente lo
-heredado de lo comprobado, y ningún componente pasa a ✅ sin observación real.
+Ubuntu **boots** on the tablet. This matrix explicitly separates what is
+inherited from what has been checked, and no component reaches ✅ without a real
+observation.
 
-## Base
+## Baseline
 
-- Dispositivo: Samsung Galaxy Tab S9 Ultra Wi-Fi, SM-X910, `gts9uwifi`.
-- SoC: Qualcomm Snapdragon 8 Gen 2, SM8550/kalama; GPU Adreno 740.
-- Kernel: Linux mainline 7.2-rc3, commit fijado
+- Device: Samsung Galaxy Tab S9 Ultra Wi-Fi, SM-X910, `gts9uwifi`.
+- SoC: Qualcomm Snapdragon 8 Gen 2, SM8550/kalama; Adreno 740 GPU.
+- Kernel: Linux mainline 7.2-rc3, pinned at commit
   `a13c140cc289c0b7b3770bce5b3ad42ab35074aa`.
-- Origen del soporte de hardware: postmarketOS v1.71 (kernel r114, device r44,
+- Origin of the hardware support: postmarketOS v1.71 (kernel r114, device r44,
   firmware r10).
-- Userspace objetivo: Ubuntu 24.04 LTS arm64, systemd, GNOME sobre Wayland.
-- Rootfs: ext4 dentro de `userdata`, en la UFS interna, desde v0.18. Samsung
-  ABL carga `boot` e `init_boot` y el DTB/cmdline de `vendor_boot` de esa misma
-  UFS. Hasta v0.17 la raíz vivía en una microSD ext4.
+- Target userspace: Ubuntu 24.04 LTS arm64, systemd, GNOME on Wayland.
+- Root filesystem: ext4 on the internal UFS since v0.18 — in `linuxroot` when
+  the disk has been split, in `userdata` when it has not. Samsung's ABL loads
+  `boot` and `init_boot`, and the DTB/cmdline from `vendor_boot`, off that same
+  UFS. Up to v0.17 the root lived on an ext4 microSD.
 
-Para el primer hito se usa **el mismo kernel 7.2-rc3 y el mismo DTS ya
-probados**. Actualizar el kernel se pospone hasta alcanzar paridad: mezclar un
-cambio de distribución con un salto de kernel haría imposible atribuir una
-regresión.
+For the first milestone **the same 7.2-rc3 kernel and the same DTS already
+proven** are used. Updating the kernel is postponed until parity is reached:
+mixing a distribution change with a kernel jump would make any regression
+impossible to attribute.
 
-## Niveles de evidencia
+## Evidence levels
 
-Toda fila de la matriz lleva uno de estos niveles. No se admite «el driver
-sondea» como prueba de funcionamiento.
+Every row in the matrix carries one of these. "The driver probes" is not
+accepted as proof that something works.
 
-| Nivel | Significado |
+| Level | Meaning |
 |---|---|
-| **medido** | Confirmado en logs o instrumentación del propio sistema Ubuntu |
-| **observado** | Visto físicamente por el asistente (captura OBS) o por la usuaria |
-| **confirmado** | La usuaria lo declara funcional tras una prueba concreta |
-| **heredado** | Validado en postmarketOS v1.71, no todavía en Ubuntu |
-| **supuesto** | Ni probado ni validado en ninguna distribución |
+| **measured** | Confirmed in logs or instrumentation of the Ubuntu system itself |
+| **observed** | Seen physically by the assistant (an OBS capture) or by the owner |
+| **confirmed** | The owner declares it working after a specific test |
+| **inherited** | Validated on postmarketOS v1.71, not yet on Ubuntu |
+| **assumed** | Neither tested nor validated on any distribution |
 
-## Matriz
+## Matrix
 
-| Componente | pmOS v1.71 | Ubuntu | Nivel | Notas |
+| Component | pmOS v1.71 | Ubuntu | Level | Notes |
 |---|---|---|---|---|
-| Arranque Android v4 + rootfs microSD | ✅ | ✅ | confirmado | Arranca desde microSD con `root=LABEL=UBTS9U_ROOT`. Initramfs propio en LZ4 legacy dentro de `init_boot`. Es la cadena de hasta v0.17 |
-| Arranque con rootfs en UFS | — | ✅ | confirmado | v0.18 escribe la raíz en `userdata` y arranca con `root=LABEL=UBTS9U_UFS`. Flasheada por sideload y arrancada en el dispositivo el 2026-08-10. Solo cambia dónde busca la raíz el initramfs; el resto de la cadena es la misma |
-| Pantalla interna 2960×1848@120 | ✅ | ✅ | medido | La recuperación cold-boot está validada bajo Ubuntu: el journal registra `panel id 00 00 00` → ciclo `pm_test=platform` → `80 00 04` |
-| GPU Adreno 740 | ✅ | ✅ | medido | Freedreno/Turnip funciona correctamente en juegos. Se observan artefactos menores y esporádicos en algunos clientes Wayland (un gradiente de Discord/Chromium y ciertos controles GTK tras repintados). La investigación de la sesión 48 no produjo un arreglo genérico sin regresiones, por lo que no se instala ningún override de Mesa, ANGLE, GTK ni lanzadores de aplicaciones |
-| Escritorio GNOME/Wayland | ✅ | ✅ | confirmado | GDM3 y GNOME 46 nativos, sin el workaround de cuentas greeter de Alpine |
-| Tab Companion | — | 🟡 | observado | 0.9.0 añade apagado BLE conservando escritura, modos alternativos de gestos/puntero y hápticos del teclado en pantalla. El backend y el paquete están validados; la prueba física de estas funciones nuevas queda pendiente |
-| Brillo / blanking | ✅ | ⏳ | medido | Backlight DCS y control manual nativo. GNOME tiene `ambient-enabled=true`, pero no puede hacer brillo automático porque ninguna de las dos rutas STK31610 entrega lux |
-| Táctil Goodix GT9916 | ✅ | ✅ | confirmado | Layout Samsung de eventos de 16 bytes |
-| Botones power y volumen | ✅ | ✅ | confirmado | |
-| UFS interna | ✅ | ✅ | medido | Seis LUN `sda`–`sdf`. Desde v0.18 aloja también la raíz, en `userdata` (`sda34`, 1 007 985 586 176 B), etiquetada `UBTS9U_UFS`. **Se reutiliza la partición tal cual: no se crea, borra ni redimensiona ninguna**, y en el primer arranque solo se redimensiona el sistema de ficheros con `resize2fs` |
-| microSD | ✅ | ✅ | confirmado | Funciona con normalidad como almacenamiento extraíble en la instalación UFS actual. Hasta v0.17 también alojó la raíz `UBTS9U_ROOT`; aquellas imágenes usan journal y `errors=remount-ro` para tolerar apagados sucios |
-| Wi-Fi WCN7850 / ath12k | ✅ | ✅ | confirmado | Conectada a la red por la usuaria; SSH en uso para el desarrollo |
-| Bluetooth y A2DP | ✅ | ✅ | confirmado | La unidad espera a `bluetoothd`, alimenta correctamente `btmgmt` y reaplica la dirección nativa; controlador y A2DP validados |
-| Altavoces 4× CS35L45 y DMIC | ✅ | ✅ | confirmado | PipeWire nativo, sin PulseAudio. Requiere el arranque tardío del ADSP y `protection-domain-mapper` |
-| Protección DSP de altavoces | ❌ | ❌ | supuesto | Firmware Cirrus sin cargar; volumen de hardware conservador |
-| Batería | ✅ | ✅ | confirmado | SM5714: porcentaje, voltaje, corriente y temperatura del pack |
-| Carga USB-PD/PPS | ✅ | ✅ | medido | SM5714 TCPM + SM5440 2:1. **25,2-25,5 W** sostenidos cinco minutos con el EP-T4510, die a 49,5 °C y pack a 36,4 °C. El techo lo ponía la corriente pedida en el contrato PPS, fijada a 3000 mA; barrida en hardware, el óptimo está en 3400 (por encima sube `ibus` y no la potencia, sólo el die). Ajustable en `/sys/module/sm5440_direct/parameters/pps_op_curr_ma` |
-| Suspensión profunda | ✅ | ✅ | confirmado | Probada mediante la funda |
-| Funda / Hall `SW_LID` | ✅ | ✅ | confirmado | Cerrar apaga la pantalla |
-| Acelerómetro y autorrotación | ✅ | ✅ | confirmado | SSC expuesto a GNOME. `iio-sensor-proxy` ya no gira: la espera síncrona de libssc bloquea en `poll()` en vez de iterar el contexto sin bloquear. 1 tick/2 s frente a 199, y 48,9 °C frente a 94,7. La usuaria confirmó girando la tablet que la rotación sigue bien tras el cambio |
-| Giroscopio LSM6DSO | ✅ | ✅ | medido | El mismo canal SSC. El LSM6DSO cuelga de **SPI** (`bus_type=3`, `bus_instance=1`) |
-| Brújula AK0991x | ✅ | ✅ | medido | **I²C del SSC, y funciona**: `bus_instance=2`, 0x0c, `dri_irq_num=89`, raíl real `/pmic/client/sensor_vddio`. `monitor-sensor` da rumbo vivo (127–134°) tras reclamarla. Ojo al comprobarlo: la interfaz está en el objeto `/net/hadess/SensorProxy/Compass`, no en `/net/hadess/SensorProxy`, y reclamar sensores por SSH exige una regla polkit temporal porque la sesión no es «activa» |
-| USB gadget / RNDIS | ✅ | ⏳ | heredado | |
-| USB host, HID y almacenamiento | ✅ | ✅ | confirmado | Con y sin alimentación externa |
-| DisplayPort USB-C | ✅ | ✅ | confirmado | Salida de vídeo confirmada por la usuaria |
-| Ethernet RTL8153 | 🟡 | ⏳ | heredado | Enumera y carga firmware; falta enlace y tráfico reales |
-| UAS | ❓ | ❓ | supuesto | Nunca probado: no hubo unidad con interfaz UAS |
-| Luz ambiental STK31610 | ❌ | ❌ | medido | El registro Samsung sitúa los dos chips en I²C `bus_instance` 3 y 4, esclavo 72 (**0x48**), raíles `dummy_vdd`. Esos dos motores son `i2c_hub_3` (0x98c000) e `i2c_hub_4` (0x990000), que el AP ya conduce en GPI-DMA: un `i2cdetect` completo de ambos devuelve **sólo** 0x63 (SM5440) y 0x18 (MAX77816), y 0x48 hace NAK en los 16 buses del AP. Eso cierra la vía AP —un driver IIO no tendría a qué enlazarse— pero **no** prueba nada sobre el chip: la brújula, que sí funciona, es igual de invisible para el AP. **El sensor está**: apuntar el registro a un bus donde no hay chip hace que el DSP se niegue a publicar el SUID (`Unable to initialize light sensor: UNKNOWN`), mientras que en los buses 3 y 4 lo publica y acepta el enable con `SUCCESS`. Prueba, se identifica y no emite ni una muestra: la frontera está en el *streaming* dentro del blob ADSP firmado de Samsung. `ssc-light` no se ofrece para no bloquear GNOME |
-| Proximidad | — | — | — | El firmware SSC stock del X910 no instancia el sensor |
-| S Pen: escritura (Wacom I²C 0x56) | ❌ | ✅ | confirmado | Driver propio: hover con distancia, presión 0–4095, inclinación ±63 y botón lateral. Enganche automático, ~440 Hz y rotación correcta en las cuatro orientaciones. La salida de rango se sintetiza también por silencio (timer de 250 ms): sin eso el controlador enmudecía al apartar el lápiz y `BTN_TOOL_PEN` se quedaba a 1 hasta el reinicio |
-| S Pen: acoplamiento y orientación | ❌ | ✅ | confirmado | El driver reclama TLMM GPIO137 (`PDCT`), publica `SW_PEN_INSERTED` y atributos sysfs. La propietaria confirmó retirada/reinserción y las dos orientaciones. La IRQ Wacom permanece activa para refrescar el sentido incluso si se filtran coordenadas con el lápiz insertado |
-| S Pen: batería y carga | ❌ | ✅ | medido | Al insertar, el kernel envía automáticamente enable/start/keep-on. El garaje entrega estado discreto y el GATT Samsung entrega porcentaje real: se midieron 100 %, 90 % y 80 % durante ciclos distintos de conexión/carga |
-| S Pen: emparejamiento BLE | ❌ | 🟡 | confirmado | El comando Wacom 0xea abre el anuncio al acoplarlo. El servicio aceptó la autorización iniciada por el lápiz y confirmó `Bonded`, `Paired`, `Trusted` sin interacción. Insertado usa siempre Mode `0x10`. Tab Companion valida el GATT real, descarta porcentajes en caché y reemplaza automáticamente un vínculo inservible. La recuperación post-reinicio está acotada a dos intentos de 12 s. Desde 0.10.8, apagar Bluetooth suspende las funciones remotas sin modificar la preferencia y la señal `Powered` las restaura inmediatamente al encenderlo |
-| S Pen: gestos y puntero | ❌ | 🟡 | medido | Los gestos BLE simple/doble/larga y seis movimientos están confirmados. El puntero activa el sensor raw a ~24 Hz, descarta el giro longitudinal X y proyecta gyro Y/Z con la gravedad para compensar la rotación del lápiz. Tras la prueba visual se invirtieron ambos ejes y X usa 1,6× de ganancia. En Puntero, `BTN_STYLUS` genera `BTN_LEFT` mantenido para clic y arrastre, con liberación de seguridad. Una captura produjo 621 eventos `REL_X/REL_Y`; falta cerrar la sensación final y confirmar físicamente el arrastre |
-| Táctil: zona que sólo responde al lápiz | — | ❌ | **abierto** | Intermitente. Una región deja de aceptar toques nuevos con el dedo; un arrastre iniciado fuera sí la atraviesa. La marca de proximidad pegada del S Pen se descartó como explicación suficiente: con el flag clavado y verificado, no había zona muerta. Sin diagnosticar; `work/catch-dead-zone.sh` decide si los toques llegan al kernel |
-| Teclado pogo EF-DX920 (STM32 I²C 0x2a) | ❌ | ✅ | confirmado | Requiere V37 en el MCU. Se midieron Galaxy AI 760, DeX 701, Finder 710, Ajustes 709 y Fn+F1–F11: 757, 758, 759, 705, 254, 172, 224, 225, 113, 114 y 115. Fn+F12 no genera evento bruto. Tab Companion 0.7.0 conserva por defecto Inicio/brillo/volumen de Fn+F6–F11 y permite restaurar todos los valores |
-| Otras fundas EF-DX900/910/915/925 | ❌ | 🟡 | medido | El DTS oficial del X910 declara los cinco modelos. El driver ya distingue los identificadores y VERSION, la app publica nombre/modelo y adapta la fila AI. Sólo el DX920 está disponible: enumeración, teclas especiales y touchpads de los otros cuatro siguen pendientes de hardware real |
-| Huella: infraestructura EL721/UDFPS | ❌ | 🟡 | parcial | QTEE 5.2.0, UID 122, HBM FlatZ, watchdog, indicador GNOME y eventos/supresión Goodix-FOD están validados físicamente. TrustZone acepta y descarga limpiamente la TA firmada `dualfp` de 19,9 MB mediante memoria compartida; falta validar la alimentación tardía GPIO91/GPIO155 y el protocolo BAUTH. El círculo DDIC no dibuja sin Self Display y no se usa; detalles en [fingerprint-reader.md](fingerprint-reader.md) |
-| Huella: registro, verificación y GDM | ❌ | ❌ | supuesto | No existe todavía un backend seguro para `libfprint`/`fprintd`. No se ofrece autenticación biométrica hasta validar registro, verificación, cancelación, bloqueo y GDM de extremo a extremo |
-| Vibración / hápticos | ❌ | ✅ | confirmado | El DTS stock identifica `dc_vibrator` COINDC en TLMM GPIO18 y mainline lo publica como `gpio-vibrator`/`FF_RUMBLE`. La usuaria confirmó motor y teclado en pantalla; Tab Companion ofrece pulsos de 24/42/66 ms. Las notificaciones vibran de forma opcional y una prueba real midió GPIO554 activo durante 64,5 ms |
-| Flash / linterna | ❌ | ✅ | observado | PM8550 SID 1, canales 0+1 agrupados por `leds-qcom-flash`; iluminación real observada en modo estrobo y linterna. El mosaico **Linterna** de ajustes rápidos está instalado, activo y probado físicamente |
-| Cámaras | ❌ | 🟡 | observado | Los cuatro sensores hacen fotos y pasan por `libcamera` simple + software ISP, apareciendo como exactamente cuatro cámaras V4L2 normales y nombradas. GNOME Cámara, Chrome WebRTC y OBS abrieron y alternaron las cuatro con vídeo cambiante, también después de un arranque en frío; la trasera principal enfoca con su DW9808. El relevo entre sensores queda cerrado. Siguen abiertos la calibración de fábrica y el flash fotográfico automático |
-| Módem | — | — | — | No aplica al modelo Wi-Fi |
+| Android v4 boot + microSD root | ✅ | ✅ | confirmed | Boots from microSD with `root=LABEL=UBTS9U_ROOT`. Its own legacy-LZ4 initramfs inside `init_boot`. This is the chain up to v0.17 |
+| Boot with the root on the UFS | — | ✅ | confirmed | v0.18 writes the root into `userdata` and boots with `root=LABEL=UBTS9U_UFS`. Flashed by sideload and booted on the device on 2026-08-10. Only where the initramfs looks for the root changes; the rest of the chain is the same |
+| Dual boot beside Android | — | ✅ | confirmed | Since v1.0.0. `gts9u-split.zip` creates `linuxroot`, the installer goes there, and both systems' boot sets are saved while the ZIP runs. Tested in both directions against One UI and LineageOS |
+| Internal display 2960×1848@120 | ✅ | ✅ | measured | The cold-boot recovery is validated under Ubuntu: the journal records `panel id 00 00 00` → a `pm_test=platform` cycle → `80 00 04` |
+| Adreno 740 GPU | ✅ | ✅ | measured | Freedreno/Turnip works correctly in games. Minor, sporadic artefacts are seen in some Wayland clients (a Discord/Chromium gradient, and certain GTK controls after repaints). Session 48's investigation produced no generic fix without regressions, so no Mesa, ANGLE, GTK or launcher override is installed |
+| GNOME/Wayland desktop | ✅ | ✅ | confirmed | Native GDM3 and GNOME 46, without Alpine's greeter-account workaround |
+| Tab Companion | — | ✅ | confirmed | 1.0.0 adds the S Pen dock panel, the flashlight brightness slider, the Dualboot page and its quick-settings toggle. Validated on hardware |
+| Brightness / blanking | ✅ | ⏳ | measured | DCS backlight and native manual control. GNOME has `ambient-enabled=true` but cannot do automatic brightness, because neither STK31610 route delivers lux |
+| Goodix GT9916 touch | ✅ | ✅ | confirmed | Samsung's 16-byte event layout |
+| Power and volume buttons | ✅ | ✅ | confirmed | |
+| Internal UFS | ✅ | ✅ | measured | Six LUNs, `sda`–`sdf`. Since v0.18 it also holds the root. Whole-tablet installs reuse `userdata` (`sda34`, 1,007,985,586,176 B) **exactly as it is, creating, deleting and resizing nothing**; split installs add `linuxroot` (entry 35) and only then is the table rewritten, by the split ZIP. On the first boot only the filesystem is resized, with `resize2fs` |
+| microSD | ✅ | ✅ | confirmed | Works normally as removable storage on the current UFS installation. Up to v0.17 it also held the `UBTS9U_ROOT` root; those images use a journal and `errors=remount-ro` to tolerate dirty shutdowns |
+| WCN7850 Wi-Fi / ath12k | ✅ | ✅ | confirmed | Connected to the network by the owner; SSH in use for development |
+| Bluetooth and A2DP | ✅ | ✅ | confirmed | The unit waits for `bluetoothd`, feeds `btmgmt` correctly and reapplies the native address; controller and A2DP validated |
+| 4× CS35L45 speakers and DMICs | ✅ | ✅ | confirmed | Native PipeWire, no PulseAudio. Requires the late ADSP start and `protection-domain-mapper` |
+| Speaker DSP protection | ❌ | ❌ | assumed | Cirrus firmware not loaded; conservative hardware volume |
+| Battery | ✅ | ✅ | confirmed | SM5714: percentage, voltage, current and pack temperature |
+| USB-PD/PPS charging | ✅ | ✅ | measured | SM5714 TCPM + SM5440 2:1. **25.2–25.5 W** sustained for five minutes with the EP-T4510, die at 49.5 °C and pack at 36.4 °C. The ceiling was the current requested in the PPS contract, fixed at 3000 mA; swept on hardware, the optimum is 3400 (above that `ibus` rises and the power does not, only the die). Adjustable in `/sys/module/sm5440_direct/parameters/pps_op_curr_ma` |
+| Deep suspend | ✅ | ✅ | confirmed | It used to wake about a second after every suspend: the S Pen, charging in its dock, is registered as a power supply and `power_supply_register()` marks those as wakeup sources. A udev rule disables that one wakeup source. Suspend now holds |
+| Cover switch | ✅ | ✅ | confirmed | Closing the cover blanks the screen and opening it wakes the tablet. It is **not** a Hall sensor: the Wacom digitizer reports the cover in a `0x0d` notification packet, bit 7 of `0x0a`, and the driver publishes `SW_MACHINE_COVER` and `SW_LID` from it. logind gets a 5 s `HoldoffTimeoutSec` so the lock screen does not swallow the first event after a resume |
+| Accelerometer and auto-rotation | ✅ | ✅ | confirmed | SSC exposed to GNOME. `iio-sensor-proxy` no longer spins: libssc's synchronous wait blocks in `poll()` instead of iterating the context without blocking. 1 tick per 2 s against 199, and 48.9 °C against 94.7. The owner confirmed by rotating the tablet that rotation still works after the change |
+| LSM6DSO gyroscope | ✅ | ✅ | measured | The same SSC channel. The LSM6DSO hangs off **SPI** (`bus_type=3`, `bus_instance=1`) |
+| AK0991x compass | ✅ | ✅ | measured | **On the SSC's I²C, and working**: `bus_instance=2`, 0x0c, `dri_irq_num=89`, real rail `/pmic/client/sensor_vddio`. `monitor-sensor` gives a live heading (127–134°) once claimed. A trap when checking it: the interface is on the `/net/hadess/SensorProxy/Compass` object, not on `/net/hadess/SensorProxy`, and claiming sensors over SSH needs a temporary polkit rule because the session is not "active" |
+| CPU frequency scaling | ✅ | ✅ | measured | It had never probed: `qcom-cpufreq-hw` needs its interconnect paths, and `INTERCONNECT_QCOM_OSM_L3` was a module in a port that installs no module tree, so all eight cores ran at a fixed clock with no governor. Built in, `schedutil` takes over |
+| USB gadget / RNDIS | ✅ | ⏳ | inherited | |
+| USB host, HID and storage | ✅ | ✅ | confirmed | With and without external power |
+| USB-C DisplayPort | ✅ | ✅ | confirmed | Video output confirmed by the owner |
+| RTL8153 Ethernet | 🟡 | ⏳ | inherited | Enumerates and loads firmware; real link and traffic still missing |
+| UAS | ❓ | ❓ | assumed | Never tested: no drive with a UAS interface was available |
+| STK31610 ambient light | ❌ | ❌ | measured | Samsung's registry places both chips on I²C `bus_instance` 3 and 4, slave 72 (**0x48**), rails `dummy_vdd`. Those two engines are `i2c_hub_3` (0x98c000) and `i2c_hub_4` (0x990000), which the AP already drives over GPI-DMA: a full `i2cdetect` of both returns **only** 0x63 (SM5440) and 0x18 (MAX77816), and 0x48 NAKs on all 16 AP buses. That closes the AP route — an IIO driver would have nothing to bind to — but proves **nothing** about the chip: the compass, which does work, is equally invisible to the AP. **The sensor is there**: pointing the registry at a bus with no chip makes the DSP refuse to publish the SUID (`Unable to initialize light sensor: UNKNOWN`), while on buses 3 and 4 it publishes it and accepts the enable with `SUCCESS`. It probes, identifies itself, and emits not one sample: the boundary is *streaming*, inside Samsung's signed ADSP blob. `ssc-light` is not offered, so GNOME is not blocked |
+| Proximity | — | — | — | The X910's stock SSC firmware does not instantiate the sensor |
+| S Pen: writing (Wacom I²C 0x56) | ❌ | ✅ | confirmed | Our own driver: hover with distance, pressure 0–4095, tilt ±63 and the side button. Automatic attach, ~440 Hz and correct rotation in all four orientations. Leaving range is also synthesised from silence (a 250 ms timer): without it the controller went quiet when the pen was moved away and `BTN_TOOL_PEN` stayed at 1 until reboot |
+| S Pen: docking and orientation | ❌ | ✅ | confirmed | The driver claims TLMM GPIO137 (`PDCT`), publishes `SW_PEN_INSERTED` and sysfs attributes. The owner confirmed removal/reinsertion and both orientations. The Wacom IRQ stays live to refresh the direction even when coordinates are filtered with the pen docked |
+| S Pen: battery and charging | ❌ | ✅ | measured | On docking, the kernel automatically sends enable/start/keep-on. The dock delivers a discrete state and the Samsung GATT delivers a real percentage: 100 %, 90 % and 80 % were measured across different connection/charge cycles |
+| S Pen: BLE pairing | ❌ | ✅ | confirmed | The Wacom command 0xea opens the advertisement on docking. The service accepted the pen-initiated authorisation and confirmed `Bonded`, `Paired`, `Trusted` with no interaction. Docked it always uses Mode `0x10`. Tab Companion validates the real GATT, discards cached percentages and automatically replaces an unusable bond. Post-reboot recovery is bounded to two 12 s attempts. Since 0.10.8, switching Bluetooth off suspends the remote features without modifying the preference, and the `Powered` signal restores them immediately when it comes back |
+| S Pen: gestures and pointer | ❌ | ✅ | measured | The BLE single/double/long gestures and the six movements are confirmed. The pointer enables the raw sensor at ~24 Hz, discards the lengthwise X roll and projects gyro Y/Z with gravity to compensate for the pen's roll. After the visual test both axes were inverted and X uses a 1.6× gain. In Pointer mode, `BTN_STYLUS` produces a held `BTN_LEFT` for click and drag, with a safety release. One capture produced 621 `REL_X/REL_Y` events |
+| Touch: an area that only answers the pen | — | ❌ | **open** | Intermittent. A region stops accepting new finger touches; a drag started outside does cross it. The S Pen's stuck proximity flag was ruled out as a sufficient explanation: with the flag pinned and verified, there was no dead zone. Undiagnosed; `work/catch-dead-zone.sh` decides whether the touches reach the kernel |
+| EF-DX920 pogo keyboard (STM32 I²C 0x2a) | ❌ | ✅ | confirmed | Requires V37 on the MCU. Measured: Galaxy AI 760, DeX 701, Finder 710, Settings 709, and Fn+F1–F11: 757, 758, 759, 705, 254, 172, 224, 225, 113, 114 and 115. Fn+F12 produces no raw event. Tab Companion keeps Fn+F6–F11's home/brightness/volume by default and can restore every value |
+| Other EF-DX900/910/915/925 covers | ❌ | 🟡 | measured | The X910's official DTS declares all five models. The driver already tells the identifiers and VERSION apart, and the app publishes name/model and adapts the AI row. Only the DX920 is available: enumeration, special keys and touchpads of the other four still await real hardware |
+| Fingerprint: EL721/UDFPS infrastructure | ❌ | 🟡 | partial | QTEE 5.2.0, UID 122, FlatZ HBM, watchdog, the GNOME indicator and the Goodix-FOD events/suppression are physically validated. TrustZone accepts and cleanly unloads the signed 19.9 MB `dualfp` TA through shared memory; the late GPIO91/GPIO155 power and the BAUTH protocol still need validating. The DDIC circle does not draw without Self Display and is not used; details in [fingerprint-reader.md](fingerprint-reader.md) |
+| Fingerprint: enrolment, verification and GDM | ❌ | ❌ | assumed | There is still no secure backend for `libfprint`/`fprintd`. Biometric authentication is not offered until enrolment, verification, cancellation, lockout and GDM are validated end to end |
+| Haptics | ❌ | ✅ | confirmed | The stock DTS identifies a `dc_vibrator` COINDC on TLMM GPIO18 and mainline publishes it as `gpio-vibrator`/`FF_RUMBLE`. The owner confirmed the motor and the on-screen keyboard; Tab Companion offers 24/42/66 ms pulses. Notifications vibrate optionally, and a real test measured GPIO554 active for 64.5 ms |
+| Flash / torch | ❌ | ✅ | observed | PM8550 SID 1, channels 0+1 grouped by `leds-qcom-flash`; real illumination observed in strobe and torch modes. The **Flashlight** quick-settings tile is installed, active and physically tested, with a brightness submenu and state shared with the shortcut actions |
+| Cameras | ❌ | 🟡 | observed | All four sensors take pictures and go through `libcamera` simple plus the software ISP, appearing as exactly four normal, named V4L2 cameras. GNOME Camera, Chrome WebRTC and OBS opened and switched between all four with changing video, including after a cold boot; the main rear focuses with its DW9808. Switching between sensors is closed. Factory calibration and automatic photographic flash remain open |
+| Modem | — | — | — | Not applicable to the Wi-Fi model |
 
-### Cámaras y flash: alcance exacto de la validación
+### Cameras and flash: the exact scope of the validation
 
-La enumeración no se tomó como prueba. Se configuró cada enlace físico por
-separado hacia `msm_csid0` → `msm_vfe0_rdi0` → `/dev/video0` y se guardó un
-fotograma completo. La relación observada es:
+Enumeration was not taken as proof. Each physical link was configured
+separately towards `msm_csid0` → `msm_vfe0_rdi0` → `/dev/video0` and a full
+frame was saved. The observed relationship is:
 
-| objetivo | sensor / subdispositivo | CSIPHY | formato capturado |
+| Lens | Sensor / subdevice | CSIPHY | Captured format |
 |---|---|---|---|
-| trasera principal | HI1337 `1-0021`, `/dev/v4l-subdev32` | `msm_csiphy1` | 4128×3096 RAW10, 16.000.128 bytes |
-| trasera angular | HI847 `0-0021`, `/dev/v4l-subdev34` | `msm_csiphy2` | 3264×2448 RAW10, 9.987.840 bytes |
-| frontal principal | HI1337 `3-0020`, `/dev/v4l-subdev31` | `msm_csiphy4` | 3408×2556 RAW10, 10.919.232 bytes |
-| frontal angular | HI1337 `9-0021`, `/dev/v4l-subdev30` | `msm_csiphy5` | 4000×3000 RAW10, 15.024.000 bytes |
+| main rear | HI1337 `1-0021`, `/dev/v4l-subdev32` | `msm_csiphy1` | 4128×3096 RAW10, 16,000,128 bytes |
+| wide rear | HI847 `0-0021`, `/dev/v4l-subdev34` | `msm_csiphy2` | 3264×2448 RAW10, 9,987,840 bytes |
+| main front | HI1337 `3-0020`, `/dev/v4l-subdev31` | `msm_csiphy4` | 3408×2556 RAW10, 10,919,232 bytes |
+| wide front | HI1337 `9-0021`, `/dev/v4l-subdev30` | `msm_csiphy5` | 4000×3000 RAW10, 15,024,000 bytes |
 
-`/dev/video0` es el nodo de captura común: no identifica por sí solo una lente;
-el sensor se elige cambiando los enlaces y formatos del grafo de medios. Sobre
-esa capa se empaqueta `libcamera` 0.7.2 con el pipeline `simple`, software ISP y
-ayudantes de ganancia HI1337/HI847. El tuning aplica pedestal RAW10, AE, AWB de
-mundo gris y una matriz de color conservadora. Tras 150 frames de convergencia,
-las cuatro salidas RGB mostraron exposición útil y blancos/grises sin la
-dominante magenta de la conversión inicial:
+`/dev/video0` is the common capture node: on its own it identifies no lens; the
+sensor is chosen by changing the media graph's links and formats. On top of
+that layer, `libcamera` 0.7.2 is packaged with the `simple` pipeline, the
+software ISP and HI1337/HI847 gain helpers. The tuning applies a RAW10
+pedestal, AE, grey-world AWB and a conservative colour matrix. After 150
+convergence frames, all four RGB outputs showed usable exposure and whites and
+greys free of the magenta cast of the initial conversion:
 
-- [frontal angular](../work/resultado-frontal-angular.jpg);
-- [frontal principal](../work/resultado-frontal-principal.jpg);
-- [trasera principal](../work/resultado-trasera-principal.jpg);
-- [trasera angular](../work/resultado-trasera-angular.jpg).
+- [wide front](../work/resultado-frontal-angular.jpg);
+- [main front](../work/resultado-frontal-principal.jpg);
+- [main rear](../work/resultado-trasera-principal.jpg);
+- [wide rear](../work/resultado-trasera-angular.jpg).
 
-El escalado del ISP conserva ahora el rectángulo completo del sensor: usa
-ajuste *contain* centrado y relleno negro si la relación solicitada no coincide,
-en vez de recortar los laterales para llenar la salida. La interfaz V4L2 base es
-1280×960 (4:3); un cliente que pida 16:9 puede aplicar después su propio
-`crop-and-scale`. La trasera principal sigue teniendo un campo óptico
-naturalmente más estrecho que las ultra gran angular.
+The ISP's scaling now preserves the sensor's full rectangle: it uses a centred
+*contain* fit with black padding when the requested ratio does not match,
+instead of cropping the sides to fill the output. The base V4L2 interface is
+1280×960 (4:3); a client wanting 16:9 can apply its own crop-and-scale
+afterwards. The main rear still has a naturally narrower optical field than the
+ultra-wides.
 
-La trasera principal enlaza el actuador DW9808 `2-000c` como lente del HI1337.
-El driver expone `focus_absolute` 0–1023 y la IPA software hace un barrido de
-contraste grueso y otro fino antes de mantener la mejor posición. Con la luz
-continua, el texto del billete quedó legible tanto en GNOME Cámara como en OBS.
+The main rear links the DW9808 actuator `2-000c` as the HI1337's lens. The
+driver exposes `focus_absolute` 0–1023, and the software IPA does a coarse
+contrast sweep and then a fine one before holding the best position. Under
+continuous light, the text on a banknote was legible in both GNOME Camera and
+OBS.
 
-`/dev/udmabuf` se entrega a `video` mediante udev. PipeWire conserva las cuatro
-fuentes libcamera y cuatro procesos `v4l2-relayd` las conectan bajo demanda con
-`/dev/video20`–`23`, creados por un `v4l2loopback` parcheado, firmado y compilado
-contra el kernel exacto. Las cámaras se llaman `GTS9U-Front-Ultra-Wide`,
-`GTS9U-Front-Main`, `GTS9U-Rear-Main` y `GTS9U-Rear-Ultra-Wide`; no requieren
-escenas ni configuración por usuario.
+`/dev/udmabuf` is handed to `video` through udev. PipeWire keeps the four
+libcamera sources and four `v4l2-relayd` processes connect them on demand to
+`/dev/video20`–`23`, created by a patched, signed `v4l2loopback` built against
+the exact kernel. The cameras are named `GTS9U-Front-Ultra-Wide`,
+`GTS9U-Front-Main`, `GTS9U-Rear-Main` and `GTS9U-Rear-Ultra-Wide`; they need no
+scenes and no per-user configuration.
 
-Los cuatro sensores comparten CAMSS/ISP, por lo que los relés serializan sus
-entradas. Si una aplicación abre la cámara nueva antes de cerrar la anterior,
-el relé nuevo pide la preempción del dueño actual y espera a que libcamera haya
-soltado CAMSS. Los enlaces de medios se reinician antes de cada configuración y
-la cola de salida de `v4l2loopback` sobrevive a la negociación del consumidor.
-El propietario del bloqueo se reescribe desde el offset cero: sin ese detalle,
-el fichero acumulaba huecos NUL y el siguiente relé no podía descubrir a quién
-señalar, dejando una imagen negra o estática.
+The four sensors share CAMSS/ISP, so the relays serialise their inputs. If an
+application opens the new camera before closing the previous one, the new relay
+asks to pre-empt the current owner and waits for libcamera to have released
+CAMSS. The media links are reset before each configuration, and
+`v4l2loopback`'s output queue survives the consumer's negotiation. The lock's
+owner is rewritten from offset zero: without that detail the file accumulated
+NUL gaps and the next relay could not discover whom to signal, leaving a black
+or frozen image.
 
-Chrome enumeró sólo esas cuatro cámaras y abrió cada una a 1280×720 mediante
-WebRTC. Tres rondas seguidas exigieron más de un segundo de tiempo multimedia y
-cambio de píxeles entre muestras separadas dos segundos; las doce aperturas
-pasaron. Tras otro arranque en frío, el primer consumidor repitió 4/4 con
-2,030–2,034 s y 98,76–100 % de píxeles cambiantes en la escena disponible. El
-selector V4L2 estándar de un perfil OBS completamente vacío mostró las mismas
-cuatro y capturó cada `/dev/video20`–`23`. Dos capturas separadas tres segundos
-por cámara cambiaron entre 20,04 % y 31,12 % de los píxeles del preview, por lo
-que no eran imágenes cacheadas. El complemento empaquetado oculta únicamente
-los endpoints RAW internos `Qualcomm Camera Subsystem` y corrige el caso en que
-no existen los directorios `by-id`/`by-path`, que antes terminaba en `SIGSEGV`.
+The relays used to cost 2.4 cores at idle, with the four GStreamer pipelines
+running a full-resolution conversion whether or not anyone was watching. Their
+caps are now 640×480 and the splash is converted once and frozen: 32 % → 2.5 %
+CPU, and about 58 °C → 40 °C, with the four cameras still available.
 
-Discord en Chrome enumera también los cuatro identificadores V4L2 correctos.
-Su selector de previsualización observado conserva internamente el stream
-predeterminado `/dev/video20` aunque la etiqueta cambie a una trasera; el mismo
-Chrome abre inmediatamente esas traseras por su `deviceId` exacto en WebRTC.
-Esto queda documentado como comportamiento de esa interfaz de Discord, no como
-un alias o una cámara ausente del sistema; no se instala ningún userscript ni
-configuración por perfil para maquillarlo.
+Chrome enumerated only those four cameras and opened each at 1280×720 through
+WebRTC. Three consecutive rounds required more than a second of media time and
+changing pixels between samples two seconds apart; all twelve openings passed.
+After another cold boot the first consumer repeated 4/4 with 2.030–2.034 s and
+98.76–100 % changing pixels in the available scene. The standard V4L2 selector
+of a completely empty OBS profile showed the same four and captured each of
+`/dev/video20`–`23`. Two captures three seconds apart per camera changed
+between 20.04 % and 31.12 % of the preview's pixels, so they were not cached
+images. The packaged plugin hides only the internal `Qualcomm Camera Subsystem`
+RAW endpoints and fixes the case where the `by-id`/`by-path` directories do not
+exist, which used to end in `SIGSEGV`.
 
-Los arranques reales terminan con cuatro nodos, cuatro relés y las cuatro
-fuentes PipeWire utilizables antes de iniciar sesión gráfica. La cuenta creada
-por la persona propietaria conserva su gestor systemd mediante *linger*; su
-nombre y UID se resuelven en cada arranque y se escriben en un drop-in bajo
-`/run`, nunca en la unidad empaquetada. El servicio vigila el PID real de
-PipeWire: si éste cambia, destruye y recrea el conjunto completo de relés en vez
-de dejar nodos V4L2 activos que sólo entregan negro.
+Discord in Chrome also enumerates the four correct V4L2 identifiers. Its
+preview selector, as observed, internally keeps the default `/dev/video20`
+stream even when the label changes to a rear one; that same Chrome immediately
+opens those rear cameras by their exact `deviceId` in WebRTC. This is recorded
+as behaviour of that Discord interface, not as an alias or a camera missing
+from the system; no userscript or per-profile configuration is installed to
+paper over it.
 
-Las capturas posteriores al reinicio mostraron canales equilibrados en las dos
-frontales y una dominante verde moderada en superficies neutras iluminadas por
-el flash trasero. La escena trasera estaba dominada por objetos rojos y marrones,
-por lo que el AWB de mundo gris puede sesgarse; no se aplicó una matriz global
-que habría degradado otras luces. La calibración de fábrica sigue abierta hasta
-medir una carta neutra y de color bajo varias iluminaciones controladas.
+Real boots end with four nodes, four relays and the four PipeWire sources
+usable before a graphical login. The owner's account keeps its systemd manager
+through lingering; its name and UID are resolved on every boot and written into
+a drop-in under `/run`, never into the packaged unit. The service watches
+PipeWire's real PID: if it changes, it destroys and recreates the whole set of
+relays rather than leaving active V4L2 nodes that only deliver black.
 
-El flash se verificó en sus dos rutas de hardware. El estrobo se armó mediante
-la clase V4L2 flash y disparó durante una captura; la linterna mantuvo los dos
-canales encendidos durante otra. Las dos imágenes muestran reflejos e
-iluminación que no aparecen en la captura sin luz.
+The post-reboot captures showed balanced channels on both front cameras and a
+moderate green cast on neutral surfaces lit by the rear flash. The rear scene
+was dominated by red and brown objects, so grey-world AWB can skew; no global
+matrix was applied, as it would have degraded other lighting. Factory
+calibration stays open until a neutral and colour chart is measured under
+several controlled illuminations.
 
-Para uso diario, GNOME carga la extensión de sistema
-`flashlight@ubuntu-gts9u` y muestra **Linterna** en los ajustes rápidos
-(`Super+S`). El mosaico usa luz continua al nivel conservador 128/255, refleja
-el estado real del LED y lo apaga al deshabilitarse. También queda disponible
-`gts9u-flashlight on|off|toggle|status`; no necesita `sudo`. Udev concede al
-grupo `video` escritura únicamente sobre `brightness`: estrobo, timeout y
-fallos siguen siendo controles de `root`. Un hook de suspensión fuerza nivel
-cero para que el LED no quede encendido dentro de una funda.
+The flash was verified on both of its hardware routes. The strobe was armed
+through the V4L2 flash class and fired during one capture; the torch kept both
+channels on during another. Both images show reflections and lighting absent
+from the capture without light.
 
-Tras reiniciar por un atasco de la sesión multimedia, se repitieron 120 frames
-de vídeo RAW, 60 frames VP9 codificados/decodificados y 30 frames de cada una
-de las cuatro fuentes PipeWire. Las validaciones posteriores con GNOME Cámara
-y OBS confirmaron orientación en las cuatro: monitor derecho en las frontales
-y billete derecho en ambas traseras. La principal mostró además detalle a
-corta distancia después de converger el autofoco.
+For daily use, GNOME loads the `flashlight@ubuntu-gts9u` system extension and
+shows **Flashlight** in quick settings (`Super+S`). The tile uses continuous
+light at a conservative 128/255, reflects the LED's real state and switches it
+off when disabled. `gts9u-flashlight on|off|toggle|status` is also available
+and needs no `sudo`. Udev grants the `video` group write access to `brightness`
+only: strobe, timeout and faults remain `root` controls. A suspend hook forces
+level zero so the LED cannot be left on inside a cover.
 
-## Riesgos de Ubuntu: cómo quedaron
+After a reboot caused by a stuck media session, 120 frames of RAW video, 60
+encoded/decoded VP9 frames and 30 frames from each of the four PipeWire sources
+were repeated. Later validations with GNOME Camera and OBS confirmed
+orientation on all four: the monitor upright on the front cameras and the
+banknote upright on both rear ones. The main rear additionally showed
+close-range detail once autofocus converged.
 
-Los cinco riesgos anticipados antes del primer arranque, con lo que ocurrió
-realmente.
+## Ubuntu's risks: how they turned out
 
-1. **UCM — resuelto.** El perfil propio de la X910 convive con el
-   `alsa-ucm-conf` de Ubuntu sin conflicto; se instala en
-   `conf.d/sm8550/` y `Qualcomm/sm8550/GTS9U/` y tiene prioridad.
-2. **PipeWire frente a PulseAudio — resuelto a favor de PipeWire.** No hizo
-   falta PulseAudio: PipeWire nativo expone los cuatro CS35L45 y los DMIC. El
-   arranque ordena la recuperación del panel antes del ADSP y refresca
-   WirePlumber cuando aparece `controlC0`; dos reinicios consecutivos dejaron
-   `HiFi`, altavoz y micrófono activos, con 351.781 y 351.547 muestras no nulas.
-   A2DP sigue sin probar porque el controlador Bluetooth no se mantiene
-   estable.
-3. **`initramfs-tools` — resuelto, con trabajo.** Cumple los tres requisitos
-   duros, pero solo tras forzar `COMPRESS=lz4`, corregir `MODULES` y podar la
-   base de datos de udev para caber en `init_boot`.
-4. **AppArmor — no se manifestó.** Los servicios de recuperación del panel y de
-   arranque del ADSP escriben en `/sys/power` y en `remoteproc` sin que ningún
-   perfil los bloquee. No se ha tocado AppArmor.
-5. **Sensores — confirmado como el hueco previsto, y resuelto.** `pd-mapper` sí
-   existe en Ubuntu (`protection-domain-mapper`), pero `libssc` y `hexagonrpcd`
-   no. Empaquetarlos fue necesario pero no suficiente: hicieron falta tres
-   correcciones más, todas en el repositorio y ninguna específica de Ubuntu.
-   Ver «Autorrotación: los cuatro obstáculos» en el registro de porte.
+The five risks anticipated before the first boot, with what actually happened.
 
-### Soporte medido: funda con teclado EF-DX920
+1. **UCM — resolved.** The X910's own profile coexists with Ubuntu's
+   `alsa-ucm-conf` without conflict; it installs into `conf.d/sm8550/` and
+   `Qualcomm/sm8550/GTS9U/` and takes priority.
+2. **PipeWire against PulseAudio — resolved in PipeWire's favour.** PulseAudio
+   was not needed: native PipeWire exposes the four CS35L45s and the DMICs. The
+   boot orders the panel recovery before the ADSP and refreshes WirePlumber
+   when `controlC0` appears; two consecutive reboots left `HiFi`, speaker and
+   microphone active, with 351,781 and 351,547 non-zero samples.
+3. **`initramfs-tools` — resolved, with work.** It meets the three hard
+   requirements, but only after forcing `COMPRESS=lz4`, correcting `MODULES`
+   and pruning udev's database to fit in `init_boot`.
+4. **AppArmor — never showed up.** The panel recovery and ADSP start services
+   write to `/sys/power` and to `remoteproc` with no profile blocking them.
+   AppArmor has not been touched.
+5. **Sensors — confirmed as the anticipated gap, and resolved.** `pd-mapper`
+   does exist in Ubuntu (`protection-domain-mapper`), but `libssc` and
+   `hexagonrpcd` do not. Packaging them was necessary but not sufficient: three
+   more fixes were needed, all in the repository and none specific to Ubuntu.
+   See "Auto-rotation: the four obstacles" in the porting log.
 
-La v0.9 reproduce la máquina de estados de Samsung: QUPv3 SE15, VDDO, el
-MAX77816 de SE4, las dos IRQ y la entrada/salida del bootloader ROM. El STM32
-pasó de la aplicación antigua `00 34 00 34` a la imagen oficial del X910
-`00 37 00 37`; los 52.132 bytes se releyeron y compararon antes de arrancarla.
-Sin el reset adicional posterior a VDDO —que el stock no hace— el controlador
-anuncia el modelo `0xd6` y Linux registra `Book Cover Keyboard Slim (EF-DX920)`.
-El dispositivo solo existe mientras el modelo real está presente, por lo que
-GNOME no pierde la autorrotación por un teclado fantasma. La fase de aplicación
-stock también responde con versión, modo, CRC y ausencia esperada de touchpad.
-La secuencia correcta —leer VERSION dentro de la IRQ y diferir 10 ms el resto—
-desbloqueó las pulsaciones: `evtest` midió presiones y liberaciones reales.
+### Measured support: the EF-DX920 keyboard cover
 
-Ese primer éxito a 400 kHz no sobrevivió al reinicio siguiente: bajo escritura
-aparecieron decenas de GPIO62, NACK `-6`, timeouts y recreaciones de `event3`.
-Forzar el runtime PM de SE15 a `on` no cambió el patrón, por lo que autosuspend
-quedó descartado. La diferencia temporal mostró transacciones/reintentos de
-~230–250 ms en el arranque malo. Reducir únicamente `clock-frequency` de SE15
-a 100 kHz eliminó la tormenta en reposo durante tres arranques consecutivos y
-tras un rebind del driver, pero no sobrevivió a escritura sostenida: la dueña
-volvió a observar teclas pegadas y el journal acumuló `-110`, NACK, resets y
-pulsos GPIO62. La frecuencia queda como mejora de reposo, no como causa raíz.
+v0.9 reproduces Samsung's state machine: QUPv3 SE15, VDDO, SE4's MAX77816, both
+IRQs and entering/leaving the ROM bootloader. The STM32 moved from the old
+application `00 34 00 34` to the X910's official image `00 37 00 37`; its
+52,132 bytes were read back and compared before starting it. Without the extra
+reset after VDDO — which the stock does not do — the controller announces model
+`0xd6` and Linux registers `Book Cover Keyboard Slim (EF-DX920)`. The device
+only exists while the real model is present, so GNOME does not lose
+auto-rotation to a phantom keyboard. The stock application phase also answers
+with version, mode, CRC and the expected absence of a touchpad. The right
+sequence — read VERSION inside the IRQ and defer the rest by 10 ms — unblocked
+the keystrokes: `evtest` measured real presses and releases.
 
-Mover la lectura lógica de GPIO75 desde el hilo al hard-IRQ sí produjo una
-ventana estable importante: 2.046 transiciones durante más de ocho horas,
-`keys_down=0` y reconexión física correcta. Un primer reinicio recibió otras 61
-transiciones. Sin embargo, el reinicio siguiente volvió a dejar teclas pegadas
-y a detener el input con el mismo `boot`, `vendor_boot` y frecuencia DT. Por
-tanto esa prueba no demuestra una causa raíz definitiva: cambia el estado frío
-del STM32/teclado o la fase temporal del transporte, no las imágenes.
+That first success at 400 kHz did not survive the next reboot: under typing,
+dozens of GPIO62s appeared, along with NACK `-6`, timeouts and `event3` being
+recreated. Forcing SE15's runtime PM to `on` did not change the pattern, so
+autosuspend was ruled out. The timing difference showed transactions and
+retries of ~230–250 ms on the bad boot. Reducing only SE15's
+`clock-frequency` to 100 kHz removed the idle storm across three consecutive
+boots and after a driver rebind, but did not survive sustained typing: the
+owner saw stuck keys again and the journal accumulated `-110`, NACKs, resets
+and GPIO62 pulses. The frequency stands as an idle improvement, not as the root
+cause.
 
-La investigación posterior cambió la conclusión. Un volcado completo y
-estrictamente de solo lectura de los 64 KiB del STM32 dio SHA-256
-`8937281d2efa08400390f9a2b02e40ca914b634e646d6dd544980c38464533ef`, contiene
-`00 34 00 34` en `0x200` y no contiene ninguna copia V37. Es una imagen ARM
-coherente y sus cadenas identifican explícitamente `TabS9(STM32G0) Series ->
-V34`; por tanto V34 no es una lectura marginal ni prueba de corrupción.
+Moving GPIO75's logical read from the thread into the hard IRQ did produce a
+significant stable window: 2,046 transitions over more than eight hours,
+`keys_down=0` and correct physical reconnection. A first reboot took another 61
+transitions. The reboot after that, however, brought stuck keys back and
+stopped input with the same `boot`, `vendor_boot` and DT frequency. That test
+therefore proves no definitive root cause: what changes is the STM32/keyboard's
+cold state or the transport's timing phase, not the images.
 
-De ahí se dedujo que One UI usaba V34 y que el hueco estaba en nuestra
-inicialización fría. **Era un salto**: que la imagen sea válida no dice quién la
-puso. El único blob del proyecto —el oficial del X910, el mismo que empaqueta
-pmOS— es V37, y fue el que la sesión 8 programó para obtener las primeras
-pulsaciones reales. El MCU había vuelto a V34 por su cuenta.
+The later investigation changed the conclusion. A complete, strictly read-only
+dump of the STM32's 64 KiB gave SHA-256
+`8937281d2efa08400390f9a2b02e40ca914b634e646d6dd544980c38464533ef`, contains
+`00 34 00 34` at `0x200`, and contains no copy of V37. It is a coherent ARM
+image and its strings explicitly identify `TabS9(STM32G0) Series -> V34`; V34 is
+therefore neither a marginal read nor evidence of corruption.
 
-Reprogramarlo a V37 con el actualizador del propio driver restauró el teclado en
-el acto y sobrevivió a un arranque en frío: `0xd6` a los 4,5 s, inicialización de
-aplicación a los 7,6 s, escritura real de la dueña y reconexión física correcta
-de la funda. Sigue sin medirse **qué** devolvió el MCU a V34; lo más probable es
-el `stm32_pogo_v3.ko` de Samsung bajo One UI o Ubuntu Touch, así que arrancar
-esos sistemas puede volver a degradarlo. La recuperación es de un comando:
+From that it was inferred that One UI used V34 and that the gap was in our cold
+initialisation. **That was a leap**: the image being valid says nothing about
+who put it there. The project's only blob — the X910's official one, the same
+pmOS packages — is V37, and it is what session 8 programmed to get the first
+real keystrokes. The MCU had gone back to V34 on its own.
+
+Reprogramming it to V37 with the driver's own updater restored the keyboard
+instantly and survived a cold boot: `0xd6` at 4.5 s, application initialisation
+at 7.6 s, real typing by the owner and correct physical reconnection of the
+cover. **What** returned the MCU to V34 has still not been measured; the most
+likely candidate is Samsung's `stm32_pogo_v3.ko` under One UI or Ubuntu Touch,
+so booting those systems may degrade it again. Recovery is one command:
 
 ```
 sudo env GTS9U_ALLOW_POGO_FLASH=YES \
   /usr/libexec/ubuntu-gts9u-pogo-firmware-update
 ```
 
-También se probó, sin escribir flash, el comando ROM `GO 0x08000000`, primero
-solo y después con VDDO/MAX77816 activos y 100 ms de estabilización. El
-bootloader aceptó ambos saltos, pero la aplicación siguió sin levantar DATA ni
-anunciar `0xd6`; GPIO62 continuó pulsando cada ~2,126 s. Eso era la aplicación
-V34, que el driver mainline no sabe hablar. La fuente final volvió exactamente
-al driver del último estado conocido bueno (`504ff29`). Las escrituras
-automáticas del accesorio siguen bloqueadas: exigen la guarda explícita
-`GTS9U_ALLOW_POGO_FLASH=YES` y el servicio queda enmascarado, de modo que
-ninguna programación del MCU ocurre durante el arranque.
+The ROM command `GO 0x08000000` was also tried without writing flash, first
+alone and then with VDDO/MAX77816 active and 100 ms of settling. The bootloader
+accepted both jumps, but the application still did not raise DATA or announce
+`0xd6`; GPIO62 kept pulsing every ~2.126 s. That was the V34 application, which
+the mainline driver does not know how to talk to. The final source went back
+exactly to the driver of the last known good state (`504ff29`). Automatic
+writes to the accessory remain blocked: they require the explicit
+`GTS9U_ALLOW_POGO_FLASH=YES` guard and the service stays masked, so no MCU
+programming happens during boot.
 
-## Invariantes heredadas que no se pueden romper
+## Inherited invariants that cannot be broken
 
-- Proveedores críticos **built-in**; solo ath12k/ath12k_wifi7 como módulos
-  aislados firmados, y siempre de la misma compilación que `boot`.
-- Cambiar el DTS obliga a reescribir `vendor_boot`.
-- No reactivar `lpass_ag_noc`: provocó bloqueos y el audio funciona sin él.
-- Conservar el aplazamiento del HPD DisplayPort hasta después de la
-  recuperación cold-boot del panel.
-- Wi-Fi con firmware oficial y BDF QRD **con** envoltorio ELF. La BDF Samsung
-  HMT.2.0 crashea el amss HMT.1.1 y no debe mezclarse ni despojarse de su ELF.
-- No añadir lecturas MMIO/ioremap improvisadas para diagnosticar probes.
-- Nunca escribir PIT, EFS, persist, modem/modemst ni calibraciones.
+- Critical providers **built in**; only ath12k/ath12k_wifi7 as isolated signed
+  modules, and always from the same build as `boot`.
+- Changing the DTS means rewriting `vendor_boot`.
+- Do not re-enable `lpass_ag_noc`: it caused hangs, and audio works without it.
+- Keep the DisplayPort HPD deferred until after the panel's cold-boot recovery.
+- Wi-Fi with the official firmware and the QRD BDF **with** its ELF wrapper.
+  Samsung's HMT.2.0 BDF crashes the HMT.1.1 amss and must be neither mixed nor
+  stripped of its ELF.
+- Do not add improvised MMIO/ioremap reads to diagnose probes.
+- Never write the PIT, EFS, persist, modem/modemst or the calibration
+  partitions.
