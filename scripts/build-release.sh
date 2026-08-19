@@ -23,7 +23,7 @@ overlay=$base/out/rootfs-overlay
 initramfs_overlay=$base/out/initramfs-overlay
 bundle=$base/out/bundle
 image=$base/out/ubuntu-gts9uwifi-v$version-ufs.img
-zip=$artifacts/ubuntu-24.04-gts9uwifi-v$version-sm-x910-twrp.zip
+zip=$artifacts/ubuntu-24.04-sm-x910-v$version.zip
 
 # No secret is needed to build a shipping image any more: it has no account,
 # and the owner creates theirs in the first-boot wizard.  GTS9U_PW is only for
