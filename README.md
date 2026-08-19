@@ -48,7 +48,7 @@ Tab Companion 1.0.0 is preinstalled and provides:
 - full S Pen settings (pairing, gestures and air-pointer mouse mode);
 - remapping for compatible Samsung Book Cover Keyboard keys;
 - adjustable vibration feedback for GNOME's on-screen keyboard and optional notification vibration;
-- dualboot to Android with an optional toggle on quick settings
+- dual boot to Android, with an optional toggle in quick settings.
 
 The air-pointer concept is inspired by
 [PenMouse S](https://github.com/jojczak/PenMouseS) by Jakub J (`@jojczak`).
@@ -67,9 +67,9 @@ split the UFS first.
 ### Before you start
 
 1. **An unlocked bootloader.**
-2. **ROOT with magisk** (only if you want dualboot).
-3. Get `ubuntu-24.04-sm-x910-vX.X.X.zip` from the [latest release](https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/releases/latest). `gts9u-split.zip` and `Dualboot-vX.X.X.apk` only if you want dualboot.
-4. **[TWRP](https://github.com/rainbowdashh/android_device_samsung_gts9u/releases/tag/V2)** and **a `vbmeta` with AVB verification disabled** ([the one published alongside TWRP](https://xdaforums.com/attachments/vbmeta-1-tar.6077784/)). Flash both files in AP using Odin or Heimdall (you will need to reboot again to download mode between flashes).
+2. **Root with Magisk** (only if you want dual boot).
+3. Get `ubuntu-24.04-sm-x910-vX.X.X.zip` from the [latest release](https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/releases/latest). `gts9u-split.zip` and `Dualboot-vX.X.X.apk` only if you want dual boot.
+4. **[TWRP](https://github.com/rainbowdashh/android_device_samsung_gts9u/releases/tag/V2)** and **a `vbmeta` with AVB verification disabled** ([the one published alongside TWRP](https://xdaforums.com/attachments/vbmeta-1-tar.6077784/)). Flash both files in the AP slot using Odin or Heimdall (you will need to reboot again to download mode between flashes).
 5. After flashing both files from step 4 reboot to TWRP. **Don't let One UI boot** or TWRP will be overwritten with the stock recovery and you will need to flash the files again.
 
 ### Ubuntu on the whole tablet
@@ -80,15 +80,15 @@ split the UFS first.
 ### Ubuntu beside Android
 
 > [!IMPORTANT]
-> Default split is 50% of the storage for Android and 50% for Linux. If you want to modify it just change the value of `ANDROID-PERCENT` inside `gts9u-split.zip` to the percentage you want Android to keep (between 5% and 95%).
+> The default split is 50% of the storage for Android and 50% for Linux. If you want to modify it just change the value of `ANDROID-PERCENT` inside `gts9u-split.zip` to the percentage you want Android to keep (between 5% and 95%).
 
 1. Flash `gts9u-split.zip`. It shortens `userdata`, creates `linuxroot`
    beside it, and recreates Android's data so Android can make fresh encryption
    keys on its next boot.
-2. Reboot TWRP (reboot > recovery).
+2. Reboot to TWRP (Reboot > Recovery).
 3. Wipe > Format Data.
 4. Flash the installation ZIP (`ubuntu-24.04-sm-x910-v1.0.0.zip`).
-5. Reboot and enjoy! (check below how to reboot to Android).
+5. Reboot and enjoy! (see below for how to reboot to Android).
 
 ### Switching systems
 
@@ -96,13 +96,13 @@ From **Ubuntu**, just use the toggle that you should see on quick settings or fr
 
 From **Android**, install the `Dualboot-vX.X.X.apk` app and give it root access, then reboot from the app or add the toggle to quick settings.
 
-Both One UI and LineageOS have been tested in dualboot with Ubuntu and they work fine.
+Both One UI and LineageOS have been tested in dual boot with Ubuntu and they work fine.
 
-## Known Issues
+## Known issues
 
-- Regarding official cover keyboard, as I said, only EF-DX920 cover keyboard has been tested. EF-DX900, EF-DX910, EF-DX915 and
+- Regarding the official cover keyboard, as I said, only EF-DX920 cover keyboard has been tested. EF-DX900, EF-DX910, EF-DX915 and
 EF-DX925 are untested as I don't have them, so they might not work.
-- Text might not display correctly in some chromium based apps.
+- Text might not display correctly in some Chromium-based apps.
 - Front cameras are zoomed in for some reason.
 
 ## Documentation
