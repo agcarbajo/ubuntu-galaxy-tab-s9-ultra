@@ -1,232 +1,276 @@
-# Cadena de arranque, instalación y recuperación
+# Boot chain, installation and recovery
 
-Última revisión: 2026-08-10. Hereda la cadena demostrada físicamente por
-postmarketOS v1.71; lo que cambia es únicamente el rootfs y su initramfs.
+Last revised: 2026-08-19. It inherits the chain physically proven by
+postmarketOS v1.71; only the root filesystem and its initramfs differ.
 
-Desde v0.18 el rootfs se instala en la **UFS interna** y la release es un solo
-ZIP flasheable. La sección [Instalación en la UFS sin
-reparticionar](#instalación-en-la-ufs-sin-reparticionar) explica por qué eso no
-toca la tabla de particiones.
+Since v0.18 the root filesystem is installed on the **internal UFS** and a
+release is a single flashable ZIP. Since v1.0.0 it can share that UFS with
+Android — see [Two ways to install](#two-ways-to-install).
 
-## Cadena demostrada
+## The proven chain
 
-- El SM-X910 no usa slots A/B y Samsung ofrece Download Mode/Odin, no un
-  `fastboot boot` utilizable.
-- La cadena Android usa **boot header v4**.
-- Samsung ABL carga el kernel de `boot`, el initramfs genérico de `init_boot` y
-  el DTB, cmdline y bootconfig de `vendor_boot`, todos desde la UFS interna.
-- El rootfs Linux es un **ext4 dentro de `userdata`**, en esa misma UFS. ABL no
-  lee sistemas de ficheros: el kernel sale de `boot` y solo el initramfs busca
-  la raíz, por etiqueta.
-- La DTBO stock contiene interfaces downstream y no se aplica sobre un DTB
-  mainline. El bundle escribe un `dtbo` que deliberadamente **no** es una tabla
-  DT de Android, lo que hace que ABL use su fallback de DTB anexado al kernel.
-- TWRP lleva su propio DTB/DTBO de recovery y sigue siendo recuperable aunque
-  cambien las imágenes mainline.
+- The SM-X910 has no A/B slots, and Samsung offers Download Mode and Odin, not
+  a usable `fastboot boot`.
+- The Android chain uses **boot header v4**.
+- Samsung's ABL loads the kernel from `boot`, the generic initramfs from
+  `init_boot`, and the DTB, cmdline and bootconfig from `vendor_boot`, all from
+  the internal UFS.
+- The Linux root is an **ext4 filesystem inside a partition** on that same UFS.
+  ABL reads no filesystems: the kernel comes out of `boot`, and only the
+  initramfs looks for the root, by label.
+- The stock DTBO carries downstream interfaces and does not apply on top of a
+  mainline DTB. The bundle writes a `dtbo` that deliberately is **not** an
+  Android DT table, which makes ABL fall back to the DTB appended to the kernel.
+- TWRP carries its own recovery DTB/DTBO and stays recoverable however the
+  mainline images change.
 
-Dos invariantes que no se pueden tocar:
+Two invariants that cannot be touched:
 
-- `APPEND_DTB_TO_KERNEL=1` y `DISABLE_RUNTIME_DTBO=1`. Con los valores
-  contrarios ABL vuelve a su fork `ufdt`, rechaza el DTB base y entra en Odin
-  antes de llegar a Linux.
-- **Cambiar el DTS obliga a reescribir `vendor_boot`.** El ABL del X910 aplica
-  el DTB de `vendor_boot`, no el anexado a `boot.img`. Reescribir solo `boot`
-  deja el DTS antiguo en uso.
+- `APPEND_DTB_TO_KERNEL=1` and `DISABLE_RUNTIME_DTBO=1`. With the opposite
+  values ABL returns to its `ufdt` fork, rejects the base DTB and drops into
+  Odin before ever reaching Linux.
+- **Changing the DTS means rewriting `vendor_boot`.** The X910's ABL applies the
+  DTB from `vendor_boot`, not the one appended to `boot.img`. Rewriting only
+  `boot` leaves the old DTS in use.
 
-## Particiones utilizadas
+## Requirements
 
-| Partición | Tamaño exacto | Contenido |
+Three things have to be in place first, all flashed with Odin from Download
+mode, into the `AP` slot:
+
+1. **An unlocked bootloader.** Once it is, `ro.boot.verifiedbootstate` reads
+   `orange`.
+2. **TWRP.**
+3. **A `vbmeta` with AVB verification disabled** — the one published alongside
+   TWRP.
+
+The third is the one that catches people out, because it is invisible until it
+bites. Flashing stock firmware puts back a `vbmeta` with verification enabled,
+and `vbmeta` lives on a read-only LUN — `sde15`, not the `sda` everything else
+here is on — that only the bootloader can write. The installer therefore cannot
+patch it from TWRP. It checks the flags instead and stops with:
+
+```
+ERROR: vbmeta is read-only and does not have AVB flags 2
+```
+
+That is the installer refusing to write a kernel the tablet would then decline
+to boot. Flash the disabled `vbmeta` and run it again. Changing `vbmeta` makes
+Android erase its own data on the next boot.
+
+After flashing TWRP, reboot **straight into recovery**. Letting Android boot
+once puts the stock recovery back over it.
+
+## Partitions used
+
+| Partition | Exact size | Contents |
 |---|---:|---|
-| `boot` | 100663296 | `Image.gz` + DTB anexado, header v4, sin ramdisk |
-| `init_boot` | 8388608 | initramfs Ubuntu, LZ4 legacy |
-| `vendor_boot` | 100663296 | DTB X910, cmdline, bootconfig y fragmento vendor con el firmware temprano de Bluetooth |
-| `dtbo` | 16777216 | imagen no-tabla que fuerza el fallback appended-DTB |
-| `vbmeta` | 131072 | AVB con verification/verity desactivados (`flags=2`) |
-| `userdata` | 1007985586176 | rootfs ext4 de Ubuntu etiquetado `UBTS9U_UFS` |
+| `boot` | 100663296 | `Image.gz` with appended DTB, header v4, no ramdisk |
+| `init_boot` | 8388608 | Ubuntu initramfs, legacy LZ4 |
+| `vendor_boot` | 100663296 | X910 DTB, cmdline, bootconfig, and a vendor fragment with the early Bluetooth firmware |
+| `dtbo` | 16777216 | a non-table image, which forces the appended-DTB fallback |
+| `vbmeta` | 131072 | AVB with verification and verity disabled (`flags=2`) |
+| `userdata` (34) | up to 1007985586176 | Android's data, or Ubuntu's root when the disk is not split |
+| `linuxroot` (35) | the remainder | Ubuntu's ext4 root, labelled `UBTS9U_UFS`, when the disk is split |
 
-La instalación **no** toca `super`, recovery, bootloader, PIT, EFS, persist,
-modem/modemst ni calibraciones. En el TWRP usado durante el port `vbmeta` es de
-solo lectura: el instalador verifica que ya contiene `flags=2` y lo conserva en
-lugar de reescribirlo.
+The installation never touches `super`, the bootloader, the PIT, EFS, persist,
+modem/modemst or the calibration partitions.
 
-## Instalación en la UFS sin reparticionar
+## Two ways to install
 
-Ubuntu ocupa `userdata` porque es la única partición de este dispositivo con
-sitio para un escritorio —939 GiB— y porque usarla no exige cambiar nada de la
-tabla de particiones. La imagen ext4 se escribe con `dd` en una partición que
-ya existe, y el sistema de ficheros crece hasta ocuparla entera en el primer
-arranque.
+Both use the same ZIP. The difference is whether the UFS is split first, and
+the installer's rule is one line: **`linuxroot` if it exists, otherwise
+`userdata`**.
 
-Lo que esto garantiza, y por qué importa:
+### Ubuntu on the whole tablet
 
-- **La GPT sigue siendo la de Samsung, byte a byte.** Ni el build ni el
-  instalador ejecutan `sgdisk`, `parted`, `sfdisk`, `mkfs` ni `wipefs` contra
-  el dispositivo; `scripts/validate-bundle.sh` falla si alguna de esas
-  herramientas aparece en el instalador empaquetado. Por eso restaurar One UI
-  sigue siendo un flasheo de Odin y nada más.
-- **`super` no se toca**, así que la imagen de sistema de Android sigue ahí.
-- **Los datos de usuario de Android sí se pierden**: son exactamente lo que
-  ocupa la partición que se reutiliza. Esto no es un dual boot, y no hay
-  partición sobrante donde dejarlos.
+Nothing is repartitioned. The ext4 image is written with `dd` into a partition
+that already exists, and the filesystem grows to fill it on the first boot.
 
-La alternativa era `super` (11,2 GiB), que no da para un escritorio y además
-obligaría a reconstruir sus particiones lógicas. Reparticionar la UFS queda
-descartado mientras exista esta opción.
+- **The GPT stays Samsung's, byte for byte.** Neither the build nor the
+  installer runs `sgdisk`, `parted`, `sfdisk`, `mkfs` or `wipefs` against the
+  device; `scripts/validate-bundle.sh` fails if any of those appears in the
+  packaged installer.
+- **`super` is untouched**, so Android's system image is still there.
+- **Android's user data is lost**: it is exactly what occupies the partition
+  being reused.
 
-El ZIP se flashea **desde fuera del almacenamiento interno**, que *es* la
-partición que se sobrescribe: leer el ZIP de ahí lo destruiría a mitad de la
-escritura, así que el instalador aborta si la ruta del ZIP está en `/data`,
-`/sdcard` o equivalentes.
+### Ubuntu beside Android
 
-Por orden de comodidad:
+`gts9u-split.zip` shortens `userdata` and creates `linuxroot` next to it, then
+recreates Android's data so it can make fresh encryption keys on its next boot.
+Afterwards the installer finds `linuxroot`, installs there, and leaves
+Android's `userdata` alone.
 
-1. **`adb sideload`.** El ZIP se sirve desde el PC y no ocupa nada en la
-   tablet. Es la vía probada.
-2. **USB-OTG**, si hay un pendrive a mano.
-3. **microSD**, con una advertencia: TWRP monta en `/external_sd` la **primera**
-   partición de la tarjeta, y si esa tarjeta lleva una instalación de las
-   versiones microSD, su primera partición es `UBTS9U_BOOT`, de 256 MiB. Ahí no
-   cabe un ZIP de ~1 GiB. Hace falta una tarjeta de datos normal.
+The split ships set to halve the disk. The share is one file inside the ZIP,
+`ANDROID-PERCENT`, holding the percentage `userdata` keeps. Changing the split
+means changing that number — open the ZIP in any archive manager and edit it:
 
-### Etiquetas
+```bash
+printf '30\n' > ANDROID-PERCENT && zip gts9u-split.zip ANDROID-PERCENT
+```
 
-| Etiqueta | Dónde | Qué es |
+Nothing else needs touching: `SHA256SUMS` inside the ZIP covers the installer
+script alone, so editing the number invalidates nothing. Anything from 5 to 95
+is accepted, and the tablet checks the same bounds before it writes the table.
+
+Flashed on a tablet that is already split it exits saying so and changes
+nothing, so there is no harm in running it twice.
+
+### Where the ZIP has to sit
+
+When Ubuntu is going onto `userdata`, that partition *is* the internal storage:
+reading the ZIP from there would destroy it half way through the write, so the
+installer aborts if the ZIP's path is under `/data`, `/sdcard` or equivalent.
+In order of convenience:
+
+1. **`adb sideload`.** The ZIP is served from the PC and takes no room on the
+   tablet. This is the proven route.
+2. **USB-OTG**, if a stick is at hand.
+3. **microSD**, with a warning: TWRP mounts the card's **first** partition at
+   `/external_sd`, and on a card left over from the microSD releases that first
+   partition is `UBTS9U_BOOT`, 256 MiB. A ~1 GiB ZIP does not fit there. Use a
+   plain data card.
+
+When Ubuntu goes onto `linuxroot`, the ZIPs may sit on internal storage,
+because the partition being written is not the one they are on.
+
+### Labels
+
+| Label | Where | What it is |
 |---|---|---|
-| `UBTS9U_UFS` | `userdata` | la raíz instalada, desde v0.18 |
-| `UBTS9U_ROOT` | microSD | la raíz de las releases hasta v0.17 |
+| `UBTS9U_UFS` | `linuxroot`, or `userdata` | the installed root, since v0.18 |
+| `UBTS9U_ROOT` | microSD | the root of releases up to v0.17 |
 
-Son distintas a propósito. `root=LABEL=` resuelve a lo primero que encuentra, y
-con la misma etiqueta en los dos sitios una tarjeta vieja olvidada en la ranura
-arrancaría en lugar de la instalación nueva. Las tarjetas antiguas siguen
-sirviendo de vuelta atrás si se reflashea su ZIP.
+They differ on purpose. `root=LABEL=` resolves to the first match, and with the
+same label in both places an old card forgotten in the slot would boot instead
+of the new installation.
 
-## Instalación en un solo paso
+## The single installation step
 
-Flashear el ZIP desde TWRP. Escribe el rootfs en `userdata`, lo verifica por
-hash releyéndolo, y después escribe `boot`, `init_boot`, `vendor_boot` y
-`dtbo`. Ese orden es deliberado: si falla la parte larga, el dispositivo
-conserva las imágenes de arranque que ya tenía y sigue estando a un reintento
-de donde estaba.
+Flash the ZIP from TWRP. It writes the root filesystem, verifies it by reading
+it back and hashing it, and only then writes `boot`, `init_boot`, `vendor_boot`
+and `dtbo`. That order is deliberate: if the long part fails, the device keeps
+the boot images it already had and is still one retry from where it was.
 
-El firmware de GPU, ADSP, Wi-Fi y audio va **dentro** de la imagen del rootfs,
-no en un overlay aplicado después. El estado intermedio de «tarjeta incompleta»
-de las versiones microSD ya no existe.
+Firmware for the GPU, ADSP, Wi-Fi and audio lives **inside** the root
+filesystem image, not in an overlay applied afterwards.
 
-Las herramientas de build **nunca** escriben en una partición. La usuaria
-flashea el ZIP a mano.
+The build tools **never** write to a partition. The owner flashes the ZIP.
 
-### ZIPs de actualización
+### Update ZIPs
 
-Un ZIP sin `rootfs.img` pero con overlay actualiza en sitio una instalación ya
-existente: monta la raíz de `userdata` tras comprobarla con `e2fsck -p`,
-sustituye firmware, módulos y configuración, y no toca los datos. Es la vía
-para probar un kernel nuevo sin reinstalar. Los dos contenidos son excluyentes
-y `make-twrp-zip.py` rechaza generar un ZIP con ambos.
+A ZIP with no `rootfs.img` but with an overlay updates an existing installation
+in place: it mounts the root after checking it with `e2fsck -p`, replaces
+firmware, modules and configuration, and leaves the data alone. This is how a
+new kernel is tested without reinstalling. The two contents are mutually
+exclusive and `make-twrp-zip.py` refuses to build a ZIP with both.
 
-## Iteración sobre un sistema ya arrancado
+### Seeding the dual-boot sets
 
-Cuando Ubuntu arranque, los cambios de kernel o DTS podrán probarse escribiendo
-solo la imagen estrictamente necesaria desde el sistema vivo, siempre con
-autorización explícita:
+While the ZIP runs is the only moment both systems' boot images exist at once:
+Android's are still on the partitions, and Ubuntu's are in the ZIP. So that is
+where the sets the switchers read get saved, into
+`/var/lib/gts9u-boot-sets/{android,ubuntu}` on the new root.
 
-- `boot` para el kernel;
-- `vendor_boot` para DTS, cmdline o bootconfig;
-- ambos cuando el kernel y los módulos ath12k formen un conjunto firmado nuevo.
+A set is the four boot images, 216 MiB, so both together need 432 MiB inside a
+filesystem that has not grown yet. The installer refuses below 480 MiB rather
+than seed half of them — Android's set is the one that cannot be rebuilt
+afterwards. The image is therefore built with enough slack to clear that bar;
+see `scripts/build-ufs-image.sh`.
 
-Antes de cada escritura: backup temporal, comprobación de tamaño, `dd
-conv=fsync` y comparación SHA-256 entre origen y destino. Nunca se codifican
-números `sdaN`; se usan los enlaces estables de `/dev/disk/by-partlabel/`.
+This runs only when installing into `linuxroot`. On a whole-tablet install
+there is no second system to switch to.
 
-El kernel lockdown exige que `boot` y los módulos instalados en la raíz
-—ath12k y v4l2loopback— procedan de la **misma** compilación. Recrear el árbol
-`O=` genera una clave de firma nueva y los módulos antiguos pasan a rechazarse
-con «Operation not permitted»: hay que sincronizar siempre los módulos junto al
-kernel.
+Because the set is copied off the live partitions, **install Android first and
+Ubuntu second**, and root Android before that step if it is meant to be rooted:
+switching systems from the Android side goes through `su`.
 
-## Particularidades de arranque que Ubuntu debe conservar
+## Iterating on a running system
 
-- El panel ANA38407 no queda accesible tras el hand-off frío de Samsung. Antes
-  de iniciar el display manager hace falta un único suspend/resume de
-  plataforma (`pm_test=platform`) que recupera DDIC, DPU y sesión gráfica. En
-  Ubuntu esto se ordena `Before=gdm3.service`.
-- Si hay un dock DisplayPort ya conectado, su HPD debe permanecer **aplazado**
-  hasta terminar esa recuperación. Un HPD temprano bloqueó también el DSI
-  interno en las pruebas de la baseline.
-- La consola visible temprana no es un requisito: ABL puede añadir
-  `console=null`. El journal persistente y TWRP son las fuentes fiables de
-  diagnóstico.
-- Los proveedores críticos del kernel son **built-in**. Este port no instala ni
-  autocarga un árbol general de módulos; solo distribuye los dos módulos ath12k
-  firmados de forma aislada. Un símbolo crítico que quede en `=m` normalmente
-  hace que el subsistema no aparezca en absoluto.
+With Ubuntu up, kernel or DTS changes can be tested by writing only the image
+strictly needed, always with explicit authorisation:
 
-## Procedimiento exacto de instalación
+- `boot` for the kernel;
+- `vendor_boot` for DTS, cmdline or bootconfig;
+- both when the kernel and the ath12k modules form a newly signed set.
 
-Los pasos que ejecuta la usuaria. Ninguna herramienta del proyecto los hace por
-ella.
+Before every write: a temporary backup, a size check, `dd conv=fsync` and a
+SHA-256 comparison between source and destination. `sdaN` numbers are never
+hardcoded; the stable links under `/dev/disk/by-partlabel/` are used instead.
 
-### Antes de empezar
+Kernel lockdown requires that `boot` and the modules installed on the root —
+ath12k and v4l2loopback — come from the **same** build. Recreating the `O=`
+tree generates a new signing key and the old modules start being rejected with
+"Operation not permitted": always ship the modules alongside their kernel.
 
-1. Comprobar que los hashes del `MANIFEST-v<versión>.txt` coinciden con los
-   ficheros descargados.
-2. Tener a mano la vía de vuelta: el ZIP y la imagen de postmarketOS v1.71 con
-   su `MANIFEST-v1.71-rollback.txt`.
-3. Asumir que **lo que Android guarde en `userdata` se pierde**. Es la
-   partición donde se instala Ubuntu. `super`, el bootloader, EFS y las
-   calibraciones no se tocan.
-4. Tener el ZIP fuera del almacenamiento interno, que es la partición que se
-   sobrescribe. Lo más simple es `adb sideload`; ver la lista de medios de la
-   sección anterior.
+## Boot quirks Ubuntu has to keep
 
-### Paso único — flashear el ZIP desde TWRP
+- The ANA38407 panel is not reachable after Samsung's cold hand-off. Before the
+  display manager starts, a single platform suspend/resume (`pm_test=platform`)
+  is needed to recover the DDIC, the DPU and the graphics session. In Ubuntu
+  this is ordered `Before=gdm3.service`.
+- If a DisplayPort dock is already connected, its HPD must stay **deferred**
+  until that recovery finishes. An early HPD also blocked the internal DSI in
+  the baseline tests.
+- An early visible console is not a requirement: ABL may add `console=null`.
+  The persistent journal and TWRP are the reliable sources of diagnosis.
+- Critical kernel providers are **built-in**. This port neither installs nor
+  auto-loads a general module tree; it ships only the two ath12k modules,
+  signed in isolation. A critical symbol left at `=m` usually makes the
+  subsystem fail to appear at all.
 
-1. Arrancar en TWRP. Para sideload: `Advanced` → `ADB Sideload`, y desde el PC
-   `adb sideload <zip>`. Con un medio externo: `Install` → seleccionar el ZIP.
-2. Esperar. La escritura del rootfs tarda varios minutos, no muestra progreso,
-   y va antes que las imágenes de arranque a propósito.
-3. Leer la salida. El instalador aborta si el dispositivo no es un SM-X910, si
-   el tamaño de alguna partición no cuadra, si `vbmeta` no tiene AVB flags 2,
-   si `userdata` es más pequeña que la imagen, si el ZIP está en el destino, si
-   `userdata` sigue montada, o si lo releído no coincide con el SHA-256 de la
-   imagen.
-4. El ZIP **no reinicia**. Reiniciar a mano cuando termine.
-5. En el primer arranque el sistema de ficheros crece hasta ocupar las 939 GiB.
-   Solo se redimensiona el sistema de ficheros: la partición ya era así.
+## Exact installation procedure
 
-### Si algo va mal
+The steps the owner performs. No tool in the project does them for them.
 
-El ZIP no formatea, no reparticiona y no reinicia, así que un fallo a mitad
-deja el dispositivo en TWRP, que sigue siendo accesible. Desde ahí:
+### Before starting
 
-- reintentar el flasheo, o
-- volver a postmarketOS con sus dos pasos, o
-- entrar en Download Mode y restaurar el firmware oficial con Odin.
+1. Check that the hashes in `MANIFEST-v<version>.txt` match the downloaded
+   files.
+2. Have the way back at hand.
+3. Accept that **whatever Android keeps in the partition being written is
+   lost**. `super`, the bootloader, EFS and the calibrations are untouched.
+4. For a whole-tablet install, keep the ZIP off internal storage — see the
+   media list above.
 
-Un fallo durante la escritura del rootfs deja `userdata` a medias, pero las
-imágenes de arranque intactas: no hay un estado en que el dispositivo tenga un
-kernel nuevo y ningún sistema que arrancar.
+### Flashing
 
-## Recuperación
+1. Boot TWRP. For sideload: `Advanced` → `ADB Sideload`, then `adb sideload
+   <zip>` from the PC. From external media: `Install` → pick the ZIP.
+2. Wait. Writing the root filesystem takes several minutes, shows no progress,
+   and deliberately runs before the boot images.
+3. Read the output. The installer aborts if the device is not an SM-X910, if a
+   partition size does not match, if `vbmeta` lacks AVB flags 2, if the target
+   is smaller than the image, if the ZIP sits on the destination, if the target
+   is still mounted, or if what it reads back does not match the image's
+   SHA-256.
+4. The ZIP **does not reboot**. Reboot by hand when it finishes.
+5. On the first boot the filesystem grows to fill its partition. Only the
+   filesystem is resized: the partition was already that size.
 
-Por orden:
+### If something goes wrong
 
-1. **Volver a postmarketOS v1.71**: reescribir la microSD con la imagen de
-   rollback y flashear el ZIP v1.71. Ambos artefactos se conservan fuera de Git
-   en `../PostmarketOS/artifacts/`, con su manifiesto de hashes. Esa instalación
-   vive en la tarjeta y no depende de lo que haya en `userdata`.
-2. **TWRP y `adb`**, para montar la raíz de `userdata`, extraer el journal y
-   restaurar imágenes.
-3. **Download Mode y Odin** con el firmware oficial X910XXS5CYG1. Sigue siendo
-   un paso, porque la GPT nunca se ha modificado.
+The installer does not format, does not repartition and does not reboot, so a
+failure half way leaves the device in TWRP, still reachable. From there:
 
-Las copias se restauran mediante `/dev/block/by-name/<partición>`, nunca con
-números de LUN codificados. EFS solo puede montarse `ro,noload` cuando haga
-falta leer la dirección Bluetooth; jamás se escribe.
+- retry the flash, or
+- enter Download Mode and restore the official firmware with Odin.
 
-## Futuro: dual boot
+A failure while writing the root filesystem leaves that partition half done but
+the boot images intact: there is no state in which the device has a new kernel
+and no system to boot.
 
-El rootfs ya vive en la UFS. Lo que queda es instalarlo **junto a Android en
-lugar de en su sitio**, que exige un diseño separado de layout, selector y
-recuperación. La regla no cambia: **no se reparticionará la UFS ni se
-reutilizará `super`**. Un dual boot que dependa de mover particiones no es una
-opción; si llega, será compartiendo las que ya existen.
+## Recovery
+
+In order:
+
+1. **TWRP and `adb`**, to mount the root, pull the journal and restore images.
+2. **Download Mode and Odin** with official firmware. On a tablet that was
+   never split this is one step, because the GPT was never modified. On a split
+   one, Odin's Re-Partition with the PIT from the firmware's CSC restores the
+   factory table and returns `userdata` to the whole disk.
+
+Backups are restored through `/dev/block/by-name/<partition>`, never with
+hardcoded LUN numbers. EFS is only ever mounted `ro,noload`, when the Bluetooth
+address has to be read; it is never written.
