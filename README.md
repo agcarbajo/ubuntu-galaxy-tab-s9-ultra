@@ -68,13 +68,13 @@ split the UFS first.
 
 1. **An unlocked bootloader.**
 2. **ROOT with magisk** (only if you want dualboot).
-3. Get `ubuntu-24.04-gts9uwifi-vX.X.X-sm-x910-twrp.zip` from the [latest release](https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/releases/latest). `gts9u-split.zip` and `Dualboot-vX.X.X.apk` only if you want dualboot.
+3. Get `ubuntu-24.04-sm-x910-vX.X.X.zip` from the [latest release](https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/releases/latest). `gts9u-split.zip` and `Dualboot-vX.X.X.apk` only if you want dualboot.
 4. **[TWRP](https://github.com/rainbowdashh/android_device_samsung_gts9u/releases/tag/V2)** and **a `vbmeta` with AVB verification disabled** ([the one published alongside TWRP](https://xdaforums.com/attachments/vbmeta-1-tar.6077784/)). Flash both files in AP using Odin or Heimdall (you will need to reboot again to download mode between flashes).
 5. After flashing both files from step 4 reboot to TWRP. **Don't let One UI boot** or TWRP will be overwritten with the stock recovery and you will need to flash the files again.
 
 ### Ubuntu on the whole tablet
 
-1. From TWRP just flash the installation ZIP (`ubuntu-24.04-gts9uwifi-v1.0.0-sm-x910-twrp.zip`) using a microSD, external USB storage or sideload. **Don't flash it from internal storage** as it will get wiped.
+1. From TWRP just flash the installation ZIP (`ubuntu-24.04-sm-x910-v1.0.0.zip`) using a microSD, external USB storage or sideload. **Don't flash it from internal storage** as it will get wiped.
 2. Reboot and enjoy!
 
 ### Ubuntu beside Android
@@ -87,7 +87,7 @@ split the UFS first.
    keys on its next boot.
 2. Reboot TWRP (reboot > recovery).
 3. Wipe > Format Data.
-4. Flash the installation ZIP (`ubuntu-24.04-gts9uwifi-v1.0.0-sm-x910-twrp.zip`).
+4. Flash the installation ZIP (`ubuntu-24.04-sm-x910-v1.0.0.zip`).
 5. Reboot and enjoy! (check below how to reboot to Android).
 
 ### Switching systems
