@@ -68,33 +68,33 @@ split the UFS first.
 
 1. **An unlocked bootloader.**
 2. **ROOT with magisk** (only if you want dualboot).
-3. Get `ubuntu-24.04-gts9uwifi-vX.X.X-sm-x910` from the [latest release](https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/releases/latest). `gts9u-split.zip` and `Dualboot-vX.X.X.apk` only if you want dualboot.
-4. **[TWRP](https://github.com/rainbowdashh/android_device_samsung_gts9u/releases/tag/V2)** and **a `vbmeta` with AVB verification disabled** ([the one published alongside TWRP](https://xdaforums.com/attachments/vbmeta-1-tar.6077784/)). Flash both files in AP using Odin or Heimdall (you will need to reboot again to download mode between flashes)
-5. After flashing both files from step 4 reboot to TWRP. **Don't let One UI boot** or TWRP will get overrided with stock recovery and you will need to flash the files again.
+3. Get `ubuntu-24.04-gts9uwifi-vX.X.X-sm-x910-twrp.zip` from the [latest release](https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/releases/latest). `gts9u-split.zip` and `Dualboot-vX.X.X.apk` only if you want dualboot.
+4. **[TWRP](https://github.com/rainbowdashh/android_device_samsung_gts9u/releases/tag/V2)** and **a `vbmeta` with AVB verification disabled** ([the one published alongside TWRP](https://xdaforums.com/attachments/vbmeta-1-tar.6077784/)). Flash both files in AP using Odin or Heimdall (you will need to reboot again to download mode between flashes).
+5. After flashing both files from step 4 reboot to TWRP. **Don't let One UI boot** or TWRP will be overwritten with the stock recovery and you will need to flash the files again.
 
 ### Ubuntu on the whole tablet
 
-1. From TWRP just flash the instalation ZIP (`ubuntu-24.04-gts9uwifi-v1.0.0-sm-x910`) using a microSD, external USB storage or sideload. **Don't flash it from internal storage** as it will get wiped.
-2. Reboot and enjoy!.
+1. From TWRP just flash the installation ZIP (`ubuntu-24.04-gts9uwifi-v1.0.0-sm-x910-twrp.zip`) using a microSD, external USB storage or sideload. **Don't flash it from internal storage** as it will get wiped.
+2. Reboot and enjoy!
 
 ### Ubuntu beside Android
 
 > [!IMPORTANT]
-> Default split is 50% of the storage for Android and 50% for Linux. If you want to modify it just change the value of `ANDROID-PERCENT` inside of  `gts9u-split.zip` with the desire percentage that you want Android to take (between 5% and 95%).
+> Default split is 50% of the storage for Android and 50% for Linux. If you want to modify it just change the value of `ANDROID-PERCENT` inside `gts9u-split.zip` to the percentage you want Android to keep (between 5% and 95%).
 
 1. Flash `gts9u-split.zip`. It shortens `userdata`, creates `linuxroot`
    beside it, and recreates Android's data so Android can make fresh encryption
    keys on its next boot.
 2. Reboot TWRP (reboot > recovery).
-3. Format data.
-4. Flash the installation ZIP (`ubuntu-24.04-gts9uwifi-v1.0.0-sm-x910`).
+3. Wipe > Format Data.
+4. Flash the installation ZIP (`ubuntu-24.04-gts9uwifi-v1.0.0-sm-x910-twrp.zip`).
 5. Reboot and enjoy! (check below how to reboot to Android).
 
 ### Switching systems
 
 From **Ubuntu**, just use the toggle that you should see on quick settings or from the Tab Companion app under the Dualboot tab.
 
-From **Android**, install the `Dualboot-vX.X.X.apk` app and give it root acces, then reboot from the app or add the toggle to quick settings.
+From **Android**, install the `Dualboot-vX.X.X.apk` app and give it root access, then reboot from the app or add the toggle to quick settings.
 
 Both One UI and LineageOS have been tested in dualboot with Ubuntu and they work fine.
 
@@ -107,15 +107,14 @@ EF-DX925 are untested as I don't have them, so they might not work.
 
 ## Documentation
 
-The detailed project documentation is written in Spanish:
-
 | Document | Contents |
 |---|---|
+| [Boot strategy](docs/boot-strategy.md) | Requirements, partitions, the boot chain and recovery |
+| [Dual boot](docs/dual-boot.md) | How switching systems works, and what it never touches |
 | [Hardware status](docs/hardware-status.md) | Evidence, limitations and pending hardware tests |
-| [Fingerprint reader](docs/fingerprint-reader.md) | EL721/UDFPS architecture, security model and validation plan |
 | [Tab Companion](docs/tab-companion.md) | S Pen and keyboard behaviour, architecture and diagnostics |
-| [Boot strategy](docs/boot-strategy.md) | Installation, partitions, boot chain and recovery |
 | [Ubuntu userspace](docs/ubuntu-userspace.md) | Root filesystem and desktop integration |
+| [Fingerprint reader](docs/fingerprint-reader.md) | EL721/UDFPS architecture, security model and validation plan |
 | [Development notes](docs/development-notes.md) | Durable technical conclusions and rejected approaches |
 | [Porting log](docs/porting-log.md) | Chronological engineering history |
 
@@ -124,10 +123,12 @@ The detailed project documentation is written in Spanish:
 ```text
 kernel/       Device tree, drivers, patches and kernel configuration
 packaging/    Debian packages installed in the Ubuntu image
-configs/      System configuration and service overlays
+android/      The Dualboot app, which switches systems from the Android side
+configs/      System configuration, service overlays and the TWRP installers
 scripts/      Reproducible build and validation tools
 docs/         Detailed documentation and engineering history
 artifacts/    Generated release files; not versioned
+work/         Scratch space for builds; not versioned
 ```
 
 ## Firmware and licensing
