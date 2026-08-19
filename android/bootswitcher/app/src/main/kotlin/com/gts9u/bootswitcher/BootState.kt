@@ -47,6 +47,9 @@ object BootState {
      */
     fun stage(context: Context, from: BootSets.BootSet?, target: BootSets.BootSet) {
         val prefs = Prefs(context)
+        // The partitions are about to say something else, so whatever the tile
+        // drew for this boot is now a lie.
+        prefs.clearTileCache()
         if (from == null || from.id == target.id) {
             prefs.clearStaged()
         } else {

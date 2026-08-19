@@ -42,5 +42,16 @@ object Root {
      * Magisk answers the request with a denial when the app has been rejected
      * before, and a request that timed out is remembered as a denial.
      */
-    fun available(): Boolean = run("id -u").let { it.ok && it.output.trim() == "0" }
+    fun available(): Boolean {
+        if (granted) return true
+        val ok = run("id -u").let { it.ok && it.output.trim() == "0" }
+        // Only the yes is remembered.  A denial is the owner's to reverse, and
+        // caching it would leave the app insisting it has no root long after it
+        // was granted; a grant, once given, holds for the life of the process.
+        if (ok) granted = true
+        return ok
+    }
+
+    @Volatile
+    private var granted = false
 }

@@ -40,7 +40,20 @@ class BootSwitchTile : TileService() {
         super.onDestroy()
     }
 
-    private fun refresh() = scope.launch {
+    /**
+     * Brings the tile up to date, from the cache unless [force].
+     *
+     * Reading the tablet means about ten root shells and hashing 432 MiB, and
+     * this runs every single time the shade comes down.  See [Prefs.tileBoot]
+     * for why one read per boot is enough.
+     */
+    private fun refresh(force: Boolean = false) = scope.launch {
+        val prefs = Prefs(this@BootSwitchTile)
+        if (!force && Prefs.sameBoot(prefs.tileBoot, Prefs.bootStamp())) {
+            draw(prefs.tileLabel)
+            return@launch
+        }
+
         val shot = withContext(Dispatchers.IO) {
             if (!Root.available()) return@withContext null
             BootState.read(this@BootSwitchTile)
@@ -53,16 +66,25 @@ class BootSwitchTile : TileService() {
         running = shot?.running
         staged = shot?.staged == true && shot.nextBoot?.id == found?.id
 
+        // Only a real read is worth keeping.  Caching a failed one would leave
+        // the tile insisting there is nowhere to go until the next restart.
+        if (shot != null) {
+            prefs.tileLabel = found?.label
+            prefs.tileBoot = Prefs.bootStamp()
+        }
+        draw(found?.label)
+    }
+
+    private fun draw(other: String?) {
         qsTile?.apply {
-            if (found == null) {
+            if (other == null) {
                 state = Tile.STATE_UNAVAILABLE
-                label = getString(R.string.tile_label)
                 subtitle = getString(R.string.tile_unavailable)
             } else {
                 state = Tile.STATE_INACTIVE
-                label = getString(R.string.tile_label)
-                subtitle = found.label
+                subtitle = other
             }
+            label = getString(R.string.tile_label)
             icon = Icon.createWithResource(this@BootSwitchTile, R.drawable.ic_tile_dualboot)
             updateTile()
         }
@@ -70,11 +92,17 @@ class BootSwitchTile : TileService() {
 
     override fun onClick() {
         super.onClick()
-        val set = target ?: return
         // The tile can be tapped over a lock screen, and neither the dialog nor
         // the reboot should happen behind one.
         unlockAndRun {
-            if (Prefs(this).skipConfirmation) switch(set) else confirm(set)
+            scope.launch {
+                // What is on screen may have been drawn from the cache, and a
+                // cached label is not enough to write with: the set carries the
+                // files. Nothing is touched until the tablet has been asked.
+                refresh(force = true).join()
+                val set = target ?: return@launch
+                if (Prefs(this@BootSwitchTile).skipConfirmation) switch(set) else confirm(set)
+            }
         }
     }
 
@@ -114,7 +142,7 @@ class BootSwitchTile : TileService() {
             withContext(Dispatchers.IO) { BootSets.reboot() }
         } else {
             Toast.makeText(this@BootSwitchTile, R.string.tile_failed, Toast.LENGTH_LONG).show()
-            refresh()
+            refresh(force = true)
         }
     }
 }
