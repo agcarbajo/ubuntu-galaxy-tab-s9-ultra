@@ -1,79 +1,78 @@
-# Construcción del rootfs Ubuntu 24.04 arm64
+# Building the Ubuntu 24.04 arm64 root filesystem
 
-Última revisión: 2026-07-31. Documento de arquitectura del Hito 1; todavía no
-describe un sistema arrancado.
+Last revised: 2026-08-19.
 
-Este documento define **cómo se construye** el userspace Ubuntu y qué
-decisiones son propias de Ubuntu. La cadena de arranque está en
-[`boot-strategy.md`](boot-strategy.md); lo que se hereda del port postmarketOS
-está en [`hardware-status.md`](hardware-status.md).
+This document defines **how the Ubuntu userspace is built** and which decisions
+belong to Ubuntu. The boot chain is in [`boot-strategy.md`](boot-strategy.md);
+what is inherited from the postmarketOS port is in
+[`hardware-status.md`](hardware-status.md).
 
-## Principio rector
+## Guiding principle
 
-El hardware ya está resuelto en el kernel. Ubuntu no debe reinventar nada de
-eso: aporta únicamente userspace. Por tanto el pipeline se divide en dos
-mitades con responsabilidades separadas:
+The hardware is already solved in the kernel. Ubuntu must reinvent none of it:
+it contributes userspace only. The pipeline is therefore split into two halves
+with separate responsibilities:
 
-| Mitad | Origen | Qué produce |
+| Half | Source | What it produces |
 |---|---|---|
-| Kernel y arranque | Fuentes importadas del port pmOS (`kernel/`) | `boot`, `init_boot`, `vendor_boot`, `dtbo`, módulos ath12k |
-| Userspace | `mmdebstrap` sobre archive.ubuntu.com/ports | rootfs ext4 dentro de `userdata`, en la UFS |
+| Kernel and boot | Sources imported from the pmOS port (`kernel/`) | `boot`, `init_boot`, `vendor_boot`, `dtbo`, ath12k modules |
+| Userspace | `mmdebstrap` over archive.ubuntu.com/ports | an ext4 root filesystem on the internal UFS |
 
-Ninguna de las dos mitades puede depender de que la otra se haya montado a
-mano en una instalación viva.
+Neither half may depend on the other having been assembled by hand on a live
+installation.
 
-## Herramienta de construcción: mmdebstrap
+## Build tool: mmdebstrap
 
-Se usa **`mmdebstrap`**, no `debootstrap` ni una imagen preinstalada de
-Ubuntu, por tres razones concretas:
+**`mmdebstrap`** is used, not `debootstrap` and not a preinstalled Ubuntu
+image, for three concrete reasons:
 
-1. acepta un `--architecture=arm64` con `qemu-user-static` y no exige un
-   entorno arm64 nativo, que aquí no existe: el build corre en WSL x86-64;
-2. permite `--customize-hook` para inyectar configuración, paquetes locales y
-   overlays **dentro** de la misma invocación, de forma que el rootfs no se
-   modifica después «a mano»;
-3. produce el mismo resultado a partir del mismo manifiesto de paquetes, y
-   permite fijar el snapshot del archivo si más adelante hace falta
-   reproducibilidad estricta.
+1. it accepts `--architecture=arm64` with `qemu-user-static` and needs no
+   native arm64 environment, which does not exist here: the build runs in WSL
+   x86-64;
+2. it allows `--customize-hook` to inject configuration, local packages and
+   overlays **inside** the same invocation, so the root filesystem is never
+   modified "by hand" afterwards;
+3. it produces the same result from the same package manifest, and allows
+   pinning the archive snapshot if strict reproducibility is needed later.
 
-`debootstrap` se descarta como herramienta principal porque necesitaría una
-segunda fase de configuración fuera de la herramienta, que es exactamente el
-patrón «instalación irrepetible» que este proyecto prohíbe.
+`debootstrap` is rejected as the main tool because it would need a second
+configuration phase outside the tool, which is exactly the "unrepeatable
+installation" pattern this project forbids.
 
-### Suite y componentes
+### Suite and components
 
 - Suite: `noble` (Ubuntu 24.04 LTS).
-- Arquitectura: `arm64`.
-- Componentes: `main`, `restricted`, `universe`, `multiverse`.
+- Architecture: `arm64`.
+- Components: `main`, `restricted`, `universe`, `multiverse`.
 - Mirror: `http://ports.ubuntu.com/ubuntu-ports`.
-- Bolsillos habilitados: `noble`, `noble-updates`, `noble-security`.
+- Pockets enabled: `noble`, `noble-updates`, `noble-security`.
 
-`ports.ubuntu.com` es obligatorio: `archive.ubuntu.com` no publica arm64.
+`ports.ubuntu.com` is mandatory: `archive.ubuntu.com` publishes no arm64.
 
-### Conjunto de paquetes del primer rootfs
+### The first root filesystem's package set
 
-El objetivo del Hito 1/2 es un sistema que arranque, tenga red y SSH. El
-escritorio se instala en el mismo rootfs porque el Hito 3 lo necesita y
-reconstruir es barato, pero el orden de validación sigue siendo
-consola → red → escritorio.
+The goal of milestones 1 and 2 is a system that boots and has networking and
+SSH. The desktop is installed in the same root filesystem because milestone 3
+needs it and rebuilding is cheap, but the validation order remains console →
+network → desktop.
 
-Base y arranque:
+Base and boot:
 
 ```
 ubuntu-minimal, ubuntu-standard, systemd, systemd-sysv, udev,
-initramfs-tools, linux-firmware (solo lo genérico; los blobs Samsung/Qualcomm
-llegan por el overlay del ZIP), e2fsprogs, dosfstools, parted, gdisk,
+initramfs-tools, linux-firmware (generic only; the Samsung/Qualcomm blobs
+arrive through the ZIP's overlay), e2fsprogs, dosfstools, parted, gdisk,
 zstd, xz-utils
 ```
 
-Red y acceso:
+Network and access:
 
 ```
 netplan.io, network-manager, wpasupplicant, openssh-server, avahi-daemon,
 iputils-ping, curl, ca-certificates
 ```
 
-Escritorio:
+Desktop:
 
 ```
 ubuntu-desktop-minimal, gdm3, gnome-shell, gnome-control-center,
@@ -84,279 +83,290 @@ libspa-0.2-bluetooth, gstreamer1.0-gl, bluez, alsa-ucm-conf, alsa-utils,
 iio-sensor-proxy, upower, power-profiles-daemon
 ```
 
-Diagnóstico durante el bring-up:
+Diagnostics during bring-up:
 
 ```
 gdb, strace, evtest, i2c-tools, v4l-utils, usbutils, pciutils, ethtool, tree,
 libdrm-tests, drm-info, edid-decode
 ```
 
-`v4l-utils` sigue siendo la herramienta de diagnóstico de CAMSS, pero la ruta
-normal ya no termina en RAW10. `scripts/build-camera-packages.sh` fija y
-empaqueta `libcamera` 0.7.2 (`62d4bfc`) con pipeline `simple`, software ISP,
-GStreamer, tuning HI1337/HI847, preservación del campo de visión completo y
-autofoco por contraste para el DW9808. También
-recompila únicamente el SPA libcamera de PipeWire 1.0.5 (`a2287be`) con siete
-backports: compatibilidad con libcamera 0.7, mapa RGB correcto, reutilización
-segura de requests y buffers, descriptores prestados y entrega de completados
-en el bucle de datos. Los `.deb` resultantes son
-`libcamera-gts9u` y `libspa-0.2-libcamera-gts9u`; reemplazan solo los paquetes
-de cámara del archivo y conservan el PipeWire/WirePlumber de Noble.
+`v4l-utils` is still the CAMSS diagnostic tool, but the normal path no longer
+ends at RAW10. `scripts/build-camera-packages.sh` pins and packages
+`libcamera` 0.7.2 (`62d4bfc`) with the `simple` pipeline, the software ISP,
+GStreamer, HI1337/HI847 tuning, full field-of-view preservation, and contrast
+autofocus for the DW9808. It also rebuilds only PipeWire 1.0.5's libcamera SPA
+(`a2287be`) with seven backports: libcamera 0.7 compatibility, the correct RGB
+map, safe reuse of requests and buffers, borrowed descriptors, and delivery of
+completions on the data loop. The resulting `.deb`s are `libcamera-gts9u` and
+`libspa-0.2-libcamera-gts9u`; they replace only the archive's camera packages
+and keep Noble's PipeWire and WirePlumber.
 
-El paquete de dispositivo instala además la regla udev de `/dev/udmabuf`,
-necesaria para que el software ISP pueda asignar buffers sin privilegios. El
-kernel incluye un `v4l2loopback` fijado y firmado para crear cuatro nodos de
-captura, y `v4l2-relayd-gts9u` los alimenta bajo demanda desde las fuentes
-PipeWire. La imagen de escritorio incluye GNOME Cámara y `gstreamer1.0-gl`. Una
-build limpia ofrece así las cuatro cámaras nombradas a navegadores y
-aplicaciones V4L2 sin escenas ni ajustes por usuario.
+The device package also installs the udev rule for `/dev/udmabuf`, needed so
+the software ISP can allocate buffers without privileges. The kernel includes a
+pinned, signed `v4l2loopback` to create four capture nodes, and
+`v4l2-relayd-gts9u` feeds them on demand from the PipeWire sources. The desktop
+image includes GNOME Camera and `gstreamer1.0-gl`. A clean build therefore
+offers the four named cameras to browsers and V4L2 applications with no scenes
+and no per-user setup.
 
-**OBS Studio ya no se distribuye.** Viajaba de prestado como herramienta de
-verificación de las cámaras, junto con `obs-v4l2-gts9u`; cerrado ese trabajo,
-ambos salieron en la v2.23 del paquete de dispositivo y con ellos los 77 MiB de
-VLC que `obs-plugins` arrastraba por `Recommends`. Ver «OBS viajaba de prestado»
-en las notas de desarrollo.
+**OBS Studio is no longer shipped.** It travelled along as a camera
+verification tool, together with `obs-v4l2-gts9u`; with that work closed, both
+left in v2.23 of the device package, and with them the 77 MiB of VLC that
+`obs-plugins` dragged in through `Recommends`. See "OBS was travelling along"
+in the development notes.
 
-La imagen no crea una cuenta. Desde `ubuntu-gts9u-device 2.18`,
-`ubuntu-gts9u-desktop-user` resuelve en cada arranque la cuenta creada por OOBE,
-habilita su *linger* y genera bajo `/run` el `User=`, `Group=` y entorno del
-servicio de relés. Así su PipeWire existe también antes del primer login y no
-depende de que una sesión SSH siga abierta. El servicio espera el PID real de
-PipeWire y vigila su ciclo de vida; si PipeWire o un relé termina, systemd
-reconstruye las cuatro cámaras como un único conjunto. La versión
-`v4l2-relayd-gts9u 0.1.2-gts9u15` añade la entrega preemptiva y conserva
-correctamente el PID del dueño del ISP. Esto evita que los nodos permanezcan
-enumerados pero negros tras un arranque, una actualización o un cambio de
-sensor.
+The image creates no account. Since `ubuntu-gts9u-device 2.18`,
+`ubuntu-gts9u-desktop-user` resolves the OOBE-created account on every boot,
+enables its lingering, and generates the relay service's `User=`, `Group=` and
+environment under `/run`. Its PipeWire therefore exists before the first login
+too, and does not depend on an SSH session staying open. The service waits for
+PipeWire's real PID and watches its lifetime; if PipeWire or a relay exits,
+systemd rebuilds the four cameras as a single set. Version
+`v4l2-relayd-gts9u 0.1.2-gts9u15` adds pre-emptive delivery and correctly keeps
+the ISP owner's PID. This stops the nodes from staying enumerated but black
+after a boot, an update or a sensor change.
 
-`ubuntu-desktop-minimal` en lugar de `ubuntu-desktop` deja fuera ofimática y
-snaps de escritorio que no aportan nada al bring-up. Snap se evalúa como tema
-separado en el Hito 5, no se asume desde el principio.
+`ubuntu-desktop-minimal` rather than `ubuntu-desktop` leaves out office
+software and desktop snaps that contribute nothing to bring-up. Snap is
+evaluated separately in milestone 5; it is not assumed from the start.
 
-### Decisiones de Ubuntu que deben probarse primero en su forma nativa
+### Ubuntu decisions that must be tried natively first
 
-De la baseline postmarketOS se hereda hardware, **no** parches de userspace.
-Estas piezas deben probarse nativas antes de portar nada:
+From the postmarketOS baseline the project inherits hardware, **not** userspace
+patches. These pieces must be tried natively before anything is ported:
 
-| Pieza | pmOS/Alpine | Ubuntu 24.04 — probar primero |
+| Piece | pmOS/Alpine | Ubuntu 24.04 — try first |
 |---|---|---|
-| Greeter | cuentas `gdm-greeter-*` creadas a mano porque Alpine compila systemd sin `systemd-userdbd` | GDM3 nativo: Ubuntu **sí** trae `systemd-userdbd`, así que el workaround no debe copiarse |
-| Servidor de sonido | PulseAudio 17 | PipeWire + WirePlumber, con `pipewire-pulse` como capa de compatibilidad |
-| Topología GPU/DPU partida | Xorg parcheado + reverse PRIME | Mutter/Wayland gestiona `card0` (Adreno, render) y `card1` (DPU, KMS) sin parches; el stack Xorg de pmOS **no** se porta |
-| Rotación | Mutter r6 parcheado | Mutter de Ubuntu tal cual; el parche solo se porta si reaparece la regresión concreta (ratón externo desactiva la autorrotación) |
-| Escalado | ajustes GTK/Xft manuales de XFCE | `scale-monitor-framebuffer` de Mutter y escalado 200 % de GNOME |
-| Sensores | `iio-sensor-proxy` 3.9 parcheado + `libssc` + `hexagonrpcd` | `iio-sensor-proxy` de Ubuntu; `libssc`/`hexagonrpcd` **sí** hay que empaquetarlos porque no existen en Ubuntu. Los tres llevan parches propios, `libssc` incluido |
-| Gestión de red | NetworkManager | NetworkManager con netplan como frontend (por defecto en Ubuntu) |
+| Greeter | `gdm-greeter-*` accounts created by hand because Alpine builds systemd without `systemd-userdbd` | Native GDM3: Ubuntu **does** ship `systemd-userdbd`, so the workaround must not be copied |
+| Sound server | PulseAudio 17 | PipeWire + WirePlumber, with `pipewire-pulse` as the compatibility layer |
+| Split GPU/DPU topology | Patched Xorg + reverse PRIME | Mutter/Wayland handles `card0` (Adreno, render) and `card1` (DPU, KMS) unpatched; pmOS's Xorg stack is **not** ported |
+| Rotation | Patched Mutter r6 | Ubuntu's Mutter as it is; the patch is ported only if the specific regression returns (an external mouse disabling auto-rotation) |
+| Scaling | XFCE's manual GTK/Xft settings | Mutter's `scale-monitor-framebuffer` and GNOME's 200 % scaling |
+| Sensors | Patched `iio-sensor-proxy` 3.9 + `libssc` + `hexagonrpcd` | Ubuntu's `iio-sensor-proxy`; `libssc` and `hexagonrpcd` **do** have to be packaged, because Ubuntu has neither. All three carry their own patches, `libssc` included |
+| Network management | NetworkManager | NetworkManager with netplan as the frontend (Ubuntu's default) |
 
-Lo que **no** se traduce y hay que reempaquetar como `.deb`:
+What does **not** translate and has to be repackaged as `.deb`:
 
-- `libssc` y `hexagonrpcd` (cliente SSC/FastRPC de los sensores). `libssc`
-  lleva parche propio: su espera síncrona giraba el contexto GLib sin bloquear,
-  lo que costaba un núcleo entero en cuanto el SSC dejaba una petición sin
-  contestar;
-- `pd-mapper` (imprescindible: sin él el ADSP no publica `servreg locator` y no
-  aparece la tarjeta ALSA);
-- el paquete de dispositivo con udev, UCM, servicios de recuperación y
-  `deviceinfo` equivalentes.
+- `libssc` and `hexagonrpcd` (the sensors' SSC/FastRPC client). `libssc` carries
+  its own patch: its synchronous wait spun the GLib context without blocking,
+  which cost a whole core as soon as the SSC left a request unanswered;
+- `pd-mapper` (essential: without it the ADSP publishes no `servreg locator`
+  and the ALSA card never appears);
+- the device package with the equivalent udev rules, UCM, recovery services and
+  `deviceinfo`.
 
-## Estructura del rootfs
+## Root filesystem structure
 
-Desde v0.18 la raíz es **un solo sistema de ficheros ext4 dentro de
-`userdata`**, en la UFS interna, etiquetado `UBTS9U_UFS`. La imagen que
-distribuye el ZIP no tiene tabla de particiones: es el sistema de ficheros a
-secas, porque se escribe dentro de una partición que ya existe.
+Since v0.18 the root is **a single ext4 filesystem inside a partition** on the
+internal UFS, labelled `UBTS9U_UFS`. That partition is `linuxroot` when the
+disk has been split and `userdata` when it has not. The image the ZIP ships has
+no partition table: it is the filesystem alone, because it is written inside a
+partition that already exists.
 
-Ahí `/boot` va dentro de la raíz. La partición separada de la microSD existía
-porque el initramfs que cabe en `init_boot` (8 MiB) no puede contener el árbol
-completo de módulos y la segunda etapa tenía que vivir en algún sitio montable;
-con una sola raíz ese sitio es `/boot` y no hace falta pedir una partición que
-no vamos a crear.
+`/boot` lives inside the root. The separate microSD partition existed because
+the initramfs that fits in `init_boot` (8 MiB) cannot hold the full module tree
+and the second stage had to live somewhere mountable; with a single root that
+place is `/boot`, and no partition has to be requested that we are not going to
+create.
 
-Hasta v0.17 la microSD llevaba **dos particiones**:
+Up to v0.17 the microSD carried **two partitions**:
 
-| Partición | FS | Etiqueta | Contenido |
+| Partition | FS | Label | Contents |
 |---|---|---|---|
-| 1 | ext4 | `UBTS9U_BOOT` | `initramfs-extra`, DTB de referencia y metadatos de build |
-| 2 | ext4 | `UBTS9U_ROOT` | rootfs Ubuntu |
+| 1 | ext4 | `UBTS9U_BOOT` | `initramfs-extra`, the reference DTB and build metadata |
+| 2 | ext4 | `UBTS9U_ROOT` | the Ubuntu root filesystem |
 
-Las etiquetas son propias a propósito. Reutilizar `pmOS_boot`/`pmOS_root` haría
-que un initramfs de postmarketOS y otro de Ubuntu compitiesen por el mismo
-medio; y `UBTS9U_UFS` se distingue de `UBTS9U_ROOT` para que una tarjeta
-antigua olvidada en la ranura no gane la resolución de `root=LABEL=` contra la
-instalación interna.
+The labels are deliberately our own. Reusing `pmOS_boot`/`pmOS_root` would make
+a postmarketOS initramfs and an Ubuntu one compete for the same medium; and
+`UBTS9U_UFS` differs from `UBTS9U_ROOT` so that an old card forgotten in the
+slot cannot win the `root=LABEL=` resolution against the internal installation.
 
-La imagen se genera pequeña (rootfs + margen) y una unidad
-`ubuntu-gts9u-grow-rootfs.service` la expande en el primer arranque. En la UFS
-eso significa **solo `resize2fs`**: la partición ya ocupa las 939 GiB y ninguna
-herramienta de particionado la toca. En una microSD sí hay que extender antes la
-partición, y el script distingue los dos casos por el dispositivo y la etiqueta.
+The image is generated small (root filesystem plus slack) and a
+`ubuntu-gts9u-grow-rootfs.service` unit expands it on the first boot. On the
+UFS that means **`resize2fs` only**: the partition is already its full size and
+no partitioning tool touches it. On a microSD the partition does have to be
+extended first, and the script tells the two cases apart by device and label.
 
-## Swap en dos niveles
+## Two-tier swap
 
-La imagen no traía **ninguna** swap: con 14,2 GiB de RAM utilizable y una carga
-de escritorio real (Steam más navegador), el único respaldo ante un pico era el
-OOM killer. Desde la v2.22 del paquete de dispositivo hay dos niveles, 23 GiB
-en total:
+The image carried **no** swap at all: with 14.2 GiB of usable RAM and a real
+desktop load (Steam plus a browser), the only backstop against a spike was the
+OOM killer. Since v2.22 of the device package there are two tiers, 23 GiB in
+total:
 
-| nivel | tamaño | prioridad | unidad |
+| Tier | Size | Priority | Unit |
 |---|---|---|---|
 | zram (zstd) | 8 GiB | 100 | `ubuntu-gts9u-zram.service` |
-| swapfile en la UFS | 16 GiB | 10 | `ubuntu-gts9u-swapfile.service` |
+| swapfile on the UFS | 16 GiB | 10 | `ubuntu-gts9u-swapfile.service` |
 
-Las decisiones y por qué:
+The decisions, and why:
 
-- **zram primero, y con `zstd`.** No cuesta ni una escritura a la UFS. El
-  algoritmo por defecto del kernel aquí es `lzo-rle`, pero `zstd` está
-  disponible: `CONFIG_CRYPTO_ZSTD` es sólo módulo y este port no instala el
-  árbol genérico, pero zram moderno lleva su propio backend zstd y lo anuncia en
-  `comp_algorithm`. Medido en la tablet, **4,53×** — 0,65 GiB de páginas
-  ocupando 0,16 GiB de RAM.
-- **8 GiB de zram, la mitad de la RAM.** Es el techo razonable: más grande, una
-  racha de páginas incompresibles podría reclamar más memoria de la que ahorra.
-  `comp_algorithm` sólo admite escritura mientras `disksize` siga sin fijar, así
-  que ese orden en el script no es intercambiable.
-- **El swapfile no viaja en la imagen.** 16 GiB de ceros empequeñecerían el ZIP
-  flasheable; se crea en el dispositivo, y por eso la unidad va `After=` la
-  expansión del rootfs: antes de eso el sistema de ficheros todavía es el
-  pequeño que se envía.
-- **`fallocate`, no `dd`.** ext4 con este kernel acepta un swapfile de extents
-  no escritos —`mkswap` y `swapon` lo aceptan, verificado en la tablet—, así que
-  la creación es instantánea y no añade nada al arranque. El `dd` se conserva
-  sólo como respaldo por si `swapon` rechazase el fichero.
-- **16 GiB, mayor que la RAM, a propósito.** Es el 2 % del espacio libre y deja
-  la suspensión a disco aritméticamente posible para quien quiera cablear
-  `resume=`; no se promete que funcione.
-- **`vm.swappiness = 100` y `vm.page-cluster = 0`** (`90-gts9u-swap.conf`). Con
-  un nivel comprimido delante, expulsar una página anónima sale barato y
-  conviene preferirlo a tirar caché. No se usa el 180 de una máquina sólo-zram
-  porque aquí hay un swapfile detrás. `page-cluster = 0` porque zram no tiene
-  penalización de búsqueda y leer racimos de páginas sólo malgasta descompresión.
+- **zram first, and with `zstd`.** It costs not one write to the UFS. The
+  kernel's default algorithm here is `lzo-rle`, but `zstd` is available:
+  `CONFIG_CRYPTO_ZSTD` is module-only and this port installs no generic tree,
+  but modern zram carries its own zstd backend and announces it in
+  `comp_algorithm`. Measured on the tablet: **4.53×** — 0.65 GiB of pages
+  occupying 0.16 GiB of RAM.
+- **8 GiB of zram, half the RAM.** That is the reasonable ceiling: any larger
+  and a run of incompressible pages could claim more memory than it saves.
+  `comp_algorithm` only accepts writes while `disksize` is still unset, so that
+  order in the script is not interchangeable.
+- **The swapfile does not travel in the image.** 16 GiB of zeros would dwarf
+  the flashable ZIP; it is created on the device, which is why the unit is
+  ordered `After=` the root filesystem expansion: before that the filesystem is
+  still the small one that was shipped.
+- **`fallocate`, not `dd`.** ext4 with this kernel accepts a swapfile of
+  unwritten extents — `mkswap` and `swapon` accept it, verified on the tablet —
+  so creation is instant and adds nothing to boot. The `dd` is kept only as a
+  fallback should `swapon` ever reject the file.
+- **16 GiB, larger than RAM, on purpose.** It is 2 % of the free space and
+  leaves hibernation arithmetically possible for anyone who wants to wire up
+  `resume=`; it is not promised to work.
+- **`vm.swappiness = 100` and `vm.page-cluster = 0`** (`90-gts9u-swap.conf`).
+  With a compressed tier in front, evicting an anonymous page is cheap and
+  worth preferring over dropping cache. The 180 of a zram-only machine is not
+  used, because here there is a swapfile behind. `page-cluster = 0` because
+  zram has no seek penalty and reading clusters of pages only wastes
+  decompression.
 
-Validado tras reinicio sin intervención: las dos unidades activas, el swapfile
-reutilizado y no recreado, y una prueba que reserva 11 GiB sin un solo OOM kill.
+Validated after an unattended reboot: both units active, the swapfile reused
+rather than recreated, and a test that reserves 11 GiB without a single OOM
+kill.
 
-## initramfs propio de Ubuntu
+## Ubuntu's own initramfs
 
-**No se reutiliza el initramfs de postmarketOS.** Ubuntu genera el suyo con
-`initramfs-tools`, y debe cumplir cuatro requisitos que no vienen por defecto:
+**The postmarketOS initramfs is not reused.** Ubuntu generates its own with
+`initramfs-tools`, and it has to meet four requirements that do not come by
+default:
 
-1. **Localizar la raíz sin números de dispositivo.** El root se indica por
-   `root=LABEL=UBTS9U_UFS`, nunca `sda34` ni `mmcblk1p2`. El orden de
-   enumeración de los LUN de la UFS y de `sdhc_2` no está garantizado, y la
-   etiqueta es además lo que separa la instalación interna de una microSD
-   antigua.
-2. **Esperar a que aparezca el dispositivo.** `rootwait` ya está en la cmdline
-   de `vendor_boot`; además el hook local reintenta el `blkid` en lugar de caer
-   al shell de emergencia al primer fallo.
-3. **Empaquetarse en LZ4 legacy.** Esto es innegociable: el ABL del X910
-   concatena el ramdisk genérico de `init_boot` con el fragmento de
-   `vendor_boot`, y con un ramdisk genérico gzip Linux rechaza el initrd con
-   «invalid magic at start of compressed archive» aunque la imagen Android sea
-   válida. `initramfs-tools` se configura con `COMPRESS=lz4` y el empaquetador
-   verifica la magia `02 21 4c 18`.
-4. **Caber en 8 MiB menos el footer AVB.** `MODULES=dep` y no `most`. Como los
-   proveedores críticos de este port son built-in, el initramfs no necesita un
-   árbol grande de módulos; si aun así no cabe, la solución es mover módulos a
-   `initramfs-extra` en la partición de boot, no recortar drivers necesarios.
+1. **Find the root without device numbers.** The root is given as
+   `root=LABEL=UBTS9U_UFS`, never `sda34` or `mmcblk1p2`. The enumeration order
+   of the UFS LUNs and of `sdhc_2` is not guaranteed, and the label is also
+   what separates the internal installation from an old microSD.
+2. **Wait for the device to appear.** `rootwait` is already in `vendor_boot`'s
+   cmdline; on top of that the local hook retries `blkid` instead of dropping
+   to the emergency shell on the first failure.
+3. **Be packed in legacy LZ4.** This is non-negotiable: the X910's ABL
+   concatenates the generic ramdisk from `init_boot` with the fragment from
+   `vendor_boot`, and with a gzip generic ramdisk Linux rejects the initrd with
+   "invalid magic at start of compressed archive" even though the Android image
+   is valid. `initramfs-tools` is configured with `COMPRESS=lz4` and the
+   packager checks for the `02 21 4c 18` magic.
+4. **Fit in 8 MiB minus the AVB footer.** `MODULES=dep`, not `most`. Since this
+   port's critical providers are built in, the initramfs needs no large module
+   tree; if it still does not fit, the answer is to move modules to
+   `initramfs-extra` on the boot partition, not to cut needed drivers.
 
-El script de validación comprueba los cuatro puntos sobre la imagen generada,
-sin flashear nada.
+The validation script checks all four against the generated image, flashing
+nothing.
 
 ## Firmware
 
-El repositorio no contiene blobs. Los helpers `scripts/stage-stock-*.sh` se
-adaptan del port pmOS conservando sus hashes fijados y cambian únicamente el
-destino, que en Ubuntu es la jerarquía Debian:
+The repository contains no blobs. The `scripts/stage-stock-*.sh` helpers are
+adapted from the pmOS port, keeping its pinned hashes and changing only the
+destination, which in Ubuntu is the Debian hierarchy:
 
-| Contenido | Ruta en el rootfs Ubuntu |
+| Contents | Path in the Ubuntu root filesystem |
 |---|---|
-| GPU Adreno 740 (`a740_*`, `gmu_gen70200.bin`) | `/lib/firmware/qcom/` |
-| ADSP Samsung (`adsp*.mdt`, `adsp*.bNN`, `*.jsn`) | `/lib/firmware/qcom/sm8550/` |
-| Topología AudioReach | `/lib/firmware/qcom/sm8550/Samsung-Galaxy-Tab-S9-Ultra-tplg.bin` |
-| Wi-Fi WCN7850 (amss oficial + BDF QRD en ELF) | `/lib/firmware/ath12k/WCN7850/hw2.0/` |
+| Adreno 740 GPU (`a740_*`, `gmu_gen70200.bin`) | `/lib/firmware/qcom/` |
+| Samsung ADSP (`adsp*.mdt`, `adsp*.bNN`, `*.jsn`) | `/lib/firmware/qcom/sm8550/` |
+| AudioReach topology | `/lib/firmware/qcom/sm8550/Samsung-Galaxy-Tab-S9-Ultra-tplg.bin` |
+| WCN7850 Wi-Fi (official amss + QRD BDF in ELF) | `/lib/firmware/ath12k/WCN7850/hw2.0/` |
 | Bluetooth (`hmtbtfw20.tlv`, `hmtnv20.b21`) | `/lib/firmware/qca/` |
-| CS35L45 (protección, aún no cargada) | `/lib/firmware/` |
-| Árbol HexagonFS de sensores | `/usr/share/qcom/sm8550/Samsung/gts9uwifi/` |
+| CS35L45 (protection, not loaded yet) | `/lib/firmware/` |
+| Sensors' HexagonFS tree | `/usr/share/qcom/sm8550/Samsung/gts9uwifi/` |
 
-En Ubuntu `/lib` es un symlink a `/usr/lib`, igual que en el initramfs de
-postmarketOS. Es la misma trampa que rompió la v0.69 de aquel port: el overlay
-debe escribirse en `/usr/lib/firmware/...`, nunca crear un directorio `/lib`
-sobre el symlink.
+In Ubuntu `/lib` is a symlink to `/usr/lib`, as it is in the postmarketOS
+initramfs. This is the same trap that broke v0.69 of that port: the overlay
+must be written into `/usr/lib/firmware/...`, never creating a `/lib` directory
+over the symlink.
 
-`hmtbtfw20.tlv` y `hmtnv20.b21` deben ir **también** en el fragmento vendor del
-`vendor_boot`, porque `hci_qca` es built-in y sondea antes de montar la raíz.
+`hmtbtfw20.tlv` and `hmtnv20.b21` must **also** go in `vendor_boot`'s vendor
+fragment, because `hci_qca` is built in and probes before the root is mounted.
 
-## Usuario, locale y entrada
+## User, locale and input
 
-- **La imagen no lleva cuenta.** Desde v0.19 la crea la usuaria en el asistente
-  de primer arranque de GNOME (`gnome-initial-setup`), que GDM lanza cuando la
-  máquina no tiene ninguna cuenta ordinaria y `InitialSetupEnable=true` está en
-  `/etc/gdm3/custom.conf`. Ahí se eligen nombre, contraseña, idioma, teclado y
-  zona horaria.
+- **The image carries no account.** Since v0.19 the owner creates it in GNOME's
+  first-run wizard (`gnome-initial-setup`), which GDM launches when the machine
+  has no ordinary account and `InitialSetupEnable=true` is set in
+  `/etc/gdm3/custom.conf`. Name, password, language, keyboard and time zone are
+  chosen there.
 
-  Esto no es solo comodidad: la cuenta se creaba con una contraseña pasada en
-  `GTS9U_PW`, que no puede vivir en el repositorio, así que **nadie que no la
-  supiera podía hacer una build limpia**. Ahora una release no necesita ningún
-  secreto.
+  This is not only convenience: the account used to be created with a password
+  passed in `GTS9U_PW`, which cannot live in the repository, so **nobody who
+  did not know it could make a clean build**. A release now needs no secret at
+  all.
 
-  `GTS9U_PW` sigue existiendo para imágenes de desarrollo, donde interesa más
-  un SSH que funcione antes de que nadie toque la pantalla.
-- Nada del port puede nombrar ya a un usuario concreto. La extensión de la
-  linterna se activa con un *gschema override*, y
-  `ubuntu-gts9u-desktop-user` resuelve en cada arranque la cuenta ordinaria,
-  habilita su *linger*, aplica grupos de dispositivo y genera el drop-in de los
-  relés bajo `/run`.
-- Locale `en_US.UTF-8`, zona horaria UTC y teclado `us` como punto de partida
-  neutral; el asistente pregunta los tres.
-- Hostname distinto del de postmarketOS para no confundir dos sistemas en la
-  misma LAN.
-- Escalado 200 % por defecto: 2960×1848 en 14,6" es inusable al 100 %.
-- SSH habilitado con clave; contraseña del usuario fuera del repositorio.
+  `GTS9U_PW` still exists for development images, where working SSH before
+  anyone touches the screen matters more.
 
-## Pipeline de build
+  One consequence worth knowing when reaching a tablet over SSH: the account's
+  name and password are whatever was typed in that wizard, and they change with
+  every reinstall. The host keys do not — they travel inside the image.
+- Nothing in the port may name a specific user any more. The flashlight
+  extension is enabled through a gschema override, and
+  `ubuntu-gts9u-desktop-user` resolves the ordinary account on every boot,
+  enables its lingering, applies device groups and generates the relays'
+  drop-in under `/run`.
+- Locale `en_US.UTF-8`, time zone UTC and keyboard `us` as a neutral starting
+  point; the wizard asks for all three.
+- A hostname different from postmarketOS's, so two systems on the same LAN
+  cannot be confused.
+- 200 % scaling by default: 2960×1848 on 14.6" is unusable at 100 %.
+- SSH enabled with a key; the user's password stays out of the repository.
 
-Todo se ejecuta como root dentro de `wsl.exe -d Ubuntu-24.04`, con base en
-`/root/ubuntu-gts9u`. Ningún script acepta un dispositivo de bloque ni escribe
-en una partición.
+## Build pipeline
 
-| Paso | Script | Produce |
+Everything runs as root inside `wsl.exe -d Ubuntu-24.04`, based in
+`/root/ubuntu-gts9u`. No script accepts a block device or writes to a
+partition.
+
+| Step | Script | Produces |
 |---|---|---|
-| 0 | `install-build-deps.sh` / `check-build-deps.sh` | entorno de build comprobado |
-| 0 | `fetch-mainline.sh` | checkout fijado en `a13c140c` (7.2-rc3) |
+| 0 | `install-build-deps.sh` / `check-build-deps.sh` | a checked build environment |
+| 0 | `fetch-mainline.sh` | checkout pinned at `a13c140c` (7.2-rc3) |
 | 0 | `stage-android-tools.sh` | `mkbootimg`, `mkdtboimg`, `avbtool` |
-| 0 | `import-kernel-sources.sh` | reimporta DTS, drivers y parches con hash de origen |
-| 1 | `build-mainline-kernel.sh` | `Image.gz`, DTB, config y módulos ath12k + `v4l2loopback` firmado |
-| 1b | `build-camera-packages.sh` | `libcamera-gts9u` y SPA libcamera para PipeWire |
-| 1c | `build-extra-packages.sh` | Fastfetch y relé V4L2 |
-| 2 | `build-ubuntu-rootfs.sh` | rootfs Ubuntu arm64 con `mmdebstrap` |
-| 3 | `build-rootfs-overlay.sh` | overlay de módulos y firmware |
-| 4 | `build-ufs-image.sh` | initramfs Ubuntu e imagen ext4 de la raíz, sin tabla de particiones |
+| 0 | `import-kernel-sources.sh` | reimports DTS, drivers and patches with a source hash |
+| 1 | `build-mainline-kernel.sh` | `Image.gz`, DTB, config, and the ath12k plus signed `v4l2loopback` modules |
+| 1b | `build-camera-packages.sh` | `libcamera-gts9u` and the libcamera SPA for PipeWire |
+| 1c | `build-extra-packages.sh` | Fastfetch and the V4L2 relay |
+| 2 | `build-ubuntu-rootfs.sh` | the Ubuntu arm64 root filesystem, with `mmdebstrap` |
+| 3 | `build-rootfs-overlay.sh` | the module and firmware overlay |
+| 4 | `build-ufs-image.sh` | Ubuntu's initramfs and the root's ext4 image, with no partition table |
 | 5 | `build-android-v4-bundle.sh` | `boot`, `init_boot`, `vendor_boot`, `dtbo`, `vbmeta` |
-| 6 | `make-twrp-zip.py` | ZIP TWRP determinista, con la raíz dentro |
-| 7 | `validate-bundle.sh` | validación estática, sin flashear |
-| — | `make-initramfs.sh` | initramfs LZ4 legacy comprobado; lo usan los dos constructores de imagen |
-| — | `build-sd-image.sh` | imagen de microSD de dos particiones, la forma de instalar hasta v0.17 |
-| — | `build-release.sh` | encadena 1–7 y escribe el manifiesto |
+| 6 | `make-twrp-zip.py` | a deterministic TWRP ZIP with the root inside |
+| 7 | `validate-bundle.sh` | static validation, flashing nothing |
+| — | `make-initramfs.sh` | a checked legacy-LZ4 initramfs; both image builders use it |
+| — | `build-sd-image.sh` | the two-partition microSD image, how installing worked up to v0.17 |
+| — | `build-release.sh` | chains 1–7 and writes the manifest |
 
-`make-initramfs.sh` falla la build si el initramfs no es LZ4 legacy o no cabe
-en `init_boot`. Esos dos errores se descubren aquí y no en la tablet, y están
-en un solo sitio para que la imagen de UFS y la de microSD no puedan divergir
-justo en eso.
+`make-initramfs.sh` fails the build if the initramfs is not legacy LZ4 or does
+not fit in `init_boot`. Those two errors are found here rather than on the
+tablet, and they live in one place so the UFS image and the microSD one cannot
+diverge on exactly that.
 
-`build-ufs-image.sh` produce el sistema de ficheros a secas: sin GPT, con
-`/boot` dentro, con el overlay de firmware ya integrado, con la etiqueta
-`UBTS9U_UFS`, y reservando bloques de descriptores (`-E resize=`) suficientes
-para que el primer arranque pueda crecer hasta 1 TiB en línea. Rechaza escribir
-sobre un dispositivo de bloque y aborta si la imagen supera el presupuesto de
-4 GiB, porque viaja entera dentro del ZIP.
+`build-ufs-image.sh` produces the filesystem alone: no GPT, with `/boot`
+inside, with the firmware overlay already integrated, labelled `UBTS9U_UFS`,
+and reserving enough descriptor blocks (`-E resize=`) for the first boot to
+grow online to 1 TiB. It refuses to write to a block device and aborts if the
+image exceeds its size budget, because it travels whole inside the ZIP.
 
-## Orden de validación
+Two numbers in that script are deliberate and connected:
 
-1. `systemd` llega a `multi-user.target` con journal persistente.
-2. Wi-Fi y SSH.
-3. GDM y sesión GNOME Wayland.
-4. GPU acelerada comprobada con `eglinfo`/`vulkaninfo`, no supuesta.
-5. Resto de paridad de hardware.
+- **`-m 1` instead of ext4's default 5 % reserve.** The reserve is a percentage
+  held in the superblock, so it survives the resize: 5 % of the partition the
+  root grows into would be tens of gigabytes the owner never gets back.
+- **The slack, and the budget it needs.** The installer seeds two boot sets of
+  216 MiB each into this filesystem before it grows, so it must have room for
+  both. The budget was raised from 4096 to 4608 MiB deliberately for that; empty
+  space costs almost nothing in the ZIP, where 256 MiB of slack measured 784 KB.
 
-Ningún componente se marca funcional en la matriz por el hecho de que su
-driver haya enlazado.
+## Validation order
+
+1. `systemd` reaches `multi-user.target` with a persistent journal.
+2. Wi-Fi and SSH.
+3. GDM and a GNOME Wayland session.
+4. Accelerated GPU checked with `eglinfo`/`vulkaninfo`, not assumed.
+5. The rest of the hardware parity.
+
+No component is marked working in the matrix merely because its driver bound.
