@@ -4,9 +4,6 @@ Ubuntu 24.04 LTS arm64 for the Samsung Galaxy Tab S9 Ultra Wi-Fi
 (`SM-X910`, `gts9uwifi`), running GNOME 46 on Wayland and upstream Linux
 7.2-rc3.
 
-The current release is **v1.0.0-beta2**. It installs to the tablet's internal storage
-from one TWRP-flashable ZIP; a microSD is not required after installation.
-
 ## Hardware compatibility
 
 | Component | Status | Summary |
@@ -19,13 +16,13 @@ from one TWRP-flashable ZIP; a microSD is not required after installation.
 | S Pen dock | ✅ | Insertion, orientation and charging |
 | S Pen BLE | ✅ | Pairing, real battery levels, air gestures and pointer mode fully validated |
 | Tab Companion | ✅ | S Pen remote modes, behaviour options, haptics and keyboard remapping |
-| Keyboard cover | ✅ | EF-DX920 validated; four related Samsung models are recognised but untested |
+| Keyboard cover | ✅ | Only EF-DX920 tested, not sure if other models will work |
 | Cover switch | ✅ | Closing the cover turns off the display |
 | Power and volume buttons | ✅ | Including suspend from the power button |
 | Wi-Fi | ✅ | WCN7850 / ath12k |
 | Bluetooth | ✅ | Controller, audio and S Pen BLE |
 | Speakers and microphones | ✅ | Four speakers and digital microphones |
-| Vibration / haptics | ✅ | On-screen keyboard feedback and optional notification vibration |
+| Vibration / haptics | ✅ | On-screen keyboard feedback |
 | Motion sensors | ✅ | Rotation, accelerometer, gyroscope and compass |
 | Battery telemetry | ✅ | Charge, voltage, current and temperature |
 | USB-PD/PPS charging | ✅ | Up to 25 W measured into the battery |
@@ -34,8 +31,8 @@ from one TWRP-flashable ZIP; a microSD is not required after installation.
 | USB host | ✅ | HID and storage, powered or unpowered |
 | USB-C DisplayPort | ✅ | External video output |
 | Cameras and flash | ✅ | Four cameras, autofocus and flashlight work; colour tuning remains a future improvement |
-| Ambient light sensor | ❌ | No usable lux data from the sensor DSP |
-| Fingerprint reader | 🟡 | Optical HBM, FOD touch isolation and the signed EL721 TrustZone app are validated; enrolment/login remain unavailable |
+| Ambient light sensor | ❌ | Currently not working |
+| Fingerprint reader | 🟡 | Work in progress |
 | Waydroid | ❓ | Not tested |
 
 ✅ working on the physical tablet · 🟡 experimental or partially validated ·
@@ -48,19 +45,10 @@ The evidence and technical limitations for every component are documented in
 
 Tab Companion 1.0.0 is preinstalled and provides:
 
-- S Pen battery, charging and dock status;
-- automatic dock-initiated BLE pairing, air gestures and an air-pointer mode;
-- a switch that disconnects all S Pen remote features while preserving writing;
-- finger rejection while the S Pen is hovering;
-- optional S Pen digitizer disabling while the pen is docked;
+- full S Pen settings (pairing, gestures and air-pointer mouse mode);
 - remapping for compatible Samsung Book Cover Keyboard keys;
-- application, command, simulated-key and flashlight actions;
 - adjustable vibration feedback for GNOME's on-screen keyboard and optional notification vibration;
-- English, Spanish, French, German, Italian and Portuguese interfaces.
-
-The EF-DX920 is physically validated. EF-DX900, EF-DX910, EF-DX915 and
-EF-DX925 are recognised but still need tests with the real accessories. See
-[tab-companion.md](docs/tab-companion.md) for implementation and diagnostics.
+- dualboot to Android with an optional toggle on quick settings
 
 The air-pointer concept is inspired by
 [PenMouse S](https://github.com/jojczak/PenMouseS) by Jakub J (`@jojczak`).
@@ -78,93 +66,44 @@ split the UFS first.
 
 ### Before you start
 
-Three things have to be in place first, all flashed with Odin from Download
-mode, into the `AP` slot:
-
-1. **An unlocked bootloader.** Once it is, `ro.boot.verifiedbootstate` reads
-   `orange`.
-2. **TWRP.**
-3. **A `vbmeta` with AVB verification disabled** — the one published alongside
-   TWRP.
-
-The third is the one that catches people out, because it is invisible until it
-bites. Flashing stock firmware puts back a `vbmeta` with verification enabled,
-and `vbmeta` lives on a read-only LUN that only the bootloader can write, so
-the installer cannot patch it from TWRP. It checks the flags instead and stops
-with:
-
-```
-ERROR: vbmeta is read-only and does not have AVB flags 2
-```
-
-That is the installer refusing to write a kernel the tablet would then decline
-to boot. Flash the disabled `vbmeta` and run it again. Note that changing
-`vbmeta` makes Android erase its own data on the next boot, which the warning
-above already covers.
+1. **An unlocked bootloader.**
+2. **ROOT with magisk** (only if you want dualboot).
+3. Get `ubuntu-24.04-gts9uwifi-vX.X.X-sm-x910` from the [latest release](https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/releases/latest). `gts9u-split.zip` and `Dualboot-vX.X.X.apk` only if you want dualboot.
+4. **[TWRP](https://github.com/rainbowdashh/android_device_samsung_gts9u/releases/tag/V2)** and **a `vbmeta` with AVB verification disabled** ([the one published alongside TWRP](https://xdaforums.com/attachments/vbmeta-1-tar.6077784/)). Flash both files in AP using Odin or Heimdall (you will need to reboot again to download mode between flashes)
+5. After flashing both files from step 4 reboot to TWRP. **Don't let One UI boot** or TWRP will get overrided with stock recovery and you will need to flash the files again.
 
 ### Ubuntu on the whole tablet
 
-1. Copy the installation ZIP to a microSD or a USB-OTG drive.
-2. Boot TWRP.
-3. Flash it.
-4. Reboot and complete GNOME's first-run setup.
-
-It has to come from external media here, because Ubuntu is being written into
-the very partition TWRP offers as internal storage. The installer checks, and
-refuses to start if it finds itself sitting on it.
+1. From TWRP just flash the instalation ZIP (`ubuntu-24.04-gts9uwifi-v1.0.0-sm-x910`) using a microSD, external USB storage or sideload. **Don't flash it from internal storage** as it will get wiped.
+2. Reboot and enjoy!.
 
 ### Ubuntu beside Android
 
+> [!IMPORTANT]
+> Default split is 50% of the storage for Android and 50% for Linux. If you want to modify it just change the value of `ANDROID-PERCENT` inside of  `gts9u-split.zip` with the desire percentage that you want Android to take (between 5% and 95%).
+
 1. Flash `gts9u-split.zip`. It shortens `userdata`, creates `linuxroot`
-   beside it, and recreates Android's data so One UI can make fresh encryption
+   beside it, and recreates Android's data so Android can make fresh encryption
    keys on its next boot.
-2. Flash the installation ZIP. Finding `linuxroot`, it installs there and
-   leaves Android's own `userdata` alone.
-3. Reboot and complete GNOME's first-run setup.
-
-Here the ZIPs may sit on internal storage, because the partition being written
-is not the one they are on.
-
-The ZIP is generic and ships set to split the disk in half. The share is one
-file inside it, `ANDROID-PERCENT`, holding the percentage of `userdata` Android
-keeps. Changing the split means changing that number — open the ZIP in any
-archive manager and edit it, or:
-
-```bash
-printf '30
-' > ANDROID-PERCENT && zip gts9u-split.zip ANDROID-PERCENT
-```
-
-Nothing else needs touching: `SHA256SUMS` inside the ZIP covers the installer
-script alone, so editing the number invalidates nothing. Anything from 5 to 95
-is accepted, and the tablet checks the same bounds before it writes the table.
-
-Building a ZIP with the number already set works too:
-
-```bash
-python3 scripts/make-repartition-zip.py out/gts9u-split.zip --android-percent 30
-```
-
-Flashing it on a tablet that is already split does nothing and says so, so
-there is no harm in running it twice.
+2. Reboot TWRP (reboot > recovery).
+3. Format data.
+4. Flash the installation ZIP (`ubuntu-24.04-gts9uwifi-v1.0.0-sm-x910`).
+5. Reboot and enjoy! (check below how to reboot to Android).
 
 ### Switching systems
 
-No PC needed. The **Dualboot** app on Android and Tab Companion's Dualboot page
-on Ubuntu each replace the four boot partitions and restart, and both offer a
-quick-settings toggle. Switching takes seconds and cannot lose data: nothing is
-moved, resized or reformatted. See [dual-boot.md](docs/dual-boot.md).
+From **Ubuntu**, just use the toggle that you should see on quick settings or from the Tab Companion app under the Dualboot tab.
 
-> [!IMPORTANT]
-> **Android's side needs root.** The Dualboot app runs its work through `su`: it
-> has to mount `linuxroot` to read the saved boot sets and write the four boot
-> partitions to switch. Without Magisk it can do neither. Ubuntu's side needs no
-> such thing — it is already root there.
+From **Android**, install the `Dualboot-vX.X.X.apk` app and give it root acces, then reboot from the app or add the toggle to quick settings.
 
-Neither ZIP touches Samsung's bootloader, EFS, calibration or modem-related
-partitions, neither touches `super`, and neither reboots by itself. Full
-installation, recovery and boot-chain details are in
-[boot-strategy.md](docs/boot-strategy.md).
+Both One UI and LineageOS have been tested in dualboot with Ubuntu and they work fine.
+
+## Known Issues
+
+- Regarding official cover keyboard, as I said, only EF-DX920 cover keyboard has been tested. EF-DX900, EF-DX910, EF-DX915 and
+EF-DX925 are untested as I don't have them, so they might not work.
+- Text might not display correctly in some chromium based apps.
+- Front cameras are zoomed in for some reason.
 
 ## Documentation
 
