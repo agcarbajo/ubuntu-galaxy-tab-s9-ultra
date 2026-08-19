@@ -1,231 +1,229 @@
-# Lector de huellas EL721 bajo Ubuntu
+# The EL721 fingerprint reader under Ubuntu
 
-Este documento describe la infraestructura experimental del lector óptico en
-pantalla del Galaxy Tab S9 Ultra Wi-Fi (`SM-X910`). **El registro, la
-verificación y el inicio de sesión con huella todavía no funcionan**: no se
-instalará ni anunciará soporte en GNOME hasta disponer de un backend seguro para
-`libfprint`/`fprintd` y validarlo en la tablet.
+This document describes the experimental infrastructure for the Galaxy Tab S9
+Ultra Wi-Fi's (`SM-X910`) under-display optical reader. **Enrolment,
+verification and fingerprint login do not work yet**: no support will be
+installed or advertised in GNOME until there is a secure backend for
+`libfprint`/`fprintd` and it has been validated on the tablet.
 
-## Identificación confirmada
+## Confirmed identification
 
-- Sensor: EgisTec EL721, identificado por el overlay R03 y el controlador GPL
-  oficial de Samsung para la familia `el7xx`.
-- Tipo: lector óptico bajo el panel AMOLED.
-- Alimentación de 3,3 V: TLMM GPIO91 (`etspi-ldoPin`).
+- Sensor: EgisTec EL721, identified by the R03 overlay and Samsung's official
+  GPL driver for the `el7xx` family.
+- Type: optical reader under the AMOLED panel.
+- 3.3 V supply: TLMM GPIO91 (`etspi-ldoPin`).
 - Enable/reset: TLMM GPIO155 (`etspi-sleepPin`).
-- Modelo comunicado por Samsung: `X916`.
-- Posición stock:
+- Model reported by Samsung: `X916`.
+- Stock position:
   `16.70,0.00,9.10,9.10,14.80,14.80,12.00,12.00,5.00`.
 
-El sensor trabaja en modo seguro. El controlador Linux de Samsung no contiene
-el algoritmo de reconocimiento ni una ruta normal para obtener imágenes: el
-registro, la comparación y las plantillas se delegan en aplicaciones firmadas
-dentro de TrustZone.
+The sensor works in secure mode. Samsung's Linux driver contains neither the
+recognition algorithm nor a normal path to obtain images: enrolment, matching
+and templates are delegated to signed applications inside TrustZone.
 
-La cadena del firmware oficial está identificada con precisión:
+The official firmware's chain is precisely identified:
 
 ```text
 fingerprint-service
   → libsfp_sensor
   → libsfp_teegw
-  → libQSEEComAPI (objetos)
-  → AppLoader compatible, UID 122
-  → nombre lógico "securefp"
-  → TA firmada dualfp
+  → libQSEEComAPI (objects)
+  → compatible AppLoader, UID 122
+  → logical name "securefp"
+  → signed dualfp TA
 ```
 
-El servicio Samsung solicita el nombre lógico `securefp`, pero no existe un
-fichero `securefp.mbn` en `system`, `vendor`, `odm` ni en el APEX biométrico. La
-ruta `fpta` admite una actualización u override, pero está vacía en este
-firmware. El análisis completo de `NON-HLOS.bin` resolvió la ambigüedad:
-`fingerpr.b00`–`b08` contiene el motor QFP genérico, mientras
-`dualfp.b00`–`b08` contiene la implementación Samsung/Egis del EL721, BAUTH,
-matching y plantillas. `authnr.mbn` es otro autenticador que referencia tanto
-`securefp` como `dualfp`, no el matcher principal.
+Samsung's service asks for the logical name `securefp`, but no `securefp.mbn`
+file exists in `system`, `vendor`, `odm` or in the biometric APEX. The `fpta`
+path allows an update or override, but is empty in this firmware. A full
+analysis of `NON-HLOS.bin` resolved the ambiguity: `fingerpr.b00`–`b08` holds
+the generic QFP engine, while `dualfp.b00`–`b08` holds the Samsung/Egis
+implementation of the EL721, BAUTH, matching and templates. `authnr.mbn` is
+another authenticator that references both `securefp` and `dualfp`, not the
+main matcher.
 
-La imagen ensamblada `dualfp` mide 19.927.128 bytes. El AppLoader compatible
-UID 122 la acepta con `loadFromRegion` y devuelve un controlador QSEEComCompat
-válido; la descarga posterior también termina correctamente. Esto demuestra
-que la TA segura necesaria está presente y es ejecutable desde Ubuntu, aunque
-`lookupTA("securefp")` no publique un alias ni antes ni después de la carga.
+The assembled `dualfp` image is 19,927,128 bytes. The compatible AppLoader UID
+122 accepts it with `loadFromRegion` and returns a valid QSEEComCompat handle;
+the subsequent unload also completes correctly. That proves the required secure
+TA is present and executable from Ubuntu, even though `lookupTA("securefp")`
+publishes no alias either before or after the load.
 
-La imagen oficial contiene además el servicio biométrico de Samsung y las
-bibliotecas Egis, pero dependen de Bionic, Binder, la AIDL biométrica de Android
-y tokens de Gatekeeper. Por eso no son un backend intercambiable directamente
-con `fprintd`.
+The official image also contains Samsung's biometric service and the Egis
+libraries, but they depend on Bionic, Binder, Android's biometric AIDL and
+Gatekeeper tokens. That is why they are not a directly interchangeable backend
+for `fprintd`.
 
-## Arquitectura preparada
+## The prepared architecture
 
-La infraestructura es deliberadamente **opt-in**. Una compilación normal usa
-exactamente el DT y el controlador de panel del último commit validado, no
-aplica la extensión FOD de Goodix y no compila el EL721. QCOMTEE conserva la
-configuración modular de la base pero queda en la blacklist. Para una prueba
-controlada puede usarse el selector conjunto
-`ENABLE_FINGERPRINT_EXPERIMENTAL=1` o activar por separado
-`FINGERPRINT_PANEL_FOD`, `FINGERPRINT_TOUCH_FOD` y `FINGERPRINT_EL721`. El
-módulo QCOMTEE firmado
-sólo se carga con `modprobe qcomtee`, después de arrancar y habilitar el
-registro. Esta separación se introdujo tras observar un reinicio anterior al
-montaje del rootfs y evita convertir otro fallo en un bootloop.
+The infrastructure is deliberately **opt-in**. A normal build uses exactly the
+DT and panel driver of the last validated commit, does not apply the Goodix FOD
+extension and does not compile the EL721. QCOMTEE keeps the base's modular
+configuration but stays blacklisted. For a controlled test, the combined
+selector `ENABLE_FINGERPRINT_EXPERIMENTAL=1` can be used, or
+`FINGERPRINT_PANEL_FOD`, `FINGERPRINT_TOUCH_FOD` and `FINGERPRINT_EL721`
+enabled separately. The signed QCOMTEE module only loads with `modprobe
+qcomtee`, after booting and enabling logging. This separation was introduced
+after observing a reboot before the root filesystem was mounted, and it stops
+another failure from becoming a bootloop.
 
-La implementación separa cuatro responsabilidades:
+The implementation separates four responsibilities:
 
-1. `egis_el721.c` controla únicamente el raíl de 3,3 V y la línea de
-   enable/reset. Publica `/dev/esfp0` para la parte no sensible de la ABI Egis;
-   no registra el sensor como un periférico SPI accesible por Linux.
-2. `CONFIG_TEE=y` mantiene la infraestructura común. En builds experimentales,
-   `CONFIG_QCOMTEE=m` empaqueta el transporte de objetos QTEE de Qualcomm; al
-   cargarlo manualmente publica `/dev/tee0`. El transporte Qualcomm Diagnostics
-   y el AppLoader UID 122 están validados físicamente. Los mensajes conservan
-   el límite upstream de 4 MiB; las TA mayores se entregan con un objeto de memoria TEE
-   mediante `loadFromRegion`, sin inflar el mensaje ni duplicar 20 MiB en CMA.
-3. `panel-samsung-ana38407.c` ofrece el modo de alto brillo requerido por
-   un lector óptico. Conserva el brillo solicitado por GNOME, lo restaura al
-   terminar y fuerza la limpieza después de 15 segundos. Una extensión de
-   GNOME dibuja el objetivo y compensa el HBM global fuera de esa región.
-4. El controlador Goodix suprime dedos sólo dentro del rectángulo del sensor
-   durante una operación biométrica. El firmware ya entrega `press/release`
-   FOD reales y no reenvía ese contacto como toque normal. El resto de la
-   pantalla permanece utilizable y al desactivar la sesión se liberan los
-   contactos retenidos. La sesión también se cancela, en vez de restaurarse,
-   al suspender el sistema.
+1. `egis_el721.c` controls only the 3.3 V rail and the enable/reset line. It
+   publishes `/dev/esfp0` for the non-sensitive part of the Egis ABI; it does
+   not register the sensor as an SPI peripheral reachable from Linux.
+2. `CONFIG_TEE=y` keeps the common infrastructure. In experimental builds,
+   `CONFIG_QCOMTEE=m` packages Qualcomm's QTEE object transport; loading it
+   manually publishes `/dev/tee0`. The Qualcomm Diagnostics transport and the
+   UID 122 AppLoader are physically validated. Messages keep the upstream 4 MiB
+   limit; larger TAs are delivered with a TEE memory object through
+   `loadFromRegion`, without inflating the message or duplicating 20 MiB in
+   CMA.
+3. `panel-samsung-ana38407.c` offers the high-brightness mode an optical reader
+   requires. It preserves the brightness GNOME asked for, restores it at the
+   end, and forces cleanup after 15 seconds. A GNOME extension draws the target
+   and compensates the global HBM outside that region.
+4. The Goodix driver suppresses fingers only inside the sensor's rectangle and
+   only during a biometric operation. The firmware already delivers real FOD
+   `press/release` events and does not forward that contact as a normal touch.
+   The rest of the screen stays usable, and disabling the session releases any
+   held contacts. The session is also cancelled, rather than restored, when the
+   system suspends.
 
-GNOME 46 y `fprintd` no conocen por sí mismos la geometría de un UDFPS ni
-controlan el HBM del panel. La extensión de sistema
-`gts9u-fingerprint-overlay@agcarbajo` cubre esa carencia en la sesión y el
-desbloqueo; aún hay que conectarla al backend y cargarla también en GDM.
+GNOME 46 and `fprintd` do not themselves know a UDFPS's geometry and do not
+control the panel's HBM. The `gts9u-fingerprint-overlay@agcarbajo` system
+extension covers that gap in the session and at unlock; it still has to be
+wired to the backend and loaded in GDM too.
 
-## Límites de seguridad
+## Security boundaries
 
-Estos límites forman parte del diseño, no son tareas opcionales:
+These boundaries are part of the design, not optional tasks:
 
-- Linux no debe exponer fotogramas, registros ni transacciones SPI crudas del
-  EL721. Las operaciones desconocidas de `/dev/esfp0` fallan con
-  `EOPNOTSUPP`.
-- `/dev/esfp0` se crea con modo `0600`; sus `ioctl` requieren
-  `CAP_SYS_ADMIN`. El sensor arranca apagado y se apaga al suspender, retirar el
-  driver o cerrar el sistema.
-- Las plantillas y la comparación deben permanecer en QTEE. El port no importa,
-  exporta ni reutiliza las huellas inscritas en Android.
-- No se modifica la lista de máquinas del QSEECOM heredado. La ruta elegida es
-  el transporte QTEE moderno que ya existe en el kernel fijado.
-- La exclusión táctil debe limitarse al rectángulo del sensor y sólo durante una
-  operación activa. Tomar en exclusiva todo el dispositivo con `EVIOCGRAB`
-  bloquearía la pantalla de bloqueo y no es aceptable.
-- Toda salida, cancelación, error, suspensión o cierre del cliente debe ejecutar
-  la secuencia inversa: quitar el círculo, salir de HBM, apagar el sensor y
-  rehabilitar los toques. El watchdog del panel es una segunda protección, no
-  el mecanismo normal de cierre.
+- Linux must not expose the EL721's frames, registers or raw SPI transactions.
+  Unknown `/dev/esfp0` operations fail with `EOPNOTSUPP`.
+- `/dev/esfp0` is created mode `0600`; its `ioctl`s require `CAP_SYS_ADMIN`.
+  The sensor starts powered off and is powered off on suspend, on driver removal
+  and at shutdown.
+- Templates and matching must stay in QTEE. The port neither imports, exports
+  nor reuses the fingerprints enrolled under Android.
+- The legacy QSEECOM machine list is not modified. The chosen route is the
+  modern QTEE transport that already exists in the pinned kernel.
+- Touch exclusion must be limited to the sensor's rectangle and only during an
+  active operation. Grabbing the whole device with `EVIOCGRAB` would block the
+  lock screen and is not acceptable.
+- Every exit, cancellation, error, suspend or client shutdown must run the
+  reverse sequence: remove the circle, leave HBM, power the sensor down and
+  re-enable touches. The panel's watchdog is a second line of defence, not the
+  normal way to close.
 
-## Interfaces del kernel
+## Kernel interfaces
 
-Las rutas contienen nombres asignados dinámicamente; hay que descubrir el
-dispositivo en vez de fijar su índice.
+The paths contain dynamically assigned names; the device has to be discovered
+rather than its index hardcoded.
 
-### Sensor EL721
+### The EL721 sensor
 
-El nodo de carácter es fijo:
+The character node is fixed:
 
 ```text
 /dev/esfp0
 ```
 
-El dispositivo de plataforma expone estos atributos:
+The platform device exposes these attributes:
 
-| Atributo | Acceso | Contenido |
+| Attribute | Access | Contents |
 |---|---|---|
-| `vendor` | lectura | `EGISTEC` |
-| `name` | lectura | `EL721` |
-| `model` | lectura | `X916` |
-| `position` | lectura | metadatos geométricos del overlay stock |
-| `sensor_power` | lectura/escritura | estado y control de GPIO91/GPIO155 |
-| `reset` | escritura | reset controlado; sólo acepta `1` |
-| `reset_count` | lectura | resets ejecutados desde el arranque |
+| `vendor` | read | `EGISTEC` |
+| `name` | read | `EL721` |
+| `model` | read | `X916` |
+| `position` | read | geometric metadata from the stock overlay |
+| `sensor_power` | read/write | state and control of GPIO91/GPIO155 |
+| `reset` | write | controlled reset; accepts only `1` |
+| `reset_count` | read | resets performed since boot |
 
-Se pueden localizar sin asumir el nombre del dispositivo:
+They can be located without assuming the device's name:
 
 ```sh
 find /sys/bus/platform/devices -type f -name vendor -exec grep -l EGISTEC {} +
 ```
 
-### Panel ANA38407
+### The ANA38407 panel
 
-Los atributos aparecen junto al backlight ANA38407:
+The attributes appear next to the ANA38407 backlight:
 
-| Atributo | Acceso | Contenido |
+| Attribute | Access | Contents |
 |---|---|---|
-| `fod_ready` | lectura | `1` cuando el panel está preparado y encendido |
-| `fod_mode` | lectura/escritura | HBM óptico y secuencia FlatZ |
-| `fod_circle` | lectura/escritura | comando DDIC diagnóstico; exige `fod_mode=1`, pero no dibuja sin Self Display |
+| `fod_ready` | read | `1` when the panel is ready and on |
+| `fod_mode` | read/write | optical HBM and the FlatZ sequence |
+| `fod_circle` | read/write | a diagnostic DDIC command; requires `fod_mode=1`, but draws nothing without Self Display |
 
-El panel conserva en paralelo el brillo pedido por el escritorio. Al escribir
-`fod_mode=0` restaura ese valor, y también desactiva el círculo si estuviera
-activo. El watchdog devuelve ambos controles a cero tras 15 segundos.
+The panel keeps the desktop's requested brightness in parallel. Writing
+`fod_mode=0` restores that value, and also switches the circle off if it was
+active. The watchdog returns both controls to zero after 15 seconds.
 
-Esta capa ya arrancó de forma aislada en hardware. Se validaron HBM, el
-watchdog y la restauración exacta del brillo. `fod_circle=1` llega al DDIC sin
-error, pero no produce una imagen visible: el kernel Samsung carga primero una
-imagen Self Display y comprueba su checksum. Portar ese subsistema sólo para el
-indicador no aporta captura; se usa el objetivo de GNOME. El panel por sí solo
-queda descartado como causa del bootloop inicial.
+This layer has already run in isolation on hardware. HBM, the watchdog and the
+exact brightness restoration were validated. `fod_circle=1` reaches the DDIC
+without error but produces no visible image: the Samsung kernel first loads a
+Self Display image and checks its checksum. Porting that subsystem just for the
+indicator gains no capture; GNOME's target is used instead. The panel on its
+own is ruled out as the cause of the initial bootloop.
 
-El ANA38407 no ofrece HBM local. Al leer una huella entra en FlatZ/HBM global y
-GNOME oscurece los píxeles externos al objetivo. Al ser OLED, esos píxeles
-emiten físicamente menos luz aunque la selección de la región se haga en el
-compositor. La opacidad se calcula desde el brillo actual con la tabla oficial:
-el modo normal alcanza 420 cd/m² en `WRDISBV=2047` y FlatZ de huella, 650 cd/m².
-El objetivo queda fuera de la compensación y recibe el máximo óptico; el resto
-conserva aproximadamente la luminancia anterior. La extensión recalcula cada
-100 ms si una tecla cambia el brillo durante la lectura.
+The ANA38407 offers no local HBM. Reading a fingerprint puts it into global
+FlatZ/HBM and GNOME darkens the pixels outside the target. Being OLED, those
+pixels physically emit less light even though the region is selected in the
+compositor. The opacity is computed from the current brightness with the
+official table: normal mode reaches 420 cd/m² at `WRDISBV=2047`, and
+fingerprint FlatZ 650 cd/m². The target is left out of the compensation and
+receives the optical maximum; the rest keeps roughly its previous luminance.
+The extension recalculates every 100 ms in case a key changes the brightness
+during the read.
 
-### Táctil Goodix
+### Goodix touch
 
-El bloqueo UDFPS se configura en el dispositivo I²C Goodix mediante cuatro
-atributos sysfs:
+The UDFPS block is configured on the Goodix I²C device through four sysfs
+attributes:
 
-| Atributo | Acceso | Contenido |
+| Attribute | Access | Contents |
 |---|---|---|
-| `fod_rect` | root lectura/escritura | `left top right bottom` en coordenadas crudas Goodix |
-| `fod_enable` | root lectura/escritura | activa el sponge FOD y la supresión regional |
-| `fod_property` | root lectura/escritura | política Samsung `fast/strict`, valores `0`–`3`; por defecto `3` |
-| `fod_state` | lectura, pollable | `idle|pressed|released|out|vi x y secuencia` |
+| `fod_rect` | root read/write | `left top right bottom` in raw Goodix coordinates |
+| `fod_enable` | root read/write | enables the FOD sponge and the regional suppression |
+| `fod_property` | root read/write | Samsung's `fast/strict` policy, values `0`–`3`; default `3` |
+| `fod_state` | read, pollable | `idle|pressed|released|out|vi x y sequence` |
 
-El driver obtiene la dirección del sponge de la extensión SEC que publica el
-firmware GT6936; no fija registros del controlador en el código. En la unidad
-física anuncia `0x29800`, longitud 1024. La estructura SEC empieza después de
-los 10 bytes reservados finales de `IC_INFO`; omitirlos produce una dirección
-falsa. Igual que el driver Samsung, cada acceso despierta primero el firmware
-al modo normal con el comando `0x9f` y después confirma el sponge con `0xf2`.
+The driver obtains the sponge's address from the SEC extension the GT6936
+firmware publishes; it hardcodes no controller registers. On the physical unit
+it announces `0x29800`, length 1024. The SEC structure starts after
+`IC_INFO`'s ten trailing reserved bytes; skipping them yields a false address.
+Like Samsung's driver, every access first wakes the firmware into normal mode
+with command `0x9f` and then confirms the sponge with `0xf2`.
 
-El rectángulo crudo `[854,2732]–[994,2872]` quedó validado físicamente: un dedo
-en el centro visual produjo `released 911 2808` y `released 945 2809`. Durante
-la misma prueba no apareció ningún `BTN_TOUCH`, tracking ID ni coordenada
-normal. Cada slot se clasifica al comenzar: un dedo iniciado dentro se consume
-hasta `UP`, mientras uno iniciado fuera sigue funcionando aunque cruce el
-rectángulo.
+The raw rectangle `[854,2732]–[994,2872]` was physically validated: a finger at
+the visual centre produced `released 911 2808` and `released 945 2809`. During
+that same test no `BTN_TOUCH`, tracking ID or normal coordinate appeared. Each
+slot is classified when it starts: a finger begun inside is consumed until
+`UP`, while one begun outside keeps working even as it crosses the rectangle.
 
-## Secuencia prevista para una lectura
+## The intended sequence for a read
 
-El futuro backend de `fprintd` debe tratar cada lectura como una transacción:
+The future `fprintd` backend must treat every read as a transaction:
 
-1. comprobar panel, QTEE y sensor;
-2. transformar la geometría a la orientación actual y activar únicamente la
-   exclusión Goodix de esa zona;
-3. encender y, si procede, resetear el EL721;
-4. mostrar la máscara/objetivo de GNOME y activar `fod_mode`;
-5. solicitar la captura o comparación a `dualfp` mediante QTEE;
-6. en un bloque de limpieza incondicional, quitar círculo y HBM, apagar el
-   sensor y reactivar el tacto.
+1. check the panel, QTEE and the sensor;
+2. transform the geometry to the current orientation and enable the Goodix
+   exclusion for that area only;
+3. power the EL721 up and, if needed, reset it;
+4. show GNOME's mask/target and enable `fod_mode`;
+5. ask `dualfp` for the capture or match through QTEE;
+6. in an unconditional cleanup block, remove the circle and HBM, power the
+   sensor down and re-enable touch.
 
-No se debe mantener el sensor, el círculo ni HBM activos entre muestras más
-tiempo del solicitado por la aplicación segura.
+The sensor, the circle and HBM must not be kept active between samples for
+longer than the secure application asks.
 
-## Validación por capas
+## Layered validation
 
-### 1. Sondeo no destructivo
+### 1. Non-destructive probing
 
-Tras arrancar un build experimental, confirmar primero que QTEE sigue
-descargado y cargarlo sólo con un canal de recuperación disponible:
+After booting an experimental build, first confirm QTEE is still unloaded and
+load it only with a recovery channel available:
 
 ```sh
 test ! -e /dev/tee0
@@ -233,7 +231,7 @@ lsmod | grep -q '^qcomtee ' && exit 1
 sudo modprobe qcomtee
 ```
 
-Después:
+Then:
 
 ```sh
 test -c /dev/esfp0
@@ -248,14 +246,14 @@ done
 dmesg | grep -Ei 'egis|el721|qcomtee|fingerprint'
 ```
 
-El resultado esperado antes de iniciar una operación es `sensor_power=0`. La mera
-existencia de estos nodos sólo valida infraestructura; no demuestra que se
-pueda registrar o reconocer una huella.
+The expected result before starting an operation is `sensor_power=0`. The mere
+existence of these nodes validates infrastructure only; it does not prove a
+fingerprint can be enrolled or recognised.
 
-### 2. Alimentación y reset
+### 2. Power and reset
 
-La prueba se ejecuta como `root`, debe ser breve y termina apagando el sensor
-incluso si una orden falla:
+The test runs as `root`, must be brief, and ends by powering the sensor down
+even if a command fails:
 
 ```sh
 fp_vendor=$(grep -l '^EGISTEC$' /sys/bus/platform/devices/*/vendor | head -n1)
@@ -268,13 +266,13 @@ printf 1 > "$fp_sysfs/reset"
 cat "$fp_sysfs/reset_count"
 ```
 
-Hay que verificar además que el raíl vuelve a cero tras reiniciar, apagar o
-forzar la retirada del driver.
+It must also be verified that the rail returns to zero after a reboot, a
+shutdown, or forcing the driver's removal.
 
-### 3. Panel óptico
+### 3. The optical panel
 
-Sólo se prueba como `root` y con la pantalla encendida. Debe observarse el
-cambio durante unos segundos, nunca dejar HBM fijo:
+Tested only as `root` and with the screen on. The change must be observed for a
+few seconds, never leaving HBM latched:
 
 ```sh
 bl=$(for d in /sys/class/backlight/*; do
@@ -288,47 +286,47 @@ sleep 2
 printf 0 > "$bl/fod_mode"
 ```
 
-La validación debe confirmar que vuelve el brillo anterior, que suspender o
-apagar limpia el estado y que el watchdog actúa si el cliente muere.
+The validation must confirm that the previous brightness returns, that
+suspending or powering off cleans the state, and that the watchdog acts if the
+client dies.
 
-### 4. Exclusión táctil
+### 4. Touch exclusion
 
-Validado el 14 de agosto de 2026 en la tablet física. Con `fod_property=3`, el
-GT6936 entregó `released` dentro del rectángulo y la escucha simultánea de
-`/dev/input/event5` no recibió ningún contacto normal. Al desactivar la sesión,
-la pantalla respondió de inmediato. Queda repetir la experiencia completa de
-autenticación en GDM y en las cuatro orientaciones cuando exista el backend.
+Validated on 14 August 2026 on the physical tablet. With `fod_property=3`, the
+GT6936 delivered `released` inside the rectangle and a simultaneous listen on
+`/dev/input/event5` received no normal contact. Disabling the session made the
+screen respond immediately. What remains is repeating the full authentication
+experience in GDM and in all four orientations, once the backend exists.
 
-### 5. QTEE y autenticación completa
+### 5. QTEE and full authentication
 
-La consulta de sólo lectura con las herramientas oficiales `quic-teec` ya
-confirma QTEE 5.2.0, Qualcomm Diagnostics y el AppLoader compatible UID 122.
-`lookupTA("securefp")` devuelve `2` tanto desde clientes de usuario como desde
-el entorno privilegiado interno del driver: el alias no está publicado en
-este estado de TrustZone. Esto ya no bloquea la carga porque UID 122 acepta la
-imagen firmada `dualfp` y devuelve directamente su controlador compatible.
+The read-only query with the official `quic-teec` tools already confirms QTEE
+5.2.0, Qualcomm Diagnostics and the compatible UID 122 AppLoader.
+`lookupTA("securefp")` returns `2` both from user clients and from the driver's
+internal privileged environment: the alias is not published in this state of
+TrustZone. That no longer blocks loading, because UID 122 accepts the signed
+`dualfp` image and returns its compatible handle directly.
 
-`scripts/probe-qtee-securefp.c` implementa exactamente esa consulta. Se compila
-contra `quic-teec` `736419e25a2036aac3292a10a93e394a90750ca3` y QCBOR
-`4ace4620d549f22c1163c5b00d3ae0c0dae1d207`: abre UID 122, ejecuta únicamente
-`lookupTA("securefp")` y libera el controlador devuelto sin obtener el objeto de
-aplicación ni enviarle una operación.
+`scripts/probe-qtee-securefp.c` implements exactly that query. It is built
+against `quic-teec` `736419e25a2036aac3292a10a93e394a90750ca3` and QCBOR
+`4ace4620d549f22c1163c5b00d3ae0c0dae1d207`: it opens UID 122, runs only
+`lookupTA("securefp")` and releases the returned handle without obtaining the
+application object or sending it an operation.
 
-`scripts/probe-qtee-load-securefp.c` reconstruye una imagen dividida stock con
-los offsets ELF que utiliza Qualcomm. Recibe por separado el nombre base de los
-segmentos y el nombre de carga. Para `dualfp` reserva un objeto de memoria
-TEE y usa `loadFromRegion`; QTEE aceptó los 19.927.128 bytes como `dualfp` y los
-descargó limpiamente. El probe ofrece además
-`--type-check[=PRIMERO[-ÚLTIMO]]`: la petición llega a la TA
-(`invoke result 0`). La HAL stock identifica `EL721` con el enum de nombre `21`
-y lo traduce al tipo de sensor `8`; el probe reproduce ese mapeo exacto.
-No se inicia captura, registro ni comparación.
+`scripts/probe-qtee-load-securefp.c` reassembles a stock split image with the
+ELF offsets Qualcomm uses. It takes the segments' base name and the load name
+separately. For `dualfp` it reserves a TEE memory object and uses
+`loadFromRegion`; QTEE accepted the 19,927,128 bytes as `dualfp` and unloaded
+them cleanly. The probe also offers `--type-check[=FIRST[-LAST]]`: the request
+reaches the TA (`invoke result 0`). The stock HAL identifies `EL721` with name
+enum `21` and translates it to sensor type `8`; the probe reproduces that exact
+mapping. No capture, enrolment or match is started.
 
-Durante tres sesiones la TA respondió `29` a todo. La causa se resolvió el 14 de
-agosto de 2026 desensamblando la propia TA, que no está cifrada. Su despachador
-rechaza la petición y escribe `29` en `rsp[4]` cuando falla la validación previa
-de los punteros embebidos, y esa validación consiste en **volver a registrar
-cada uno como shared buffer de `0x2a4000` bytes**:
+For three sessions the TA answered `29` to everything. The cause was resolved
+on 14 August 2026 by disassembling the TA itself, which is not encrypted. Its
+dispatcher rejects the request and writes `29` into `rsp[4]` when the prior
+validation of the embedded pointers fails, and that validation consists of
+**registering each of them again as a shared buffer of `0x2a4000` bytes**:
 
 ```text
 4280:  bl   0x1b0                 ; qsee_register_shared_buffer(ptr, 0x2a4000)
@@ -337,101 +335,107 @@ cada uno como shared buffer de `0x2a4000` bytes**:
 42dc:  mov  w0, #0x1d             ; 29
 ```
 
-El gateway stock declara 8 bytes de payload, pero sus asignaciones `dmabuf` son
-mucho mayores, así que el registro le funciona. Reservando los dos objetos de
-memoria TEE con ese tamaño exacto, la TA acepta la petición y ejecuta el
-comando: `invoke result 0`, `trustlet=0`, sobre de respuesta a ceros. `29`
-significaba simplemente que los búferes eran demasiado pequeños.
+The stock gateway declares 8 bytes of payload, but its `dmabuf` allocations are
+much larger, so the registration works for it. Reserving both TEE memory
+objects at that exact size makes the TA accept the request and run the command:
+`invoke result 0`, `trustlet=0`, response envelope zeroed. `29` simply meant
+the buffers were too small.
 
-Con el transporte ya correcto, el bloqueo se desplaza al sensor. `TypeCheck`
-devuelve tipo `0`, es decir «no identificado»: la TA hace hasta tres
-transferencias SPI y exige leer `rx[42]==0x07` y `rx[46]==21` para declarar
-`ET721` y devolver el tipo `8`. Que la TA llega a ejecutar esa consulta está
-demostrado: envenenando el búfer de salida antes de la llamada, vuelve con sus
-ocho primeros bytes escritos y el resto intacto.
+With the transport now correct, the blockage moves to the sensor. `TypeCheck`
+returns type `0`, meaning "not identified": the TA performs up to three SPI
+transfers and requires reading `rx[42]==0x07` and `rx[46]==21` to declare
+`ET721` and return type `8`. That the TA does get as far as running that query
+is proven: poisoning the output buffer before the call, it comes back with its
+first eight bytes written and the rest untouched.
 
-El bus es **QUP1_SE2**, y conviene fijar bien sus pines porque una medición
-anterior se hizo sobre los equivocados. La TA nombra sus pads `qup1_se2_l0..l3`,
-y `qup1_se2` es **gpio36–gpio39**, no gpio64–67 —esos son `qup2_se2`—. La
-numeración coincide entre el árbol stock y mainline: gpio26 es `qup1_se7` en
-ambos.
+The bus is **QUP1_SE2**, and its pins are worth pinning down properly because
+an earlier measurement was made on the wrong ones. The TA names its pads
+`qup1_se2_l0..l3`, and `qup1_se2` is **gpio36–gpio39**, not gpio64–67 — those
+are `qup2_se2`. The numbering agrees between the stock tree and mainline:
+gpio26 is `qup1_se7` in both.
 
-Esos pines están **fuera del alcance de Linux por diseño**, aquí y en stock:
-este port declara `gpio-reserved-ranges = <36 4>` y el árbol stock
-`qcom,gpios-reserved = <0x20 … 0x27>`, precisamente porque los gobierna
-TrustZone. El kernel no los expone, así que ningún muestreo desde el espacio de
-usuario puede observarlos, y **no hay medición válida de si TrustZone agita o no
-ese bus**. La que se publicó antes miraba gpio64–67 y no prueba nada.
+Those pins are **out of Linux's reach by design**, here and in stock: this port
+declares `gpio-reserved-ranges = <36 4>` and the stock tree
+`qcom,gpios-reserved = <0x20 … 0x27>`, precisely because TrustZone governs
+them. The kernel does not expose them, so no sampling from user space can
+observe them, and **there is no valid measurement of whether TrustZone drives
+that bus or not**. The one published earlier looked at gpio64–67 and proves
+nothing.
 
-El resto de la capa Linux ya replica exactamente a stock, lo que se comprobó una
-a una: el nodo `spi@a88000` (`qupv3_se2_spi`) está deshabilitado también en el
-árbol stock y el overlay del X910 no lo referencia nunca; el controlador de
-Samsung en build segura es un `platform_driver` colgado de `soc`; y los relojes
-del SE vienen apagados del bootloader, no los apaga Linux —la línea de comandos
-ya lleva `clk_ignore_unused`, `pd_ignore_unused` y `regulator_ignore_unused`—.
-Sujetar `gcc_qupv3_wrap1_s2_clk` encendido desde un módulo no cambia el
-resultado.
+The rest of the Linux layer already mirrors stock exactly, which was checked
+one item at a time: the `spi@a88000` node (`qupv3_se2_spi`) is disabled in the
+stock tree too and the X910's overlay never references it; Samsung's driver in
+a secure build is a `platform_driver` hanging off `soc`; and the SE's clocks
+come up disabled from the bootloader, Linux does not disable them — the command
+line already carries `clk_ignore_unused`, `pd_ignore_unused` and
+`regulator_ignore_unused`. Holding `gcc_qupv3_wrap1_s2_clk` on from a module
+does not change the result.
 
-Tampoco se ha conseguido leer el log de TrustZone, que es donde la TA registra
-el motivo. El árbol stock describe `tz-log@146AA720`, pero esa ventana es un
-área de punteros en IMEM: su primer cuadword vale `0x14696000` y mapear esa
-dirección reinicia la tablet, porque es memoria segura. La llamada SIP clásica
-(servicio 6, comando 2) responde «no soportada» en este firmware, y el servicio
-Diagnostics de QTEE (UID 143) sólo devuelve la lista de TAs cargadas
+TrustZone's log, which is where the TA records the reason, has not been read
+either. The stock tree describes `tz-log@146AA720`, but that window is an area
+of pointers in IMEM: its first quadword is `0x14696000`, and mapping that
+address reboots the tablet, because it is secure memory. The classic SIP call
+(service 6, command 2) answers "not supported" on this firmware, and QTEE's
+Diagnostics service (UID 143) only returns the list of loaded TAs
 (`keymaster64`, `featenabler`, `tz_hdm`, `tz_iccc`).
 
-Se verificó que las particiones activas de la tablet coinciden byte a byte con
-el firmware analizado: `apnhlos` coincide con `NON-HLOS.bin` (SHA-256
-`1aa9de73…`) y `tz` con `tz.mbn` (`865b32e1…`). El resultado no se debe a una
-mezcla de versiones o a antirollback.
+It was verified that the tablet's active partitions match the analysed firmware
+byte for byte: `apnhlos` matches `NON-HLOS.bin` (SHA-256 `1aa9de73…`) and `tz`
+matches `tz.mbn` (`865b32e1…`). The result is not down to mixed versions or to
+anti-rollback.
 
-Las herramientas auxiliares se mantienen en `scripts/` y no se instalan en la
-imagen final: `probe-el721-abi.c` comprueba que la ABI restringida sólo expone
-el modelo, `probe-qtee-securefp.c` consulta un nombre lógico, y
-`probe-qtee-load-ta.c` permite cargar y descargar una TA pequeña ya ensamblada.
-`probe-stock-qseecom.c` conserva el experimento equivalente para enlazar contra
-la biblioteca Bionic stock. Ninguna registra plantillas ni se usa como backend
-de autenticación.
+The helper tools live in `scripts/` and are not installed in the final image:
+`probe-el721-abi.c` checks that the restricted ABI exposes only the model,
+`probe-qtee-securefp.c` queries a logical name, and `probe-qtee-load-ta.c`
+allows loading and unloading a small, already-assembled TA.
+`probe-stock-qseecom.c` keeps the equivalent experiment for linking against the
+stock Bionic library. None of them enrols templates or is used as an
+authentication backend.
 
-Sólo cuando exista un backend seguro se instalará `fprintd` y se validarán, en
-este orden:
+Only once a secure backend exists will `fprintd` be installed, and these
+validated, in this order:
 
-- registro y cancelación sin dejar HBM, sensor o bloqueo táctil activos;
-- varias verificaciones correctas y dedos incorrectos;
-- desbloqueo de GNOME y autenticación en GDM;
-- suspensión/reanudación, rotación y cambios de brillo durante una lectura;
-- reinicio sin pérdida ni exposición de plantillas;
-- recuperación tras caída del backend y tras agotar el watchdog.
+- enrolment and cancellation without leaving HBM, the sensor or the touch block
+  active;
+- several correct verifications and wrong fingers;
+- unlocking GNOME and authenticating in GDM;
+- suspend/resume, rotation and brightness changes during a read;
+- a reboot with no loss and no exposure of templates;
+- recovery after the backend crashes and after the watchdog expires.
 
-Hasta superar toda esta matriz, el estado público permanece experimental y la
-autenticación por huella se considera no disponible.
+Until that whole matrix passes, the public status stays experimental and
+fingerprint authentication is considered unavailable.
 
-## Bloqueo actual y siguiente paso
+## The current blockage and the next step
 
-`libfprint` no incluye soporte para el EL721 y el sensor no entrega imágenes a
-Linux. Transporte QTEE, AppLoader, carga de `dualfp`, iluminación óptica y
-señal/supresión FOD de Goodix están comprobados. La alimentación diferida
-también: el 14 de agosto de 2026 el raíl de 3,3 V y la línea de enable se
-encendieron y apagaron sobre la tablet, con reset y sin reiniciarla.
+`libfprint` has no support for the EL721 and the sensor delivers no images to
+Linux. The QTEE transport, the AppLoader, loading `dualfp`, the optical
+illumination and the Goodix FOD signal/suppression are all checked. So is the
+deferred power: on 14 August 2026 the 3.3 V rail and the enable line were
+switched on and off on the tablet, with a reset and without rebooting it.
 
-El transporte BAUTH también está resuelto: con los shared buffers del tamaño que
-exige la TA, acepta y ejecuta el comando. Lo que falta es que TrustZone consiga
-hablar por SPI con el sensor, y está medido que hoy ni siquiera lo intenta: las
-cuatro líneas de QUP1_SE2 no se mueven en 13,4 millones de muestras. Como ese
-bus lo maneja la TA y no Linux, el siguiente paso es leer el log de TrustZone,
-donde la TA registra el motivo (`gpio control tz_open error : %d`,
-`qsee_tlmm_get_gpio_id: BLSP_CLK Failed`, `sec_tzspi_open failed : %d`). Este
-kernel todavía no lo expone: haría falta portar un lector estilo `tzdbg`.
+The BAUTH transport is solved too: with shared buffers of the size the TA
+demands, it accepts and runs the command. What is missing is TrustZone managing
+to talk to the sensor over SPI. `TypeCheck` returns type `0`, and the reason
+cannot be observed from here: the four QUP1_SE2 lines are reserved for
+TrustZone in both trees, so Linux cannot sample them and there is no valid
+measurement of whether that bus moves at all.
 
-Después se implementará el puente mínimo hacia `libfprint`/`fprintd`. Las
-plantillas y la comparación permanecerán en TrustZone. `fprintd` no se añade ni
-se habilita mientras falte ese backend: mostrar una opción de huella en GNOME
-sin poder completarla sería un falso positivo de compatibilidad.
+The next step is therefore reading TrustZone's log, where the TA records the
+reason (`gpio control tz_open error : %d`, `qsee_tlmm_get_gpio_id: BLSP_CLK
+Failed`, `sec_tzspi_open failed : %d`). This kernel does not expose it yet: a
+`tzdbg`-style reader would have to be ported.
 
-`scripts/test-el721-type-check.sh` ejecuta esa prueba física como una
-transacción única. Rechaza un sensor o `/dev/tee0` ya activos, comprueba los
-nueve segmentos firmados y garantiza mediante `trap` que GPIO91/GPIO155 vuelvan
-a cero y que QCOMTEE se descargue incluso si `TypeCheck` falla. Admite un quinto
-argumento con el selector que se pasa al probe, para barrer varios enums dentro
-de una sola carga —lo caro es cargar los 19 MB, no la consulta—. No activa HBM,
-no solicita una captura y no registra datos biométricos.
+After that comes the minimal bridge to `libfprint`/`fprintd`. Templates and
+matching will stay in TrustZone. `fprintd` is neither added nor enabled while
+that backend is missing: showing a fingerprint option in GNOME without being
+able to complete it would be a false positive of compatibility.
+
+`scripts/test-el721-type-check.sh` runs that physical test as a single
+transaction. It refuses an already-active sensor or `/dev/tee0`, checks the
+nine signed segments, and guarantees through `trap` that GPIO91/GPIO155 return
+to zero and that QCOMTEE is unloaded even if `TypeCheck` fails. It takes a
+fifth argument with the selector passed to the probe, so several enums can be
+swept within a single load — the expensive part is loading the 19 MB, not the
+query. It does not enable HBM, does not request a capture and records no
+biometric data.
