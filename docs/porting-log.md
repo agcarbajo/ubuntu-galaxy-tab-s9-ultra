@@ -1,256 +1,256 @@
-# Bitácora del port Ubuntu 24.04
+# Ubuntu 24.04 porting log
 
-Una sesión por iteración, incluyendo los fallos. El estado vigente está en
-[`hardware-status.md`](hardware-status.md) y las conclusiones duraderas en
+One session per iteration, failures included. The current state is in
+[`hardware-status.md`](hardware-status.md) and the durable conclusions in
 [`development-notes.md`](development-notes.md).
 
 ---
 
-## Sesión 1 — relevo desde postmarketOS v1.71 y build de rollback
+## Session 1 — handover from postmarketOS v1.71 and the rollback build
 
-Fecha: 2026-07-31. No se tocó la tablet física.
+Date: 2026-07-31. The physical tablet was not touched.
 
-### Contexto
+### Context
 
-Se recibe el relevo del port postmarketOS `gts9uwifi` en el commit `b1dcca0`,
-con la baseline v1.71 congelada y físicamente validada. El objetivo del nuevo
-proyecto es conservar esa paridad de hardware con un userspace Ubuntu 24.04
-LTS. Se leyó la documentación completa del port anterior antes de escribir
-código: README, `hardware-status.md`, `boot-strategy.md`,
-`development-notes.md`, `panel-ana38407-bringup.md` y las sesiones relevantes
-de `porting-log.md`, además de las fuentes de los tres paquetes de dispositivo,
-`configs/` y `scripts/`.
+The handover of the `gts9uwifi` postmarketOS port is received at commit
+`b1dcca0`, with the v1.71 baseline frozen and physically validated. The new
+project's goal is to keep that hardware parity with an Ubuntu 24.04 LTS
+userspace. The previous port's complete documentation was read before writing
+any code: the README, `hardware-status.md`, `boot-strategy.md`,
+`development-notes.md`, `panel-ana38407-bringup.md` and the relevant sessions
+of its `porting-log.md`, plus the sources of the three device packages,
+`configs/` and `scripts/`.
 
-### Build de rollback: ZIP TWRP v1.71
+### The rollback build: the v1.71 TWRP ZIP
 
-Antes de crear nada nuevo se regeneró la última build de postmarketOS, para
-disponer de una vía de vuelta antes de que Ubuntu toque la microSD.
+Before creating anything new, postmarketOS's last build was regenerated, so
+that a way back would exist before Ubuntu touched the microSD.
 
-El ZIP se reconstruyó con `REUSE_BUILD_OUTPUTS=1` sobre los outputs de kernel
-cacheados de v1.71 (`out/kernel-gts9uwifi-v171`, kernel package r114). El
-resultado **no** coincide con el hash registrado del release, y la causa quedó
-identificada con precisión:
+The ZIP was rebuilt with `REUSE_BUILD_OUTPUTS=1` over v1.71's cached kernel
+outputs (`out/kernel-gts9uwifi-v171`, kernel package r114). The result does
+**not** match the release's recorded hash, and the cause was identified
+precisely:
 
-| Imagen | Resultado |
+| Image | Result |
 |---|---|
-| `boot.img` | `cb13c0fa…` — **idéntica** a v1.71 |
-| `init_boot.img` | `6fab6d38…` — **idéntica** a v1.71 |
-| `dtbo.img` | `c17418be…` — **idéntica** a v1.71 |
-| `vbmeta.img` | `b95e5ef9…` — **idéntica** a v1.71 |
-| `vendor_boot.img` | `55d9d94a…` frente a `c4b93f02…` registrado |
+| `boot.img` | `cb13c0fa…` — **identical** to v1.71 |
+| `init_boot.img` | `6fab6d38…` — **identical** to v1.71 |
+| `dtbo.img` | `c17418be…` — **identical** to v1.71 |
+| `vbmeta.img` | `b95e5ef9…` — **identical** to v1.71 |
+| `vendor_boot.img` | `55d9d94a…` against the recorded `c4b93f02…` |
 
-Se descompuso el `vendor_boot.img` regenerado para acotar la diferencia:
+The regenerated `vendor_boot.img` was decomposed to narrow the difference down:
 
-- DTB empaquetado: `952688174c…`, **idéntico** al DTB de la build v1.71;
-- `vendor_cmdline`: idéntica byte a byte a `configs/vendor_boot/cmdline.txt`;
-- bootconfig: idéntico a `configs/vendor_boot/bootconfig.txt`;
-- fragmento vendor: contiene exactamente `usr/lib/firmware/qca/hmtbtfw20.tlv`
-  (`b91f0af7…`) y `usr/lib/firmware/qca/hmtnv20.b21` (`864476ed…`), ambos
-  idénticos a las copias del repositorio.
+- packaged DTB: `952688174c…`, **identical** to the v1.71 build's DTB;
+- `vendor_cmdline`: byte for byte identical to
+  `configs/vendor_boot/cmdline.txt`;
+- bootconfig: identical to `configs/vendor_boot/bootconfig.txt`;
+- vendor fragment: contains exactly `usr/lib/firmware/qca/hmtbtfw20.tlv`
+  (`b91f0af7…`) and `usr/lib/firmware/qca/hmtnv20.b21` (`864476ed…`), both
+  identical to the repository's copies.
 
-La única diferencia real son los `mtime` de las cabeceras CPIO: `cpio
---reproducible` normaliza device e inode pero **no** el tiempo de
-modificación, y el overlay se copia con `install`, que sella la hora del build.
-Es una laguna de reproducibilidad preexistente del pipeline pmOS, no una
-divergencia de contenido. Queda anotada en `development-notes.md` y el
-pipeline Ubuntu fijará `mtime=0` en el overlay antes de empaquetar.
+The only real difference is the CPIO headers' `mtime`s: `cpio --reproducible`
+normalises device and inode but **not** the modification time, and the overlay
+is copied with `install`, which stamps the build's time. It is a pre-existing
+reproducibility gap in the pmOS pipeline, not a divergence of content. It is
+recorded in `development-notes.md` and the Ubuntu pipeline will set `mtime=0`
+across the overlay before packaging.
 
-### Build de rollback: imagen de microSD
+### The rollback build: the microSD image
 
-El primer intento de regenerar la imagen del rootfs reveló un desajuste que
-habría producido un artefacto engañoso: el `pmaports` de la base de build WSL
-estaba en **kernel r103**, mientras que la baseline congelada del repositorio
-es **r114** (device r44, firmware r10). La imagen resultante se descartó y se
-repitió el proceso ejecutando antes `scripts/sync-pmaports.sh`.
+The first attempt at regenerating the root filesystem image revealed a mismatch
+that would have produced a misleading artefact: the WSL build base's
+`pmaports` was at **kernel r103**, while the repository's frozen baseline is
+**r114** (device r44, firmware r10). The resulting image was discarded and the
+process repeated after running `scripts/sync-pmaports.sh`.
 
-El segundo intento falló en `apk add`:
+The second attempt failed in `apk add`:
 
 ```
 breaks: device-samsung-gts9uwifi-1-r44[hexagonrpcd=0.4.0-r4]
 ```
 
-La causa no estaba en las fuentes: el repositorio congela `hexagonrpcd` en r4 y
-el paquete de dispositivo r44 lo fija exactamente. Lo que sobraba era un
-`hexagonrpcd 0.4.0-r5` **construido localmente** en un experimento posterior y
-todavía presente en `pmbootstrap-work/packages/edge`, que apk prefería por ser
-más reciente. Se movió a cuarentena, se reindexó el repositorio local y la
-build completó.
+The cause was not in the sources: the repository freezes `hexagonrpcd` at r4
+and device package r44 pins it exactly. What was in the way was a
+**locally built** `hexagonrpcd 0.4.0-r5` from a later experiment, still present
+in `pmbootstrap-work/packages/edge`, which apk preferred for being newer. It
+was quarantined, the local repository reindexed, and the build completed.
 
-El rootfs resultante instala exactamente el conjunto de la baseline: kernel
-r114, device r44, firmware r10, `hexagonrpcd` r4, `iio-sensor-proxy` r3 y
-Mutter r6.
+The resulting root filesystem installs exactly the baseline's set: kernel r114,
+device r44, firmware r10, `hexagonrpcd` r4, `iio-sensor-proxy` r3 and Mutter
+r6.
 
-Dos conclusiones reutilizables:
+Two reusable conclusions:
 
-1. la base de build en WSL no es una fuente de verdad; el repositorio lo es, y
-   `sync-pmaports.sh` debe ejecutarse antes de cualquier build entregable;
-2. un paquete construido localmente puede ganar a la versión fijada aunque las
-   fuentes sean correctas. Ante un `breaks:` de este tipo hay que mirar el
-   repositorio local de paquetes antes que los APKBUILD.
+1. the WSL build base is not a source of truth; the repository is, and
+   `sync-pmaports.sh` has to be run before any deliverable build;
+2. a locally built package can beat the pinned version even when the sources
+   are correct. Faced with a `breaks:` of this kind, look at the local package
+   repository before the APKBUILDs.
 
-### Artefactos de rollback entregados
+### Rollback artefacts delivered
 
-Quedan en `PostmarketOS/artifacts/`, fuera de Git, con
+They live in `PostmarketOS/artifacts/`, outside Git, with
 `MANIFEST-v1.71-rollback.txt`:
 
-| Artefacto | SHA-256 |
+| Artefact | SHA-256 |
 |---|---|
 | `postmarketos-edge-gnome-mainline-v1.71-dp-dock-coldboot-sm-x910-twrp.zip` | `3270afa0…` |
 | `postmarketos-v1.71-rollback-sd-gts9uwifi.img.xz` | `05ccca69…` |
 
-La imagen sin comprimir mide 5.941.231.616 bytes y su SHA-256 es
-`fb346a78…`. La imagen del rootfs es una build nueva sobre Alpine edge actual,
-no un clon byte a byte del userspace validado en su día; lo que sí se conserva
-byte a byte es la parte de arranque, que es donde vive el soporte de hardware.
+The uncompressed image is 5,941,231,616 bytes and its SHA-256 is `fb346a78…`.
+The root filesystem image is a fresh build on current Alpine edge, not a
+byte-for-byte clone of the userspace validated at the time; what is preserved
+byte for byte is the boot part, which is where the hardware support lives.
 
-### Repositorio Ubuntu
+### The Ubuntu repository
 
-Se creó `Ubuntu-24.04/` al mismo nivel que `PostmarketOS/`, con Git local, sin
-remoto público, y con `artifacts/`, `work/`, imágenes, firmware y productos de
-build ignorados. Se escribió la documentación de partida: README breve, matriz
-de hardware con niveles de evidencia explícitos, cadena de arranque heredada,
-arquitectura del rootfs y esta bitácora.
+`Ubuntu-24.04/` was created alongside `PostmarketOS/`, with a local Git, no
+public remote, and with `artifacts/`, `work/`, images, firmware and build
+products ignored. The starting documentation was written: a short README, a
+hardware matrix with explicit evidence levels, the inherited boot chain, the
+root filesystem's architecture and this log.
 
-### Estado al cerrar la sesión
+### State at the close of the session
 
-- Vía de vuelta a postmarketOS v1.71 disponible fuera de Git, con manifiesto
-  de hashes.
-- Repositorio Ubuntu inicializado y documentado.
-- Kernel, DTS, cinco drivers, 17 parches, fragmento de configuración, cmdline,
-  bootconfig y DTBO no-op importados con procedencia y hash de origen.
-- Dependencias del pipeline instaladas en la base de build WSL y comprobadas
-  con `scripts/check-build-deps.sh`.
-- `scripts/build-ubuntu-rootfs.sh` escrito: `mmdebstrap` arm64 con perfiles
-  `minimal` y `desktop`, configuración aplicada dentro de la propia invocación
-  y ningún paso manual posterior.
-- Ninguna partición, tarjeta ni instalación física modificada.
+- A way back to postmarketOS v1.71 available outside Git, with a hash
+  manifest.
+- The Ubuntu repository initialised and documented.
+- Kernel, DTS, five drivers, 17 patches, the configuration fragment, cmdline,
+  bootconfig and the no-op DTBO imported with provenance and a source hash.
+- The pipeline's dependencies installed in the WSL build base and checked with
+  `scripts/check-build-deps.sh`.
+- `scripts/build-ubuntu-rootfs.sh` written: `mmdebstrap` arm64 with `minimal`
+  and `desktop` profiles, configuration applied within the invocation itself
+  and no manual step afterwards.
+- No partition, card or physical installation modified.
 
-### Siguiente paso
+### Next step
 
-Ejecutar el primer rootfs `minimal`, adaptar el build de kernel y el
-empaquetado Android v4 a este repositorio, y generar la primera imagen de
-microSD y su ZIP TWRP con manifiesto de hashes.
+Run the first `minimal` root filesystem, adapt the kernel build and the Android
+v4 packaging to this repository, and generate the first microSD image and its
+TWRP ZIP with a hash manifest.
 
 ---
+## Session 2 — our own kernel, the image pipeline and the first release
 
-## Sesión 2 — kernel propio, pipeline de imagen y primera release
+Date: 2026-07-31. The physical tablet was not touched.
 
-Fecha: 2026-07-31. No se tocó la tablet física.
+### The validated kernel is not the Alpine package's kernel
 
-### El kernel validado no es el kernel del paquete Alpine
+While porting the kernel build, a discrepancy appeared that would have produced
+a kernel different from the validated one had the patch list been copied from
+the wrong place:
 
-Al portar el build de kernel apareció una discrepancia que habría producido un
-kernel distinto del validado si se hubiera copiado la lista de parches del
-sitio equivocado:
-
-| | build directa | APKBUILD |
+| | direct build | APKBUILD |
 |---|---|---|
-| `ignore-console-null.patch` | **no** | sí |
-| `set-mi2s-codec-dai-format.patch` | **sí** | no |
+| `ignore-console-null.patch` | **no** | yes |
+| `set-mi2s-codec-dai-format.patch` | **yes** | no |
 
-El `boot.img` que se flasheó y validó sale de la build directa. Es decir, el
-kernel que arranca tiene el arreglo de formato/sysclk de los CS35L45 —por eso
-suena el audio— y **no** tiene el parche de consola. Este port reproduce el
-conjunto de la build directa y deja `ignore-console-null` tras
-`APPLY_IGNORE_CONSOLE_NULL=1`, como build de diagnóstico explícita.
+The `boot.img` that was flashed and validated comes from the direct build. That
+is, the kernel that boots has the CS35L45 format/sysclk fix — which is why
+audio works — and does **not** have the console patch. This port reproduces the
+direct build's set and leaves `ignore-console-null` behind
+`APPLY_IGNORE_CONSOLE_NULL=1`, as an explicit diagnostic build.
 
-### Verificación contra la baseline
+### Verification against the baseline
 
-Construido desde este repositorio, con el checkout fijado en `a13c140c`:
+Built from this repository, with the checkout pinned at `a13c140c`:
 
-| Salida | Resultado |
+| Output | Result |
 |---|---|
-| `sm8550-samsung-gts9uwifi.dtb` | `952688174c…` — **idéntico** a v1.71 |
-| `config` | `2c1eaeee…` — **idéntico** a v1.71 |
-| `Image.gz` | distinto |
+| `sm8550-samsung-gts9uwifi.dtb` | `952688174c…` — **identical** to v1.71 |
+| `config` | `2c1eaeee…` — **identical** to v1.71 |
+| `Image.gz` | different |
 
-El DTB y la config son exactamente los validados, que es lo que fija la
-descripción del hardware y el conjunto de funciones. `Image.gz` no coincide, y
-la causa se midió en lugar de suponerse: mismo tamaño sin comprimir
-(65.903.104 bytes), mismo release, mismo compilador y mismo banner, pero
-7.003.750 bytes distintos. El desencadenante es `UTS_VERSION`: la baseline
-llevaba `#18` y la nuestra `#1`, y ese carácter de más desplaza el enlazado.
-Además, cada árbol de build genera su propia clave de firma de módulos.
+The DTB and the config are exactly the validated ones, which is what fixes the
+hardware description and the feature set. `Image.gz` does not match, and the
+cause was measured rather than assumed: same uncompressed size (65,903,104
+bytes), same release, same compiler and same banner, but 7,003,750 bytes
+different. The trigger is `UTS_VERSION`: the baseline carried `#18` and ours
+`#1`, and that one extra character shifts the linking. On top of that, each
+build tree generates its own module signing key.
 
-### Identidad de build: un problema de privacidad, no solo de reproducibilidad
+### Build identity: a privacy problem, not only a reproducibility one
 
-El banner del kernel empotraba `root@PC-ARTURO`, el nombre de la máquina de la
-usuaria, y ese literal habría viajado dentro de cada `boot.img` publicado. El
-build fija ahora `KBUILD_BUILD_USER=ubuntu`, `KBUILD_BUILD_HOST=gts9uwifi` y
-un `SOURCE_DATE_EPOCH` derivado de la fecha del commit del kernel, y reinicia
-`.version` en cada ejecución. Verificado sobre la imagen resultante: el banner
-es `ubuntu@gts9uwifi` y no queda ningún identificador personal.
+The kernel's banner embedded `root@PC-ARTURO`, the owner's machine name, and
+that literal would have travelled inside every published `boot.img`. The build
+now fixes `KBUILD_BUILD_USER=ubuntu`, `KBUILD_BUILD_HOST=gts9uwifi` and a
+`SOURCE_DATE_EPOCH` derived from the kernel commit's date, and resets
+`.version` on every run. Verified on the resulting image: the banner is
+`ubuntu@gts9uwifi` and no personal identifier remains.
 
-### Pipeline de imagen
+### The image pipeline
 
-Se escribieron los siete pasos descritos en `ubuntu-userspace.md`. Tres
-decisiones merecen registro:
+The seven steps described in `ubuntu-userspace.md` were written. Three
+decisions are worth recording:
 
-- `build-sd-image.sh` **falla la build** si el initramfs no es LZ4 legacy o no
-  cabe en `init_boot` menos su footer AVB. Los dos son fallos que el port
-  anterior descubrió en la tablet; aquí se descubren en el host.
-- El instalador TWRP localiza el rootfs **por etiqueta**, no por
-  `mmcblk1p2`, y exige `ID=ubuntu`. Activa unidades systemd con symlinks reales
-  desde un manifiesto empaquetado, porque systemd ignora un fichero regular
-  dentro de un directorio `.wants`.
-- El fragmento vendor se normaliza a `mtime=0` antes de empaquetarlo, cerrando
-  la laguna de reproducibilidad detectada en la sesión 1.
+- `build-sd-image.sh` **fails the build** if the initramfs is not legacy LZ4 or
+  does not fit in `init_boot` minus its AVB footer. Both are failures the
+  previous port discovered on the tablet; here they are discovered on the host.
+- The TWRP installer locates the root filesystem **by label**, not by
+  `mmcblk1p2`, and requires `ID=ubuntu`. It enables systemd units with real
+  symlinks from a packaged manifest, because systemd ignores a regular file
+  inside a `.wants` directory.
+- The vendor fragment is normalised to `mtime=0` before packaging, closing the
+  reproducibility gap found in session 1.
 
-### Fin de línea
+### Line endings
 
-Los scripts sin extensión —el instalador TWRP y los de `packaging/`— quedaban
-fuera de cualquier regla `.gitattributes` por extensión y se habrían escrito
-con CRLF en el checkout de Windows, lo que hace que `#!/sbin/sh` no ejecute. El
-repositorio fuerza ahora `eol=lf` para todo.
+The scripts with no extension — the TWRP installer and those in `packaging/` —
+fell outside any per-extension `.gitattributes` rule and would have been
+written with CRLF in the Windows checkout, which stops `#!/sbin/sh` executing.
+The repository now forces `eol=lf` for everything.
 
-### Primera release: v0.1-minimal
+### The first release: v0.1-minimal
 
-El pipeline completo produjo su primer artefacto instalable. Cinco defectos
-salieron a la luz al ejecutarlo, todos corregidos en los scripts y ninguno
-parcheado a mano sobre el artefacto.
+The complete pipeline produced its first installable artefact. Five defects
+came to light while running it, all fixed in the scripts and none patched by
+hand onto the artefact.
 
-**1. Firmware Wi-Fi mal mapeado.** El overlay pedía `amss.bin` y `board-2.bin`,
-nombres que no existen. Los ficheros reales son `official-amss.bin` y, para los
-datos de placa, `official-board-2.bin` como contenedor más `qrd-board.bin` como
-`board.bin`. El contenedor oficial no tiene entrada para la X910, así que
-ath12k cae deliberadamente al ELF QRD — y `board.bin` faltaba por completo. El
-overlay valida ahora todos los blobs por adelantado.
+**1. Wi-Fi firmware mapped wrongly.** The overlay asked for `amss.bin` and
+`board-2.bin`, names that do not exist. The real files are `official-amss.bin`
+and, for the board data, `official-board-2.bin` as a container plus
+`qrd-board.bin` as `board.bin`. The official container has no entry for the
+X910, so ath12k deliberately falls back to the QRD ELF — and `board.bin` was
+missing entirely. The overlay now validates every blob up front.
 
-**2. `MODULES=dep` mira el host equivocado.** Hace que `initramfs-tools`
-inspeccione el dispositivo raíz de la máquina que compila, que aquí es WSL, y
-falla con «failed to determine device for /». `MODULES=most` es lo correcto y
-sigue siendo diminuto: los únicos módulos instalados son los dos ath12k.
-Faltaba además `/boot/config-<release>`, sin el cual `initramfs-tools` no puede
-verificar el soporte de LZ4 — precisamente el único compresor admisible aquí.
+**2. `MODULES=dep` looks at the wrong host.** It makes `initramfs-tools`
+inspect the root device of the machine doing the compiling, which here is WSL,
+and it fails with "failed to determine device for /". `MODULES=most` is the
+right choice and is still tiny: the only modules installed are the two ath12k
+ones. `/boot/config-<release>` was also missing, without which
+`initramfs-tools` cannot verify LZ4 support — precisely the only acceptable
+compressor here.
 
-**3. El initramfs no cabía.** 9,4 MiB frente a un presupuesto de 8,0 MiB. El
-guardián de `build-sd-image.sh` lo detuvo en el host, que es su razón de ser.
-Se midió antes de recortar: **cero módulos** en el initramfs, y 12 MiB de los
-29,6 MiB sin comprimir eran `udev/hwdb.bin`, una base de datos de propiedades
-de dispositivos que nunca se lee mientras se busca la raíz. El compresor no era
-negociable, así que se recortó contenido: 25.212 KiB → 13.204 KiB en staging y
-**7.123.964 bytes comprimidos, con 1,2 MB de margen**. Descubierto de paso:
-`initramfs-tools` **omite en silencio** un hook que no sea ejecutable.
+**3. The initramfs did not fit.** 9.4 MiB against a budget of 8.0 MiB.
+`build-sd-image.sh`'s guard stopped it on the host, which is its whole purpose.
+It was measured before cutting anything: **zero modules** in the initramfs, and
+12 MiB of the 29.6 MiB uncompressed were `udev/hwdb.bin`, a device property
+database that is never read while looking for the root. The compressor was not
+negotiable, so content was cut: 25,212 KiB → 13,204 KiB in staging and
+**7,123,964 bytes compressed, with 1.2 MB to spare**. Discovered along the way:
+`initramfs-tools` **silently skips** a hook that is not executable.
 
-**4. Los nodos de partición del loop no aparecen solos.** En este entorno no
-hay udev, así que `losetup --partscan` no garantiza `/dev/loopNpM`. El script
-empuja al kernel, espera y cae a `kpartx`.
+**4. The loop device's partition nodes do not appear on their own.** There is
+no udev in this environment, so `losetup --partscan` does not guarantee
+`/dev/loopNpM`. The script nudges the kernel, waits, and falls back to
+`kpartx`.
 
-**5. El validador mentía.** Sin `unzip` instalado, todas las comprobaciones del
-ZIP fallaban salvo la negativa —«el instalador nunca menciona particiones
-prohibidas»—, que **pasaba** porque `grep` no encontraba nada en una entrada
-vacía. Es el mismo patrón de mentira silenciosa que ya costó una comprobación
-de dependencias falsa. Ahora una herramienta ausente aborta la validación. Las
-otras dos comprobaciones también estaban mal planteadas: identificaban el
-instalador por su prosa y hacían `grep` sobre los comentarios que documentan
-justamente las particiones que promete no tocar. Se sustituyeron por una línea
-de contrato explícita y por un análisis del código con los comentarios
-eliminados, más una comprobación nueva de que solo escribe con `dd` y no
-contiene ninguna orden de formateo.
+**5. The validator was lying.** Without `unzip` installed, every ZIP check
+failed except the negative one — "the installer never mentions forbidden
+partitions" — which **passed** because `grep` found nothing in empty input. It
+is the same silent-lie pattern that already cost a false dependency check. Now
+a missing tool aborts the validation. The other two checks were also badly
+framed: they identified the installer by its prose and grepped over the
+comments that document precisely the partitions it promises not to touch. They
+were replaced with an explicit contract line and with an analysis of the code
+with comments stripped, plus a new check that it only writes with `dd` and
+contains no formatting command.
 
-Resultado, con las 21 comprobaciones estáticas en verde:
+The result, with all 21 static checks green:
 
-| Artefacto | SHA-256 |
+| Artefact | SHA-256 |
 |---|---|
 | `ubuntu-24.04-gts9uwifi-v0.1-minimal-sd.img.xz` | `c68f2bb9…` |
 | `ubuntu-24.04-gts9uwifi-v0.1-minimal-sm-x910-twrp.zip` | `f534a5a5…` |
@@ -260,45 +260,45 @@ Resultado, con las 21 comprobaciones estáticas en verde:
 | `dtbo.img` | `c17418be…` |
 | `vbmeta.img` | `b95e5ef9…` |
 
-`dtbo.img` y `vbmeta.img` coinciden byte a byte con los de postmarketOS v1.71,
-como debe ser: su contenido no depende de la distribución.
+`dtbo.img` and `vbmeta.img` match postmarketOS v1.71's byte for byte, as they
+should: their content does not depend on the distribution.
 
-Imagen de microSD: 2.367.684.608 bytes sin comprimir
-(`f399d509…`), 110 MB comprimida, con `UBTS9U_BOOT` de 256 MiB y `UBTS9U_ROOT`
-de 2 GiB.
+microSD image: 2,367,684,608 bytes uncompressed (`f399d509…`), 110 MB
+compressed, with a 256 MiB `UBTS9U_BOOT` and a 2 GiB `UBTS9U_ROOT`.
 
-**Laguna conocida:** `init_boot.img` cambia de hash entre ejecuciones porque
-`update-initramfs` no produce un CPIO reproducible. El resto del bundle sí lo
-es. Queda pendiente normalizarlo, igual que se hizo con el fragmento vendor.
+**Known gap:** `init_boot.img` changes hash between runs because
+`update-initramfs` does not produce a reproducible CPIO. The rest of the bundle
+is reproducible. Normalising it is still pending, as was done with the vendor
+fragment.
 
-### v0.1 desktop y el fallo que habría arruinado la primera prueba
+### v0.1 desktop, and the failure that would have ruined the first test
 
-El perfil `desktop` construye 948 paquetes en 1,8 GiB. Comprobado dentro del
-rootfs, no supuesto: GDM3 46.2, GNOME Shell 46.0, Mutter 46.2, PipeWire 1.0.5,
-WirePlumber, Mesa 25.2.8 con `mesa-vulkan-drivers`, BlueZ 5.72, NetworkManager,
-OpenSSH y el paquete de dispositivo. El pin de apt funcionó: **no** se coló
-ningún `linux-image-*` de la distribución. `ssh`, `NetworkManager` y
-`ubuntu-gts9u-grow-rootfs` quedan habilitados; `/etc/fstab` monta por etiqueta y
-el usuario `ubuntu` está en `sudo`.
+The `desktop` profile builds 948 packages in 1.8 GiB. Checked inside the root
+filesystem, not assumed: GDM3 46.2, GNOME Shell 46.0, Mutter 46.2, PipeWire
+1.0.5, WirePlumber, Mesa 25.2.8 with `mesa-vulkan-drivers`, BlueZ 5.72,
+NetworkManager, OpenSSH and the device package. The apt pin worked: **no**
+`linux-image-*` from the distribution slipped in. `ssh`, `NetworkManager` and
+`ubuntu-gts9u-grow-rootfs` are enabled; `/etc/fstab` mounts by label and the
+`ubuntu` user is in `sudo`.
 
-Antes de proponer una prueba física apareció un fallo que la habría hecho
-fracasar por un motivo ajeno al hardware: **la cmdline heredada no lleva
-`root=`**. El initramfs de postmarketOS localiza su partición por sí mismo, así
-que su cmdline nunca lo necesitó. `initramfs-tools` no hace eso: habría
-esperado a un dispositivo que no llega y habría caído a la shell de emergencia.
+Before proposing a physical test, a failure appeared that would have made it
+fail for a reason unrelated to the hardware: **the inherited cmdline has no
+`root=`**. postmarketOS's initramfs locates its partition itself, so its
+cmdline never needed one. `initramfs-tools` does not do that: it would have
+waited for a device that never arrives and dropped to the emergency shell.
 
-La cmdline de Ubuntu añade `root=LABEL=UBTS9U_ROOT rootfstype=ext4` —por
-etiqueta, porque el orden de enumeración entre microSD y UFS no está
-garantizado— y elimina dos parámetros arrastrados sin sentido aquí:
-`pmos.nosplash` y `ignore_console_null`, cuyo parche este build no aplica. El
-validador falla ahora si `root=` falta o si reaparece cualquiera de los dos.
+Ubuntu's cmdline adds `root=LABEL=UBTS9U_ROOT rootfstype=ext4` — by label,
+because the enumeration order between microSD and UFS is not guaranteed — and
+removes two parameters carried over that make no sense here: `pmos.nosplash`
+and `ignore_console_null`, whose patch this build does not apply. The validator
+now fails if `root=` is missing or if either of those two reappears.
 
-Los artefactos construidos con la cmdline antigua se borraron en lugar de
-dejarlos: no arrancan y su nombre no los distingue.
+The artefacts built with the old cmdline were deleted rather than kept: they do
+not boot and their names do not distinguish them.
 
-Release v0.1 (desktop), con todas las comprobaciones estáticas en verde:
+Release v0.1 (desktop), with every static check green:
 
-| Artefacto | SHA-256 |
+| Artefact | SHA-256 |
 |---|---|
 | `ubuntu-24.04-gts9uwifi-v0.1-sd.img.xz` | `5af2a7d2…` |
 | `ubuntu-24.04-gts9uwifi-v0.1-sm-x910-twrp.zip` | `3a55399e…` |
@@ -308,41 +308,41 @@ Release v0.1 (desktop), con todas las comprobaciones estáticas en verde:
 | `dtbo.img` | `c17418be…` |
 | `vbmeta.img` | `b95e5ef9…` |
 
-Imagen sin comprimir: 3.588.227.072 bytes, `27a4f469…`.
+Uncompressed image: 3,588,227,072 bytes, `27a4f469…`.
 
-`boot.img` es idéntico al del perfil mínimo, como debe ser: mismo kernel y mismo
-DTS. `dtbo.img` y `vbmeta.img` coinciden byte a byte con los de postmarketOS
-v1.71.
+`boot.img` is identical to the minimal profile's, as it should be: same kernel
+and same DTS. `dtbo.img` and `vbmeta.img` match postmarketOS v1.71's byte for
+byte.
 
-### v0.2: recuperación del panel y escritura de la microSD por TWRP
+### v0.2: the panel recovery and writing the microSD through TWRP
 
-Se portó la recuperación cold-boot del ANA38407 antes de proponer la primera
-prueba física, para que exista alguna posibilidad de imagen al primer intento.
-El mecanismo no cambia respecto al port de referencia porque es propiedad del
-hardware: el DDIC queda inalcanzable tras el hand-off de Samsung y solo el
-ciclo `pm_test=platform` lo recupera. Se verificó que `CONFIG_PM_DEBUG=y` está
-en el kernel construido, de modo que `/sys/power/pm_test` existirá.
+The ANA38407's cold-boot recovery was ported before proposing the first
+physical test, so that there is some chance of an image on the first attempt.
+The mechanism does not change from the reference port because it is a property
+of the hardware: the DDIC is unreachable after Samsung's hand-off and only the
+`pm_test=platform` cycle recovers it. It was verified that `CONFIG_PM_DEBUG=y`
+is in the built kernel, so `/sys/power/pm_test` will exist.
 
-Una diferencia deliberada: la unidad se activa en `multi-user.target`, no en
-`graphical.target`. Aquel port siempre alcanzaba un display manager; aquí este
-ciclo es también lo que hace visible la consola de texto, así que si GDM falla
-conviene tener el panel vivo para poder ver por qué.
+One deliberate difference: the unit is enabled in `multi-user.target`, not
+`graphical.target`. That port always reached a display manager; here this cycle
+is also what makes the text console visible, so if GDM fails it is worth having
+the panel alive to see why.
 
-Comprobado en el rootfs construido, no supuesto: paquete `ubuntu-gts9u-device`
-0.2 instalado, script ejecutable, unidad presente y **symlink de activación**
-en `/etc/systemd/system/multi-user.target.wants/`.
+Checked in the built root filesystem, not assumed: package `ubuntu-gts9u-device`
+0.2 installed, script executable, unit present and the **enabling symlink** in
+`/etc/systemd/system/multi-user.target.wants/`.
 
-La usuaria indicó que este PC no tiene lector de tarjetas, pero que la tablet
-puede dejarse en TWRP con la microSD puesta. `scripts/twrp-write-sd.sh` escribe
-la tarjeta por ADB: por defecto solo inspecciona, y escribir exige `--write`
-más un `--device` explícito tras cinco guardas —dispositivo mmc completo,
-`removable=1`, tipo `SD`, capacidad suficiente y nada montado— además de
-confirmar que el aparato es un SM-X910 **en recovery**. Al terminar relee la
-tarjeta y compara SHA-256 contra la imagen.
+The owner noted that this PC has no card reader, but that the tablet can be
+left in TWRP with the microSD in place. `scripts/twrp-write-sd.sh` writes the
+card over ADB: by default it only inspects, and writing requires `--write` plus
+an explicit `--device` after five guards — a whole mmc device, `removable=1`,
+type `SD`, sufficient capacity and nothing mounted — as well as confirming the
+device is an SM-X910 **in recovery**. When it finishes it reads the card back
+and compares SHA-256 against the image.
 
-Release v0.2 (desktop), todas las comprobaciones estáticas en verde:
+Release v0.2 (desktop), every static check green:
 
-| Artefacto | SHA-256 |
+| Artefact | SHA-256 |
 |---|---|
 | `ubuntu-24.04-gts9uwifi-v0.2-sd.img.xz` | `aebe0193…` |
 | `ubuntu-24.04-gts9uwifi-v0.2-sm-x910-twrp.zip` | `8a1c37bf…` |
@@ -352,126 +352,125 @@ Release v0.2 (desktop), todas las comprobaciones estáticas en verde:
 | `dtbo.img` | `c17418be…` |
 | `vbmeta.img` | `b95e5ef9…` |
 
-Imagen sin comprimir: 3.588.227.072 bytes, `6e14f383…`. Los artefactos de v0.1
-se retiraron para que no quede ambigüedad sobre cuál flashear.
+Uncompressed image: 3,588,227,072 bytes, `6e14f383…`. The v0.1 artefacts were
+withdrawn so there is no ambiguity about which one to flash.
 
-### Siguiente paso
+### Next step
 
-Primera prueba física. El objetivo es el Hito 2: systemd hasta
-`multi-user.target`, journal persistente, Wi-Fi y SSH. La imagen y el panel
-todavía no están validados bajo Ubuntu y no se declararán funcionales hasta
-observarlos.
+The first physical test. The goal is milestone 2: systemd through to
+`multi-user.target`, a persistent journal, Wi-Fi and SSH. The image and the
+panel are not yet validated under Ubuntu and will not be declared working until
+they are observed.
 
 ---
+## Session 3 — the first physical boot: milestones 2 and 3 met
 
-## Sesión 3 — primer arranque físico: Hitos 2 y 3 cumplidos
+Date: 2026-07-31. Ubuntu's first run on the tablet.
 
-Fecha: 2026-07-31. Primera ejecución de Ubuntu en la tablet.
+### Writing the microSD without a card reader
 
-### Escribir la microSD sin lector de tarjetas
+The owner's PC has no reader, but the tablet can be left in TWRP with the card
+in place. `scripts/twrp-write-sd.sh` writes it over ADB. Four defects appeared
+only against real hardware, and deserve writing down:
 
-El PC de la usuaria no tiene lector, pero la tablet puede quedarse en TWRP con
-la tarjeta puesta. `scripts/twrp-write-sd.sh` la escribe por ADB. Cuatro
-defectos aparecieron solo contra el hardware real, y merecen quedar escritos:
+1. **CRLF.** Windows's `adb.exe` ends every line with CRLF, so the
+   end-of-line-anchored device detection never matched and the script reported
+   there was no device while one was connected.
+2. **32-bit overflow.** The sizes were computed on the tablet, whose busybox
+   does 32-bit arithmetic: `sectors*512` wrapped around and a 29.7 GiB card
+   showed as 1.72 GiB.
+3. **`removable=0`.** This board's SD host marks the card as non-removable. My
+   guard required `removable=1` and would have rejected the only valid
+   destination. The decisive signal is `device/type == SD`, plus checking that
+   the internal UFS exists separately as `sda`.
+4. **`dd` reading from a pipe lost 42,688 bytes.** The card was deceptively
+   convincing — correct GPT, correct partition names, an identical first MiB —
+   but everything after the point of loss had landed 42,688 bytes early. It was
+   located by searching for a signature from the image inside the card. Only
+   the read-back verification caught it.
 
-1. **CRLF.** El `adb.exe` de Windows termina cada línea con CRLF, así que la
-   detección de dispositivo anclada a fin de línea nunca casaba y el script
-   informaba de que no había ninguno mientras estaba conectado.
-2. **Desbordamiento a 32 bits.** Los tamaños se calculaban en la tablet, cuyo
-   busybox hace aritmética de 32 bits: `sectores*512` daba la vuelta y una
-   tarjeta de 29,7 GiB se mostraba como 1,72 GiB.
-3. **`removable=0`.** El SD host de esta placa marca la tarjeta como no
-   extraíble. Mi guarda exigía `removable=1` y habría rechazado el único
-   destino válido. La señal decisiva es `device/type == SD`, más la
-   comprobación de que la UFS interna existe aparte como `sda`.
-4. **`dd` leyendo de una tubería perdió 42.688 bytes.** La tarjeta quedaba
-   engañosamente convincente —GPT correcto, nombres de partición correctos,
-   primer MiB idéntico— pero todo lo posterior al punto de pérdida había caído
-   42.688 bytes antes de su sitio. Se localizó buscando una firma de la imagen
-   dentro de la tarjeta. Solo la verificación de lectura lo detectó.
+The easy hypotheses were ruled out with tests: `adb exec-in` and `exec-out`
+turned out to be **binary-safe** (4 MiB with 16,507 LF bytes arrived
+identical), so the transport was clean. The write now stages the image as a
+file on the tablet's RAM disk, verifies that copy against the source hash, and
+only then runs `dd` from a regular file.
 
-Se descartaron las hipótesis fáciles con pruebas: `adb exec-in` y `exec-out`
-resultaron **binario-seguros** (4 MiB con 16.507 bytes LF llegaron idénticos),
-así que el transporte estaba limpio. La escritura ahora prepara la imagen como
-fichero en el disco RAM de la tablet, verifica esa copia contra el hash origen
-y solo entonces ejecuta `dd` desde un fichero regular.
+### The TWRP installer, twice
 
-### El instalador TWRP, dos veces
+The ZIP aborted with "could not find `UBTS9U_ROOT`" on a card that had it. Two
+independent causes:
 
-El ZIP abortó con «no encontré `UBTS9U_ROOT`» sobre una tarjeta que la tenía.
-Dos causas independientes:
+- this TWRP **has neither `blkid` nor `findfs`**, nor `/dev/disk/by-label`. It
+  does have `tune2fs`, which reads the ext4 volume name directly;
+- the kernel was still holding the previous partition table, so the `pN` nodes
+  pointed at postmarketOS's offsets and any filesystem over them looked
+  corrupt.
 
-- este TWRP **no tiene `blkid` ni `findfs`** ni `/dev/disk/by-label`. Sí tiene
-  `tune2fs`, que lee el nombre de volumen ext4 directamente;
-- el kernel seguía con la tabla de particiones anterior, así que los nodos `pN`
-  apuntaban a los offsets de postmarketOS y cualquier filesystem sobre ellos
-  parecía corrupto.
+Fixing that introduced a third failure, subtler: the installer re-read the
+table and searched **immediately afterwards**. Re-reading deletes and recreates
+the partition nodes, so the search fell into that window and found nothing,
+while the error message printed moments later listed the partition it had just
+failed to find. Identical code, opposite results, only the timing changed. It
+now searches first and re-reads only if it has to.
 
-La corrección de eso introdujo un tercer fallo, más sutil: el instalador releía
-la tabla y buscaba **inmediatamente después**. Releer borra y recrea los nodos
-de partición, así que la búsqueda caía en esa ventana y no encontraba nada,
-mientras el mensaje de error impreso instantes después listaba la partición que
-acababa de no encontrar. Código idéntico, resultados opuestos, solo el momento
-cambiaba. Ahora busca primero y solo relee si hace falta.
+Since then, the rebuild script **extracts the real functions from the packaged
+ZIP and runs them on the tablet** before asking for a flash.
 
-Desde entonces, el script de reconstrucción **extrae las funciones reales del
-ZIP empaquetado y las ejecuta en la tablet** antes de pedir un flasheo.
+### The first boot
 
-### Primer arranque
+It worked. Confirmed by the owner: display, GPU, touch, buttons, battery,
+suspend with the cover, USB host and USB-C video output, with and without
+external power.
 
-Funcionó. Confirmado por la usuaria: pantalla, GPU, táctil, botones, batería,
-suspensión con la funda, USB host y salida de vídeo por USB-C, con y sin
-alimentación externa.
-
-**La recuperación del panel quedó validada bajo Ubuntu**, con la firma exacta
-del port de referencia en el journal:
+**The panel recovery was validated under Ubuntu**, with the reference port's
+exact signature in the journal:
 
 ```
 ana38407 panel id: 00 00 00
-  -> ciclo pm_test=platform ->
+  -> pm_test=platform cycle ->
 ana38407 panel id: 80 00 04
 ```
 
-No funcionaban: sonido, Bluetooth ni rotación automática.
+Not working: sound, Bluetooth and auto-rotation.
 
-### Una sola causa raíz para sonido y sensores
+### A single root cause for sound and sensors
 
-El ADSP estaba `offline`. `qcom_q6v5_pas` tiene `auto_boot=true` y pide
-`qcom/sm8550/adsp.mdt` a los ~3 s, cuando la microSD que lo contiene todavía no
-está montada: falla con `-ENOENT` y se queda apagado para siempre.
+The ADSP was `offline`. `qcom_q6v5_pas` has `auto_boot=true` and asks for
+`qcom/sm8550/adsp.mdt` at around 3 s, when the microSD containing it is not
+mounted yet: it fails with `-ENOENT` and stays off forever.
 
-Arrancarlo después de `local-fs.target` funciona, PAS acepta la imagen firmada
-de Samsung, y aparecen dos cosas a la vez: la tarjeta ALSA y `/dev/fastrpc-adsp`,
-que es el prerequisito de los sensores.
+Starting it after `local-fs.target` works, PAS accepts Samsung's signed image,
+and two things appear at once: the ALSA card and `/dev/fastrpc-adsp`, which is
+the sensors' prerequisite.
 
-Ubuntu ya empaqueta pd-mapper como **`protection-domain-mapper`**, así que no
-hubo que compilarlo; solo ordenarlo tras el arranque tardío del DSP, o no
-encuentra remoteproc y systemd se rinde.
+Ubuntu already packages pd-mapper as **`protection-domain-mapper`**, so nothing
+had to be compiled; it only had to be ordered after the DSP's late start, or it
+finds no remoteproc and systemd gives up.
 
-Con el perfil UCM del port de referencia, **PipeWire expone «Built-in speakers
-(4x CS35L45)» y los micrófonos digitales de forma nativa, sin PulseAudio**.
-Eso responde una de las preguntas abiertas del diseño de userspace. La usuaria
-confirmó audio audible tras un reinicio, sin intervención.
+With the reference port's UCM profile, **PipeWire exposes "Built-in speakers
+(4x CS35L45)" and the digital microphones natively, with no PulseAudio**. That
+answers one of the userspace design's open questions. The owner confirmed
+audible audio after a reboot, with no intervention.
 
-### Bluetooth: mi servicio colgó el arranque
+### Bluetooth: my service hung the boot
 
-La dirección de la NVM del WCN7850 es nula, así que `hci0` arranca como
-`00:00:00:00:5A:AD` y queda `DOWN`. Leerla de EFS (`ro,noload`) y aplicarla con
-`btmgmt` la levanta — verificado en vivo, el controlador pasó a `UP RUNNING`.
+The WCN7850's NVM address is null, so `hci0` comes up as
+`00:00:00:00:5A:AD` and stays `DOWN`. Reading it from EFS (`ro,noload`) and
+applying it with `btmgmt` brings it up — verified live, the controller went to
+`UP RUNNING`.
 
-Pero como servicio de arranque falló, y el fallo fue mío: **`btmgmt` de BlueZ
-5.72 se bloquea indefinidamente si corre antes de que el controlador esté
-registrado en la interfaz de gestión**, que es exactamente cuando corre este
-servicio. Se midió: `btmgmt info` estuvo más de cuatro minutos parado y, al
-estar el servicio ordenado antes de `bluetooth.service`, se llevó por delante
-toda la pila. El mismo comando responde en menos de un segundo una vez el
-controlador está registrado. `hciconfig` en cambio es un ioctl y responde en
-3 ms.
+But as a boot service it failed, and the failure was mine: **BlueZ 5.72's
+`btmgmt` blocks indefinitely if it runs before the controller is registered
+with the management interface**, which is exactly when this service runs. It
+was measured: `btmgmt info` sat there for over four minutes and, with the
+service ordered before `bluetooth.service`, it took the whole stack down with
+it. The same command answers in under a second once the controller is
+registered. `hciconfig`, by contrast, is an ioctl and answers in 3 ms.
 
-El servicio acota ahora cada llamada con `timeout` y sondea con `hciconfig`.
-Pero al reintentarlo apareció un problema distinto y más profundo.
+The service now bounds every call with `timeout` and polls with `hciconfig`.
+But retrying it revealed a different and deeper problem.
 
-### Bluetooth: el firmware no se descarga tras un reinicio en caliente
+### Bluetooth: the firmware is not downloaded after a warm reboot
 
 ```
 QCA Product ID   :0x00000019
@@ -484,130 +483,128 @@ command 0xfc00 tx timeout
 QCA Failed to send TLV segment (-110)
 ```
 
-El controlador **responde correctamente** a todas las consultas de versión y
-solo se atasca en la descarga masiva del firmware. Es decir: el UART funciona,
-el fichero se encuentra, y aun así el TLV no pasa. El driver reintenta tres
-veces y se rinde.
+The controller **answers every version query correctly** and only gets stuck on
+the firmware's bulk download. That is: the UART works, the file is found, and
+the TLV still does not go through. The driver retries three times and gives up.
 
-Lo que distingue los arranques observados:
+What distinguishes the boots observed:
 
-| Arranque | Tipo | Resultado |
+| Boot | Type | Result |
 |---|---|---|
-| 1º | en frío, tras flashear desde TWRP | firmware cargado, `hci0` alcanzó `5A:AD` y subió |
-| 2º–4º | `systemctl reboot` en caliente | `tx timeout` a los 3,6 s, tres reintentos, se rinde |
+| 1st | cold, after flashing from TWRP | firmware loaded, `hci0` reached `5A:AD` and came up |
+| 2nd–4th | warm `systemctl reboot` | `tx timeout` at 3.6 s, three retries, gives up |
 
-La recuperación por software está descartada con evidencia: `rfkill`
-block/unblock no cambia nada, y un unbind/rebind del serdev deja el
-controlador aún peor —tras él falla incluso la lectura de versión.
+Software recovery is ruled out with evidence: `rfkill` block/unblock changes
+nothing, and an unbind/rebind of the serdev leaves the controller worse still —
+after it, even the version read fails.
 
-Hipótesis actual, pendiente de confirmar con un apagado completo: el lado
-Bluetooth del WCN7850 compartido necesita un ciclo de alimentación real, que un
-reinicio en caliente no proporciona. No se declara nada hasta medirlo.
+Current hypothesis, pending confirmation with a complete power-off: the
+Bluetooth side of the shared WCN7850 needs a real power cycle, which a warm
+reboot does not provide. Nothing is declared until it is measured.
 
-### Estado al cerrar la sesión
+### State at the close of the session
 
-Suben solos desde arranque en frío, verificado sin tocar nada: recuperación del
-panel, ADSP, pd-mapper y audio. Bluetooth queda intermitente y la rotación
-automática sin abordar, porque necesita `hexagonrpcd` y `libssc`, que no
-existen en Ubuntu.
+These come up on their own from a cold boot, verified without touching
+anything: the panel recovery, the ADSP, pd-mapper and audio. Bluetooth is
+intermittent and auto-rotation untouched, because it needs `hexagonrpcd` and
+`libssc`, which do not exist in Ubuntu.
 
 ---
 
-## Sesión 4 — Bluetooth cerrado, rotación empaquetada, y un kernel de escritorio
+## Session 4 — Bluetooth closed, rotation packaged, and a desktop kernel
 
-Fecha: 2026-08-01.
+Date: 2026-08-01.
 
-### Bluetooth: dos comportamientos de `btmgmt`, ninguno documentado
+### Bluetooth: two `btmgmt` behaviours, neither documented
 
-El servicio funcionaba a mano y fallaba como servicio. Fueron dos trampas
-encadenadas de BlueZ 5.72, ambas medidas:
+The service worked by hand and failed as a service. It was two chained BlueZ
+5.72 traps, both measured:
 
-1. **Ordenado antes de `bluetoothd`, `btmgmt` se bloquea en `epoll_wait`**
-   durante minutos. Como la unidad estaba `Before=bluetooth.service` —copiando
-   al port de referencia— se llevó por delante toda la pila: 90 s de timeout
-   por arranque. Con el demonio ya arriba, la misma llamada tarda 0 s. Este
-   port ordena el servicio **después**, al revés que la referencia.
-2. **Con stdin en `/dev/null`, `btmgmt` no imprime nada y sale con 0.** Es lo
-   que systemd da por defecto a un servicio. No falla: miente. El `grep` sobre
-   su salida vacía no casaba nunca y el bucle de espera se agotaba. Con una
-   tubería vacía se comporta con normalidad.
+1. **Ordered before `bluetoothd`, `btmgmt` blocks in `epoll_wait`** for
+   minutes. Since the unit was `Before=bluetooth.service` — copying the
+   reference port — it took the whole stack down: 90 s of timeout per boot.
+   With the daemon already up, the same call takes 0 s. This port orders the
+   service **after**, the opposite of the reference.
+2. **With stdin on `/dev/null`, `btmgmt` prints nothing and exits 0.** That is
+   what systemd gives a service by default. It does not fail: it lies. The
+   `grep` over its empty output never matched and the wait loop timed out. With
+   an empty pipe it behaves normally.
 
-Un tercer detalle: el servicio informaba de fallo cuando había funcionado.
-Aplicar la dirección reinicializa el controlador, así que releerla un segundo
-después mostraba la antigua. Ahora sondea.
+A third detail: the service reported failure when it had worked. Applying the
+address reinitialises the controller, so re-reading it a second later showed
+the old one. It now polls.
 
-Resultado verificado desde arranque en frío: `48:BC:…`, `UP RUNNING`,
-`Powered: yes`, servicio completado en 1,3 s. Escaneo de 10 s: 20 dispositivos.
-A2DP sigue sin probar.
+Result verified from a cold boot: `48:BC:…`, `UP RUNNING`, `Powered: yes`,
+service completed in 1.3 s. A 10 s scan: 20 devices. A2DP still untested.
 
-También quedó **refutada** la hipótesis del ciclo de alimentación: un apagado
-completo no cambia nada. El `command 0xfc00 tx timeout` del primer intento de
-descarga de firmware es intermitente y el propio driver se recupera en el
-reintento. No era el problema.
+The power-cycle hypothesis was also **refuted**: a complete power-off changes
+nothing. The `command 0xfc00 tx timeout` on the first firmware download attempt
+is intermittent and the driver itself recovers on the retry. That was not the
+problem.
 
-### `apt install firefox`, `chromium` y `fastfetch`
+### `apt install firefox`, `chromium` and `fastfetch`
 
-Tres síntomas, dos causas.
+Three symptoms, two causes.
 
-La grande es sistémica: **este port no instala árbol de módulos**, así que todo
-lo que quede en `=m` está ausente. `CONFIG_SQUASHFS=m` significa que ningún
-snap puede montarse, y en Ubuntu `chromium` y `firefox` son paquetes de
-transición cuyo único trabajo es instalar un snap. Lo mismo explicaba
-`systemd-binfmt.service` y `proc-sys-fs-binfmt_misc.mount` fallando en cada
-arranque y dejando el sistema en `degraded`: `CONFIG_BINFMT_MISC=m`.
+The big one is systemic: **this port installs no module tree**, so anything
+left at `=m` is absent. `CONFIG_SQUASHFS=m` means no snap can be mounted, and
+in Ubuntu `chromium` and `firefox` are transitional packages whose only job is
+to install a snap. The same explained `systemd-binfmt.service` and
+`proc-sys-fs-binfmt_misc.mount` failing on every boot and leaving the system
+`degraded`: `CONFIG_BINFMT_MISC=m`.
 
-Se añadió un fragmento de configuración propio, separado del heredado para que
-ese siga siendo comparable con su origen: `SQUASHFS` y sus cinco
-descompresores, `OVERLAY_FS`, `FUSE_FS`, `BINFMT_MISC`, exFAT, NTFS3, y
-AppArmor con `apparmor` en `CONFIG_LSM` **conservando `lockdown`**, del que
-depende el emparejamiento kernel/módulos firmados.
+A configuration fragment of our own was added, separate from the inherited one
+so that it stays comparable with its origin: `SQUASHFS` and its five
+decompressors, `OVERLAY_FS`, `FUSE_FS`, `BINFMT_MISC`, exFAT, NTFS3, and
+AppArmor with `apparmor` in `CONFIG_LSM` while **keeping `lockdown`**, on which
+the kernel/signed-module pairing depends.
 
-El guard del build rechazó tres errores antes de compilar:
-`SQUASHFS_DECOMP_MULTI_PERCPU` vive dentro de un `choice` y no se fija
-directamente; `NTFS3_FS` solo puede ser módulo mientras el driver NTFS antiguo
-esté habilitado; y la lista de fragmentos era una cadena separada por espacios
-en un repositorio cuya ruta **contiene espacios**.
+The build's guard rejected three errors before compiling:
+`SQUASHFS_DECOMP_MULTI_PERCPU` lives inside a `choice` and is not set directly;
+`NTFS3_FS` can only be a module while the old NTFS driver is enabled; and the
+fragment list was a space-separated string in a repository whose path
+**contains spaces**.
 
-`fastfetch` es distinto: simplemente **no existe en el archivo de Ubuntu
-24.04**. No es un fallo de configuración.
+`fastfetch` is different: it simply **does not exist in Ubuntu 24.04's
+archive**. That is not a configuration failure.
 
-### Rotación: tres paquetes que Ubuntu no tiene
+### Rotation: three packages Ubuntu does not have
 
-Los sensores viven dentro del ADSP y se alcanzan por FastRPC, así que
-`iio-sensor-proxy` de Ubuntu no tiene nada que leer. Se compilan `libssc`
-0.4.4, `hexagonrpcd` 0.4.0 y `iio-sensor-proxy` 3.9 con `-Dssc-support`.
+The sensors live inside the ADSP and are reached over FastRPC, so Ubuntu's
+`iio-sensor-proxy` has nothing to read. `libssc` 0.4.4, `hexagonrpcd` 0.4.0 and
+`iio-sensor-proxy` 3.9 are compiled with `-Dssc-support`.
 
-Dos cosas que Ubuntu impuso y que la lista de dependencias de Alpine no
-anticipaba: `libssc` exige meson ≥ 1.4 y noble trae 1.3.2, y el `pkg-config`
-de `qmi-glib` arrastra `mbim-glib` y `protoc`.
+Two things Ubuntu imposed that Alpine's dependency list did not anticipate:
+`libssc` requires meson ≥ 1.4 and noble ships 1.3.2, and `qmi-glib`'s
+`pkg-config` drags in `mbim-glib` and `protoc`.
 
-Un error de diseño corregido a tiempo: la primera versión compilaba **dentro
-del rootfs que se distribuye**, lo que habría puesto `build-essential`, meson y
-las cabeceras de desarrollo en la tablet. Ahora usa un chroot arm64 desechable.
+A design error corrected in time: the first version compiled **inside the root
+filesystem that gets shipped**, which would have put `build-essential`, meson
+and the development headers on the tablet. It now uses a disposable arm64
+chroot.
 
-Y un hueco que solo apareció al inspeccionar el `.deb`: **upstream hexagonrpc
-no trae ninguna unidad systemd** —Alpine las añade con un parche de
-distribución— así que el drop-in del port apuntaba a un servicio inexistente.
-La unidad se escribe aquí, con `Conflicts=suspend.target` y el usuario
-`fastrpc` que su propia regla udev necesita.
+And a gap that only appeared on inspecting the `.deb`: **upstream hexagonrpc
+ships no systemd unit** — Alpine adds them with a distribution patch — so the
+port's drop-in pointed at a service that did not exist. The unit is written
+here, with `Conflicts=suspend.target` and the `fastrpc` user its own udev rule
+needs.
 
-### Un falso negativo propio
+### A false negative of my own
 
-Al comprobar si `snapd` estaba en el rootfs usé una variable en un comando en
-línea. Este entorno se las come, así que estaba inspeccionando el **host de
-build, no el rootfs**, y concluí erróneamente que sí estaba. La comprobación
-desde un fichero de script confirmó lo contrario. `snapd` y el userspace de
-AppArmor se declaran ahora explícitamente en lugar de depender de
-`Recommends`.
+Checking whether `snapd` was in the root filesystem, I used a variable in an
+inline command. This environment eats them, so I was inspecting the **build
+host, not the root filesystem**, and wrongly concluded it was there. The check
+from a script file confirmed the opposite. `snapd` and AppArmor's userspace are
+now declared explicitly rather than left to `Recommends`.
 
 ### Release v0.6
 
-Verificado sobre el rootfs construido, no supuesto: los cuatro paquetes locales
-instalados, **`iio-sensor-proxy` enlazando contra `libssc.so.2`** según `ldd`,
-el usuario `fastrpc` creado, las seis unidades con sus symlinks de activación,
-y `snapd`, `squashfs-tools` y AppArmor 4.0.1 presentes.
+Verified on the built root filesystem, not assumed: the four local packages
+installed, **`iio-sensor-proxy` linking against `libssc.so.2`** according to
+`ldd`, the `fastrpc` user created, the six units with their enabling symlinks,
+and `snapd`, `squashfs-tools` and AppArmor 4.0.1 present.
 
-| Artefacto | SHA-256 |
+| Artefact | SHA-256 |
 |---|---|
 | `ubuntu-24.04-gts9uwifi-v0.6-sd.img.xz` | `f3c8a6c5…` |
 | `ubuntu-24.04-gts9uwifi-v0.6-sm-x910-twrp.zip` | `d061a856…` |
@@ -615,69 +612,68 @@ y `snapd`, `squashfs-tools` y AppArmor 4.0.1 presentes.
 | `init_boot.img` | `a27a5370…` |
 | `vendor_boot.img` | `59a2e5c8…` |
 
-Imagen sin comprimir: 3.721.396.224 bytes, `3f92ddda…`.
+Uncompressed image: 3,721,396,224 bytes, `3f92ddda…`.
 
-**Este ZIP hay que flashearlo**: el kernel cambió, y `boot` y los módulos
-ath12k forman un conjunto firmado bajo lockdown.
+**This ZIP has to be flashed**: the kernel changed, and `boot` and the ath12k
+modules form a signed set under lockdown.
 
-### Pendiente de comprobar en hardware
+### Still to be checked on hardware
 
-Que la cadena compile e instale no prueba que la rotación funcione. Falta ver
-si Mutter 46 de Ubuntu sufre las dos carreras del bloqueo de rotación que el
-port de referencia corrigió con un parche propio; se dejó fuera a propósito,
-para portarlo solo con evidencia.
+That the chain compiles and installs does not prove rotation works. What
+remains is seeing whether Ubuntu's Mutter 46 suffers the two rotation-lock
+races the reference port fixed with a patch of its own; it was deliberately
+left out, to be ported only with evidence.
 
 ---
 
-## Sesión 5 — la cadena de sensores, eslabón a eslabón
+## Session 5 — the sensor chain, link by link
 
-Fecha: 2026-08-01. `apt install chromium` y `firefox` quedaron confirmados por
-la usuaria: el arreglo de `CONFIG_SQUASHFS=y` era la causa.
+Date: 2026-08-01. `apt install chromium` and `firefox` were confirmed by the
+owner: the `CONFIG_SQUASHFS=y` fix was the cause.
 
-La rotación se recorrió midiendo cada eslabón —ADSP → `/dev/fastrpc-adsp` →
-`hexagonrpcd` → SSC → `libssc` → `iio-sensor-proxy` → Mutter— en lugar de
-suponer dónde fallaba. Aparecieron cuatro problemas distintos.
+Rotation was walked through by measuring every link — ADSP →
+`/dev/fastrpc-adsp` → `hexagonrpcd` → SSC → `libssc` → `iio-sensor-proxy` →
+Mutter — instead of guessing where it failed. Four distinct problems appeared.
 
-### 1. Falta una dependencia de ejecución
+### 1. A runtime dependency is missing
 
-`ssccli` e `iio-sensor-proxy` morían con
-`error while loading shared libraries: libqmi-glib.so.5`. El paquete `libssc`
-no declaraba `libqmi-glib5`. Añadida, todos los símbolos resuelven.
+`ssccli` and `iio-sensor-proxy` died with `error while loading shared
+libraries: libqmi-glib.so.5`. The `libssc` package did not declare
+`libqmi-glib5`. Added, every symbol resolves.
 
-### 2. El árbol HexagonFS quedaba un nivel demasiado profundo
+### 2. The HexagonFS tree ended up one level too deep
 
-El tarball anida todo bajo `sensor-hexagonfs/` y el port de referencia lo
-extrae con `--strip-components=1`. Este port lo omitía, y `hexagonrpcd`
-reportaba `Could not open /../sns_reg_version: No such file`.
+The tarball nests everything under `sensor-hexagonfs/` and the reference port
+extracts it with `--strip-components=1`. This port omitted it, and
+`hexagonrpcd` reported `Could not open /../sns_reg_version: No such file`.
 
-Esto importa además porque el parche de Samsung reasigna el mapeo de
-`/sensors/registry/` a `/sensors/`, de modo que el árbol debe tener `dsp`,
-`sensors` y `socinfo` en su raíz.
+It also matters because Samsung's patch remaps `/sensors/registry/` to
+`/sensors/`, so the tree must have `dsp`, `sensors` and `socinfo` at its root.
 
-### 3. La aridad declarada de `apps_std_fwrite` no coincide con este firmware
+### 3. `apps_std_fwrite`'s declared arity does not match this firmware
 
-Al hacer el árbol escribible apareció:
+On making the tree writable, this appeared:
 
 ```
 Invalid number of input numbers: 8 (expected 12)
 ```
 
-El listener exige `4 * (in_nums + in_bufs + out_bufs)`. El parche declara
-`fwrite` como `(2, 1, 2, 0)` → 12 bytes; el firmware envía 8, que son dos
-palabras: `in_nums=1` más la palabra de tamaño que aporta el único búfer de
-entrada. Eso coincide además con el manejador, que lee
-`struct { uint32_t fd; uint32_t buf_size; }`, porque con `in_bufs=1` la palabra
-siguiente a `fd` **es** el tamaño de ese búfer.
+The listener requires `4 * (in_nums + in_bufs + out_bufs)`. The patch declares
+`fwrite` as `(2, 1, 2, 0)` → 12 bytes; the firmware sends 8, which are two
+words: `in_nums=1` plus the size word contributed by the single input buffer.
+That also matches the handler, which reads
+`struct { uint32_t fd; uint32_t buf_size; }`, because with `in_bufs=1` the word
+after `fd` **is** that buffer's size.
 
-Corregido a `(1, 1, 2, 0)` en `packaging/sensors/fix-fwrite-arity.patch`.
-Verificado en hardware: desaparecen tanto el error de aridad como los de
-permiso, y `sns_reg_version` **se escribe** —su fecha pasa de 1970 a la hora
-actual conservando sus 10 bytes—. La ruta de escritura funciona.
+Corrected to `(1, 1, 2, 0)` in `packaging/sensors/fix-fwrite-arity.patch`.
+Verified on hardware: both the arity error and the permission ones disappear,
+and `sns_reg_version` **is written** — its date moves from 1970 to the current
+time while keeping its 10 bytes. The write path works.
 
-### 4. Frente abierto: el DSP pide una interfaz que no existe
+### 4. An open front: the DSP asks for an interface that does not exist
 
-Con todo lo anterior corregido, el daemon vive **104 ms** y sale con estado 0.
-El intercambio completo es:
+With all of the above corrected, the daemon lives **104 ms** and exits with
+status 0. The complete exchange is:
 
 ```
 Starting hexagonrpcd (INIT_ATTACH_SNS) on /dev/fastrpc-adsp
@@ -685,49 +681,48 @@ Could not find local interface sns_registry
 Unsupported handle: 4294967295
 ```
 
-El firmware de sensores pide al AP una interfaz local llamada `sns_registry`.
-`hexagonrpcd` solo ofrece tres —`apps_mem`, `apps_std` y `remotectl`— y la
-palabra `sns_registry` no aparece en ninguna parte de su código, ni siquiera
-con el parche de Samsung. Al no encontrarla, el DSP invoca sobre el handle de
-error `0xFFFFFFFF` y cierra la sesión.
+The sensor firmware asks the AP for a local interface called `sns_registry`.
+`hexagonrpcd` offers only three — `apps_mem`, `apps_std` and `remotectl` — and
+the word `sns_registry` appears nowhere in its code, not even with Samsung's
+patch. Failing to find it, the DSP invokes on the error handle `0xFFFFFFFF` and
+closes the session.
 
-Hechos establecidos, para no repetir el trabajo:
+Facts established, so the work is not repeated:
 
-- **No es un problema de permisos.** Ejecutado como root desaparecen los
-  `Permission denied` y el comportamiento final es idéntico.
-- **No es fatal por sí mismo.** Tanto `Unsupported handle` como
-  `Could not find local interface` devuelven un error al DSP y el listener
-  continúa; lo que termina la sesión es que el DSP la cierra.
-- **El ADSP y el audio sobreviven.** El intento no provoca SSR: la tarjeta
-  ALSA sigue presente después.
-- El árbol correcto hace que el DSP llegue **más lejos**, no menos: con el
-  árbol mal extraído el daemon vivía indefinidamente porque nunca alcanzaba
-  este punto.
+- **It is not a permissions problem.** Run as root the `Permission denied`
+  messages disappear and the final behaviour is identical.
+- **It is not fatal in itself.** Both `Unsupported handle` and `Could not find
+  local interface` return an error to the DSP and the listener carries on; what
+  ends the session is the DSP closing it.
+- **The ADSP and audio survive.** The attempt causes no SSR: the ALSA card is
+  still present afterwards.
+- The correct tree makes the DSP get **further**, not less far: with the badly
+  extracted tree the daemon lived indefinitely because it never reached this
+  point.
 
-### Un aviso
+### A warning
 
-Durante el diagnóstico se ejecutó el daemon como root y truncó
-`sns_reg_version` a 0 bytes al abrirlo para escritura. Se detectó y el árbol se
-restauró desde la copia limpia del overlay de build, verificando que recupera
-sus 10 bytes. Conviene no ejecutar ese daemon como root sobre un árbol que
-importe.
+During diagnosis the daemon was run as root and truncated `sns_reg_version` to
+0 bytes on opening it for writing. It was caught and the tree restored from the
+build overlay's clean copy, verifying that it recovers its 10 bytes. Do not run
+that daemon as root over a tree that matters.
 
-### Estado
+### State
 
-Rotación: sigue sin funcionar. Tres defectos reales corregidos y el cuarto
-caracterizado con precisión. Todo lo demás del dispositivo sigue igual.
+Rotation: still not working. Three real defects fixed and the fourth precisely
+characterised. Everything else on the device is unchanged.
 
-## Autorrotación: resuelta
+## Auto-rotation: solved
 
-La traza completa de FastRPC cerró el caso. Se compiló un `hexagonrpcd` de
-diagnóstico con la opción de meson `hexagonrpcd_verbose`, que registra cada
-llamada que el firmware de sensores hace contra el sistema de ficheros. El
-binario no se instala: es solo para depurar.
+The full FastRPC trace closed the case. A diagnostic `hexagonrpcd` was built
+with the meson option `hexagonrpcd_verbose`, which logs every call the sensor
+firmware makes against the filesystem. The binary is not installed: it is for
+debugging only.
 
-### Lo que se vio
+### What was seen
 
-Con el árbol HexagonFS bien extraído, escribible por el usuario `fastrpc` y con
-la aridad de `fwrite` corregida, la traza pasó de 3 líneas a **757**:
+With the HexagonFS tree correctly extracted, writable by the `fastrpc` user and
+with `fwrite`'s arity corrected, the trace went from 3 lines to **757**:
 
 ```
 openat($ADSP_LIBRARY_PATH, /vendor/etc/sensors/sns_reg_config) -> 2
@@ -741,44 +736,42 @@ readdir(3) -> lsm6dso_0.gyro
 ...
 ```
 
-El `write(3, 10) -> 10` es la prueba directa de que el parche de aridad
-funciona: el DSP consigue por fin actualizar la versión del registro, y a
-partir de ahí recorre entero el directorio de configuración de sensores. La
-petición de `sns_registry` que cerraba la sesión no vuelve a aparecer: era
-consecuencia de que el DSP nunca completaba la carga del registro, no una
-interfaz que hiciera falta implementar.
+The `write(3, 10) -> 10` is direct proof that the arity patch works: the DSP
+finally manages to update the registry's version, and from there walks the
+whole sensor configuration directory. The `sns_registry` request that closed
+the session does not appear again: it was a consequence of the DSP never
+completing the registry load, not an interface that needed implementing.
 
-`ssccli --sensor accelerometer` devuelve entonces medidas reales:
+`ssccli --sensor accelerometer` then returns real measurements:
 
 ```
 Accelerometer sensor measurement: X=0.440279 Y=-0.062213 Z=9.757931 m/s²
 ```
 
-9,76 m/s² en Z con la tablet en horizontal: es la gravedad.
+9.76 m/s² on Z with the tablet flat: that is gravity.
 
-### El cuarto obstáculo: una etiqueta udev que upstream no pone
+### The fourth obstacle: a udev tag upstream does not set
 
-Con el acelerómetro leyéndose, `iio-sensor-proxy` seguía diciendo
-`No accelerometer` mientras sí reconocía la brújula y la luz ambiental. La
-causa está en la regla que trae el propio `iio-sensor-proxy`:
+With the accelerometer being read, `iio-sensor-proxy` still said `No
+accelerometer` while recognising the compass and the ambient light sensor. The
+cause is in the rule `iio-sensor-proxy` itself ships:
 
 ```
 SUBSYSTEM=="misc", KERNEL=="fastrpc-adsp*", ENV{IIO_SENSOR_PROXY_TYPE}+="ssc-light ssc-compass"
 ```
 
-Los cuatro drivers SSC (`ssc-accel`, `ssc-light`, `ssc-compass`,
-`ssc-proximity`) están compilados, pero cada uno solo mira dispositivos que
-lleven su etiqueta. `ssc-accel` no aparece en ninguna regla, así que
-`drv-ssc-accel` nunca recibe un dispositivo que examinar. No es un problema del
-X910 ni de Ubuntu: le pasa a cualquier dispositivo cuyo acelerómetro viva
-detrás del DSP.
+All four SSC drivers (`ssc-accel`, `ssc-light`, `ssc-compass`,
+`ssc-proximity`) are compiled, but each only looks at devices carrying its own
+tag. `ssc-accel` appears in no rule, so `drv-ssc-accel` never receives a device
+to examine. It is a problem neither of the X910 nor of Ubuntu: it happens to
+any device whose accelerometer lives behind the DSP.
 
-La corrección va en `61-gts9u-sensor-mount-matrix.rules`, junto a la matriz de
-montaje que ya tocaba ese mismo nodo. `IIO_SENSOR_PROXY_TYPE` es una lista
-separada por espacios construida con `+=`, de modo que el orden respecto a la
-regla `80-` de upstream es indiferente.
+The fix goes in `61-gts9u-sensor-mount-matrix.rules`, next to the mount matrix
+that already touched that same node. `IIO_SENSOR_PROXY_TYPE` is a
+space-separated list built with `+=`, so the order relative to upstream's `80-`
+rule does not matter.
 
-Tras aplicarla:
+After applying it:
 
 ```
 IIO_SENSOR_PROXY_TYPE=ssc-accel ssc-light ssc-compass
@@ -787,325 +780,322 @@ Found SSC accelerometer at /sys/devices/virtual/misc/fastrpc-adsp
 {'HasAccelerometer': <true>, ...}
 ```
 
-La orientación sale `undefined` con la tablet en horizontal, que es la
-respuesta correcta: con la gravedad en Z no hay orientación de pantalla que
-deducir.
+The orientation comes out `undefined` with the tablet flat, which is the
+correct answer: with gravity on Z there is no screen orientation to deduce.
 
-### Verificación desde arranque en frío
+### Verification from a cold boot
 
-Reiniciada la tablet, sin ninguna intervención manual:
+With the tablet rebooted and no manual intervention:
 
 | | |
 |---|---|
 | `pd-mapper` | active |
-| `hexagonrpcd-adsp-sensorspd` | active, 1 proceso vivo |
+| `hexagonrpcd-adsp-sensorspd` | active, 1 process alive |
 | `iio-sensor-proxy` | active |
-| etiqueta udev | `ssc-accel ssc-light ssc-compass` |
-| acelerómetro | 9,76 m/s² en Z |
-| tarjeta ALSA | presente |
+| udev tag | `ssc-accel ssc-light ssc-compass` |
+| accelerometer | 9.76 m/s² on Z |
+| ALSA card | present |
 
-El daemon ya no muere a los 104 ms: se mantiene sirviendo el árbol.
+The daemon no longer dies at 104 ms: it stays up serving the tree.
 
-### Los cuatro obstáculos, en orden
+### The four obstacles, in order
 
-1. **Árbol HexagonFS extraído un nivel de más** — faltaba
-   `--strip-components=1`. El DSP no encontraba nada.
-2. **Árbol de solo lectura para el daemon** — el firmware necesita escribir la
-   caché del registro; sin eso abandona.
-3. **Aridad de `apps_std_fwrite` mal declarada** — `(2,1,2,0)` exige 12 bytes de
-   entrada y este firmware envía 8. Corregido a `(1,1,2,0)`.
-4. **Etiqueta udev `ssc-accel` inexistente** — `iio-sensor-proxy` nunca
-   consideraba el nodo FastRPC como acelerómetro.
+1. **HexagonFS tree extracted one level too deep** — `--strip-components=1` was
+   missing. The DSP found nothing.
+2. **A read-only tree for the daemon** — the firmware needs to write the
+   registry's cache; without that it gives up.
+3. **`apps_std_fwrite`'s arity declared wrongly** — `(2,1,2,0)` requires 12
+   input bytes and this firmware sends 8. Corrected to `(1,1,2,0)`.
+4. **A non-existent `ssc-accel` udev tag** — `iio-sensor-proxy` never
+   considered the FastRPC node an accelerometer.
 
-Ninguno era específico de Ubuntu; los cuatro son defectos reales del camino
-genérico, y las cuatro correcciones viven en el repositorio.
+None was specific to Ubuntu; all four are real defects of the generic path, and
+all four fixes live in the repository.
 
-### Efecto colateral que conviene conocer
+### A side effect worth knowing
 
-Reiniciar el ADSP por `remoteproc` con el sistema arrancado deja el sistema
-**sin tarjeta de sonido**: los servicios de audio no vuelven a registrarse
-solos. Un reinicio del sistema la recupera. Durante el diagnóstico se reinició
-el ADSP varias veces; se comprobó después del reinicio que la tarjeta
-`Samsung-Galaxy-Tab-S9-Ultra` vuelve a estar presente.
+Restarting the ADSP through `remoteproc` with the system running leaves the
+system **with no sound card**: the audio services do not re-register
+themselves. A system reboot recovers it. During diagnosis the ADSP was
+restarted several times; it was checked after the reboot that the
+`Samsung-Galaxy-Tab-S9-Ultra` card is present again.
 
-## Autorrotación: la causa raíz, y por qué el port de referencia no la sufría
+## Auto-rotation: the root cause, and why the reference port did not suffer it
 
-Los parches de `rename` y del búfer del listener son correctos y necesarios
-para que el DSP *pueda* reconstruir el registro. Pero la pregunta buena era
-otra: por qué lo reconstruye, si postmarketOS usa el mismo `hexagonrpcd` 0.4.0
-con un único parche y allí la rotación funciona.
+The `rename` and listener-buffer patches are correct and necessary for the DSP
+to *be able* to rebuild the registry. But the better question was a different
+one: why does it rebuild it at all, when postmarketOS uses the same
+`hexagonrpcd` 0.4.0 with a single patch and rotation works there.
 
-La respuesta estaba escrita en el propio generador del árbol del port de
-referencia, `stage-stock-sensor-hexagonfs.sh`:
+The answer was written in the reference port's own tree generator,
+`stage-stock-sensor-hexagonfs.sh`:
 
 > Samsung's registry service uses this zero-length file as the completion
 > marker and the companion JSON as a per-input timestamp cache. Omitting either
 > makes the DSP rebuild the registry through a temp.json + rename sequence.
 
-Dos ficheros gobiernan todo:
+Two files govern everything:
 
-- `sensors/registry/sensors_registry`, de longitud cero, marca el registro como
-  completo;
-- `sensors/registry/sns_reg_config` es un caché que guarda, para cada JSON de
-  `sensors/config`, la fecha que tenía cuando se generó el registro.
+- `sensors/registry/sensors_registry`, of zero length, marks the registry as
+  complete;
+- `sensors/registry/sns_reg_config` is a cache holding, for each JSON in
+  `sensors/config`, the date it had when the registry was generated.
 
-El árbol se construye con **todas las fechas normalizadas a la época**, así que
-el caché guarda `"data": "0"`. El DSP compara ese valor contra el `stat()` de
-cada JSON: si no coincide, reconstruye.
+The tree is built with **every date normalised to the epoch**, so the cache
+stores `"data": "0"`. The DSP compares that value against each JSON's `stat()`:
+if they disagree, it rebuilds.
 
-Nuestro overlay era correcto —los dos ficheros presentes, fechas a cero—, pero
-el instalador TWRP escribe cada fichero con `unzip -p > destino`, que no
-conserva ninguna fecha. En la tablet los JSON acababan con la hora del reloj de
-la recovery, julio de 2025, y el caché decía cero. De ahí la reconstrucción en
-cada arranque, y con ella la petición de `sns_registry` que cerraba la sesión.
+Our overlay was correct — both files present, dates at zero — but the TWRP
+installer writes each file with `unzip -p > destination`, which preserves no
+dates at all. On the tablet the JSONs ended up with the recovery's clock,
+July 2025, while the cache said zero. Hence the rebuild on every boot, and with
+it the `sns_registry` request that closed the session.
 
-### La corrección
+### The fix
 
-`ubuntu-gts9u-sensor-registry.service`, un `oneshot` ordenado antes de
-`hexagonrpcd`, normaliza las fechas del árbol a la época y le devuelve la
-propiedad al usuario `fastrpc`. Se hace en el lado Ubuntu y no en el
-instalador a propósito: aquí hay `coreutils` de GNU y `touch -d @0` se comporta
-igual siempre, mientras que el `busybox` de TWRP varía; y además repara un
-árbol que haya quedado a medio reconstruir por un intento anterior.
+`ubuntu-gts9u-sensor-registry.service`, a `oneshot` ordered before
+`hexagonrpcd`, normalises the tree's dates to the epoch and returns ownership
+to the `fastrpc` user. It is done on the Ubuntu side rather than in the
+installer on purpose: here there is GNU `coreutils` and `touch -d @0` behaves
+the same every time, while TWRP's `busybox` varies; and it also repairs a tree
+left half-rebuilt by an earlier attempt.
 
-### Verificación desde arranque en frío
+### Verification from a cold boot
 
 | | |
 |---|---|
-| `hexagonrpcd-adsp-sensorspd` | active, 1 proceso |
-| acelerómetro | X=8.55 Y=0.00 Z=4.84 m/s², módulo 9.82 con la tablet inclinada |
+| `hexagonrpcd-adsp-sensorspd` | active, 1 process |
+| accelerometer | X=8.55 Y=0.00 Z=4.84 m/s², magnitude 9.82 with the tablet tilted |
 | `AccelerometerOrientation` | `normal` |
 | `AccelerometerTilt` | `tilted-up` |
-| tarjeta ALSA | presente |
+| ALSA card | present |
 
-Sin intervención manual y sin reconstruir el registro.
+With no manual intervention and without rebuilding the registry.
 
-### Qué queda de los dos parches
+### What remains of the two patches
 
-Siguen en el repositorio y siguen siendo correctos: sin ellos, cualquier
-reconstrucción del registro —por un árbol recién generado, por una fecha que se
-descuadre, por un JSON nuevo— muere en la primera entrada. Con ellos, la
-reconstrucción se completa entera. Lo que no arreglan es la etapa siguiente,
-`sns_registry`, y por eso conviene no llegar a necesitarla.
+They stay in the repository and remain correct: without them, any rebuild of
+the registry — from a freshly generated tree, from a date that slips, from a
+new JSON — dies on the first entry. With them, the rebuild completes in full.
+What they do not fix is the next stage, `sns_registry`, which is why it is
+better never to need it.
 
 ---
+## Session 6 — the EF-DX920 cover's STM32 answers once powered
 
-## Sesión 6 — el STM32 de la funda EF-DX920 responde al alimentarlo
+Date: 2026-08-02.
 
-Fecha: 2026-08-02.
+### Correcting an earlier conclusion: it is not `i2c-gpio`
 
-### Corrección de una conclusión anterior: no es `i2c-gpio`
-
-La primera lectura del fragmento `stm32@2a` vio las propiedades
-`stm32,sda_gpio = <&tlmm 72 ...>` y `stm32,scl_gpio = <&tlmm 106 ...>` y dedujo
-que el MCU usaba un bus bit-bang. Era incorrecto. La tabla `__fixups__` del
-mismo DTBO contiene la asociación decisiva:
+The first reading of the `stm32@2a` fragment saw the properties
+`stm32,sda_gpio = <&tlmm 72 ...>` and `stm32,scl_gpio = <&tlmm 106 ...>` and
+deduced the MCU used a bit-banged bus. That was wrong. The same DTBO's
+`__fixups__` table contains the decisive association:
 
 ```
 qupv3_se15_i2c = "/fragment@70:target:0";
 ```
 
-El fragmento 70 es `stm32@2a`. En mainline el controlador es `i2c15`, y su
-pinctrl upstream ya asigna exactamente GPIO72/106 a `qup2_se7`. Crear además
-un `i2c-gpio` habría hecho competir dos maestros por las mismas líneas.
+Fragment 70 is `stm32@2a`. In mainline the controller is `i2c15`, and its
+upstream pinctrl already assigns exactly GPIO72/106 to `qup2_se7`. Creating an
+`i2c-gpio` as well would have made two masters compete for the same lines.
 
-El DT stock también separa el booster: `kbd_boost@18` está en
-`qupv3_hub_i2c4`, no en SE15, y `stm32,booster_power_models` solo contiene
-`0xf9` y `0xd3`. EF-DX920 aparece como modelo `0xd6`, de modo que el primer
-bring-up puede omitir el MAX77816 con respaldo documental.
+The stock DT also separates the booster: `kbd_boost@18` is on
+`qupv3_hub_i2c4`, not on SE15, and `stm32,booster_power_models` contains only
+`0xf9` and `0xd3`. The EF-DX920 appears as model `0xd6`, so the first bring-up
+can skip the MAX77816 with documentary backing.
 
-### Prueba física reversible de alimentación
+### A reversible physical power test
 
-El kernel arrancado expone GPIO chardev v2, aunque las herramientas de Ubuntu
-24.04 solo hablan v1. Se escribió una sonda temporal que usa directamente los
-ioctl v2, sin modificar el rootfs ni ninguna partición. Sobre el TLMM principal
-aplicó la secuencia del DT Samsung:
+The booted kernel exposes the GPIO chardev v2, even though Ubuntu 24.04's tools
+speak only v1. A temporary probe was written that uses the v2 ioctls directly,
+modifying neither the root filesystem nor any partition. On the main TLMM it
+applied the Samsung DT's sequence:
 
 - GPIO10=1: VDDO;
 - GPIO12=0: BOOT0/SWCLK;
-- GPIO13=1: reset liberado.
+- GPIO13=1: reset released.
 
-Al cabo de 100 ms GPIO62 (`irq_conn`) empezó a mostrar actividad periódica y
-GPIO75 (`irq_gpio`) produjo también una transición. Al cerrar los descriptores
-los GPIO quedaron liberados. La prueba anterior con los tres pines muertos no
-refutaba el cableado: el MCU estaba sin alimentar. Esta medida confirma VDDO y
-las líneas de control, pero todavía no confirma teclas; eso exige SE15.
+After 100 ms, GPIO62 (`irq_conn`) began showing periodic activity and GPIO75
+(`irq_gpio`) also produced a transition. On closing the descriptors the GPIOs
+were released. The earlier test with three dead pins did not refute the wiring:
+the MCU was unpowered. This measurement confirms VDDO and the control lines,
+but does not yet confirm keys; that requires SE15.
 
-### Fuentes GPL y primer driver mainline
+### GPL sources and the first mainline driver
 
-Se importaron 19 ficheros de la implementación V3 desde la publicación oficial
-`SM-X910_EUR_16_Opensource.zip`, verificando primero el SHA-256 del archivo.
-Quedan intactos bajo `kernel/vendor/samsung-stm32-pogo/` con un
-`SHA256SUMS`. No se importó firmware binario.
+Nineteen files of the V3 implementation were imported from the official
+`SM-X910_EUR_16_Opensource.zip` release, verifying the archive's SHA-256 first.
+They stay untouched under `kernel/vendor/samsung-stm32-pogo/` with a
+`SHA256SUMS`. No binary firmware was imported.
 
-Portar sin cambios las 11.652 líneas downstream arrastraría `sec_class`, MUIC,
-notificadores Android, `msm-bus` y la ruta FOTA. Para el modelo real se escribió
-un subconjunto mainline pequeño que conserva el protocolo observado en las
-fuentes Samsung:
+Porting the downstream's 11,652 lines unchanged would drag in `sec_class`, the
+MUIC, Android notifiers, `msm-bus` and the FOTA path. For the real model a
+small mainline subset was written that keeps the protocol observed in Samsung's
+sources:
 
-- cabecera de tres bytes y eventos por IRQ activa baja;
-- modelo `0xd6` / EF-DX920;
-- eventos de teclado de 16 bits: keycode Linux en bits 0..14 y press en bit 15;
-- estado del LED Caps Lock en la siguiente cabecera;
-- evento Hall del MCU traducido a `SW_LID` (`2` abierto, cualquier otro valor
-  cerrado).
+- a three-byte header and events on an active-low IRQ;
+- model `0xd6` / EF-DX920;
+- 16-bit keyboard events: the Linux keycode in bits 0..14 and press in bit 15;
+- the Caps Lock LED's state in the following header;
+- the MCU's Hall event translated to `SW_LID` (`2` open, any other value
+  closed).
 
-El DTS nuevo habilita QUPv3 SE15 a 400 kHz, el regulador con GPIO10 y las cuatro
-líneas de control/IRQ exactas. El controlador queda built-in, como todos los
-proveedores de este port. También se añade `CONFIG_GPIO_CDEV_V1=y` para que las
-herramientas libgpiod 1.6 de Noble dejen de dar falsos `Invalid argument`.
+The new DTS enables QUPv3 SE15 at 400 kHz, the regulator with GPIO10 and the
+four exact control/IRQ lines. The controller stays built in, like every
+provider in this port. `CONFIG_GPIO_CDEV_V1=y` is also added so Noble's
+libgpiod 1.6 tools stop giving false `Invalid argument` errors.
 
-### Estado al terminar esta entrada
+### State at the end of this entry
 
-El kernel compiló correctamente con el driver built-in y el DTB resultante
-contiene `keyboard@2a` bajo `i2c15`, el regulador VDDO y los cuatro GPIO
-esperados. `llvm-nm` confirmó también el registro estático del driver.
+The kernel compiled correctly with the driver built in and the resulting DTB
+contains `keyboard@2a` under `i2c15`, the VDDO regulator and the four expected
+GPIOs. `llvm-nm` also confirmed the driver's static registration.
 
-Al empaquetar v0.8 apareció una regresión del entorno: `sgdisk --zap-all`
-escribía el archivo y quedaba bloqueado para siempre dentro de `sync(2)`, en
-`super_lock`. Se reprodujo con una imagen nueva de solo 16 MiB y se localizó la
-syscall exacta con `strace`; no era un fallo del layout. La creación de la GPT
-del archivo recién recreado se cambió a `sfdisk`, manteniendo los offsets,
-tipos y etiquetas. La regla de limpiar una microSD física con
-`sgdisk --zap-all` antes de escribirla permanece intacta.
+While packaging v0.8 an environment regression appeared: `sgdisk --zap-all`
+wrote the file and then blocked forever inside `sync(2)`, in `super_lock`. It
+was reproduced with a fresh image of only 16 MiB and the exact syscall located
+with `strace`; it was not a layout fault. Creating the GPT on the freshly
+recreated file was switched to `sfdisk`, keeping the offsets, types and labels.
+The rule of cleaning a physical microSD with `sgdisk --zap-all` before writing
+it stays intact.
 
-La release v0.8 terminó con todas las validaciones estáticas aprobadas:
+Release v0.8 finished with every static validation passing:
 
-- ZIP TWRP: SHA-256
+- TWRP ZIP: SHA-256
   `35a48756961bb5c72eb207af6a3a5981a868add3c49108fe74a98b936ba17652`;
-- imagen SD comprimida: SHA-256
+- compressed SD image: SHA-256
   `a24ce5f3fbc1b246311af046ad4e8876f9d87ffe34ffb4ab72a26a6febe1e093`.
 
-Nada se ha flasheado y el driver todavía no puede marcarse funcional. La
-siguiente evidencia exigida es que `i2c15` sondee `0x2a`, aparezca el
-dispositivo de entrada y las pulsaciones físicas generen eventos correctos sin
-regresiones en audio, Wi-Fi, rotación ni suspensión.
+Nothing has been flashed and the driver cannot yet be marked working. The next
+evidence required is that `i2c15` probes `0x2a`, that the input device appears,
+and that physical presses generate correct events with no regressions in audio,
+Wi-Fi, rotation or suspend.
 
-Como línea base previa a la instalación se consultó la v0.7 por SSH: kernel
-`7.2.0-rc3-dirty`, GDM activo, ninguna unidad fallida y, como era esperable en
-esa versión, ni `i2c-15` ni `15-002a` presentes en sysfs.
-
----
-
-## Sesión 7 — v0.8 en hardware: recuperación del rootfs y diagnóstico del pogo
-
-Fecha: 2026-08-02.
-
-### La pantalla negra no era una regresión de arranque
-
-El ZIP v0.8 se instaló desde TWRP con todos sus hashes correctos, pero el primer
-reinicio quedó con el panel negro y sin red. Se descartó expresamente un gadget
-USB llamado `postmarketos`: pertenecía a otro dispositivo conectado al PC, no
-a la X910 que ejecuta Ubuntu.
-
-`/proc/last_kmsg` solo alcanzaba `ExitBootServices`; no contenía panic. El
-journal persistente de la microSD dio la causa exacta: `systemd-fsck-root`
-terminó con código 4 por una inconsistencia inesperada y varios inodos sin
-enlazar, y systemd entró en `emergency.target`. El panel negro ocultó el prompt
-y simuló un fallo anterior al kernel.
-
-Desde TWRP se ejecutó una reparación explícita sobre la partición Ubuntu:
-`e2fsck -f -y` recuperó tres inodos pequeños en `lost+found` y corrigió los
-bitmaps y contadores. Una segunda pasada `e2fsck -f -n` terminó con código 0.
-Tras reiniciar, la tablet arrancó v0.8 con GNOME y Wi-Fi activos. El rootfs está
-montado desde la microSD como ext4 `rw,noatime,errors=remount-ro`.
-
-Para que un rootfs sucio no vuelva a presentarse como una regresión del kernel,
-el instalador TWRP pasa ahora `e2fsck -p` **antes** de montarlo en lectura y
-escritura. Solo continúa si el sistema estaba limpio o si se corrigieron errores
-seguros automáticamente; cualquier código más grave aborta antes de escribir
-las particiones y pide una reparación manual. La validación estática del ZIP
-comprueba que esta guarda siga empaquetada.
-
-### Lo que v0.8 demuestra y lo que no
-
-El driver sondea en el controlador dinámico `i2c-5` (`89c000.i2c`; el número no
-es el alias de hardware), registra `Book Cover Keyboard Slim (EF-DX920)` como
-dispositivo I²C de entrada y anuncia `connected=0, data-ready=0`. Eso prueba el
-enlace del driver, no teclas funcionales. Una captura de `evtest` no recibió
-eventos y el contador de la IRQ de datos GPIO75 permaneció a cero.
-
-Una sonda reversible, con el driver y el regulador liberados y restaurados al
-salir, aplicó VDDO=1, BOOT0=0 y NRST=1. GPIO62 pasó a detectar la funda y a
-oscilar en reintentos de aproximadamente dos segundos; GPIO75 se mantuvo alto.
-El MCU ve la conexión física pero nunca anuncia un paquete.
-
-La relectura completa del driver GPL de Samsung encontró dos omisiones en la
-v0.8. Primero, el stock usa GPIO62 en ambos flancos como máquina de estados:
-enciende VDDO al conectar, espera 50 ms, habilita GPIO75 activa baja y revierte
-todo al desconectar. Segundo, el MAX77816 de `qupv3_hub_i2c4` sí es necesario:
-la lista de modelos solo controla un ajuste posterior, mientras que la rutina
-de encendido de la salida se ejecuta siempre. Escribe `0x03 = 0x70` y
-`0x02 = 0x8e`. En v0.8 dicho bus está deshabilitado, por lo que la lógica del
-STM32 arranca pero la alimentación reforzada de la funda no.
-
-### Siguiente iteración
-
-La v0.9 debe implementar la IRQ de conexión y la secuencia de potencia del
-stock, habilitar `i2c_hub_4` y programar el MAX77816 con un driver built-in.
-Solo se considerará funcional tras observar pulsaciones reales en `evtest`;
-la mera aparición del dispositivo de entrada no basta.
+As a pre-installation baseline, v0.7 was queried over SSH: kernel
+`7.2.0-rc3-dirty`, GDM active, no failed unit and, as expected in that version,
+neither `i2c-15` nor `15-002a` present in sysfs.
 
 ---
 
-## Sesión 8 — v0.9: el STM32 arranca y aparece el input real del EF-DX920
+## Session 7 — v0.8 on hardware: root filesystem recovery and pogo diagnosis
 
-Fecha: 2026-08-02.
+Date: 2026-08-02.
 
-### Una primera regresión real y su corrección
+### The black screen was not a boot regression
 
-La primera v0.9 habilitó `i2c_hub_4` en PIO. Ese controlador reclamó TLMM4/5 y
-el ADSP dejó de sondear porque `6800000.remoteproc` usa las mismas líneas en su
-pinctrl. Se restauró inmediatamente el `boot` v0.8 y se rehízo SE4 con GPI DMA,
-igual que el SE3 ya validado para el SM5440. También se retiró del nodo ADSP la
-propiedad de pinctrl que no debe poseer un bus delegado a GPI. En el siguiente
-arranque el ADSP volvió a `running` y desapareció el conflicto de GPIO.
+The v0.8 ZIP was installed from TWRP with all its hashes correct, but the first
+reboot left the panel black and the network down. A USB gadget called
+`postmarketos` was expressly ruled out: it belonged to another device connected
+to the PC, not to the X910 running Ubuntu.
 
-SSC no apareció en ese arranque. Para no atribuirlo al teclado se hicieron dos
-controles negativos. Primero se desregistraron en vivo tanto `6-002a` como
-`990000.i2c`, se reinició el ADSP y se sondeó SSC doce veces: siguió devolviendo
-`SSC QMI Service not found`. Después se arrancó de nuevo el `boot` v0.8 limpio
-y se esperó la ventana completa del servicio: tampoco aparecieron sensorspd ni
-el acelerómetro. Por tanto es la intermitencia ya conocida de SSC, no una
-regresión de SE4; al terminar se restauró la v0.9.
+`/proc/last_kmsg` only reached `ExitBootServices`; it contained no panic. The
+microSD's persistent journal gave the exact cause: `systemd-fsck-root` ended
+with code 4 due to an unexpected inconsistency and several unlinked inodes, and
+systemd entered `emergency.target`. The black panel hid the prompt and
+simulated a failure earlier than the kernel.
 
-### Alimentación correcta, aplicación muda
+From TWRP an explicit repair was run on the Ubuntu partition: `e2fsck -f -y`
+recovered three small inodes into `lost+found` and corrected the bitmaps and
+counters. A second `e2fsck -f -n` pass ended with code 0. After rebooting, the
+tablet came up on v0.8 with GNOME and Wi-Fi active. The root filesystem is
+mounted from the microSD as ext4 `rw,noatime,errors=remount-ro`.
 
-El driver pasó a gestionar GPIO62 en ambos flancos con 250 ms de debounce,
-GPIO75 como nivel bajo, VDDO y el MAX77816. En vivo se leyeron sus registros:
-`CONFIG1=0x8e`, `CONFIG2=0x70` y tensión por defecto `0x23`; las escrituras sí
-llegaban. Aun así, la dirección de aplicación `0x2a` seguía en NACK y GPIO75 no
-generaba IRQ. El input dejó de registrarse en `probe`: ahora solo se crea tras
-recibir el modelo exacto `0xd6`, evitando que GNOME desactive la autorrotación
-por un teclado fantasma.
+So that a dirty root filesystem does not present itself as a kernel regression
+again, the TWRP installer now runs `e2fsck -p` **before** mounting it read-write.
+It continues only if the filesystem was clean or safe errors were corrected
+automatically; any more serious code aborts before writing the partitions and
+asks for a manual repair. The ZIP's static validation checks this guard is
+still packaged.
 
-El código Samsung aportó la siguiente prueba decisiva. Antes de usar la
-aplicación siempre entra en el bootloader I²C del STM32, valida el firmware y
-vuelve al flash principal. Se reprodujo solo la parte de lectura:
+### What v0.8 proves and what it does not
 
-- bootloader ROM en `0x51`: accesible;
-- product ID: `0x0460`, el esperado por Samsung;
-- versión en `0x08000200`: `00 34 00 34`;
-- imagen oficial `keyboard_stm/stm32_gts9family.bin`: `00 37 00 37`, 52.132
+The driver probes on the dynamic controller `i2c-5` (`89c000.i2c`; the number
+is not the hardware alias), registers `Book Cover Keyboard Slim (EF-DX920)` as
+an I²C input device and announces `connected=0, data-ready=0`. That proves the
+driver bound, not working keys. An `evtest` capture received no events and the
+GPIO75 data IRQ's counter stayed at zero.
+
+A reversible probe, with the driver and regulator released and restored on
+exit, applied VDDO=1, BOOT0=0 and NRST=1. GPIO62 began detecting the cover and
+oscillating on retries of roughly two seconds; GPIO75 stayed high. The MCU sees
+the physical connection but never announces a packet.
+
+A complete re-read of Samsung's GPL driver found two omissions in v0.8. First,
+the stock uses GPIO62 on both edges as a state machine: it powers VDDO on
+connection, waits 50 ms, enables the active-low GPIO75 and reverses everything
+on disconnection. Second, `qupv3_hub_i2c4`'s MAX77816 is needed after all: the
+model list controls only a subsequent adjustment, while the output's power-on
+routine always runs. It writes `0x03 = 0x70` and `0x02 = 0x8e`. In v0.8 that
+bus is disabled, so the STM32's logic starts but the cover's boosted supply
+does not.
+
+### The next iteration
+
+v0.9 must implement the connection IRQ and the stock's power sequence, enable
+`i2c_hub_4` and program the MAX77816 with a built-in driver. It will be
+considered working only after observing real presses in `evtest`; the input
+device merely appearing is not enough.
+
+---
+
+## Session 8 — v0.9: the STM32 starts and the EF-DX920's real input appears
+
+Date: 2026-08-02.
+
+### A first real regression and its correction
+
+The first v0.9 enabled `i2c_hub_4` in PIO. That controller claimed TLMM4/5 and
+the ADSP stopped probing, because `6800000.remoteproc` uses the same lines in
+its pinctrl. The v0.8 `boot` was restored immediately and SE4 was redone with
+GPI DMA, like the SE3 already validated for the SM5440. The pinctrl property a
+bus delegated to GPI must not own was also removed from the ADSP node. On the
+next boot the ADSP was back to `running` and the GPIO conflict was gone.
+
+SSC did not appear on that boot. So as not to attribute it to the keyboard, two
+negative controls were run. First both `6-002a` and `990000.i2c` were
+deregistered live, the ADSP restarted and SSC probed twelve times: it kept
+returning `SSC QMI Service not found`. Then the clean v0.8 `boot` was started
+again and the service's full window waited out: neither sensorspd nor the
+accelerometer appeared there either. It is therefore SSC's already-known
+intermittency, not an SE4 regression; v0.9 was restored at the end.
+
+### Correct power, mute application
+
+The driver moved to handling GPIO62 on both edges with 250 ms of debounce,
+GPIO75 as level-low, VDDO and the MAX77816. Its registers were read live:
+`CONFIG1=0x8e`, `CONFIG2=0x70` and the default voltage `0x23`; the writes were
+arriving. Even so, the application address `0x2a` kept NACKing and GPIO75
+generated no IRQ. The input stopped being registered in `probe`: it is now
+created only after receiving the exact model `0xd6`, preventing GNOME from
+disabling auto-rotation because of a phantom keyboard.
+
+Samsung's code supplied the next decisive test. Before using the application it
+always enters the STM32's I²C bootloader, validates the firmware and returns to
+the main flash. Only the reading part was reproduced:
+
+- ROM bootloader at `0x51`: reachable;
+- product ID: `0x0460`, the one Samsung expects;
+- version at `0x08000200`: `00 34 00 34`;
+- official image `keyboard_stm/stm32_gts9family.bin`: `00 37 00 37`, 52,132
   bytes, SHA-256
   `1b48d88c23523ae205cd960e6d42725268638a15a47d8a5e52854eb01108caa3`.
 
-Se añadió un actualizador explícito, accesible solo por root. Rechaza cualquier
-tamaño o versión inesperados, borra solo las 31 páginas que borra Samsung
-(conserva la última), programa en bloques de 256 bytes y relee/compara el blob
-completo. Con la tablet cargando y al 89 %, la actualización terminó sin un
-solo byte distinto. Un reinicio confirmó la versión `00 37 00 37`. Los option
-bytes leídos después fueron `aa fe ff fe`: RDP nivel 0 y bit 24 ya borrado, de
-modo que no hizo falta escribirlos.
+An explicit updater was added, reachable only by root. It rejects any
+unexpected size or version, erases only the 31 pages Samsung erases (keeping
+the last), programs in 256-byte blocks and reads back and compares the whole
+blob. With the tablet charging and at 89 %, the update finished without a
+single differing byte. A reboot confirmed version `00 37 00 37`. The option
+bytes read afterwards were `aa fe ff fe`: RDP level 0 and bit 24 already
+cleared, so they did not need writing.
 
-### Causa final del silencio
+### The final cause of the silence
 
-El firmware nuevo todavía quedaba mudo porque nuestro driver hacía un segundo
-reset justo después de activar VDDO/MAX77816. Esa hipótesis procedía de una
-lectura incompleta: Samsung resetea al salir del bootloader, **antes** de la
-conexión, pero su `stm32_keyboard_start()` solo alimenta, espera 50 ms y
-habilita la IRQ; no vuelve a resetear. Al eliminar ese reset adicional, el
-primer arranque produjo:
+The new firmware was still mute because our driver did a second reset right
+after enabling VDDO/MAX77816. That hypothesis came from an incomplete reading:
+Samsung resets on leaving the bootloader, **before** the connection, but its
+`stm32_keyboard_start()` only powers up, waits 50 ms and enables the IRQ; it
+does not reset again. On removing that extra reset, the first boot produced:
 
 ```
 STM32 bootloader reachable, product id 0x460, flash version 00 37 00 37
@@ -1113,404 +1103,399 @@ keyboard attached, model 0xd6 (EF-DX920)
 EF-DX920 protocol confirmed; input enabled
 ```
 
-`/proc/bus/input/devices` y `evtest` muestran el dispositivo I²C Samsung
-`04e8:a035` con `EV_KEY`, `EV_LED/LED_CAPSL` y `EV_SW/SW_LID`. Desconectar la
-funda lo elimina y reconectarla lo vuelve a registrar. El paquete inicial
-`0x7fff` queda fuera del rango de keycodes, igual que en el parser bypass de
-Samsung; se ignora. La tecla se había dejado pulsada antes de alimentar el
-teclado y el firmware no reporta transiciones anteriores, así que falta una
-pulsación física nueva para elevar la fila a soporte completo.
+`/proc/bus/input/devices` and `evtest` show the Samsung I²C device
+`04e8:a035` with `EV_KEY`, `EV_LED/LED_CAPSL` and `EV_SW/SW_LID`.
+Disconnecting the cover removes it and reconnecting registers it again. The
+initial packet `0x7fff` falls outside the keycode range, as in Samsung's bypass
+parser; it is ignored. The key had been left pressed before the keyboard was
+powered and the firmware reports no earlier transitions, so a fresh physical
+press is still needed to raise the row to full support.
 
-### Reproducibilidad
+### Reproducibility
 
-El firmware propietario no entra en Git. `stage-stock-pogo-firmware.sh` lo
-toma del vendor oficial ya extraído y comprueba el SHA-256 fijado; el overlay
-lo instala bajo `/lib/firmware/keyboard_stm/`. El paquete
-`ubuntu-gts9u-device` 1.2 añade una unidad oneshot que solicita la actualización
-solo con el blob exacto, al menos 50 % de batería y alimentación externa. Si la
-versión ya es `00 37 00 37`, el driver no escribe nada. La imagen instalada en
-vivo quedó de nuevo en la v0.9 y Wi-Fi/SSH, audio, GPU, táctil y DSI se
-comprobaron presentes.
+The proprietary firmware does not go into Git.
+`stage-stock-pogo-firmware.sh` takes it from the already-extracted official
+vendor image and checks the pinned SHA-256; the overlay installs it under
+`/lib/firmware/keyboard_stm/`. Package `ubuntu-gts9u-device` 1.2 adds a oneshot
+unit that requests the update only with the exact blob, at least 50 % battery
+and external power. If the version is already `00 37 00 37`, the driver writes
+nothing. The live installed image was returned to v0.9 and Wi-Fi/SSH, audio,
+GPU, touch and DSI were checked present.
 
-La release completa v0.9 también se construyó desde cero: 985 paquetes, paquete
-de dispositivo 1.2 y unidad pogo habilitada dentro de la imagen SD. Se montó la
-imagen terminada en solo lectura para comprobar esos tres datos. El ZIP superó
-todas las validaciones estáticas y contiene el firmware STM32 de 52.132 bytes
-con el hash fijado. Artefactos finales:
+The complete v0.9 release was also built from scratch: 985 packages, device
+package 1.2 and the pogo unit enabled inside the SD image. The finished image
+was mounted read-only to check those three facts. The ZIP passed every static
+validation and contains the 52,132-byte STM32 firmware with the pinned hash.
+Final artefacts:
 
-- imagen SD comprimida: SHA-256
+- compressed SD image: SHA-256
   `fdeaf00cd5d64f9e0b16d39f9a9f1914a4e8a4fa59824e80fef680e6d1186eab`;
-- ZIP TWRP: SHA-256
+- TWRP ZIP: SHA-256
   `5477e23cd9c1884237b7171c6dafbd4271eca1e7c39ad06f150f7ab2a1187c16`;
-- `boot.img` ejecutado en la tablet: SHA-256
+- `boot.img` running on the tablet: SHA-256
   `f77de14e484b83bb31ead3e557e10d441b87e8c92e5f05c84d48600ba24e4ffe`.
 
 ---
+## Session 9 — the application fully initialised, and polling withdrawn
 
-## Sesión 9 — inicialización completa de la aplicación y sondeo descartado
+Date: 2026-08-02.
 
-Fecha: 2026-08-02.
+### The application layer does get initialised
 
-### La capa de aplicación sí queda inicializada
+Fresh physical presses were observed simultaneously with `evtest`, the GPIO75
+IRQ counter and the journal. No `EV_KEY` appeared and the counter stayed still.
+This corrects the previous session's provisional conclusion: the input is real
+and dynamic, but the keys still do not work.
 
-Las pulsaciones físicas nuevas se observaron simultáneamente con `evtest`, el
-contador de la IRQ GPIO75 y el journal. No apareció ningún `EV_KEY` y el
-contador permaneció inmóvil. Esto corrige la conclusión provisional de la
-sesión anterior: el input es real y dinámico, pero las teclas aún no funcionan.
-
-La comparación con `stm32_check_ic_work()` de Samsung reveló la fase que
-faltaba después del anuncio `0xd6`. Se portaron sus lecturas de versión, modo,
-CRC y versión del accesorio, junto con los tres reintentos I²C del stock. En un
-arranque limpio el hardware respondió exactamente:
+Comparing with Samsung's `stm32_check_ic_work()` revealed the phase missing
+after the `0xd6` announcement. Its version, mode, CRC and accessory-version
+reads were ported, along with the stock's three I²C retries. On a clean boot
+the hardware answered exactly:
 
 ```
 application initialized: version 04 01 05 01, mode 1,
   CRC cd 0b f7 cf, accessory 09 00 ff 00 00 00
 ```
 
-El valor `ff 00` indica que no hay controlador de touchpad, como corresponde a
-la funda Slim. Aun con esta inicialización correcta, nuevas pulsaciones no
-activaron GPIO75 ni entregaron eventos. Una consulta manual devolvió la
-cabecera de keypad con payload `ff ff`, marcador de que no había tecla
-pendiente. Consultas posteriores compitieron con el driver y causaron
-NACK/`-EPROTO`; no deben repetirse con el cliente enlazado.
+The `ff 00` value indicates there is no touchpad controller, as befits the Slim
+cover. Even with this correct initialisation, new presses activated neither
+GPIO75 nor delivered events. A manual query returned the keypad header with
+payload `ff ff`, the marker for no key pending. Later queries competed with the
+driver and caused NACK/`-EPROTO`; they must not be repeated with the client
+bound.
 
-### Sondeo periódico: regresión y retirada inmediata
+### Periodic polling: a regression and immediate withdrawal
 
-Para separar una IRQ ausente de una cola de eventos válida se construyó un
-sondeo de 20 ms dentro del propio driver, protegido por el mismo mutex. Solo se
-escribió `boot`; copia, backup y partición se verificaron por SHA-256. El nuevo
-boot sí alcanzó el sistema real, aunque el Wi-Fi no asoció hasta que se reinició
-una vez. El journal posterior aportó la causa para retirar el experimento:
-`i2c i2c-6: Transfer while suspended`, con la pila apuntando al trabajo de
-sondeo. Una tarea de 20 ms no puede tocar SE15 mientras el sistema suspende.
+To separate an absent IRQ from a valid event queue, a 20 ms poll was built
+inside the driver itself, protected by the same mutex. Only `boot` was written;
+copy, backup and partition were verified by SHA-256. The new boot did reach the
+real system, though Wi-Fi did not associate until it was rebooted once. The
+subsequent journal gave the reason to withdraw the experiment: `i2c i2c-6:
+Transfer while suspended`, with the stack pointing at the polling work. A 20 ms
+task cannot touch SE15 while the system suspends.
 
-Se retiró de inmediato y se recompiló un kernel que conserva solo la
-inicialización probada.
-El `boot.img` de recuperación resultante tiene SHA-256
-`17e7feaaca18cddbdd39c41bb2f477c0164482af26a40f0c86fdeb236d722f58`.
-Tras un reinicio manual, la tablet recuperó Wi-Fi/SSH y se escribió únicamente
-ese `boot` por UFS. No fue necesario TWRP.
+It was withdrawn immediately and a kernel recompiled that keeps only the proven
+initialisation. The resulting recovery `boot.img` has SHA-256
+`17e7feaaca18cddbdd39c41bb2f477c0164482af26a40f0c86fdeb236d722f58`. After a
+manual reboot, the tablet recovered Wi-Fi/SSH and only that `boot` was written
+over UFS. TWRP was not needed.
 
-Como control externo, la misma funda EF-DX920 se probó en One UI: las teclas
-funcionaron correctamente y cerrar la tapa apagó la pantalla. El hardware y los
-contactos quedan descartados como causa general; el bloqueo es propio de la
-secuencia mainline.
-
----
-
-## Sesión 10 — primeras teclas reales y recuperación de rebotes del STM32
-
-Fecha: 2026-08-02.
-
-### La temporización de Samsung era funcional, no cosmética
-
-La comparación fina con `stm32_dev_int_proc()` y `stm32_check_ic_work()` mostró
-que Samsung no mantiene la IRQ GPIO75 enmascarada durante toda la inicialización.
-Lee VERSION de forma síncrona cuando recibe el anuncio `0xd6`, sale del handler
-y programa el resto 10 ms después. La primera reproducción que dejó MODE, la
-espera de 200 ms, CRC y accesorio dentro del handler atascó DATA y produjo
-timeouts `-110`. Al separar ambos pasos como el stock, GPIO75 volvió a reposo y
-la aplicación respondió de forma consistente.
-
-Reproducir también el flanco de desconexión de Samsung —liberar estado y cortar
-VDDO cuando GPIO62 baja, restaurarlo si vuelve a subir antes de los 250 ms—
-desbloqueó por fin el teclado. Una captura física de `evtest` midió press y
-release de `U`, `I`, `T`, `H`, `W`, `E`, `F`, espacio y retroceso. El contador de
-GPIO75 subió a la vez. Esto descarta definitivamente GNOME, evdev, el mapa de
-teclas y el firmware como causa del silencio anterior.
-
-### Por qué alguna tecla quedaba pulsada y luego moría el teclado
-
-La primera build con teclas utilizó `boot.img` SHA-256
-`25e0b8f6a58f7104649f7eb16f0bede7de0b40aa3ebacbaf40a5105677702838`.
-Durante escritura real GPIO62 rebotó en ambos sentidos y el STM32 reinició. Si
-eso ocurría con una tecla baja, el micro perdía el estado y nunca enviaba su
-release. Además el driver solo hacía VERSION/MODE/CRC en el primer anuncio;
-después conservaba el input pero omitía el handshake en los reanuncios. El
-resultado visible era una tecla pegada seguida de un teclado sin respuesta.
-
-La iteración `f33516674b910b5853f9fc3a9aaa94ac67069242cdcbadb4af73c8ae0cfb2243`
-liberó todas las teclas antes de cortar VDDO y repitió el handshake en cada
-`0xd6`. Eliminó la retención, pero una prueba física acabó con un modelo espurio
-`0xff`, DATA afirmada y un `-ETIMEDOUT` cada ~4,4 s sin recuperación. La captura
-había usado antes `evtest --grab`; mientras estuvo activo GNOME no podía recibir
-las teclas. Las capturas posteriores retiraron `--grab`.
-
-El kernel actualmente instalado, `boot.img` SHA-256
-`171d335e9609be33387c915e8c7997b4fb884f0842b34abcf7b888d4bb31da2e`, añade
-la ruta de error del stock: ignora `0xff`, libera todo el bitmap y pulsa NRST
-durante 3 ms tras agotar los reintentos I²C. En un arranque limpio superó un
-rebote temprano, repitió el anuncio `0xd6` y terminó con versión
-`04 01 05 01`, modo 1, CRC `cd 0b f7 cf`, DATA inactiva y sin nuevos timeouts.
-Dos ventanas posteriores de 40 y 90 segundos no recibieron actividad física;
-el estado permaneció estable, pero la validación final de escritura sostenida
-sigue explícitamente pendiente y no se marca todavía como soporte completo.
-
-### La traza conjunta reveló una lectura espuria de una cola vacía
-
-Con una tecla mantenida físicamente se habilitaron únicamente los tracepoints
-del adaptador I²C 6 y las IRQ 186/187. La secuencia fue determinista: anuncio
-`0xd6`, VERSION y varios paquetes keypad válidos; después llegaba otra IRQ 186,
-la escritura de la cabecera `[03 00 01]` tenía éxito, pero la lectura de la
-cabecera expiraba con `-110` tras unos 0,9–1,0 s. Los reintentos devolvían `-6`,
-GPIO62 generaba la IRQ 187 y VDDO entraba en un ciclo de alimentación. El patrón
-reaparecía cada 2–3 s.
-
-La causa era la adaptación a `IRQF_TRIGGER_FALLING`: solucionó la pérdida de
-pulsos breves del modo level-low, pero el handler leía sin comprobar si DATA
-seguía afirmada. El ISR de Samsung sí retorna cuando la línea activa-baja ya ha
-subido. Se conservó el flanco descendente y se añadió esa comprobación antes de
-cualquier transacción. También se retiró el watchdog experimental de 3 s: una
-tecla legítimamente mantenida no demuestra un stream bloqueado y no debe
-reiniciar la aplicación.
-
-Se compiló y escribió solo `boot` con backup y verificación SHA-256. El nuevo
-`boot.img` es
-`5e3d577d81c6a74f11b55476555c3d4e37e387e332f6d50a21075900cdcc755b`;
-el anterior
-`4b1e3637781081fc5fae9e108422dbca8864713f48f97df577f3a26c45471640`
-quedó como rollback temporal. En vivo, durante seis minutos con carga física,
-los contadores permanecieron en `connection_high=0`, `connection_low=0`,
-`recoveries=0`; una IRQ ya desactivada quedó registrada en
-`data_irq_deasserted=1` y no produjo ningún timeout. Es evidencia fuerte de que
-la tormenta de alimentación quedó corregida. Aún falta la prueba final de
-escritura variada por la dueña, por lo que el estado continúa en amarillo.
+As an external control, the same EF-DX920 cover was tested under One UI: the
+keys worked correctly and closing the lid blanked the screen. The hardware and
+the contacts are ruled out as a general cause; the blockage belongs to the
+mainline sequence.
 
 ---
 
-## Sesión 11 — la estabilidad a 400 kHz no sobrevivía al reinicio
+## Session 10 — the first real keys, and recovering from STM32 bounces
 
-Fecha: 2026-08-02.
+Date: 2026-08-02.
 
-La usuaria confirmó que el teclado había funcionado con varias teclas a la vez
-y también tras desconectarlo y conectarlo, pero al reiniciar volvió a ser
-irregular. Era exactamente el mismo `boot.img`, por lo que se compararon los
-arranques en vez de atribuirlo al filtro de IRQ.
+### Samsung's timing was functional, not cosmetic
 
-En el arranque malo el driver recibió cientos de eventos reales, pero acumuló
-decenas de flancos GPIO62, NACK `-6`, errores `-71`, timeouts GENI y varias
-destrucciones/recreaciones de `event3`. Una captura pasiva terminó con
-`No such device` justo cuando GPIO62 permaneció bajo más de 250 ms. El filtro
-de IRQ vacía sí hacía su trabajo —los descartes crecían sin causar reset—, pero
-había además fallos en transacciones con DATA realmente activa.
+A close comparison with `stm32_dev_int_proc()` and `stm32_check_ic_work()`
+showed that Samsung does not keep the GPIO75 IRQ masked throughout
+initialisation. It reads VERSION synchronously when it receives the `0xd6`
+announcement, leaves the handler, and schedules the rest 10 ms later. The first
+reproduction, which left MODE, the 200 ms wait, CRC and accessory inside the
+handler, jammed DATA and produced `-110` timeouts. On separating the two steps
+as the stock does, GPIO75 returned to rest and the application answered
+consistently.
 
-### Autosuspend descartado
+Reproducing Samsung's disconnection edge as well — releasing state and cutting
+VDDO when GPIO62 falls, restoring it if it rises again within 250 ms — finally
+unblocked the keyboard. A physical `evtest` capture measured press and release
+of `U`, `I`, `T`, `H`, `W`, `E`, `F`, space and backspace. GPIO75's counter rose
+at the same time. That definitively rules out GNOME, evdev, the keymap and the
+firmware as the cause of the earlier silence.
 
-El controlador `89c000.i2c` usa autosuspend de 250 ms y las fases fallidas
-mostraban retardos del mismo orden. Se forzó temporalmente
-`power/control=on`, se verificó el estado `active` y se reinicializó solo el
-driver pogo. GPIO62 siguió pulsando y las teclas volvieron a detenerse. La
-prueba fue reversible, se devolvió el controlador a `auto` y no se conservó
-ningún parche de userspace.
+### Why a key would stay pressed and then the keyboard would die
 
-### SE15 a 100 kHz
+The first build with working keys used `boot.img` SHA-256
+`25e0b8f6a58f7104649f7eb16f0bede7de0b40aa3ebacbaf40a5105677702838`. During real
+typing GPIO62 bounced in both directions and the STM32 restarted. If that
+happened with a key down, the micro lost the state and never sent its release.
+The driver also did VERSION/MODE/CRC only on the first announcement;
+afterwards it kept the input but skipped the handshake on re-announcements. The
+visible result was a stuck key followed by an unresponsive keyboard.
 
-Se cambió únicamente `clock-frequency` de I2C15 de 400 kHz a 100 kHz. El driver
-y `boot` permanecieron idénticos. Se construyó y escribió solo `vendor_boot`,
-con copia y verificación SHA-256:
+Iteration `f33516674b910b5853f9fc3a9aaa94ac67069242cdcbadb4af73c8ae0cfb2243`
+released every key before cutting VDDO and repeated the handshake on each
+`0xd6`. It eliminated the sticking, but a physical test ended with a spurious
+model `0xff`, DATA asserted and an `-ETIMEDOUT` every ~4.4 s with no recovery.
+The capture had previously used `evtest --grab`; while that was active GNOME
+could not receive the keys. Later captures dropped `--grab`.
 
-- nuevo: `1313836dd22c120f7c2bb82a7ec45fba0de1e057e2b6691cb2e453d1bbdef6ba`;
-- anterior: `fb31f91ebb9959400a5110607353148e63f7017f7ba03616e21dcbbe6dc653ba`.
+The currently installed kernel, `boot.img` SHA-256
+`171d335e9609be33387c915e8c7997b4fb884f0842b34abcf7b888d4bb31da2e`, adds the
+stock's error path: it ignores `0xff`, releases the whole bitmap and pulses
+NRST for 3 ms after exhausting the I²C retries. On a clean boot it survived an
+early bounce, repeated the `0xd6` announcement and ended with version
+`04 01 05 01`, mode 1, CRC `cd 0b f7 cf`, DATA inactive and no new timeouts.
+Two later windows of 40 and 90 seconds received no physical activity; the state
+stayed stable, but the final validation under sustained typing is explicitly
+still pending and it is not yet marked as full support.
 
-El árbol vivo confirmó `clock-frequency=100000`. En el primer arranque hubo un
-ciclo inicial, el handshake terminó correctamente y una tecla física `ESC`
-llegó al input. Los 36 muestreos siguientes durante tres minutos quedaron
-idénticos, sin timeout ni recuperación. Se reinició de nuevo con el teclado
-conectado y el resultado se repitió. Finalmente se hizo un unbind/bind solo del
-driver: recreó `event3`, recibió de nuevo la tecla física y permaneció otros
-tres minutos sin nuevos GPIO62 ni resets. La frecuencia queda como corrección
-reproducible de v0.10; falta que la dueña valide escritura variada al volver.
+### The joint trace revealed a spurious read of an empty queue
 
-Una tercera prueba de reinicio, ya con la corrección instalada de forma
-persistente, fue todavía más limpia: el firmware anunció `0xd6`, completó
-VERSION/MODE/CRC al primer intento y creó `event3` con
-`connection_high=0`, `connection_low=0` y `recoveries=0`. Antes de ese reinicio,
-57 muestras durante nueve minutos habían permanecido idénticas. El objeto sobre
-el teclado produjo un `ESC` físico, pero no sustituye la prueba manual de varias
-teclas y reconexión que sigue pendiente.
+With a key physically held down, only I²C adapter 6's tracepoints and IRQs
+186/187 were enabled. The sequence was deterministic: the `0xd6` announcement,
+VERSION and several valid keypad packets; then another IRQ 186 arrived, writing
+the header `[03 00 01]` succeeded, but reading the header timed out with `-110`
+after some 0.9–1.0 s. The retries returned `-6`, GPIO62 generated IRQ 187 and
+VDDO entered a power cycle. The pattern reappeared every 2–3 s.
 
-La release reproducible v0.10 se generó desde el commit `5403cd7`. Sus artefactos
-son `ubuntu-24.04-gts9uwifi-v0.10-sd.img.xz` (SHA-256
-`8380a22336e4a6b5c8a9e713e105fd1807fc3346930d87662d07f7753fb3aa40`)
-y `ubuntu-24.04-gts9uwifi-v0.10-sm-x910-twrp.zip` (SHA-256
+The cause was the adaptation to `IRQF_TRIGGER_FALLING`: it solved the loss of
+short pulses that level-low suffered, but the handler read without checking
+whether DATA was still asserted. Samsung's ISR does return when the active-low
+line has already risen. The falling edge was kept and that check added before
+any transaction. The experimental 3 s watchdog was also withdrawn: a key
+legitimately held down does not demonstrate a blocked stream and must not
+restart the application.
+
+Only `boot` was compiled and written, with a backup and SHA-256 verification.
+The new `boot.img` is
+`5e3d577d81c6a74f11b55476555c3d4e37e387e332f6d50a21075900cdcc755b`; the
+previous one,
+`4b1e3637781081fc5fae9e108422dbca8864713f48f97df577f3a26c45471640`, was kept as
+a temporary rollback. Live, over six minutes of physical typing, the counters
+stayed at `connection_high=0`, `connection_low=0`, `recoveries=0`; one
+already-deasserted IRQ was recorded in `data_irq_deasserted=1` and produced no
+timeout. That is strong evidence the power storm is fixed. The owner's final
+test with varied typing is still missing, so the status stays amber.
+
+---
+
+## Session 11 — the stability at 400 kHz did not survive a reboot
+
+Date: 2026-08-02.
+
+The owner confirmed the keyboard had worked with several keys at once and also
+after disconnecting and reconnecting it, but on rebooting it became erratic
+again. It was exactly the same `boot.img`, so the boots were compared rather
+than blaming the IRQ filter.
+
+On the bad boot the driver received hundreds of real events, but accumulated
+dozens of GPIO62 edges, NACK `-6`, `-71` errors, GENI timeouts and several
+destructions and recreations of `event3`. A passive capture ended with `No such
+device` just as GPIO62 stayed low for more than 250 ms. The empty-IRQ filter
+was doing its job — the discards grew without causing resets — but there were
+also failures in transactions with DATA genuinely active.
+
+### Autosuspend ruled out
+
+The `89c000.i2c` controller uses a 250 ms autosuspend and the failing phases
+showed delays of the same order. `power/control=on` was forced temporarily, the
+`active` state verified and only the pogo driver reinitialised. GPIO62 kept
+pulsing and the keys stopped again. The test was reversible, the controller was
+returned to `auto` and no userspace patch was kept.
+
+### SE15 at 100 kHz
+
+Only I2C15's `clock-frequency` was changed from 400 kHz to 100 kHz. The driver
+and `boot` stayed identical. Only `vendor_boot` was built and written, with a
+copy and SHA-256 verification:
+
+- new: `1313836dd22c120f7c2bb82a7ec45fba0de1e057e2b6691cb2e453d1bbdef6ba`;
+- previous: `fb31f91ebb9959400a5110607353148e63f7017f7ba03616e21dcbbe6dc653ba`.
+
+The live tree confirmed `clock-frequency=100000`. On the first boot there was
+one initial cycle, the handshake completed correctly and a physical `ESC`
+reached the input. The following 36 samples over three minutes were identical,
+with no timeout and no recovery. It was rebooted again with the keyboard
+connected and the result repeated. Finally an unbind/bind of the driver alone
+was done: it recreated `event3`, received the physical key again and stayed
+another three minutes with no new GPIO62 events and no resets. The frequency
+stands as v0.10's reproducible fix; the owner's validation with varied typing
+is still needed on her return.
+
+A third reboot test, now with the fix installed persistently, was cleaner
+still: the firmware announced `0xd6`, completed VERSION/MODE/CRC on the first
+attempt and created `event3` with `connection_high=0`, `connection_low=0` and
+`recoveries=0`. Before that reboot, 57 samples over nine minutes had stayed
+identical. An object resting on the keyboard produced a physical `ESC`, but
+that does not substitute for the manual test of several keys and a reconnection
+that remains pending.
+
+The reproducible v0.10 release was generated from commit `5403cd7`. Its
+artefacts are `ubuntu-24.04-gts9uwifi-v0.10-sd.img.xz` (SHA-256
+`8380a22336e4a6b5c8a9e713e105fd1807fc3346930d87662d07f7753fb3aa40`) and
+`ubuntu-24.04-gts9uwifi-v0.10-sm-x910-twrp.zip` (SHA-256
 `895c2f8a526d0bc234490c917349f87d48f739367cc1e74ece634db7ade233fc`).
 
 ---
 
-## Sesión 12 — los pulsos DATA deben clasificarse en el hard-IRQ
+## Session 12 — DATA pulses have to be classified in the hard IRQ
 
-Fecha: 2026-08-03.
+Date: 2026-08-03.
 
-La prueba manual pendiente invalidó la conclusión fuerte de la sesión anterior:
-las teclas seguían quedándose pulsadas aunque conectar/desconectar la funda y la
-aparición de la autorrotación funcionasen correctamente. En nueve minutos de
-escritura, los diagnósticos midieron 174 IRQ DATA, 104 transiciones de tecla,
-17 IRQ descartadas por DATA inactiva, 18 flancos bajos GPIO62 y cuatro resets de
-recuperación. El journal contenía `-110` y `-6`. Durante una captura pasiva
-posterior de 60 segundos, ya sin actividad física, todos los contadores quedaron
-inmóviles. Esto separa el fallo de la ruta de attach/detach y del userspace.
+The pending manual test invalidated the previous session's strong conclusion:
+the keys were still sticking, even though connecting and disconnecting the
+cover and auto-rotation appearing both worked correctly. Over nine minutes of
+typing, the diagnostics measured 174 DATA IRQs, 104 key transitions, 17 IRQs
+discarded for DATA being inactive, 18 GPIO62 low edges and four recovery
+resets. The journal contained `-110` and `-6`. During a later 60-second passive
+capture, with no physical activity, every counter stayed still. That separates
+the fault from the attach/detach path and from userspace.
 
-La guarda añadida en la sesión 10 se ejecutaba dentro del handler threaded. Ese
-instante es demasiado tarde para un GPIO que emite pulsos cortos: un flanco
-válido puede haber vuelto a alto mientras el paquete correspondiente permanece
-en la cola, por lo que se perdía una transición —especialmente el release—. A
-la vez, retirar la guarda por completo ya había demostrado que una IRQ pendiente
-obsoleta sondea la cola vacía y provoca un timeout.
+The guard added in session 10 ran inside the threaded handler. That moment is
+too late for a GPIO that emits short pulses: a valid edge may have returned
+high while the corresponding packet is still queued, so a transition was lost —
+the release especially. At the same time, removing the guard entirely had
+already shown that a stale pending IRQ polls the empty queue and causes a
+timeout.
 
-Se mantuvo `IRQF_TRIGGER_FALLING | IRQF_ONESHOT`, pero se añadió un handler
-primario que lee GPIO75 con `gpiod_get_value()` en contexto hard-IRQ. Solo si el
-nivel lógico activo sigue presente devuelve `IRQ_WAKE_THREAD`; las pendientes
-ya inactivas se contabilizan y terminan sin I²C. El kernel compiló y se escribió
-solo en `boot`, con SHA-256
-`93e39902057b515017bb705fc6076fc9a35d212eafb35960afd5c054387d0d23` y rollback
-verificado `5e3d577d81c6a74f11b55476555c3d4e37e387e332f6d50a21075900cdcc755b`.
-El primer arranque y un unbind/bind recrearon `event3` con cero recuperaciones;
-faltan transiciones físicas sostenidas para confirmar la corrección.
+`IRQF_TRIGGER_FALLING | IRQF_ONESHOT` was kept, but a primary handler was added
+that reads GPIO75 with `gpiod_get_value()` in hard-IRQ context. Only if the
+active logical level is still present does it return `IRQ_WAKE_THREAD`;
+already-inactive pendings are counted and finish without I²C. The kernel
+compiled and was written to `boot` alone, with SHA-256
+`93e39902057b515017bb705fc6076fc9a35d212eafb35960afd5c054387d0d23` and a
+verified rollback of
+`5e3d577d81c6a74f11b55476555c3d4e37e387e332f6d50a21075900cdcc755b`. The first
+boot and an unbind/bind recreated `event3` with zero recoveries; sustained
+physical transitions are still needed to confirm the fix.
 
-### Confirmación física y persistencia
+### Physical confirmation and persistence
 
-La prueba manual sostenida confirmó la hipótesis. Durante más de ocho horas el
-driver contabilizó 2.046 transiciones reales de tecla y terminó con
-`keys_down=0`; la dueña pudo escribir con normalidad, usar varias teclas y
-desconectar y reconectar físicamente la funda sin volver a dejar una tecla
-pulsada ni perder el teclado. De 2.099 IRQ DATA, 12 pendientes ya inactivas se
-descartaron en el hard-IRQ sin iniciar I²C. Hubo dos recuperaciones durante el
-asentamiento inicial y una recuperación aislada de SE15 a los 16 minutos, pero
-el driver rehízo el handshake por sí solo y las siguientes reconexiones fueron
-limpias; no hubo degradación visible durante las horas posteriores.
+The sustained manual test confirmed the hypothesis. Over more than eight hours
+the driver counted 2,046 real key transitions and ended with `keys_down=0`; the
+owner could type normally, use several keys and physically disconnect and
+reconnect the cover without leaving a key pressed or losing the keyboard. Of
+2,099 DATA IRQs, 12 already-inactive pendings were discarded in the hard IRQ
+without starting I²C. There were two recoveries during the initial settling and
+one isolated SE15 recovery at 16 minutes, but the driver redid the handshake by
+itself and the following reconnections were clean; no visible degradation
+occurred over the hours that followed.
 
-Se reinició la tablet con la funda conectada para descartar que el éxito
-dependiese del rebind de la sesión de prueba. El kernel volvió a crear
-`Book Cover Keyboard Slim (EF-DX920)` desde el arranque, completó
-VERSION/MODE/CRC y recibió otras 61 transiciones físicas con `keys_down=0`.
-Una recuperación temprana por `-110` rehízo automáticamente la aplicación y no
-impidió el funcionamiento. El árbol vivo siguió exponiendo SE15 a 100.000 Hz y
-los hashes de las particiones coincidieron con los payloads reproducibles:
+The tablet was rebooted with the cover connected to rule out the success
+depending on the test session's rebind. The kernel created `Book Cover Keyboard
+Slim (EF-DX920)` again from boot, completed VERSION/MODE/CRC and received
+another 61 physical transitions with `keys_down=0`. An early `-110` recovery
+automatically redid the application and did not prevent operation. The live
+tree kept exposing SE15 at 100,000 Hz and the partitions' hashes matched the
+reproducible payloads:
 
 - `boot`: `93e39902057b515017bb705fc6076fc9a35d212eafb35960afd5c054387d0d23`;
 - `vendor_boot`: `1313836dd22c120f7c2bb82a7ec45fba0de1e057e2b6691cb2e453d1bbdef6ba`.
 
-En ese momento la evidencia parecía suficiente para pasar el teclado a soporte
-completo. La sesión siguiente demostró que esa conclusión fue prematura: no se
-publicó la v0.11.
+At that moment the evidence looked sufficient to move the keyboard to full
+support. The next session showed that conclusion was premature: v0.11 was not
+published.
 
 ---
 
-## Sesión 13 — la estabilidad prolongada tampoco sobrevivió al reinicio
+## Session 13 — the prolonged stability did not survive a reboot either
 
-Fecha: 2026-08-03.
+Date: 2026-08-03.
 
-Tras la ventana de más de ocho horas y un primer reinicio correcto, la usuaria
-reinició de nuevo y las teclas volvieron a quedar retenidas; después el teclado
-dejaba de responder. Se compararon las particiones y el árbol vivo: `boot`,
-`vendor_boot` y `clock-frequency=100000` eran idénticos. El arranque estable
-había enlazado de nuevo el driver a los 272 s y se asentó hacia los 363 s; el
-arranque malo lo hizo a los 3 s y acumuló NACK `-6`, timeouts `-110`, resets y
-pulsos GPIO62. Un rebind aislado no garantizó reproducir el estado bueno. La
-diferencia es de estado frío/temporal del STM32 o del transporte, no de una
-imagen distinta.
+After the window of more than eight hours and one correct reboot, the owner
+rebooted again and the keys stuck once more; afterwards the keyboard stopped
+responding. The partitions and the live tree were compared: `boot`,
+`vendor_boot` and `clock-frequency=100000` were identical. The stable boot had
+rebound the driver at 272 s and settled around 363 s; the bad boot did it at
+3 s and accumulated NACK `-6`, `-110` timeouts, resets and GPIO62 pulses. An
+isolated rebind did not guarantee reproducing the good state. The difference is
+in the STM32's or the transport's cold/timing state, not in a different image.
 
-Se revisó el controlador real de Samsung
-`drivers/i2c/busses/i2c-msm-geni.c`, no solo el driver común más pequeño. Tres
-diferencias están respaldadas por el fuente oficial del SM-X910:
+Samsung's real controller `drivers/i2c/busses/i2c-msm-geni.c` was reviewed, not
+only the smaller common driver. Three differences are backed by the SM-X910's
+official source:
 
-- el DT usa DATA por nivel bajo + ONESHOT;
-- el contador GENI de 100 kHz es `{7, 10, 11, 26}` y mainline usaba
+- the DT uses DATA as level-low + ONESHOT;
+- the 100 kHz GENI counter is `{7, 10, 11, 26}` and mainline used
   `{7, 10, 12, 26}`;
-- ante timeout Samsung envía `M_CMD_CANCEL` y solo aborta si cancelar falla.
+- on a timeout Samsung sends `M_CMD_CANCEL` and only aborts if cancelling
+  fails.
 
-La primera prueba con nivel bajo, sin los otros cambios, recibió 109
-transiciones en 60 s pero terminó con cuatro recuperaciones y errores
-`-6/-110`. Añadir únicamente el contador Samsung mejoró otra captura a 57
-transiciones y una recuperación, pero apareció el evento corrupto `0x6767` y
-persistieron dos NACK y un timeout. Ninguna variante se declaró corregida.
+The first test with level-low, without the other changes, received 109
+transitions in 60 s but ended with four recoveries and `-6/-110` errors. Adding
+only Samsung's counter improved another capture to 57 transitions and one
+recovery, but the corrupt event `0x6767` appeared and two NACKs and a timeout
+persisted. No variant was declared fixed.
 
-Se construyó después una variante limpia que añade el cancel-before-abort. Su
-`boot` tiene SHA-256
-`f3c6a4235e7dcea8e82ce510861eae3eb145e04ff5594005a0e7a42d3ca158d8` y arrancó
-correctamente; en reposo hizo el handshake completo, aunque registró dos NACK
-tempranos. Una captura de 60 s sin pulsaciones físicas no cambió ningún contador
-y, por tanto, no valida el teclado.
+A clean variant was then built adding cancel-before-abort. Its `boot` has
+SHA-256 `f3c6a4235e7dcea8e82ce510861eae3eb145e04ff5594005a0e7a42d3ca158d8` and
+booted correctly; at idle it completed the whole handshake, though it recorded
+two early NACKs. A 60 s capture with no physical presses changed no counter and
+therefore does not validate the keyboard.
 
-Finalmente se observó otra diferencia del driver oficial: cada intento de
-lectura fallido notifica RESET a los consumidores y libera las teclas antes de
-reintentar. El driver propio solo las liberaba tras agotar los tres intentos,
-lo que explicaba que una pulsación quedase visible varios segundos. Se añadió
-la liberación inmediata conservando el reset físico únicamente tras agotar los
-reintentos. Esta última variante está compilándose y queda pendiente de
-escritura sostenida, reinicio y reconexión; la release vigente continúa siendo
-v0.10 y el teclado permanece en amarillo.
+Finally another difference in the official driver was noticed: every failed
+read attempt notifies RESET to the consumers and releases the keys before
+retrying. Our own driver released them only after exhausting all three
+attempts, which explained a press staying visible for several seconds. The
+immediate release was added, keeping the physical reset only after the retries
+are exhausted. That last variant is compiling and awaits sustained typing, a
+reboot and a reconnection; the current release remains v0.10 and the keyboard
+stays amber.
 
 ---
 
-## Sesión 14 — la recuperación tardía era también una carrera SSC/GNOME
+## Session 14 — the late recovery was also an SSC/GNOME race
 
-Fecha: 2026-08-03.
+Date: 2026-08-03.
 
-La variante final de la sesión anterior compiló correctamente. Su `boot.img`,
-SHA-256
-`df98bc12b74b84db65b2cb2c4bd669fb10d28b498773692e2e2db336be6f03fa`,
-añade la liberación inmediata tras cada lectura fallida sobre el nivel bajo,
-timing Samsung y cancel-before-abort ya descritos. Se escribió únicamente
-`boot`, con copia y hash remoto verificados; el rollback es
+The previous session's final variant compiled correctly. Its `boot.img`,
+SHA-256 `df98bc12b74b84db65b2cb2c4bd669fb10d28b498773692e2e2db336be6f03fa`,
+adds the immediate release after each failed read on top of the level-low,
+Samsung timing and cancel-before-abort already described. Only `boot` was
+written, with the copy and remote hash verified; the rollback is
 `f3c6a4235e7dcea8e82ce510861eae3eb145e04ff5594005a0e7a42d3ca158d8`.
 
-Antes de escribirlo se encontró una segunda anomalía independiente. El arranque
-malo tenía `iio-sensor-proxy` cerca del 100 % de CPU y
-`irq/16-smp2p-adsp` cerca del 90 %, mientras el kernel repetía
-`Handover signaled, but it already happened` cada ~233 ms. Detener el proxy
-necesitó el timeout completo de 90 s y SIGKILL. Tras un rebind seguro del pogo,
-una captura física entregó 432 transiciones en 60 s, combinaciones incluidas,
-con `keys_down=0`, cero recuperaciones y cero errores.
+Before writing it, a second, independent anomaly was found. The bad boot had
+`iio-sensor-proxy` near 100 % CPU and `irq/16-smp2p-adsp` near 90 %, while the
+kernel repeated `Handover signaled, but it already happened` every ~233 ms.
+Stopping the proxy needed the full 90 s timeout and SIGKILL. After a safe
+rebind of the pogo, a physical capture delivered 432 transitions in 60 s,
+combinations included, with `keys_down=0`, zero recoveries and zero errors.
 
-La primera interpretación —que la tormenta fuese la causa raíz del teclado—
-era demasiado fuerte. El boot anterior que funcionó ocho horas también había
-acumulado 139.497 handovers. Sí es una regresión real: ocupa dos núcleos y
-coincide con timeouts del DPU y GENI, pero solo puede considerarse un agravante
-del transporte pogo.
+The first interpretation — that the storm was the keyboard's root cause — was
+too strong. The earlier boot that worked for eight hours had also accumulated
+139,497 handovers. It is a real regression: it occupies two cores and coincides
+with DPU and GENI timeouts, but it can only be considered an aggravating factor
+for the pogo transport.
 
-La cronología localizó la carrera. El helper arrancaba antes de LightDM/GDM,
-consultaba SSC y creaba un proxy antes de que GNOME fuese consumidor. Las
-pruebas de no reiniciar `hexagonrpcd`, esperar 75 s y observar ventanas fijas de
-4 s fallaron: el periodo silencioso del cliente variaba y la tormenta aparecía
-solo después de que el display manager quedara desbloqueado. No repetir esos
-retardos ciegos.
+The chronology located the race. The helper started before LightDM/GDM, queried
+SSC and created a proxy before GNOME was a consumer. The tests of not
+restarting `hexagonrpcd`, waiting 75 s and observing fixed 4 s windows all
+failed: the client's silent period varied and the storm appeared only after the
+display manager was unlocked. Do not repeat those blind delays.
 
-La solución reproducible ordena `ubuntu-gts9u-sensors-resume.service` después
-del display manager. Tras obtener una medida real de acelerómetro inicia un
-cliente limpio y vigila el IRQ de handover cada dos segundos durante 30 s. En
-el arranque limpio `55a9406e-d2e8-4d54-9a87-f75ecb7066b5` detectó 3 IRQ en 2 s,
-mató solo el primer proxy y abrió otro. El segundo superó toda la vigilancia;
-una medida posterior de 10 s dio delta 0, `iio-sensor-proxy` consumía 45 ms de
-CPU y la carga bajó a 0,74. No se reinició el ADSP ni se perdió audio.
+The reproducible solution orders `ubuntu-gts9u-sensors-resume.service` after
+the display manager. Once it has a real accelerometer measurement it starts a
+clean client and watches the handover IRQ every two seconds for 30 s. On the
+clean boot `55a9406e-d2e8-4d54-9a87-f75ecb7066b5` it detected 3 IRQs in 2 s,
+killed only the first proxy and opened another. The second passed the whole
+watch; a later 10 s measurement gave a delta of 0, `iio-sensor-proxy` consumed
+45 ms of CPU and the load fell to 0.74. The ADSP was not restarted and no audio
+was lost.
 
-En ese mismo arranque el pogo se inicializó desde frío sin rebind manual,
-errores ni recuperaciones y quedó en `keys_down=0`. Eso valida la reproducción
-del estado de arranque, no la escritura: la dueña estaba ausente y aún debe
-probar varias teclas, reconexión física y uso sostenido. La release pública
-sigue siendo v0.10 hasta completar esa validación sobre la candidata v0.11.
+On that same boot the pogo initialised from cold with no manual rebind, no
+errors and no recoveries, and ended at `keys_down=0`. That validates
+reproducing the boot state, not typing: the owner was away and still has to
+test several keys, a physical reconnection and sustained use. The public
+release remains v0.10 until that validation on the v0.11 candidate is complete.
 
 ---
 
-## Sesión 15 — la pantalla negra era modo emergencia, no la pantalla
+## Session 15 — the black screen was emergency mode, not the screen
 
-Fecha: 2026-08-03.
+Date: 2026-08-03.
 
-La dueña informó de que, tras un reinicio, la tablet se quedaba en negro y no
-acababa de arrancar. La entregó en TWRP.
+The owner reported that, after a reboot, the tablet went black and never
+finished booting. She handed it over in TWRP.
 
-### El diagnóstico, y una lectura equivocada por el camino
+### The diagnosis, and a misreading along the way
 
-Montada la raíz en solo lectura, el journal activo mostraba un arranque que
-alcanzaba `time-set`, `network` y `nss-lookup` y después callaba dieciséis
-minutos. Se concluyó que systemd se colgaba antes de `basic.target`. **Era
-falso.** Ese fichero contenía solo el tramo final del arranque; el principio
-estaba en un journal rotado, y la propia línea `Startup finished in 12.706s
-(kernel) + 15.085s (userspace)` lo desmentía.
+With the root mounted read-only, the active journal showed a boot that reached
+`time-set`, `network` and `nss-lookup` and then fell silent for sixteen
+minutes. The conclusion drawn was that systemd hung before `basic.target`.
+**That was false.** That file contained only the boot's final stretch; the
+beginning was in a rotated journal, and the line `Startup finished in 12.706s
+(kernel) + 15.085s (userspace)` itself contradicted it.
 
-Con todos los `system*.journal` descargados y leídos con `journalctl -D`
-apareció la secuencia real:
+With every `system*.journal` downloaded and read with `journalctl -D`, the real
+sequence appeared:
 
 ```
 systemd-fsck-root.service: Failed with result 'exit-code'
@@ -1518,35 +1503,36 @@ Failed to start systemd-fsck-root.service
 Reached target emergency.target - Emergency Mode
 ```
 
-El sistema arrancaba bien y se detenía en modo emergencia porque el `fsck` de
-la raíz encontraba errores que no podía corregir sin supervisión. Nunca se
-alcanzaban `multi-user` ni `graphical`, de ahí que no hubiera GDM ni imagen.
+The system booted fine and stopped in emergency mode because the root's `fsck`
+found errors it could not correct unsupervised. Neither `multi-user` nor
+`graphical` was ever reached, hence no GDM and no image.
 
-Lección: no diagnosticar un arranque con un único fichero de journal.
+Lesson: do not diagnose a boot with a single journal file.
 
-### La reparación
+### The repair
 
-`e2fsck -fn` mostró daño rutinario —dos inodos sueltos, diferencias de bitmap y
-contadores libres— con los pases 2 y 3 limpios, es decir, estructura de
-directorios intacta. `e2fsck -fy` lo corrigió: `Filesystem state: clean` y
-arranque normal. Cinco ficheros acabaron en `lost+found`; los cinco resultaron
-ser texto y bases GVariant de caché, nada del port.
+`e2fsck -fn` showed routine damage — two orphan inodes, bitmap differences and
+free counters — with passes 2 and 3 clean, that is, the directory structure
+intact. `e2fsck -fy` corrected it: `Filesystem state: clean` and a normal boot.
+Five files ended up in `lost+found`; all five turned out to be text and GVariant
+cache databases, nothing belonging to the port.
 
-### La causa raíz, en el repositorio
+### The root cause, in the repository
 
-`build-sd-image.sh` creaba la raíz con `-O ^has_journal`. Sin journal, cada
-apagado sucio deja daño, y con `Errors behavior: Continue` ext4 sigue adelante
-en vez de remontar en solo lectura, así que el daño se acumula invisible. La
-imagen ahora se crea con journal y `-e remount-ro`; en la tarjeta viva se
-aplicó `tune2fs -e remount-ro`.
+`build-sd-image.sh` created the root with `-O ^has_journal`. Without a journal,
+every dirty shutdown leaves damage, and with `Errors behavior: Continue` ext4
+carries on instead of remounting read-only, so the damage accumulates
+invisibly. The image is now created with a journal and `-e remount-ro`; on the
+live card `tune2fs -e remount-ro` was applied.
 
-### El teclado, después de la reparación
+### The keyboard, after the repair
 
-La dueña avisó de que el teclado había dejado de funcionar. Se descartó primero
-la hipótesis obvia y equivocada: `e2fsck` no se llevó el firmware, que sigue en
-`/lib/firmware/keyboard_stm/stm32_gts9family.bin` con sus 52.132 bytes.
+The owner reported that the keyboard had stopped working. The obvious and wrong
+hypothesis was ruled out first: `e2fsck` did not take the firmware, which is
+still in `/lib/firmware/keyboard_stm/stm32_gts9family.bin` with its 52,132
+bytes.
 
-El estado real:
+The real state:
 
 ```
 attached=1 model=0x00 connected=1 data_ready=0
@@ -1554,189 +1540,189 @@ connection_high=129 connection_low=130
 cannot restore keyboard power: -108
 ```
 
-El ID de protocolo no llega —`model=0x00` donde antes `0xd6`—, la línea de
-conexión ha rebotado 259 veces y el elevador se reactiva cada 2,1 s
-indefinidamente. El driver enlazó a los 3,7 s.
+The protocol ID does not arrive — `model=0x00` where it used to be `0xd6` —
+the connection line has bounced 259 times and the booster is re-enabled every
+2.1 s indefinitely. The driver bound at 3.7 s.
 
-Esto **coincide con el patrón ya descrito en las sesiones 11 y 13**: los
-arranques malos enlazan pronto y acumulan pulsos de GPIO62, los buenos enlazan
-tarde. No es un fallo nuevo ni consecuencia de la reparación.
+This **matches the pattern already described in sessions 11 and 13**: the bad
+boots bind early and accumulate GPIO62 pulses, the good ones bind late. It is
+neither a new failure nor a consequence of the repair.
 
-Como agravante, la batería estaba al 10 % y 3.716 mV, y el MAX77816 que
-alimenta el teclado cuelga de ella; el propio servicio de firmware se aplazó
-solo por ese motivo. Queda pendiente repetir la medida con carga suficiente
-antes de tocar el driver.
+As an aggravating factor, the battery was at 10 % and 3,716 mV, and the
+MAX77816 that powers the keyboard hangs off it; the firmware service itself
+deferred for exactly that reason. Repeating the measurement with sufficient
+charge, before touching the driver, is still pending.
 
-### Defectos del driver anotados, no corregidos
+### Driver defects recorded, not fixed
 
-- El reintento de alimentación no tiene freno: reactiva el elevador cada 2 s
-  para siempre, sin espaciado ni rendición.
-- `samsung_pogo_enable_power` emite un backtrace del kernel al fallar. Un fallo
-  de alimentación previsible no debería generar un WARN.
+- The power retry has no brake: it re-enables the booster every 2 s forever,
+  with no spacing and no surrender.
+- `samsung_pogo_enable_power` emits a kernel backtrace on failure. A
+  foreseeable power failure should not generate a WARN.
 
-### Cabo suelto: v0.11 no tiene artefactos
+### A loose end: v0.11 has no artefacts
 
-La tablet arranca un `boot.img` `df98bc12…` construido en la sesión 14 que no
-corresponde a ninguna release empaquetada: `artifacts/` llega hasta v0.10. Hay
-un kernel en el dispositivo que no es reproducible desde una release. Antes de
-seguir con el teclado conviene cerrar v0.11 o volver a v0.10.
+The tablet boots a `boot.img` `df98bc12…` built in session 14 that corresponds
+to no packaged release: `artifacts/` goes up to v0.10. There is a kernel on the
+device that is not reproducible from a release. Before continuing with the
+keyboard it is worth closing v0.11 or going back to v0.10.
 
-## Sesión 16 — qué cambió desde que el teclado funcionaba: nada nuestro
+## Session 16 — what changed since the keyboard worked: nothing of ours
 
-Fecha: 2026-08-04.
+Date: 2026-08-04.
 
-La dueña informó de que el teclado había dejado de funcionar y pidió comparar
-con el estado bueno. Tres hipótesis se descartaron con evidencia, no por
-opinión.
+The owner reported the keyboard had stopped working and asked for a comparison
+with the good state. Three hypotheses were ruled out with evidence, not
+opinion.
 
-**La batería, no.** Se había apuntado que 10 % y 3.716 mV podían impedir que el
-MAX77816 sostuviera el MCU. La dueña recordó que había funcionado al 15–20 %, y
-un arranque limpio al 39 % reprodujo el fallo idéntico. Descartada.
+**The battery, no.** It had been noted that 10 % and 3,716 mV might stop the
+MAX77816 sustaining the MCU. The owner recalled it had worked at 15–20 %, and a
+clean boot at 39 % reproduced the identical failure. Ruled out.
 
-**El firmware del MCU, no.** `ubuntu-gts9u-pogo-firmware.service` se aplazó en
-**todos** los arranques registrados, incluido uno al 91 %. Nunca escribió en el
-STM32, así que no pudo corromperlo.
+**The MCU's firmware, no.** `ubuntu-gts9u-pogo-firmware.service` deferred on
+**every** recorded boot, including one at 91 %. It never wrote to the STM32, so
+it cannot have corrupted it.
 
-**Los cambios de esta sesión, no.** La reparación del sistema de ficheros no
-tocó nada del pogo —el firmware sigue en su sitio con sus 52.132 bytes— y el
-manejador del botón de encendido solo lee `event0` del `pmic_pwrkey`.
+**This session's changes, no.** The filesystem repair touched nothing of the
+pogo's — the firmware is still in place with its 52,132 bytes — and the power
+button handler only reads `event0` of the `pmic_pwrkey`.
 
-### Lo que sí es
+### What it is
 
-El patrón coincide con lo descrito en las sesiones 11 y 13: los arranques malos
-enlazan el driver pronto —aquí a los 3,7 s— y acumulan pulsos de GPIO62 sin que
-llegue el ID de protocolo. `model=0x00` donde el estado bueno da `0xd6`.
+The pattern matches what sessions 11 and 13 described: the bad boots bind the
+driver early — here at 3.7 s — and accumulate GPIO62 pulses without the
+protocol ID ever arriving. `model=0x00` where the good state gives `0xd6`.
 
-Novedad respecto a la sesión 14: **el rebind ya no recupera el estado bueno**.
-Un ciclo completo unbind, 8 s de espera y bind volvió a dejar 12 activaciones
-del elevador en 25 s y ningún dispositivo de entrada. La recuperación que allí
-funcionó no es fiable.
+New since session 14: **the rebind no longer recovers the good state**. A
+complete unbind, 8 s wait and bind cycle again left 12 booster activations in
+25 s and no input device. The recovery that worked there is not reliable.
 
-### Una diferencia medida, de interpretación abierta
+### One measured difference, open to interpretation
 
-El driver lee cuatro bytes de la flash del STM32 por el comando de lectura del
-bootloader. En el arranque que funcionó valían `00 37 00 37`; en todos los que
-fallan, `00 34 00 34`, de forma consistente y reproducible.
+The driver reads four bytes of the STM32's flash through the bootloader's read
+command. On the boot that worked they were `00 37 00 37`; on every failing one,
+`00 34 00 34`, consistently and reproducibly.
 
-No se afirma que sea la causa. Es una lectura de memoria por el mismo enlace
-I²C que se sospecha marginal, y difieren en un solo nibble, lo que encaja igual
-de bien con una lectura corrupta que con un contenido distinto. Queda anotado
-como el único discriminante duro encontrado entre ambos estados, y merece
-comprobarse leyendo varias veces seguidas antes de construir nada encima.
+It is not claimed to be the cause. It is a memory read over the same I²C link
+that is suspected of being marginal, and they differ by a single nibble, which
+fits a corrupt read as well as it fits different content. It is recorded as the
+only hard discriminator found between the two states, and it deserves checking
+by reading several times in a row before anything is built on top of it.
 
-### Defectos confirmados y pendientes
+### Confirmed and pending defects
 
-El reintento del elevador sigue sin freno: en un arranque llegó a 788
-activaciones. Se detuvo con un unbind reversible. La corrección —espera
-creciente con tope, contador reiniciado al enganchar o al desconectar— está
-especificada y **no aplicada**, porque tocar el driver obliga a compilar,
-escribir `boot` y reiniciar, y antes hay que cerrar el cabo suelto de v0.11.
+The booster's retry still has no brake: on one boot it reached 788 activations.
+It was stopped with a reversible unbind. The fix — a growing wait with a cap,
+the counter reset on latching or disconnecting — is specified and **not
+applied**, because touching the driver means compiling, writing `boot` and
+rebooting, and the v0.11 loose end has to be closed first.
 
-## Sesión 17 — v0.11 cerrada, y el teclado apunta a la flash del MCU
+## Session 17 — v0.11 closed, and the keyboard points at the MCU's flash
 
-Fecha: 2026-08-04. Sesión desatendida, con autorización explícita de la dueña
-para escribir `boot`, `init_boot`, `vendor_boot`, `dtbo` y `vbmeta`.
+Date: 2026-08-04. An unattended session, with the owner's explicit
+authorisation to write `boot`, `init_boot`, `vendor_boot`, `dtbo` and `vbmeta`.
 
-### v0.11 cerrada
+### v0.11 closed
 
-Construida con `KERNEL_CLEAN=1`. Antes de sobrescribir nada se respaldaron las
-cinco particiones en `artifacts/backup-preV011/`, incluido el `boot.img`
-`df98bc12…` de la sesión 14, que no existía en ninguna release y es el kernel
-con el que la dueña vio el teclado funcionar mejor.
+Built with `KERNEL_CLEAN=1`. Before overwriting anything, the five partitions
+were backed up into `artifacts/backup-preV011/`, including session 14's
+`boot.img` `df98bc12…`, which existed in no release and is the kernel with
+which the owner saw the keyboard work best.
 
-Se escribieron con `dd` en vez de con el ZIP: `twrp install` derriba adb y no
-volvió la vez anterior, lo que en una sesión desatendida dejaría el dispositivo
-sin forma de reiniciarse. Cuatro particiones verificadas leyendo de vuelta.
-`vbmeta` copió cero bytes —es de solo lectura en este TWRP, ya documentado— y
-quedó intacta; la que hay es la que lleva arrancando siempre.
+They were written with `dd` rather than through the ZIP: `twrp install` takes
+adb down and it did not come back the previous time, which in an unattended
+session would leave the device with no way to reboot. Four partitions verified
+by reading back. `vbmeta` copied zero bytes — it is read-only in this TWRP,
+already documented — and stayed intact; the one there is the one that has
+always been booting.
 
-No se reescribió la microSD: la dueña tiene datos y snaps instalados, y v0.11
-no necesitaba rootfs nuevo. Sí hubo que reemplazar a mano los dos módulos
-`ath12k` firmados, que viven en la tarjeta y no en el ZIP; sin eso, kernel
-nuevo con módulos viejos deja el Wi-Fi fuera y con él el acceso por SSH.
+The microSD was not rewritten: the owner has data and installed snaps, and
+v0.11 needed no new root filesystem. The two signed `ath12k` modules, which
+live on the card and not in the ZIP, did have to be replaced by hand; without
+that, a new kernel with old modules leaves Wi-Fi out and with it SSH access.
 
-Arranque verificado: sistema `running`, cero unidades fallidas, Wi-Fi con los
-módulos nuevos, audio, sensores y el manejador del botón activos.
+Boot verified: system `running`, zero failed units, Wi-Fi with the new modules,
+and audio, sensors and the button handler all active.
 
-Pendiente de honestidad: que el build limpio sea **reproducible** no está
-demostrado. Haría falta una segunda build limpia idéntica. Lo que sí está
-demostrado es que el incremental no lo era.
+An honesty note: that the clean build is **reproducible** is not demonstrated.
+That would need a second identical clean build. What is demonstrated is that
+the incremental one was not.
 
-### El teclado: el bootloader responde, la aplicación no
+### The keyboard: the bootloader answers, the application does not
 
-`event_poll`, el gancho de diagnóstico del propio driver, provocó
-`read_retry_releases=9` sobre `manual_polls=3`: tres reintentos por sondeo, y
-ninguna respuesta. El MCU no contesta al protocolo del teclado ni preguntándole
-directamente.
+`event_poll`, the driver's own diagnostic hook, produced
+`read_retry_releases=9` over `manual_polls=3`: three retries per poll, and no
+answer at all. The MCU does not answer the keyboard protocol even when asked
+directly.
 
-En cambio su bootloader contesta perfectamente en cada arranque, leyendo el
-product id `0x460` y las option bytes sin un solo error.
+Its bootloader, by contrast, answers perfectly on every boot, reading the
+product id `0x460` and the option bytes without a single error.
 
-Eso separa las dos mitades: **bootloader vivo, aplicación muda**, y reencuadra
-la diferencia de flash ya observada. Donde el arranque bueno leía
-`00 37 00 37`, todos los malos leen `00 34 00 34`, de forma consistente. Si
-esos bytes son contenido real y no una lectura corrupta, la aplicación del
-teclado está dañada en la flash del STM32.
+That separates the two halves: **bootloader alive, application mute**, and
+reframes the flash difference already observed. Where the good boot read
+`00 37 00 37`, every bad one reads `00 34 00 34`, consistently. If those bytes
+are real content and not a corrupt read, the keyboard's application is damaged
+in the STM32's flash.
 
-Encaja con todo lo observado: el bootloader responde, la aplicación no; ningún
-reinicio ni rebind lo recupera; y la dueña describe que antes **sí enganchaba**
-y solo fallaba a medias con teclas pegadas, mientras que ahora no engancha en
-absoluto. Son fallos distintos, no el mismo agravado.
+It fits everything observed: the bootloader answers, the application does not;
+no reboot or rebind recovers it; and the owner describes it as previously
+**latching** and only half failing with stuck keys, whereas now it does not
+latch at all. They are different failures, not the same one worsened.
 
-### Lo que no se ha hecho, y por qué
+### What has not been done, and why
 
-El driver expone `firmware_update` y el blob de Samsung está en la tarjeta con
-sus 52.132 bytes, así que reprogramar el MCU es posible. **No se ha hecho.** La
-autorización de la dueña cubría las particiones de arranque de la tablet,
-enumeradas una a una; reescribir la flash de un accesorio es otra cosa,
-potencialmente irreversible, y el propio servicio de firmware está escrito para
-aplazarse solo salvo condiciones seguras. Queda como la acción recomendada,
-pendiente de que ella la autorice.
+The driver exposes `firmware_update` and Samsung's blob is on the card with its
+52,132 bytes, so reprogramming the MCU is possible. **It has not been done.**
+The owner's authorisation covered the tablet's boot partitions, enumerated one
+by one; rewriting an accessory's flash is a different thing, potentially
+irreversible, and the firmware service itself is written to defer unless
+conditions are safe. It stands as the recommended action, pending her
+authorisation.
 
-Antes de reprogramar conviene confirmar que los cuatro bytes de versión son
-estables: leerlos varias veces seguidas y comprobar que siempre dan
-`00 34 00 34`. Si bailan, son lecturas corruptas y la hipótesis cae.
+Before reprogramming, it is worth confirming the four version bytes are stable:
+read them several times in a row and check they always give `00 34 00 34`. If
+they wobble, they are corrupt reads and the hypothesis falls.
 
-## Sesión 18 — autorrotación estable y auditoría completa de V34
+## Session 18 — stable auto-rotation and a complete audit of V34
 
-Fecha: 2026-08-04.
+Date: 2026-08-04.
 
-### Sensores: dos carreras distintas
+### Sensors: two different races
 
-Se hizo reproducible el arreglo que la dueña confirmó físicamente para la
-autorrotación. `iio-sensor-proxy` ya no reclama SSC demasiado pronto y el
-servicio `hexagonrpcd` queda ordenado después de la recuperación cold-boot del
-panel. Además, el parche de `qcom_q6v5` enmascara la IRQ de handover una vez
-completada: una medida de diez segundos quedó en `1 -> 1`, sin la tormenta que
-antes ocupaba CPU y contendía con display e I2C. El sensor de luz SSC roto se
-excluye del proxy; no se presenta como brillo automático funcional.
+The fix the owner physically confirmed for auto-rotation was made
+reproducible. `iio-sensor-proxy` no longer claims SSC too early and the
+`hexagonrpcd` service is ordered after the panel's cold-boot recovery. On top
+of that, the `qcom_q6v5` patch masks the handover IRQ once it has completed: a
+ten-second measurement stayed at `1 -> 1`, without the storm that used to
+occupy CPU and contend with the display and I2C. The broken SSC light sensor is
+excluded from the proxy; it is not presented as working automatic brightness.
 
-### Se volvió exactamente al último driver pogo conocido bueno
+### We went back to exactly the last known good pogo driver
 
-Se retiraron los experimentos de las sesiones posteriores y
-`kernel/drivers/samsung_stm32_pogo.c` quedó idéntico al commit `504ff29`. El
-estado bueno histórico `df98bc12…` no pudo compararse limpiamente en vivo
-porque no levantó ninguno de los canales de control; no se convirtió esa
-ausencia de red en una conclusión sobre el teclado.
+The later sessions' experiments were withdrawn and
+`kernel/drivers/samsung_stm32_pogo.c` was left identical to commit `504ff29`.
+The historical good state `df98bc12…` could not be compared cleanly live
+because it brought up none of the control channels; that absence of networking
+was not turned into a conclusion about the keyboard.
 
-El journal downstream de Samsung mostró que su propio driver también observa
-el ciclo CONN alto, VDD/MAX activos durante unos dos segundos, CONN bajo y
-apagado. Por tanto el periodo de ~2,126 s no nace del debounce mainline: es el
-estado de fallo que comunica la aplicación del accesorio.
+Samsung's downstream journal showed that its own driver also observes the cycle
+CONN high, VDD/MAX active for about two seconds, CONN low and power off. The
+~2.126 s period therefore does not come from mainline's debounce: it is the
+failure state the accessory's application communicates.
 
-### El salto ROM no era la inicialización que faltaba
+### The ROM jump was not the missing initialisation
 
-Sin escribir la flash se añadió temporalmente el comando STM32 ROM
-`GO 0x08000000`. El bootloader lo aceptó. Se repitió con VDDO y MAX77816 ya
-activos y 100 ms de estabilización; también lo aceptó. En ambos casos la
-aplicación mantuvo `model=0x00`, DATA bajo y el mismo pulso de CONN. El
-experimento se eliminó por completo y no forma parte de la fuente final.
+Without writing the flash, the STM32 ROM command `GO 0x08000000` was added
+temporarily. The bootloader accepted it. It was repeated with VDDO and the
+MAX77816 already active and 100 ms of settling; it accepted that too. In both
+cases the application kept `model=0x00`, DATA low and the same CONN pulse. The
+experiment was removed completely and is not part of the final source.
 
-### Volcado de solo lectura: V34 es una aplicación real
+### A read-only dump: V34 is a real application
 
-Una herramienta temporal reclamó exclusivamente BOOT0/NRST, entró al ROM y
-usó únicamente `READ MEMORY` sobre I2C6. Leyó los 64 KiB y restauró el arranque
-normal sin enviar ERASE, WRITE ni UNPROTECT. Resultado:
+A temporary tool exclusively claimed BOOT0/NRST, entered the ROM and used only
+`READ MEMORY` over I2C6. It read the 64 KiB and restored normal boot without
+sending ERASE, WRITE or UNPROTECT. Result:
 
 ```
 bytes=65536
@@ -1745,49 +1731,49 @@ version_0x200=00 34 00 34
 0037_offsets=
 ```
 
-La imagen tiene vectores ARM coherentes y cadenas que dicen
-`TabS9(STM32G0) Series -> V34`. No existe una segunda V37 escondida. La
-conclusión de la sesión 17 —flash posiblemente dañada— queda refutada: One UI
-usa V34, y Ubuntu todavía no reproduce alguna parte de su inicialización fría.
+The image has coherent ARM vectors and strings that say
+`TabS9(STM32G0) Series -> V34`. There is no second, hidden V37. Session 17's
+conclusion — possibly damaged flash — is refuted: One UI uses V34, and Ubuntu
+still does not reproduce some part of its cold initialisation.
 
-Como defensa adicional, el updater exige ahora la guarda explícita
-`GTS9U_ALLOW_POGO_FLASH=YES`. No se ha escrito el MCU y no se escribirá sin una
-autorización específica.
+As an additional defence, the updater now requires the explicit guard
+`GTS9U_ALLOW_POGO_FLASH=YES`. The MCU has not been written and will not be
+without specific authorisation.
 
-El `boot.img` final de esta iteración, con el driver pogo devuelto a `504ff29`
-y la corrección q6v5, tiene SHA-256
-`9c4590600d410ca4e68f68a0f51abb9177df438c46ee42dded6bb651b7be956e`. La
-escritura en `boot` se verificó leyendo de vuelta. Tras reiniciar, Ubuntu no
-reapareció en dos barridos completos de la LAN y el gadget USB siguió en Code
-43, así que ese arranque todavía no tiene validación remota. La siguiente
-prueba física debe hacerse sin una tecla mantenida, desconectando y conectando
-la funda una vez, porque V34 contiene rutas de protección por tecla atascada.
+This iteration's final `boot.img`, with the pogo driver returned to `504ff29`
+and the q6v5 fix, has SHA-256
+`9c4590600d410ca4e68f68a0f51abb9177df438c46ee42dded6bb651b7be956e`. The write
+to `boot` was verified by reading back. After rebooting, Ubuntu did not
+reappear in two complete LAN sweeps and the USB gadget stayed in Code 43, so
+that boot has no remote validation yet. The next physical test must be done
+with no key held down, disconnecting and connecting the cover once, because V34
+contains stuck-key protection paths.
 
-## Sesión 19 — el teclado vuelve: el STM32 había vuelto a V34
+## Session 19 — the keyboard returns: the STM32 had gone back to V34
 
-Fecha: 2026-08-06.
+Date: 2026-08-06.
 
-### El discriminante ya estaba medido; lo que faltaba era leerlo al derecho
+### The discriminator was already measured; what was missing was reading it the right way round
 
-Desde la sesión 16 constaba, arranque tras arranque, la misma diferencia dura:
-el estado bueno leía `flash version 00 37 00 37` y **todos** los malos leían
-`00 34 00 34`. La sesión 18 volcó los 64 KiB en solo lectura, comprobó que V34
-es una aplicación ARM coherente y de ahí dedujo que One UI usa V34 y que el
-hueco estaba en nuestra inicialización fría.
+Since session 16 the same hard difference had been on record, boot after boot:
+the good state read `flash version 00 37 00 37` and **every** bad one read
+`00 34 00 34`. Session 18 dumped the 64 KiB read-only, checked that V34 is a
+coherent ARM application, and from that deduced One UI uses V34 and that the
+gap was in our cold initialisation.
 
-Esa deducción tenía un salto. Que V34 sea una imagen válida no dice quién la
-puso. El único blob que existe en este proyecto —el de la firmware oficial
-X910 `X910XXS5CYG1`, el mismo que empaqueta pmOS en
-`firmware-samsung-gts9uwifi`— es V37, 52.132 bytes, SHA-256
-`1b48d88c23523ae205cd960e6d42725268638a15a47d8a5e52854eb01108caa3`. La sesión 8
-lo programó en el MCU y **ese** fue el arranque en el que aparecieron las
-primeras pulsaciones reales. El MCU había vuelto a V34 por su cuenta; nunca se
-demostró que el driver mainline hablara con V34.
+That deduction contained a leap. V34 being a valid image says nothing about who
+put it there. The only blob that exists in this project — the official X910
+firmware `X910XXS5CYG1`'s, the same one pmOS packages in
+`firmware-samsung-gts9uwifi` — is V37, 52,132 bytes, SHA-256
+`1b48d88c23523ae205cd960e6d42725268638a15a47d8a5e52854eb01108caa3`. Session 8
+programmed it into the MCU and **that** was the boot on which the first real
+presses appeared. The MCU had gone back to V34 by itself; it was never
+demonstrated that the mainline driver spoke V34.
 
-### La reparación
+### The repair
 
-Con la tablet al 64 % y cargando —las dos condiciones que el propio actualizador
-exige— se invocó el actualizador del driver. El registro es completo:
+With the tablet at 64 % and charging — the two conditions the updater itself
+requires — the driver's updater was invoked. The log is complete:
 
 ```
 erasing STM32 application pages
@@ -1800,119 +1786,119 @@ application initialized: version 04 01 05 01, mode 1,
   CRC cd 0b f7 cf, accessory 09 00 ff 00 00 00
 ```
 
-`Book Cover Keyboard Slim (EF-DX920)` volvió a `/proc/bus/input/devices` en el
-acto. La tormenta de CONN se detuvo en seco: `connection_high` quedó congelado
-durante los 30 s siguientes, donde antes acumulaba una activación del elevador
-cada dos segundos.
+`Book Cover Keyboard Slim (EF-DX920)` returned to
+`/proc/bus/input/devices` instantly. The CONN storm stopped dead:
+`connection_high` stayed frozen through the following 30 s, where it used to
+accumulate one booster activation every two seconds.
 
-### Verificado desde arranque en frío y con la dueña escribiendo
+### Verified from a cold boot and with the owner typing
 
-Un reinicio completo lo confirmó sin tocar nada más. El driver leyó
-`00 37 00 37` a los 3,8 s, anunció `0xd6` a los 4,5 s y completó la
-inicialización de aplicación a los 7,6 s. En una ventana de 20 s de uso real el
-contador pasó de 1.063 a 1.174 pulsaciones, con `keys_down=1` en mitad de una
-tecla y `last_key=0x0017`. `recoveries=0`, `read_retry_releases=3` y cinco
-líneas de error en todo el arranque. Además la funda se desconectó y reconectó
-físicamente: el driver la soltó y la volvió a enganchar con la inicialización
-completa. La dueña lo dio por funcionando.
+A complete reboot confirmed it without touching anything else. The driver read
+`00 37 00 37` at 3.8 s, announced `0xd6` at 4.5 s and completed the application
+initialisation at 7.6 s. In a 20 s window of real use the counter went from
+1,063 to 1,174 presses, with `keys_down=1` in the middle of a key and
+`last_key=0x0017`. `recoveries=0`, `read_retry_releases=3` and five error lines
+in the whole boot. The cover was also physically disconnected and reconnected:
+the driver let it go and latched it again with the full initialisation. The
+owner declared it working.
 
-### Lo que sigue sin saberse
+### What is still unknown
 
-**Quién devolvió el MCU a V34.** No hay ningún V34 en este árbol, así que no
-salió de aquí. Las dos fuentes plausibles son One UI y el port de Ubuntu Touch,
-que cargan el `stm32_pogo_v3.ko` de Samsung con los blobs de su propio vendor.
-Encaja con la cronología —el fallo apareció tras arrancar otros sistemas— y con
-que la funda funcione en ambos: el driver de Samsung sí habla V34. Mientras no
-se mida, **arrancar One UI o Ubuntu Touch puede volver a degradar el MCU**.
+**Who returned the MCU to V34.** There is no V34 in this tree, so it did not
+come from here. The two plausible sources are One UI and the Ubuntu Touch port,
+which load Samsung's `stm32_pogo_v3.ko` with their own vendor's blobs. It fits
+the chronology — the failure appeared after booting other systems — and the
+fact that the cover works on both: Samsung's driver does speak V34. Until it is
+measured, **booting One UI or Ubuntu Touch may degrade the MCU again**.
 
-La recuperación es de un solo comando, y está pensada para eso:
+Recovery is a single command, and is designed for exactly that:
 
 ```
 sudo env GTS9U_ALLOW_POGO_FLASH=YES \
   /usr/libexec/ubuntu-gts9u-pogo-firmware-update
 ```
 
-El actualizador con esa guarda quedó instalado en la tablet (SHA-256
-`854599b3bb89142fdaae6f6af4e4849f1485554540dd6d9c4790498618d96e53`), y
-`ubuntu-gts9u-pogo-firmware.service` sigue **enmascarado**: ninguna escritura
-del accesorio ocurre en el arranque, que es justo el escenario en el que un
-reinicio forzado podría interrumpirla.
+The updater with that guard was installed on the tablet (SHA-256
+`854599b3bb89142fdaae6f6af4e4849f1485554540dd6d9c4790498618d96e53`), and
+`ubuntu-gts9u-pogo-firmware.service` remains **masked**: no accessory write
+happens at boot, which is precisely the scenario in which a forced reboot could
+interrupt one.
 
-### Dos cabos que esta sesión no tocó a propósito
+### Two loose ends this session deliberately did not touch
 
-El `boot` que corre en la tablet es `8fb31817…`, que no figura en ningún
-manifiesto de `artifacts/` y **no lleva** el parche de la IRQ de handover de
-`qcom_q6v5`: el journal repite `Handover signaled, but it already happened`
-varias veces por segundo. Reescribir `boot` para corregirlo habría arriesgado el
-estado bueno recién recuperado, así que se dejó para una sesión con la dueña
-presente.
+The `boot` running on the tablet is `8fb31817…`, which appears in no manifest
+in `artifacts/` and does **not** carry `qcom_q6v5`'s handover IRQ patch: the
+journal repeats `Handover signaled, but it already happened` several times a
+second. Rewriting `boot` to fix it would have risked the just-recovered good
+state, so it was left for a session with the owner present.
 
-Los cambios sin commitear del árbol —`samsung,restore-output-on-resume` en el
-DTS con su parche de `i2c-qcom-geni`, el `KERNEL_CLEAN` que también recrea el
-worktree y el `sgdisk --zap-all` de `twrp-write-sd.sh`— son de la sesión
-anterior y **nunca llegaron a la tablet**: `/proc/device-tree` no tiene la
-propiedad. Quedan en el árbol sin validar. La causa que se buscaba con ellos ya
-no está en pie, así que conviene revalidarlos por su cuenta antes de adoptarlos.
+The tree's uncommitted changes — `samsung,restore-output-on-resume` in the DTS
+with its `i2c-qcom-geni` patch, the `KERNEL_CLEAN` that also recreates the
+worktree, and `twrp-write-sd.sh`'s `sgdisk --zap-all` — are from the previous
+session and **never reached the tablet**: `/proc/device-tree` does not have the
+property. They stay in the tree unvalidated. The cause they were chasing no
+longer stands, so they are worth revalidating on their own merits before being
+adopted.
 
-## Sesión 20 — v0.16: una release que instala el teclado funcionando
+## Session 20 — v0.16: a release that installs a working keyboard
 
-Fecha: 2026-08-06.
+Date: 2026-08-06.
 
-### Se descartó el experimento GENI antes de construir nada
+### The GENI experiment was discarded before anything was built
 
-`samsung,restore-output-on-resume` y su parche de `i2c-qcom-geni` perseguían la
-hipótesis de que al MCU le faltaba que se le restauraran los drivers de salida
-del serial engine tras cada runtime resume. Se comprobó primero que nunca
-llegaron a la tablet —`/proc/device-tree` no tenía la propiedad— y después se
-retiraron junto con el interruptor A/B `GTS9U_DISABLE_Q6_HANDOVER_PATCH`, que
-solo existía para esa comparación, y con el `sgdisk --zap-all` sin probar de
-`twrp-write-sd.sh`, que además aborta si el recovery no trae `sgdisk` y está
-justo en el camino de reinstalar desde cero.
+`samsung,restore-output-on-resume` and its `i2c-qcom-geni` patch pursued the
+hypothesis that the MCU needed the serial engine's output drivers restored
+after every runtime resume. It was first checked that they never reached the
+tablet — `/proc/device-tree` did not have the property — and then they were
+withdrawn, along with the `GTS9U_DISABLE_Q6_HANDOVER_PATCH` A/B switch that
+existed only for that comparison, and with `twrp-write-sd.sh`'s untested
+`sgdisk --zap-all`, which also aborts if the recovery does not ship `sgdisk`
+and sits right on the path of reinstalling from scratch.
 
-Se conservó una sola cosa de ese lote, porque una release la necesita:
-`KERNEL_CLEAN=1` recrea también el worktree de fuentes. `apply_unless()` deja el
-árbol acumulando todo parche probado alguna vez, así que borrar solo los objetos
-no da una build limpia.
+One thing from that batch was kept, because a release needs it:
+`KERNEL_CLEAN=1` also recreates the source worktree. `apply_unless()` leaves
+the tree accumulating every patch ever tried, so deleting only the objects does
+not give a clean build.
 
-### La guarda estaba puesta al revés
+### The guard was the wrong way round
 
-Restaurar V37 exigía `GTS9U_ALLOW_POGO_FLASH=YES`. Eso, en una instalación
-nueva, significa un sistema recién puesto con el teclado mudo y sin pista de por
-qué: exactamente el problema que se acababa de diagnosticar, servido de fábrica.
-La guarda pasa a ser opt-out.
+Restoring V37 required `GTS9U_ALLOW_POGO_FLASH=YES`. On a fresh installation
+that means a newly set-up system with a mute keyboard and no clue why: exactly
+the problem just diagnosed, served from the factory. The guard becomes opt-out.
 
-Lo que hace segura la escritura no es elegir el momento, sino dónde puede caer.
-El bootloader ROM del STM32 vive en memoria de sistema, no se puede borrar y
-responde en todos los arranques; el driver relee los 52 KiB antes de darla por
-buena. Una escritura interrumpida se completa en el arranque siguiente, así que
-el servicio es autorreparable. Lo único que no puede pasar es escribir algo que
-no sea el blob de Samsung, y de eso sigue encargándose el hash fijado.
+What makes the write safe is not choosing the moment, but where it can land.
+The STM32's ROM bootloader lives in system memory, cannot be erased and answers
+on every boot; the driver reads the 52 KiB back before accepting it. An
+interrupted write completes on the next boot, so the service is self-repairing.
+The only thing that must not happen is writing something other than Samsung's
+blob, and the pinned hash still takes care of that.
 
-Se retiró también la exigencia de alimentación externa. Programar y verificar
-lleva unos dieciséis segundos; medio depósito sobra, y pedir además el cargador
-era justo lo que hacía que la restauración no se ejecutara nunca.
+The external power requirement was also removed. Programming and verifying
+takes about sixteen seconds; half a tank is plenty, and demanding the charger
+as well was exactly what stopped the restoration ever running.
 
-`flash_version` sale ahora en `diagnostics`, con `bootloader`. Es el campo que
-separa un controlador con el que se puede hablar de uno con el que no, y hasta
-ahora había que rescatarlo de una línea de `dmesg` del arranque.
+`flash_version` now appears in `diagnostics`, alongside `bootloader`. It is the
+field that separates a controller you can talk to from one you cannot, and
+until now it had to be rescued from a `dmesg` line at boot.
 
-### Verificación estática de la release, antes de tocar la tablet
+### Static verification of the release, before touching the tablet
 
-La imagen SD terminada se montó en solo lectura: paquete de dispositivo **1.5**,
-`ubuntu-gts9u-pogo-firmware.service` enlazado en `multi-user.target.wants` y sin
-enmascarar, el helper idéntico byte a byte al del repositorio, y
-`pogo-keyboard.md` instalado. El blob de Samsung no vive en la imagen sino en el
-overlay del ZIP; se extrajo del ZIP y se comprobó: 52.132 bytes y el hash
-fijado. El árbol de fuentes que compiló esta release lleva `flash_version`.
+The finished SD image was mounted read-only: device package **1.5**,
+`ubuntu-gts9u-pogo-firmware.service` linked into `multi-user.target.wants` and
+not masked, the helper byte for byte identical to the repository's, and
+`pogo-keyboard.md` installed. Samsung's blob does not live in the image but in
+the ZIP's overlay; it was extracted from the ZIP and checked: 52,132 bytes and
+the pinned hash. The source tree that compiled this release carries
+`flash_version`.
 
-### En hardware
+### On hardware
 
-Se escribieron `boot`, `init_boot`, `vendor_boot` y `dtbo` con `dd`, con
-respaldo previo de las cuatro y relectura de cada una. Los dos módulos `ath12k`
-se sustituyeron **antes** que el kernel: viven en la tarjeta, no en el ZIP, y un
-kernel nuevo con módulos viejos deja el Wi-Fi fuera y con él el acceso por SSH.
+`boot`, `init_boot`, `vendor_boot` and `dtbo` were written with `dd`, all four
+backed up first and each read back. The two `ath12k` modules were replaced
+**before** the kernel: they live on the card, not in the ZIP, and a new kernel
+with old modules leaves Wi-Fi out and with it SSH access.
 
-Tras el reinicio, sin que nadie ejecutara nada:
+After the reboot, with nobody running anything:
 
 ```
 ubuntu-gts9u-pogo-firmware.service: controller already on V37   (status=0)
@@ -1921,46 +1907,46 @@ attached=1 model=0xd6 connected=1 connection_high=0 connection_low=0
 N: Name="Book Cover Keyboard Slim (EF-DX920)"
 ```
 
-Cero pulsos de CONN desde el arranque, donde el estado malo acumulaba una
-activación del elevador cada dos segundos. El servicio no retrasa el arranque:
-`graphical.target` a los 54,5 s y la unidad no aparece en el `blame`.
+Zero CONN pulses since boot, where the bad state accumulated a booster
+activation every two seconds. The service does not delay the boot:
+`graphical.target` at 54.5 s and the unit does not appear in the `blame`.
 
-Artefactos de la v0.16, construida con `KERNEL_CLEAN=1`:
+v0.16's artefacts, built with `KERNEL_CLEAN=1`:
 
-- ZIP TWRP: `aa945ae57694df0056d1f06fc492a85e3291a8b07793e4c98451a3fc7c220397`
-- imagen SD comprimida:
+- TWRP ZIP: `aa945ae57694df0056d1f06fc492a85e3291a8b07793e4c98451a3fc7c220397`
+- compressed SD image:
   `631c0f8be83b18fe50a771963fb8de0ba6212350e7e5d071a08c1350d5d02079`
 - `boot.img`: `d57eb0994876a22aeaebfcc09e127a8b4a202f4ef9491209154caa9275374c31`
 
-### Lo que esta sesión no demuestra
+### What this session does not demonstrate
 
-Que la build limpia sea **reproducible** sigue sin demostrarse: haría falta una
-segunda build limpia idéntica. Y no se ha reinstalado desde cero de verdad —la
-tarjeta lleva datos y snaps de la dueña—, así que la garantía del teclado en una
-instalación nueva se apoya en la verificación estática de la imagen y del ZIP,
-no en haberla ejecutado. Lo que sí se ejecutó, y funcionó solo, es el servicio
-de restauración en un arranque real.
+That the clean build is **reproducible** is still undemonstrated: that would
+need a second identical clean build. And there has been no genuine reinstall
+from scratch — the card carries the owner's data and snaps — so the keyboard's
+guarantee on a fresh installation rests on the static verification of the image
+and the ZIP, not on having run it. What was run, and worked on its own, is the
+restoration service on a real boot.
 
-### Apostilla: qué se pudo comprobar sin un dedo delante
+### A postscript: what could be checked with no finger present
 
-En la v0.16 quedó sin observarse una pulsación real: un vigilante de cinco
-minutos sobre `key_events` no registró nada porque no había nadie tecleando.
-No es un fallo, es ausencia de dato, y conviene no confundirlos.
+In v0.16 a real press went unobserved: a five-minute watcher on `key_events`
+recorded nothing because nobody was typing. That is not a failure, it is an
+absence of data, and the two should not be confused.
 
-Sí se ejercitó la mitad del enlace que no necesita un dedo. Conmutar el LED de
-bloqueo de mayúsculas de la funda —`/sys/class/leds/input3::capslock`— envía un
-comando I²C real a la aplicación del STM32: las cuatro conmutaciones llegaron,
-el valor que el driver publica en `caps=` siguió a cada una, y el contador de
-errores del pogo en todo el arranque siguió en **cero**. Queda pendiente la
-dirección de lectura, que es la que necesita una tecla física.
+The half of the link that needs no finger was exercised. Toggling the cover's
+caps lock LED — `/sys/class/leds/input3::capslock` — sends a real I²C command
+to the STM32's application: all four toggles arrived, the value the driver
+publishes in `caps=` followed each one, and the pogo's error counter stayed at
+**zero** through the whole boot. The read direction, which needs a physical
+key, is still pending.
 
-### Cierre de la apostilla: la v0.16 sí teclea
+### Closing the postscript: v0.16 does type
 
-Fecha: 2026-08-07.
+Date: 2026-08-07.
 
-El hueco de la apostilla anterior no era un problema del teclado: la dueña
-estaba ausente y no había dejado nada encima. Con uso real quedó medido sobre
-el mismo arranque, ya con más de siete horas de vida:
+The gap in the previous postscript was not a keyboard problem: the owner was
+away and had left nothing on top of it. With real use it was measured on the
+same boot, by then over seven hours old:
 
 ```
 key_events=306 last_key=0x0042 keys_down=0
@@ -1968,122 +1954,121 @@ data_irq=318 connection_high=4 connection_low=4
 recoveries=0 read_retry_releases=0 bootloader=1 flash_version=00370037
 ```
 
-Cuatro transiciones de CONN en siete horas, ninguna recuperación y ningún
-reintento de lectura. Es la ventana estable más larga registrada en este port,
-y contrasta con las decenas de activaciones del elevador por minuto del estado
-malo.
+Four CONN transitions in seven hours, no recoveries and no read retries. It is
+the longest stable window recorded in this port, and it contrasts with the
+dozens of booster activations per minute of the bad state.
 
-Se comprobó además que lo que corre es la release y no un `boot` suelto: las
-cuatro particiones de arranque de la tablet coinciden byte a byte con el
-manifiesto de la v0.16, y el paquete de dispositivo instalado es el 1.5.
+It was also checked that what is running is the release and not a loose `boot`:
+the tablet's four boot partitions match v0.16's manifest byte for byte, and the
+installed device package is 1.5.
 
-## Sesión 21 — el teclado deja de pedir cosas, y los nombres comerciales
+## Session 21 — the keyboard stops asking for things, and the commercial names
 
-Fecha: 2026-08-07.
+Date: 2026-08-07.
 
-### El requisito de la funda era una suposición, y era falsa
+### The cover requirement was an assumption, and it was false
 
-El actualizador rechazaba escribir si la línea de conexión estaba baja. La
-justificación asumida —que el controlador colgaba del mismo raíl que el
-accesorio— nunca se había medido. La dueña preguntó lo obvio: si lo que se
-programa está en la tablet, ¿para qué hace falta la funda?
+The updater refused to write if the connection line was low. The assumed
+justification — that the controller hung off the same rail as the accessory —
+had never been measured. The owner asked the obvious question: if what is being
+programmed is in the tablet, what is the cover for?
 
-Se midió. Con la funda fuera, `connected=0` y `pogo_vddo` en `disabled`:
+It was measured. With the cover off, `connected=0` and `pogo_vddo` `disabled`:
 
 ```
 STM32 bootloader reachable, product id 0x460, flash version 00 37 00 37
 STM32 pogo controller ready (connected=0, data-ready=0)
 ```
 
-El ROM contesta igual sin funda y sin raíl. Lo que se corta al desconectar
-alimenta al teclado; el microcontrolador va por el I2C6 de la tablet y es
-independiente. La comprobación se retira: escribir sin funda es incluso más
-tranquilo, porque no hay pulsos de conexión compitiendo.
+The ROM answers just the same with no cover and no rail. What is cut on
+disconnection powers the keyboard; the microcontroller runs off the tablet's
+I2C6 and is independent. The check is withdrawn: writing with no cover is
+calmer still, because there are no connection pulses competing.
 
-El umbral de batería baja de 50 % a 15 %. No defiende la flash —una escritura
-interrumpida se completa en el arranque siguiente porque el bootloader ROM no
-se puede borrar— solo evita empezar en una tablet a punto de apagarse. La
-exigencia de cargador ya se había retirado antes, y era justo lo que impedía
-que la restauración se ejecutara nunca.
+The battery threshold drops from 50 % to 15 %. It does not defend the flash —
+an interrupted write completes on the next boot because the ROM bootloader
+cannot be erased — it merely avoids starting on a tablet about to switch off.
+The charger requirement had already been removed, and it was exactly what
+stopped the restoration ever running.
 
-Con eso, la sección del README que explicaba qué tenía que hacer el usuario
-desaparece: no tiene que hacer nada.
+With that, the README section explaining what the user had to do disappears:
+they have to do nothing.
 
-### Los nombres comerciales: dos fuentes, una por capa
+### The commercial names: two sources, one per layer
 
-Cada herramienta preguntaba a un sitio distinto y ninguna daba un nombre.
+Each tool asked a different place and none gave a name.
 
-**CPU.** La línea `model name` de `/proc/cpuinfo` es la convención universal en
-Linux, y arm64 solo la emite para tareas compat. Rellenarla desde una tabla
-indexada por el compatible de la máquina —no por una propiedad nueva del DTS,
-que obligaría a reescribir `vendor_boot`— hace que GNOME y todo lo que lea ese
-fichero reciba «Qualcomm Snapdragon 8 Gen 2». Se habilita además
-`QCOM_SOCINFO`, que estaba en `=m` y por tanto no existía; ahora `soc0` publica
-familia `Snapdragon` y máquina `SM8550`.
+**CPU.** `/proc/cpuinfo`'s `model name` line is the universal convention on
+Linux, and arm64 only emits it for compat tasks. Filling it from a table
+indexed by the machine's compatible — not by a new DTS property, which would
+force rewriting `vendor_boot` — makes GNOME and everything that reads that file
+receive "Qualcomm Snapdragon 8 Gen 2". `QCOM_SOCINFO` is also enabled; it was
+at `=m` and therefore did not exist. Now `soc0` publishes family `Snapdragon`
+and machine `SM8550`.
 
-**GPU.** `force_gl_renderer` es una opción soportada de Mesa —su configuración
-de fábrica la usa con otras Adreno— así que no hizo falta un Mesa propio.
-OpenGL pasa de `FD740` a `Adreno (TM) 740`, que es lo que muestra el F3 de
-Minecraft. Una trampa que costó una sesión: un `--` dentro de un comentario XML
-es ilegal, y Mesa descarta el fichero entero sin decir nada.
+**GPU.** `force_gl_renderer` is a supported Mesa option — its factory
+configuration uses it with other Adrenos — so no custom Mesa was needed. OpenGL
+goes from `FD740` to `Adreno (TM) 740`, which is what Minecraft's F3 shows. One
+trap that cost a session: a `--` inside an XML comment is illegal, and Mesa
+discards the whole file without saying anything.
 
-Vulkan sigue diciendo `Turnip Adreno (TM) 740`: esa cadena sale de un formato
-fijo dentro del driver, sin opción de configuración.
+Vulkan still says `Turnip Adreno (TM) 740`: that string comes from a fixed
+format inside the driver, with no configuration option.
 
-**fastfetch** no leía ninguna de las dos. Un `strace` lo mostró abriendo
-`/sys/firmware/devicetree/base/compatible` y nunca `/proc/cpuinfo`: en ARM
-rellena el nombre desde el device tree y, una vez puesto, se salta la lectura
-entera. Como este port ya compila fastfetch desde fuente, se parchea el orden
-de precedencia, que además es el correcto. El paquete pasa a `2.66.0-gts9u1`
-para que una actualización del archivo no se lleve el parche por delante.
+**fastfetch** read neither of the two. An `strace` showed it opening
+`/sys/firmware/devicetree/base/compatible` and never `/proc/cpuinfo`: on ARM it
+fills the name from the device tree and, once set, skips the read entirely.
+Since this port already compiles fastfetch from source, the precedence order is
+patched, which is also the correct order. The package moves to
+`2.66.0-gts9u1` so that an archive update does not take the patch with it.
 
-### La build limpia no es reproducible, y ya se sabe por qué
+### The clean build is not reproducible, and we now know why
 
-Dos builds limpias del mismo árbol dan el mismo DTB, `vendor_boot`, `init_boot`
-y `dtbo`, pero distinto `Image.gz`. Aislada la diferencia en un módulo de 1 MB,
-**todo lo anterior a `.BTF` coincide byte a byte**: el código compilado ya es
-determinista y lo que baila es el codificador BTF paralelo que
-`scripts/Makefile.btf` invoca con `-j$(JOBS)`. El detalle y el arreglo —sin
-aplicar, porque cambiaría el kernel a cambio de nada que hoy haga falta— están
-en las notas de desarrollo.
+Two clean builds of the same tree give the same DTB, `vendor_boot`,
+`init_boot` and `dtbo`, but a different `Image.gz`. With the difference
+isolated in a 1 MB module, **everything before `.BTF` matches byte for byte**:
+the compiled code is already deterministic and what varies is the parallel BTF
+encoder that `scripts/Makefile.btf` invokes with `-j$(JOBS)`. The detail and
+the fix — unapplied, because it would change the kernel in exchange for nothing
+needed today — are in the development notes.
 
-### Una carrera propia, que se comió el servicio entero
+### A race of our own, which ate the whole service
 
-Al desplegar el kernel sin el requisito de funda, el servicio de restauración no
-llegó a ejecutarse: `ConditionResult=no` y ni una línea en el journal.
+On deploying the kernel without the cover requirement, the restoration service
+never ran: `ConditionResult=no` and not one line in the journal.
 
-La causa es un cambio de la sesión 20. La unidad llevaba
-`After=multi-user.target` **y** `WantedBy=multi-user.target`, con la idea de que
-corriera tarde para poder esperar a la funda sin retrasar el arranque. systemd
-no puede ordenar una unidad detrás del propio target que la arrastra: ignora esa
-ordenación sin avisar y la lanza junto a las demás, sobre los tres segundos. El
-driver engancha a los 3,9 s, así que
-`ConditionPathExists=/sys/bus/i2c/devices/6-002a/firmware_update` perdía la
-carrera y la unidad quedaba marcada como no aplicable. En silencio: una
-condición que falla no es un error.
+The cause is a change from session 20. The unit carried
+`After=multi-user.target` **and** `WantedBy=multi-user.target`, on the idea that
+it would run late so it could wait for the cover without delaying the boot.
+systemd cannot order a unit after the very target that pulls it in: it ignores
+that ordering without warning and launches it with the rest, at around three
+seconds. The driver binds at 3.9 s, so
+`ConditionPathExists=/sys/bus/i2c/devices/6-002a/firmware_update` lost the race
+and the unit was marked not applicable. Silently: a failed condition is not an
+error.
 
-En la v0.16 y la v0.17 sí corrió, pero por suerte de carrera, no por diseño. La
-red de seguridad llevaba un día existiendo solo a ratos.
+In v0.16 and v0.17 it did run, but by luck of the race, not by design. The
+safety net had spent a day existing only intermittently.
 
-La reparación tiene dos partes. La ordenación vuelve a `After=local-fs.target`,
-que además ya no cuesta nada: quitado el requisito de funda, el helper no tiene
-que esperar a nada. Y la espera por el dispositivo baja al helper, acotada a
-15 s y con mensaje, en vez de vivir como condición de systemd, donde perder una
-carrera no deja rastro.
+The repair has two parts. The ordering returns to `After=local-fs.target`,
+which now costs nothing either: with the cover requirement gone, the helper has
+nothing to wait for. And the wait for the device moves down into the helper,
+bounded to 15 s and with a message, instead of living as a systemd condition,
+where losing a race leaves no trace.
 
-Verificado desde arranque en frío: `ConditionResult=yes`, la unidad arranca a
-las 04:57:16 y termina un segundo después con «controller already on V37».
+Verified from a cold boot: `ConditionResult=yes`, the unit starts at 04:57:16
+and finishes a second later with "controller already on V37".
 
-## Sesión 22 — el digitalizador del S Pen responde, pero todavía no habla
+## Session 22 — the S Pen's digitizer answers, but does not talk yet
 
-Fecha: 2026-08-07.
+Date: 2026-08-07.
 
-### Dónde estaba escondido
+### Where it was hidden
 
-`vendor_boot` no menciona el digitalizador ni una vez, y por eso constaba como
-«sin driver mainline» sin más detalle. Está en el **`dtbo` de Samsung**, que
-nadie había abierto: se extrae del paquete AP del firmware oficial y contiene
-dos overlays, ambos con el nodo.
+`vendor_boot` does not mention the digitizer once, which is why it was recorded
+as "no mainline driver" with no further detail. It is in **Samsung's `dtbo`**,
+which nobody had opened: it is extracted from the official firmware's AP
+package and contains two overlays, both with the node.
 
 ```
 wacom@56   compatible = "wacom,w90xx"   bus: qupv3_se3_i2c
@@ -2091,357 +2076,360 @@ wacom@56   compatible = "wacom,w90xx"   bus: qupv3_se3_i2c
   avdd = pm_humu_l13              firmware = wez01_gts9u.bin
 ```
 
-El bus es nuestro `i2c3`: Samsung numera los SE igual que mainline, como ya
-demostraba el pogo en `qupv3_se15_i2c` = `i2c15`. `gpio40/41` (los pines del
-bus) y `gpio154/137` estaban libres, y `gpi_dma1` ya habilitado.
+The bus is our `i2c3`: Samsung numbers the SEs the same as mainline, as the
+pogo already demonstrated with `qupv3_se15_i2c` = `i2c15`. `gpio40/41` (the
+bus's pins) and `gpio154/137` were free, and `gpi_dma1` already enabled.
 
-### El chip está vivo
+### The chip is alive
 
-Habilitado `i2c3` con el nodo, `i2cdetect` ve **0x56** contestando. La consulta
-estilo HID devuelve un registro estable, y decodificarlo confirma que es el
-dispositivo correcto: el registro empieza en el offset **17** y es
-**big-endian**.
+With `i2c3` enabled and the node in place, `i2cdetect` sees **0x56** answering.
+The HID-style query returns a stable register, and decoding it confirms it is
+the right device: the register starts at offset **17** and is **big-endian**.
 
-| Campo | Leído | DT de Samsung |
+| Field | Read | Samsung's DT |
 |---|---|---|
 | x_max | `0x4c85` = 19589 | — |
 | y_max | `0x7a90` = 31376 | — |
-| presión | `0x0fff` = 4095 | `max_pressure = 0xfff` |
+| pressure | `0x0fff` = 4095 | `max_pressure = 0xfff` |
 | tilt | `0x3f 0x3f` | `max_tilt = <0x3f 0x3f>` |
-| altura | `0xff` | `max_height = 0xff` |
-| módulo | `0x02` | `module_ver = 0x02` |
+| height | `0xff` | `max_height = 0xff` |
+| module | `0x02` | `module_ver = 0x02` |
 | boot addr | `0x09` | `boot_addr = 0x09` |
 
-La proporción 19589/31376 es 0,6243, exactamente 1848/2960 del panel. El
-decodificado no es una casualidad.
+The ratio 19589/31376 is 0.6243, exactly the panel's 1848/2960. The decoding is
+no coincidence.
 
-### Por qué el driver de mainline no sirve, y por qué callaba
+### Why mainline's driver does not work, and why it was silent
 
-`wacom_i2c` lee **19 bytes en little-endian** desde offsets 3, 5 y 11. Este
-chip pone su registro en el 17 y en big-endian, así que la consulta falla. Y
-falla **en silencio**: el probe hace `error = wacom_query_device(); if (error)
-return error;` sin un solo `dev_err`. De ahí que no hubiera ni una línea en
-dmesg, lo que al principio parecía que ni siquiera había casado.
+`wacom_i2c` reads **19 bytes in little-endian** from offsets 3, 5 and 11. This
+chip puts its register at 17 and in big-endian, so the query fails. And it
+fails **silently**: the probe does `error = wacom_query_device(); if (error)
+return error;` without a single `dev_err`. Hence not one line in dmesg, which at
+first made it look as though it had not even matched.
 
-El driver de Samsung para esta pieza es `wez01.ko`, con `alias:
-i2c:wacom_w90xx`. Sus cadenas dan dos requisitos que mainline no cumple:
+Samsung's driver for this part is `wez01.ko`, with `alias:
+i2c:wacom_w90xx`. Its strings give two requirements mainline does not meet:
 
-- `fwe gpio is high, change low and reset device` — la línea de habilitación de
-  flash debe estar baja.
-- `failed to send wacom i2c mode` — hay un **comando de modo** que arranca el
-  reporte.
+- `fwe gpio is high, change low and reset device` — the flash-enable line has
+  to be low.
+- `failed to send wacom i2c mode` — there is a **mode command** that starts
+  reporting.
 
-Sus notificadores enumeran justo el alcance pedido: `PEN_HOVER_IN/OUT`,
+Its notifiers enumerate exactly the scope asked for: `PEN_HOVER_IN/OUT`,
 `PEN_INSERT/REMOVE`, `PEN_CHARGING_STARTED/FINISHED`.
 
-### Lo que no funcionó, anotado para no repetirlo
+### What did not work, recorded so it is not repeated
 
-Los comandos de un byte al estilo Samsung (`0x2a`, `0x31`, `0x32`, `0x33`)
-**hacen que el chip deje de reconocer su dirección**: durante un rato todas las
-transferencias dieron `ENXIO`. Se recupera solo, pero no es su protocolo. La
-consulta de seis bytes con registro y opcode sí funciona, así que la interfaz
-es de estilo HID-sobre-I2C, no la de bytes sueltos.
+Samsung-style single-byte commands (`0x2a`, `0x31`, `0x32`, `0x33`) **make the
+chip stop acknowledging its address**: for a while every transfer returned
+`ENXIO`. It recovers on its own, but that is not its protocol. The six-byte
+query with a register and an opcode does work, so the interface is
+HID-over-I2C style, not the loose-byte one.
 
-Se sospechó que la suspensión cortaba el raíl del panel, que es quien alimenta
-al digitalizador. **Falso**: `vreg_l13b_3p0` seguía habilitado, el panel
-encendido, y solo hubo la suspensión de recuperación del arranque.
+It was suspected that suspend cut the panel's rail, which is what powers the
+digitizer. **False**: `vreg_l13b_3p0` stayed enabled, the panel was on, and the
+only suspend was the boot's recovery one.
 
-### Estado: responde, no reporta
+### State: it answers, it does not report
 
-Con el lápiz apoyado en la tablet no llega ningún evento; las lecturas dan una
-cabecera fija `0d 03 11` que nunca cambia. Hay tres explicaciones y no se pueden
-separar sin mover el lápiz: que un EMR **tumbado** acople mal por quedar su
-bobina paralela a la rejilla, que falte el comando de modo, o que FWE esté alta.
+With the pen resting on the tablet no event arrives; the reads give a fixed
+`0d 03 11` header that never changes. There are three explanations and they
+cannot be separated without moving the pen: that an EMR lying **flat** couples
+badly with its coil parallel to the grid, that the mode command is missing, or
+that FWE is high.
 
-Queda un grabador de solo lectura corriendo en la tablet
-(`/tmp/spen-record.sh` a `/tmp/spen-capture.log`) que registra cualquier cambio
-con marca de tiempo. En cuanto la dueña coja el lápiz y lo sostenga en
-perpendicular, el formato del informe queda capturado sin necesidad de estar
-delante.
+A read-only recorder is left running on the tablet (`/tmp/spen-record.sh` to
+`/tmp/spen-capture.log`) which logs any change with a timestamp. As soon as the
+owner picks the pen up and holds it perpendicular, the report format is
+captured without anyone having to be present.
 
-Nada de lo que ya funcionaba se ha tocado: cero líneas de error de I²C en todo
-el arranque, y pantalla, GPU, sensores y el controlador pogo intactos.
+Nothing that already worked has been touched: zero I²C error lines through the
+whole boot, and display, GPU, sensors and the pogo controller all intact.
 
-## Sesión 23 — el S Pen escribe: driver propio, y tres defectos que la dueña encontró
+## Session 23 — the S Pen writes: our own driver, and three defects the owner found
 
-Fecha: 2026-08-07.
+Date: 2026-08-07.
 
-### El formato del informe, decodificado de 5.200 fotogramas
+### The report format, decoded from 5,200 frames
 
-Con el bus levantado y un grabador de solo lectura corriendo, mover el lápiz
-bastó para capturar el protocolo. La cabecera fija `0d 03 11` que se veía en
-reposo no era el informe: los informes aparecen solo con el lápiz en rango.
-
-```
-[0]    estado: 0x80 en rango · 0x20 botón lateral · 0x10 punta · 0x01 siempre
-[1:2]  X          big endian        [7]   inclinación X (con signo)
-[3:4]  Y          big endian        [8]   inclinación Y (con signo)
-[5:6]  presión    big endian        [9]   distancia
-       bit15 marca el campo         [10]  contador de secuencia
-```
-
-Lo que hace el decodificado seguro no es que encaje, sino que cada campo se
-valida contra algo independiente: la presión es distinta de cero **exactamente**
-en los fotogramas con bit4 y cero en los otros 5.059; la inclinación Y recorre
-−63…21, que es el ±63 del árbol de Samsung; y no queda ni un bit sin explicar.
-
-El botón lateral necesitó una captura aparte, porque en la primera no se pulsó
-ni una vez. Aparecieron dos estados nuevos, `0xa1` y `0xb1`: bit5.
-
-### Driver propio, y por qué no valía ninguno de mainline
-
-`wacom_i2c` lee 19 bytes little-endian desde los offsets 3, 5 y 11; este chip
-responde big-endian desde el 17. Y falla **en silencio**: su probe devuelve el
-error de la consulta sin imprimir nada, así que un fallo es indistinguible de no
-haber casado, lo que despistó al principio. `wacom_w9000` solo cubre W9002 y
-W9007A. Se retiran los dos del kernel: conservarlos solo haría ambiguo de cuál
-viene un fallo futuro.
-
-### Tres defectos, todos encontrados usándolo
-
-La dueña probó y describió tres síntomas. Los tres eran reales y ninguno era el
-que yo habría mirado primero.
-
-**«Se ignoran los toques» y «deja de pillar el lápiz al mover rápido».** El
-mismo defecto: mi driver soltaba el lápiz ante cualquier fotograma sin el bit de
-rango, y el chip intercala cabeceras de estado y lecturas rotas entre los
-buenos. Medido: **75 pérdidas en quince minutos**. Descartando lo que no es un
-informe de lápiz y exigiendo tres fotogramas seguidos antes de creerse una
-salida de rango, **bajaron a cero**.
-
-**«El hover va con retraso, sobre todo al mover rápido».** Esa descripción era
-la pista: es la firma de una tasa de muestreo baja, no de un driver lento. El
-intervalo medía 25,0 ms a tres cifras, que son 40 Hz exactos, que es literalmente
-`COM_SAMPLERATE_40` de Samsung. Enviar `0x31` lo llevó a ~440 Hz de posiciones
-**distintas** —5.385 X nuevas en 5.637 paquetes, así que no son repeticiones—.
-Y la tasa **se revierte sola**, que es lo que `wez01` llama «samplerate state is
-%d, need to recovery», así que el driver la pide también en cada entrada en
-rango.
-
-**«Al rotar la pantalla el lápiz se queda girado 90º».** Aquí el instinto de
-mirar las propiedades de orientación era el equivocado: si la base estuviera
-mal, fallaría también sin rotar. La comparación con el táctil lo cerró en un
-vistazo: mismo árbol, mismas propiedades, pero `PROP=2` frente a `PROP=0`. Sin
-`INPUT_PROP_DIRECT`, libinput archiva el lápiz como tableta gráfica externa, que
-se mapea al escritorio entero y **deliberadamente** no sigue la orientación de
-la salida.
-
-### El arranque
-
-El primer intento no enganchaba: NACK a los 3,887 s. La alimentación es LDO13
-del PMIC B, compartida con el VCI del panel, y yo había decidido no declararla
-razonando que «el panel ya la mantiene encendida». Cierto en régimen
-permanente, falso durante el arranque, que es justo cuando el driver sondea.
-Declarada y encendida desde el driver, con reintentos, engancha a los 3,97 s sin
-que nadie haga nada.
-
-### Lo que queda
-
-Las partes 2 y 3 —acoplamiento y carga del lápiz, y los gestos por BLE—. El
-`wez01` de Samsung depende de `stm32_pogo_v3`, `hall_ic_notifier` y
-`usb_typec_manager`, y sus notificadores nombran `PEN_INSERT`, `PEN_REMOVE`,
-`PEN_CHARGING_STARTED` y `PEN_CHARGING_FINISHED`, así que esa parte pasa por el
-mismo sitio que la funda.
-
-### La rotación del lápiz no estaba en el kernel, y la pista la dio el dedo
-
-Con el driver funcionando, la dueña encontró que el lápiz no seguía la rotación
-de la pantalla. Costó tres iteraciones porque **estuve mirando donde no era**.
-
-El error de método: ella describía el fallo **en vertical**, donde lo que se ve
-es la transformación del driver *más* la del compositor. Atribuí la diferencia
-entera al árbol de dispositivos, quité `touchscreen-inverted-x` y rompí el
-horizontal, que llevaba bien desde el principio.
-
-La medida que había que hacer desde el primer momento es en la orientación
-nativa, donde el compositor no rota nada. Dos esquinas opuestas con el lápiz:
+With the bus up and a read-only recorder running, moving the pen was enough to
+capture the protocol. The fixed `0d 03 11` header seen at rest was not the
+report: reports appear only with the pen in range.
 
 ```
-superior izquierda   ABS_X   7 %   ABS_Y  97 %
-inferior derecha     ABS_X  92 %   ABS_Y   6 %
+[0]    state: 0x80 in range · 0x20 side button · 0x10 tip · 0x01 always
+[1:2]  X          big endian        [7]   tilt X (signed)
+[3:4]  Y          big endian        [8]   tilt Y (signed)
+[5:6]  pressure   big endian        [9]   distance
+       bit15 marks the field        [10]  sequence counter
 ```
 
-`ABS_X` crece de izquierda a derecha; `ABS_Y` decrece de arriba a abajo. Luego
-la configuración original —invertir X y luego intercambiar— era correcta, y una
-sola esquina no habría bastado para saberlo: distingue mal entre «el eje está
-invertido» y «me he equivocado al interpretar qué esquina es».
+What makes the decoding safe is not that it fits, but that every field is
+validated against something independent: pressure is non-zero **exactly** in
+the frames with bit4 and zero in the other 5,059; tilt Y sweeps −63…21, which is
+Samsung's tree's ±63; and not one bit is left unexplained.
 
-La pista buena la dio ella: **el táctil giraba bien en todas las orientaciones**.
-Eso descarta el compositor y señala lo único que el dedo y el lápiz no comparten:
+The side button needed a separate capture, because it was not pressed once in
+the first. Two new states appeared, `0xa1` and `0xb1`: bit5.
 
-- un **táctil** se calibra contra su salida, y GNOME le aplica la matriz sin
-  consultar nada más;
-- una **tableta** se *asigna* a una salida, y para saber a cuál —o si le toca
-  alguna— GNOME pregunta a **libwacom**.
+### Our own driver, and why no mainline one would do
 
-Nuestro digitalizador no estaba en su base de datos. Una tableta desconocida se
-asume externa, y una tableta externa **deliberadamente** no sigue la orientación
-de la pantalla: es lo correcto para una Intuos sobre la mesa y justo lo
-contrario cuando la tableta *es* la pantalla.
+`wacom_i2c` reads 19 little-endian bytes from offsets 3, 5 and 11; this chip
+answers big-endian from 17. And it fails **silently**: its probe returns the
+query's error without printing anything, so a failure is indistinguishable from
+not having matched, which misled us at first. `wacom_w9000` covers only the
+W9002 and W9007A. Both are removed from the kernel: keeping them would only
+make it ambiguous which one a future failure came from.
 
-La entrada `samsung-gts9u-spen.tablet` lo dice en una línea,
-`IntegratedIn=Display;System`, y libwacom pasó a devolver `integration flags=0x3`.
-No bastó con reenlazar el driver: el compositor lee esa base al arrancar, así
-que hizo falta un reinicio. Con eso, correcto en las cuatro orientaciones.
+### Three defects, all found by using it
 
-Vale la pena retener que **esta parte es userspace**: va en el paquete de
-dispositivo, no en el kernel, así que iterar aquí cuesta un minuto y no obliga a
-reflashear.
+The owner tried it and described three symptoms. All three were real and none
+was the one I would have looked at first.
 
-## Sesión 24 — la carga lenta eran tres fallos encadenados
+**"Touches get ignored" and "it stops picking up the pen when I move fast."**
+The same defect: my driver released the pen on any frame without the range bit,
+and the chip interleaves status headers and broken reads among the good ones.
+Measured: **75 losses in fifteen minutes**. Discarding what is not a pen report
+and requiring three consecutive frames before believing a range exit, they
+**dropped to zero**.
 
-Fecha: 2026-08-07.
+**"Hover lags, especially when moving fast."** That description was the clue:
+it is the signature of a low sampling rate, not a slow driver. The interval
+measured 25.0 ms to three figures, which is exactly 40 Hz, which is literally
+Samsung's `COM_SAMPLERATE_40`. Sending `0x31` took it to ~440 Hz of **distinct**
+positions — 5,385 new X values in 5,637 packets, so they are not repeats. And
+the rate **reverts on its own**, which is what `wez01` calls "samplerate state
+is %d, need to recovery", so the driver requests it on every entry into range
+too.
 
-La dueña reportó que la tablet cargaba muy despacio con el cargador oficial de
-45 W. Medido al empezar: **4,7 W** entrando a la batería, y un 1 % cada siete
-minutos. El cargador anunciaba 5V/3A, 9V/3A, 15V/3A, 20V/2,25A y **PPS hasta
-11 V a 5 A**; nosotros negociábamos 9 V a 1,66 A.
+**"When the screen rotates the pen stays turned 90°."** Here the instinct to
+look at the orientation properties was the wrong one: if the base were wrong, it
+would fail without rotating too. The comparison with the touchscreen closed it
+at a glance: same tree, same properties, but `PROP=2` against `PROP=0`. Without
+`INPUT_PROP_DIRECT`, libinput files the pen as an external graphics tablet,
+which maps to the whole desktop and **deliberately** does not follow the
+output's orientation.
 
-### El SM5440 estaba ahí, y su driver también
+### The probe
 
-Ni el chip ni el driver faltaban: `0-0063 -> sm5440`, «direct charger device ID
-0x21», y `sm5440_direct.c` ya sabía pedir PPS, refrescarlo y volver al cargador
-conmutado. El fallo no era de ausencia sino de comportamiento.
+The first attempt would not latch: NACK at 3.887 s. The supply is PMIC B's
+LDO13, shared with the panel's VCI, and I had decided not to declare it,
+reasoning that "the panel keeps it on anyway". True in steady state, false
+during boot, which is exactly when the driver probes. Declared and enabled from
+the driver, with retries, it latches at 3.97 s with nobody doing anything.
 
-### Primero: I2C durante la suspensión, que tumbaba el puerto entero
+### What remains
+
+Parts 2 and 3 — the pen's docking and charging, and the BLE gestures.
+Samsung's `wez01` depends on `stm32_pogo_v3`, `hall_ic_notifier` and
+`usb_typec_manager`, and its notifiers name `PEN_INSERT`, `PEN_REMOVE`,
+`PEN_CHARGING_STARTED` and `PEN_CHARGING_FINISHED`, so that part goes through
+the same place as the cover.
+
+### The pen's rotation was not in the kernel, and the finger gave the clue
+
+With the driver working, the owner found the pen did not follow the screen's
+rotation. It took three iterations because **I was looking in the wrong place**.
+
+The methodological error: she described the failure **in portrait**, where what
+you see is the driver's transform *plus* the compositor's. I attributed the
+whole difference to the device tree, removed `touchscreen-inverted-x` and broke
+landscape, which had been right from the start.
+
+The measurement that should have been made from the first moment is in the
+native orientation, where the compositor rotates nothing. Two opposite corners
+with the pen:
 
 ```
-i2c i2c-0: Transfer while suspended     ← el SM5440
-i2c i2c-4: Transfer while suspended     ← y detrás el controlador PD
+top left        ABS_X   7 %   ABS_Y  97 %
+bottom right    ABS_X  92 %   ABS_Y   6 %
 ```
 
-El lazo de sondeo de un segundo se ejecutaba durante la suspensión del sistema,
-y las transferencias fallidas **se llevaban por delante el contrato USB-PD**: el
-puerto caía a 5 V de DCP y se quedaba ahí. No era una carrera rara — la
-recuperación en frío del panel suspende a los ~21 s de cada arranque, que es
-justo cuando el cargador está negociando.
+`ABS_X` grows left to right; `ABS_Y` decreases top to bottom. So the original
+configuration — invert X and then swap — was correct, and a single corner would
+not have been enough to know: it distinguishes badly between "the axis is
+inverted" and "I misread which corner that is".
 
-Es la misma lección de la sesión 9 con el pogo. Allí se pudo quitar el sondeo;
-aquí no, porque la carga directa necesita su lazo, así que se para alrededor de
-la suspensión devolviendo antes la batería al conmutado.
+The good clue came from her: **touch rotated correctly in every orientation**.
+That rules out the compositor and points at the only thing finger and pen do
+not share:
 
-### Segundo: no había lazo cerrado
+- a **touchscreen** is calibrated against its output, and GNOME applies the
+  matrix to it without consulting anything else;
+- a **tablet** is *assigned* to an output, and to know which — or whether it
+  gets one at all — GNOME asks **libwacom**.
 
-Con el PD ya estable se vio el siguiente: el driver calculaba la tensión
-objetivo **una vez al arrancar** y luego reenviaba siempre la misma. Según sube
-la batería, el margen sobre 2×Vbat se estrecha y la corriente se apaga sola:
+Our digitizer was not in its database. An unknown tablet is assumed external,
+and an external tablet **deliberately** does not follow the screen's
+orientation: that is right for an Intuos on the desk and exactly wrong when the
+tablet *is* the screen.
+
+The `samsung-gts9u-spen.tablet` entry says so in one line,
+`IntegratedIn=Display;System`, and libwacom began returning `integration
+flags=0x3`. Rebinding the driver was not enough: the compositor reads that
+database at start-up, so a reboot was needed. With that, correct in all four
+orientations.
+
+Worth retaining that **this part is userspace**: it lives in the device
+package, not the kernel, so iterating here costs a minute and forces no
+reflash.
+
+## Session 24 — the slow charging was three chained failures
+
+Date: 2026-08-07.
+
+The owner reported the tablet charging very slowly with the official 45 W
+charger. Measured at the start: **4.7 W** entering the battery, and 1 % every
+seven minutes. The charger advertised 5V/3A, 9V/3A, 15V/3A, 20V/2.25A and **PPS
+up to 11 V at 5 A**; we were negotiating 9 V at 1.66 A.
+
+### The SM5440 was there, and so was its driver
+
+Neither the chip nor the driver was missing: `0-0063 -> sm5440`, "direct
+charger device ID 0x21", and `sm5440_direct.c` already knew how to request PPS,
+refresh it and fall back to the switched charger. The failure was not absence
+but behaviour.
+
+### First: I2C during suspend, which took down the whole port
 
 ```
-ibus: 970 → 1047 → 995 → 1050 → 775 → se suelta
+i2c i2c-0: Transfer while suspended     ← the SM5440
+i2c i2c-4: Transfer while suspended     ← and behind it the PD controller
 ```
 
-Ahora recalcula el objetivo antes de cada refresco, en pasos de 20 mV, que es la
-resolución del propio cargador.
+The one-second polling loop ran during system suspend, and the failed transfers
+**took the USB-PD contract with them**: the port fell to DCP's 5 V and stayed
+there. It was not an exotic race — the panel's cold recovery suspends at ~21 s
+of every boot, which is exactly when the charger is negotiating.
 
-### Tercero: REVBLK, y el chip lo dijo por su boca
+It is the same lesson as session 9's with the pogo. There the polling could be
+removed; here it cannot, because direct charging needs its loop, so it is
+stopped around suspend, returning the battery to the switched charger first.
 
-Seguía soltándose, con firmas contradictorias —una parada con 1085 mA
-circulando y otra con cero— y sin periodo fijo. En vez de una tercera conjetura
-se añadió instrumentación: leer los cuatro pestillos de interrupción en el
-momento del fallo, que es cuando sirven porque se borran al leerlos.
+### Second: there was no closed loop
+
+With PD already stable the next one appeared: the driver computed the target
+voltage **once at start-up** and then resent the same one forever. As the
+battery rises, the margin over 2×Vbat narrows and the current dies on its own:
+
+```
+ibus: 970 → 1047 → 995 → 1050 → 775 → it lets go
+```
+
+It now recomputes the target before every refresh, in 20 mV steps, which is the
+charger's own resolution.
+
+### Third: REVBLK, and the chip said so itself
+
+It still let go, with contradictory signatures — one stop with 1,085 mA flowing
+and another with zero — and no fixed period. Instead of a third conjecture,
+instrumentation was added: read the four interrupt latches at the moment of
+failure, which is when they are useful because they clear on read.
 
 ```
 int=0x0/0x0/0x2/0x0   →  INT3 bit 1
 ```
 
-El orden de bits salió de las cadenas del `sm5440-charger.ko` de Samsung, en el
-orden del binario, y **se valida solo**: `VBUSPOK` cae en el bit 5, que es
-exactamente lo que ya definía nuestro driver. El bit 1 es **REVBLK**, bloqueo
-por corriente inversa.
+The bit order came from the strings in Samsung's `sm5440-charger.ko`, in the
+binary's order, and **it validates itself**: `VBUSPOK` falls on bit 5, which is
+exactly what our driver already defined. Bit 1 is **REVBLK**, reverse-current
+blocking.
 
-La causa: a 1,8 A el cargador y el cable ceden unos 400 mV, así que de los
-700 mV nominales de margen quedaban ~290 mV en el chip —vbus 8291-8332 contra un
-pack de 4003— y cualquier bajón invertía la corriente. **Subir la corriente fue
-lo que destapó esto**: a 1 A la caída era la mitad y sobraba margen.
+The cause: at 1.8 A the charger and the cable give up about 400 mV, so of the
+nominal 700 mV of margin only ~290 mV were left at the chip — vbus 8291–8332
+against a pack at 4003 — and any dip reversed the current. **Raising the current
+is what exposed this**: at 1 A the drop was half and there was margin to spare.
 
-Margen a 1100 mV. Resultado: de tramos de 22-43 s a **más de 350 s seguidos**, y
-de 4,7 W a **~10 W** entrando a la batería, con la capacidad subiendo un 2 % en
-seis minutos.
+Margin at 1,100 mV. Result: from stretches of 22–43 s to **more than 350 s at a
+time**, and from 4.7 W to **~10 W** entering the battery, with the capacity
+rising 2 % in six minutes.
 
-### Sobre el método
+### On method
 
-Dos hipótesis propias cayeron por el camino —el margen de tensión y el perro
-guardián—, ambas deducidas de datos indirectos. La primera incluso se revirtió a
-propósito para no mezclar un arreglo demostrado con una inferencia sacada de
-lecturas que podían estar corruptas por el fallo de suspensión; resultó ir en la
-dirección correcta pero con el signo cambiado, y solo se recuperó cuando el
-hardware nombró la causa.
+Two hypotheses of my own fell along the way — the voltage margin and the
+watchdog — both deduced from indirect data. The first was even reverted
+deliberately, so as not to mix a demonstrated fix with an inference drawn from
+readings that might have been corrupted by the suspend failure; it turned out to
+be in the right direction but with the sign flipped, and it was only recovered
+once the hardware named the cause.
 
-Añadir instrumentación en lugar de probar una conjetura más fue lo que desatascó
-el asunto.
+Adding instrumentation instead of trying one more conjecture is what unstuck
+this.
 
-### Lo que queda
+### What remains
 
-Los 45 W. Los topes actuales son del driver: 2200 mA de petición PPS y 1800 mA
-de límite de entrada. Subirlos exige cuidado porque **la caída del cable crece
-con la corriente**, que es precisamente lo que provocó el REVBLK: cada escalón
-de corriente se come más margen y acerca otra vez el borde.
+The 45 W. The current ceilings are the driver's: a 2,200 mA PPS request and an
+1,800 mA input limit. Raising them takes care, because **the cable's drop grows
+with the current**, which is precisely what caused the REVBLK: every current
+step eats more margin and approaches the edge again.
 
-### El lazo definitivo: regular sobre la corriente, no sobre la tensión
+### The definitive loop: regulate on current, not on voltage
 
-Quedaba entender qué limitaba la corriente. No era ningún tope del driver: pedía
-2000 mA, el limitador del chip estaba en 1800 y solo circulaban 1300.
+What remained was understanding what limited the current. It was no ceiling of
+the driver's: it asked for 2,000 mA, the chip's limiter was at 1,800 and only
+1,300 flowed.
 
-El patrón sale de los propios datos. Un convertidor 2:1 de condensadores
-conmutados **se comporta como una resistencia**: la corriente la fija la
-diferencia entre la entrada y el doble del pack.
+The pattern comes out of the data itself. A 2:1 switched-capacitor converter
+**behaves like a resistor**: the current is set by the difference between the
+input and twice the pack.
 
 | vbus | 2×vbat | ΔV | ibus | ΔV/I |
 |---|---|---|---|---|
-| 8623 | 8396 | 227 mV | 1321 mA | 0,172 Ω |
-| 8455 | 8228 | 227 mV | 1325 mA | 0,171 Ω |
-| 8291 | 8006 | 285 mV | 1720 mA | 0,166 Ω |
-| 8332 | 8006 | 326 mV | 1805 mA | 0,181 Ω |
+| 8623 | 8396 | 227 mV | 1321 mA | 0.172 Ω |
+| 8455 | 8228 | 227 mV | 1325 mA | 0.171 Ω |
+| 8291 | 8006 | 285 mV | 1720 mA | 0.166 Ω |
+| 8332 | 8006 | 326 mV | 1805 mA | 0.181 Ω |
 
-Cuatro puntos, 0,17 Ω constante. Subir los topes no habría servido de nada
-porque nunca se tocaban; lo que hacía falta era **empujar la tensión hasta que
-la corriente llegue**.
+Four points, a constant 0.17 Ω. Raising the ceilings would have achieved
+nothing because they were never reached; what was needed was to **push the
+voltage until the current arrives**.
 
-Hay además un desajuste sin explicar entre lo que se pide al cargador y lo que
-el chip mide en su entrada: ~900 mV, y **crece cuando la corriente baja**, que
-descarta la caída de cable. El cable es el original y funciona bien en One UI.
-No hizo falta resolverlo: regulando sobre la corriente medida, la exactitud
-absoluta del ADC de tensión deja de importar. Queda anotado como pendiente, no
-como bloqueo.
+There is also an unexplained mismatch between what is asked of the charger and
+what the chip measures at its input: ~900 mV, and it **grows as the current
+falls**, which rules out cable drop. The cable is the original one and works
+fine under One UI. It did not have to be solved: regulating on the measured
+current, the voltage ADC's absolute accuracy stops mattering. It is recorded as
+pending, not as a blocker.
 
-Resultado con la batería al 28 %: **18,8 W** entrando al pack, 4,76 A a 3,96 V,
-sin un solo corte en cinco minutos, chip a 43 °C y pack a 33,9 °C. La capacidad
-subió del 28 % al 32 % en cinco minutos.
+Result with the battery at 28 %: **18.8 W** entering the pack, 4.76 A at
+3.96 V, with not one cut-out in five minutes, the chip at 43 °C and the pack at
+33.9 °C. The capacity rose from 28 % to 32 % in five minutes.
 
-De 4,7 W a 18,8 W: **cuatro veces**, y el ritmo pasa de 1 % cada siete minutos a
-1 % cada minuto y cuarto.
+From 4.7 W to 18.8 W: **four times**, and the rate goes from 1 % every seven
+minutes to 1 % every minute and a quarter.
 
-## Sesión 25 — el bucle de `iio-sensor-proxy` era una espera que no esperaba
+## Session 25 — `iio-sensor-proxy`'s loop was a wait that did not wait
 
-Fecha: 2026-08-08.
+Date: 2026-08-08.
 
-`iio-sensor-proxy` quemaba **un núcleo entero de forma permanente**, desde el
-arranque. Línea base medida al empezar, con 18 minutos de uptime: `cpu-time
-00:17:27` — es decir, el 96 % del tiempo transcurrido—, 199 ticks/2 s, **94,7 °C**
-en la zona térmica más caliente con la tablet en reposo, y la corriente de carga
-hundida.
+`iio-sensor-proxy` was burning **a whole core permanently**, from boot. The
+baseline measured at the start, with 18 minutes of uptime: `cpu-time 00:17:27`
+— that is, 96 % of the elapsed time — 199 ticks per 2 s, **94.7 °C** in the
+hottest thermal zone with the tablet idle, and the charging current sunk.
 
-Lo difícil no era encontrarlo, era que **el demonio que giraba funcionaba**:
-`AccelerometerOrientation = "normal"`, `HasAccelerometer = true`, autorrotación
-correcta. Y matarlo no valía: la instancia nueva pierde el sensor hasta que
-vuelve la sesión gráfica, y vuelve a girar igual. La sesión anterior ya se había
-estrellado contra eso construyendo un servicio de recuperación que ni curaba el
-bucle ni conservaba la rotación, y que quedó retirado.
+The hard part was not finding it, it was that **the daemon doing the spinning
+worked**: `AccelerometerOrientation = "normal"`, `HasAccelerometer = true`,
+auto-rotation correct. And killing it was no use: the new instance loses the
+sensor until the graphical session returns, and spins just the same. The
+previous session had already crashed into that, building a recovery service
+that neither cured the loop nor kept rotation, and which was withdrawn.
 
-### El `strace` apuntaba al llamante, no al bucle de eventos
+### The `strace` pointed at the caller, not at the event loop
 
-La evidencia previa decía: 106.941 `ppoll` en tres segundos, 99,64 % del tiempo
-de proceso, **todas** con `{tv_sec=0, tv_nsec=0}` y **todas** devolviendo
-`0 (Timeout)`. La lectura natural es un `GSource` cuyo `prepare()` se declara
-listo en cada pasada. Es la lectura equivocada.
+The prior evidence said: 106,941 `ppoll`s in three seconds, 99.64 % of the
+process's time, **all** with `{tv_sec=0, tv_nsec=0}` and **all** returning
+`0 (Timeout)`. The natural reading is a `GSource` whose `prepare()` declares
+itself ready on every pass. That is the wrong reading.
 
-Un timeout de cero en cada vuelta no lo produce una fuente mal armada: lo
-produce `g_main_context_iteration (ctx, FALSE)`. Con `may_block` a `FALSE` GLib
-**fuerza** el timeout a cero, mire lo que mire. La firma acusaba al llamante.
+A zero timeout on every turn is not produced by a badly built source: it is
+produced by `g_main_context_iteration (ctx, FALSE)`. With `may_block` at
+`FALSE`, GLib **forces** the timeout to zero, whatever it is looking at. The
+signature accused the caller.
 
-### Un `gdb` sobre el proceso vivo cerró el caso en una traza
+### A `gdb` on the live process closed the case in one trace
 
-No había gdb en la tablet; instalarlo costó un `apt-get`. El hilo principal:
+There was no gdb on the tablet; installing it cost an `apt-get`. The main
+thread:
 
 ```
 #3 ssc_common_wait_sync_context (ctx=…) at ../src/libssc-common.c:56
@@ -2451,8 +2439,8 @@ No había gdb en la tablet; instalarlo costó un `apt-get`. El hilo principal:
 #10 g_main_loop_run
 ```
 
-Dos cosas a la vez. La primera, que libssc 0.4.4 implementa sus esperas
-síncronas girando el contexto por defecto sin bloquear:
+Two things at once. First, that libssc 0.4.4 implements its synchronous waits
+by spinning the default context without blocking:
 
 ```c
 while (!ctx->finished) {
@@ -2460,244 +2448,245 @@ while (!ctx->finished) {
 }
 ```
 
-Eso no es esperar, es girar. Cualquier petición que el SSC no conteste clava un
-núcleo mientras viva el proceso.
+That is not waiting, it is spinning. Any request the SSC does not answer pins a
+core for as long as the process lives.
 
-La segunda, que el que no contestaba era el **sensor de luz**: el firmware
-Samsung descubre el STK31610, acepta el `enable` y nunca manda la respuesta de
-configuración, así que `ssc_sensor_light_open_sync()` no termina jamás. GNOME
-llama a `ClaimLight` al abrir sesión y ahí se quedaba.
+Second, that the one not answering was the **light sensor**: Samsung's firmware
+discovers the STK31610, accepts the `enable` and never sends the configuration
+reply, so `ssc_sensor_light_open_sync()` never finishes. GNOME calls
+`ClaimLight` when a session opens, and there it stayed.
 
-Y así se explica por fin la paradoja: como el bucle itera el contexto principal,
-D-Bus y el flujo del acelerómetro **se despachaban desde dentro de la espera**.
-El demonio giraba y funcionaba porque girar era, literalmente, lo que lo hacía
-funcionar.
+And that finally explains the paradox: because the loop iterates the main
+context, D-Bus and the accelerometer's flow **were dispatched from inside the
+wait**. The daemon spun and worked because spinning was, literally, what made
+it work.
 
-### El arreglo, y por qué no cambia nada más
+### The fix, and why it changes nothing else
 
-`packaging/sensors/fix-ssc-sync-wait-busy-loop.patch`: bloquear en `poll()`. La
-callback que termina la espera se despacha desde ese mismo contexto, así que lo
-que despierta el poll es exactamente lo que acaba la espera, y las demás fuentes
-se siguen despachando igual desde la iteración anidada. Sólo el hilo que conduce
-el contexto puede bloquearse en él, de ahí el `g_main_context_acquire()` y el
-respaldo sobre la `GCond` que la callback ya señalaba.
+`packaging/sensors/fix-ssc-sync-wait-busy-loop.patch`: block in `poll()`. The
+callback that ends the wait is dispatched from that same context, so what wakes
+the poll is exactly what ends the wait, and the other sources are still
+dispatched from the nested iteration as before. Only the thread driving the
+context may block on it, hence the `g_main_context_acquire()` and the fallback
+on the `GCond` the callback already signalled.
 
-El disparador concreto ya tenía parche desde la sesión anterior
-(`disable-broken-ssc-light.patch`, que saca `ssc-light` de la tabla de drivers),
-pero **nunca se había instalado en la tablet**: el binario que corría era
-anterior. Se comprobó comparando el sha256 del `.deb` construido con el de
-`/usr/libexec/iio-sensor-proxy` en el dispositivo. Van los dos juntos: uno quita
-la petición que no se contesta, el otro hace que ninguna petición sin contestar
-vuelva a costar un núcleo.
+The specific trigger had had a patch since the previous session
+(`disable-broken-ssc-light.patch`, which takes `ssc-light` out of the driver
+table), but it **had never been installed on the tablet**: the binary running
+was older. It was checked by comparing the built `.deb`'s sha256 with
+`/usr/libexec/iio-sensor-proxy`'s on the device. The two go together: one
+removes the request that is never answered, the other makes sure no unanswered
+request ever costs a core again.
 
-### Resultado, medido tras arranque en frío
+### Result, measured after a cold boot
 
-| | antes | después |
+| | before | after |
 |---|---|---|
-| ticks/2 s | 199 | 1 |
-| CPU acumulada / uptime | 00:17:27 en 1094 s | 00:00:01 en 222 s |
-| zona térmica más caliente | 94,7 °C | 46,9 °C |
-| corriente de batería | −908 mA | +1505 mA |
+| ticks per 2 s | 199 | 1 |
+| accumulated CPU / uptime | 00:17:27 in 1094 s | 00:00:01 in 222 s |
+| hottest thermal zone | 94.7 °C | 46.9 °C |
+| battery current | −908 mA | +1505 mA |
 | `AccelerometerOrientation` | `"normal"` | `"normal"` |
 
-La medición es de tasa, no de contador acumulado sobre un proceso recién
-nacido: ese fue justamente el error de método de la sesión anterior.
+The measurement is of rate, not of an accumulated counter on a freshly born
+process: that was precisely the previous session's methodological error.
 
-Queda pendiente reintentar la subida de corriente de carga a 3200 mA, que se
-había medido con el bus contaminado por este bucle.
+Retrying the charging current increase to 3,200 mA is still pending; it had
+been measured with the bus contaminated by this loop.
 
-## Sesión 26 — el lápiz se quedaba «presente», y la explicación bonita era falsa
+## Session 26 — the pen stayed "present", and the pretty explanation was false
 
-Fecha: 2026-08-08.
+Date: 2026-08-08.
 
-La dueña reportó un fallo anterior a todo esto: usando el lápiz, **una parte de
-la pantalla deja de responder al dedo**. El detalle que lo hacía interesante es
-que un arrastre iniciado en la zona buena **sí** atraviesa la zona muerta;
-empezar dentro, no. Intermitente, y se va al reiniciar.
+The owner reported a failure that predates all of this: while using the pen,
+**part of the screen stops responding to the finger**. The detail that made it
+interesting is that a drag started in the good area **does** cross the dead
+zone; starting inside it does not. Intermittent, and it goes away on reboot.
 
-### Lo que se encontró, que es real
+### What was found, which is real
 
-Ese detalle describe con precisión el arbitraje táctil de libinput: con una
-herramienta en proximidad descarta los contactos **nuevos** dentro de un
-rectángulo y no cancela los que ya están en curso. Y los dos dispositivos están
-emparejados: `udevadm info /dev/input/event4` da
-`LIBINPUT_DEVICE_GROUP=18/0/0:input/ts`, donde `18/0/0` son el bus y los IDs del
-**lápiz**.
+That detail describes libinput's touch arbitration precisely: with a tool in
+proximity it discards **new** contacts inside a rectangle and does not cancel
+those already in progress. And the two devices are paired: `udevadm info
+/dev/input/event4` gives `LIBINPUT_DEVICE_GROUP=18/0/0:input/ts`, where
+`18/0/0` is the bus and IDs of the **pen**.
 
-Con eso en la cabeza, se miró el estado real del digitalizador y estaba clavado:
-`BTN_TOOL_PEN` a 1 sin lápiz cerca. Y no era que el driver perdiese un evento:
-**0 interrupciones en 5 s**, `ABS_DISTANCE` congelado, último frame válido con
-distancia 235 de 255. El controlador se calla al irse el lápiz, y
-`samsung_wacom_w90xx` sólo sabía sintetizar la salida contando frames que ya no
-llegan. Se queda a 1 hasta el siguiente reinicio.
+With that in mind, the digitizer's real state was checked and it was stuck:
+`BTN_TOOL_PEN` at 1 with no pen nearby. And it was not that the driver lost an
+event: **0 interrupts in 5 s**, `ABS_DISTANCE` frozen, the last valid frame at
+distance 235 of 255. The controller goes quiet when the pen leaves, and
+`samsung_wacom_w90xx` only knew how to synthesise the exit by counting frames
+that no longer arrive. It stays at 1 until the next reboot.
 
-Arreglado con un `timer_list` de 250 ms que trata el silencio como una marcha.
-Verificado tras flashear: sube a 1 al dibujar y vuelve a 0 solo al apartar el
-lápiz, y sigue a 0 tras 90 s de muestreo.
+Fixed with a 250 ms `timer_list` that treats silence as a departure. Verified
+after flashing: it rises to 1 while drawing and returns to 0 on its own when
+the pen is moved away, and stays at 0 through 90 s of sampling.
 
-### Lo que no era
+### What it was not
 
-La historia encajaba tan bien que casi se cierra ahí. Pero antes de darla por
-buena se pidió la comprobación física, y con el flag clavado —clavado y
-verificado clavado— **la dueña no encontró ninguna zona muerta**.
+The story fitted so well that it was nearly closed there. But before accepting
+it, the physical check was requested, and with the flag stuck — stuck and
+verified stuck — **the owner found no dead zone at all**.
 
-O sea: la marca de proximidad pegada es un defecto real y está corregido, pero
-**no es la causa del fallo del táctil**, o al menos no basta. El fallo sigue
-abierto.
+So: the stuck proximity flag is a real defect and it is fixed, but it is **not
+the cause of the touch failure**, or at least not sufficient. The failure is
+still open.
 
-La lección no es nueva pero volvió a aparecer con otra cara: una explicación que
-predice el síntoma con todo detalle sigue siendo una hipótesis mientras no se
-contraste. Aquí lo barato era preguntar, y preguntar la tumbó.
+The lesson is not new but it appeared again wearing another face: an
+explanation that predicts the symptom in every detail is still a hypothesis
+until it is tested. Here the cheap thing was to ask, and asking knocked it
+down.
 
-Queda `work/catch-dead-zone.sh` para el próximo episodio. Parte el problema en
-dos según una sola medida —si los toques de la zona muerta llegan al kernel o
-no— y está validado contra un toque real, para que un «0 contactos» no pueda
-confundirse con una herramienta rota.
+`work/catch-dead-zone.sh` is left for the next episode. It splits the problem
+in two on a single measurement — whether the dead zone's touches reach the
+kernel or not — and is validated against a real touch, so that a "0 contacts"
+cannot be confused with a broken tool.
 
-### De paso: dos scripts de `work/` que no hacían nada
+### Along the way: two scripts in `work/` that did nothing
 
-`flash-boot-ssh.sh` no podía funcionar por dos motivos independientes. La tablet
-**no tiene `authorized_keys`**, y el script fuerza clave con `BatchMode=yes`. Y
-aunque autenticase, su payload nunca se ejecutaría: en
-`ssh host "echo PW | sudo -S bash -s" <<'EOF'`, el stdin de `sudo` es el pipe de
-`echo`, que sólo lleva la contraseña; `sudo` se la come y a `bash -s` le llega
-EOF. Reproducido con un payload inofensivo: salida vacía.
+`flash-boot-ssh.sh` could not work for two independent reasons. The tablet
+**has no `authorized_keys`**, and the script forces key auth with
+`BatchMode=yes`. And even if it authenticated, its payload would never run: in
+`ssh host "echo PW | sudo -S bash -s" <<'EOF'`, `sudo`'s stdin is `echo`'s
+pipe, which carries only the password; `sudo` eats it and `bash -s` gets EOF.
+Reproduced with a harmless payload: empty output.
 
-Lo peligroso es la combinación: imprimiría `pushed`, luego nada, y saldría con
-código 0 **sin haber escrito la partición**. `work/restore-tree-and-test.sh`
-tiene el mismo patrón, así que lo que se concluyera de ejecutarlo se concluyó de
-un no-op. Ninguno de los dos está en el repo publicado; se comprobó.
+The dangerous part is the combination: it would print `pushed`, then nothing,
+and exit with code 0 **without having written the partition**.
+`work/restore-tree-and-test.sh` has the same pattern, so whatever was concluded
+from running it was concluded from a no-op. Neither is in the published repo;
+that was checked.
 
-El sustituto, `work/flash-boot-password.sh`, usa contraseña y ejecuta el payload
-desde un fichero por ruta, conservando las comprobaciones que importan: sha de
-la imagen subida, exigir que el destino resuelva a `/dev/sd*`, y releer la
-partición para compararla.
+The replacement, `work/flash-boot-password.sh`, uses a password and runs the
+payload from a file by path, keeping the checks that matter: the uploaded
+image's sha, requiring the destination to resolve to `/dev/sd*`, and reading
+the partition back to compare it.
 
-## Sesión 27 — 25 W: el techo estaba en lo que pedíamos, no en lo que empujábamos
+## Session 27 — 25 W: the ceiling was in what we asked for, not in what we pushed
 
-Fecha: 2026-08-08.
+Date: 2026-08-08.
 
-Con el bucle de sensores fuera, tocaba reintentar la carga. La sesión 24 había
-dejado 18,8 W y una nota diciendo que 3200 mA de objetivo hundieron el bus, que
-2200 era «prudencia, no un límite medido», y que convenía reintentarlo con
-batería baja y el cargador recién enchufado. Se dieron las tres condiciones:
-batería al 6 %, cargador oficial de 45 W recién conectado, y nada pinando un
-núcleo.
+With the sensor loop gone, charging was worth retrying. Session 24 had left
+18.8 W and a note saying that a 3,200 mA target collapsed the bus, that 2,200
+was "prudence, not a measured limit", and that it was worth retrying with a low
+battery and the charger freshly plugged in. All three conditions were met:
+battery at 6 %, the official 45 W charger just connected, and nothing pinning a
+core.
 
-Primer dato, gratis: **19,4-20,9 W** sin tocar nada. El bucle de
-`iio-sensor-proxy` valía casi dos vatios.
+First result, for free: **19.4–20.9 W** without touching anything.
+`iio-sensor-proxy`'s loop was worth almost two watts.
 
-### El barrido que no movía nada
+### The sweep that moved nothing
 
-Para no gastar un ciclo de compilar-flashear-reiniciar por escalón, se expuso
-`SM5440_TARGET_IBUS_MA` como parámetro escribible. El barrido salió plano:
-`ibus` 2587, 2596, 2600 mA con el objetivo en 2200, 2600 y 2800. Un lazo que no
-reacciona a su consigna está saturado en otro sitio.
+To avoid spending a compile-flash-reboot cycle per step,
+`SM5440_TARGET_IBUS_MA` was exposed as a writable parameter. The sweep came out
+flat: `ibus` 2,587, 2,596, 2,600 mA with the target at 2,200, 2,600 and 2,800. A
+loop that does not react to its setpoint is saturated somewhere else.
 
-Forzándolo a 3400 la petición sí subió —`in0_input` a 9860 mV— pero **bajaron a
-la vez tensión y corriente**, hasta 1867 mA. Eso no es un lazo flojo: es una
-fuente plegándose porque ya está en su límite.
+Forcing it to 3,400, the request did rise — `in0_input` to 9,860 mV — but
+**voltage and current fell together**, down to 1,867 mA. That is not a weak
+loop: it is a source folding back because it is already at its limit.
 
-Aquí hubo que retirar una interpretación propia: la diferencia entre lo pedido
-y lo medido parecía 0,55 Ω de resistencia serie, pero **crece cuando baja la
-corriente**, que es lo contrario de lo que hace una resistencia. El propio
-driver ya advertía de que el ADC de `vbus` del chip se desvía así.
+An interpretation of my own had to be withdrawn here: the difference between
+requested and measured looked like 0.55 Ω of series resistance, but it **grows
+as the current falls**, which is the opposite of what a resistance does. The
+driver itself already warned that the chip's `vbus` ADC drifts that way.
 
-### Lo que sí era
+### What it actually was
 
 ```c
 target_ma = min(target_ma, 3000);
 ```
 
-La corriente del contrato PPS, fijada. `dmesg` lo llevaba diciendo desde el
-arranque: `direct charge started: PPS 8760 mV/3000 mA`. El adaptador anuncia
-5 A, TCPM no añade tope propio, y el suelo que el lazo pedía ya quería ~4,1 A.
-Pedíamos 3 A y nos daban 2,9.
+The PPS contract's current, fixed. `dmesg` had been saying so since boot:
+`direct charge started: PPS 8760 mV/3000 mA`. The adapter advertises 5 A, TCPM
+adds no ceiling of its own, and the floor the loop was asking for already wanted
+~4.1 A. We asked for 3 A and were given 2.9.
 
-Dos detalles hicieron falta para que el knob equivalente sirviese: el
-`max(SM5440_INITIAL_PPS_MA, …)` de delante habría dejado el resultado en 3000
-igualmente, y el refresco periódico es el único sitio que reenvía la corriente,
-así que hay que recalcularla ahí para que el cambio surta efecto sobre la
-sesión viva.
+Two details were needed for the equivalent knob to be any use: the
+`max(SM5440_INITIAL_PPS_MA, …)` in front of it would have left the result at
+3,000 anyway, and the periodic refresh is the only place that resends the
+current, so it has to be recomputed there for the change to take effect on the
+live session.
 
-### Resultado
+### Result
 
-| contrato | pack | ibus | vbus | die |
+| Contract | Pack | ibus | vbus | Die |
 |---|---|---|---|---|
-| 3000 mA | 21,4 W | 2601 mA | 8556 mV | 45,5 °C |
-| 3200 mA | 22,8 W | 2864 mA | 8611 mV | 46,5 °C |
-| **3400 mA** | **25,0 W** | 2960 mA | 8652 mV | 48,5 °C |
-| 3600 mA | 24,2 W | 3141 mA | 8801 mV | 54,0 °C |
-| 3800 mA | 24,2 W | 3128 mA | 8780 mV | 55,0 °C |
-| 4000 mA | 24,2 W | 3167 mA | 8835 mV | 55,0 °C |
+| 3000 mA | 21.4 W | 2601 mA | 8556 mV | 45.5 °C |
+| 3200 mA | 22.8 W | 2864 mA | 8611 mV | 46.5 °C |
+| **3400 mA** | **25.0 W** | 2960 mA | 8652 mV | 48.5 °C |
+| 3600 mA | 24.2 W | 3141 mA | 8801 mV | 54.0 °C |
+| 3800 mA | 24.2 W | 3128 mA | 8780 mV | 55.0 °C |
+| 4000 mA | 24.2 W | 3167 mA | 8835 mV | 55.0 °C |
 
-Por encima de 3400 sube `ibus` y no la potencia: pérdida en la bomba, pagada en
-seis grados de die. Soak de cinco minutos a 3400: **25,2-25,5 W** planos, die
-49,5 °C, pack 36,4 °C, del 45 % al 49 % de batería.
+Above 3,400 `ibus` rises and the power does not: loss in the pump, paid for
+with six degrees of die. A five-minute soak at 3,400: **25.2–25.5 W** flat, die
+49.5 °C, pack 36.4 °C, from 45 % to 49 % battery.
 
-De 18,8 a 25,2 W. Queda por ver si a batería más baja da más, que es la
-condición que se gastó cargando mientras compilaba.
+From 18.8 to 25.2 W. Whether a lower battery gives more remains to be seen;
+that condition was spent charging while compiling.
 
-### Sobre parar a tiempo
+### On stopping in time
 
-A mitad de camino se llegó a la conclusión de que subir de 3 A exigía probar el
-cable por SOP', y que sin `port0-cable` ni VCONN no era legítimo. Media
-conclusión estaba mal: siendo *sink* y *UFP*, quien interroga al cable es el
-cargador, no la tablet, así que la ausencia de esos nodos es normal en este rol
-y no prueba nada sobre el cable.
+Half way through, the conclusion was reached that going above 3 A required
+interrogating the cable over SOP', and that without `port0-cable` or VCONN that
+was not legitimate. Half of that conclusion was wrong: as a *sink* and *UFP*,
+it is the charger that interrogates the cable, not the tablet, so the absence
+of those nodes is normal in this role and proves nothing about the cable.
 
-Lo que sí se sostiene es la parte de fondo, y por eso el knob se queda con
-bandas y con el aviso en el comentario: el que es de 5 A es *este* cable, y por
-encima de 3 A lo que está en riesgo es el conector, no el silicio.
+What does stand is the substance, and that is why the knob keeps its bands and
+the warning in its comment: the one rated 5 A is *this* cable, and above 3 A
+what is at risk is the connector, not the silicon.
 
-## Sesión 28 — cuatro sensores, cuatro fotos y luz real
+## Session 28 — four sensors, four photographs and real light
 
-Fecha: 2026-08-08.
+Date: 2026-08-08.
 
-El criterio se fijó antes de empezar: identificar por I²C o crear
-`/dev/video0` no cerraba nada. Cada objetivo tenía que entregar un frame físico
-reconocible y el flash tenía que iluminar la escena, no solo aceptar un valor en
+The criterion was set before starting: identifying over I²C or creating
+`/dev/video0` closed nothing. Every lens had to deliver a recognisable physical
+frame and the flash had to illuminate the scene, not merely accept a value in
 sysfs.
 
-### Primero, el flash
+### First, the flash
 
-El bloque stock llamado `pm8350c-flash-led` está en el PM8550 de SID 1. En
-mainline corresponde a `qcom,spmi-flash-led`. Los canales 0 y 1 están conectados
-a los dos emisores traseros y Samsung los acciona juntos; el DT los expone como
-un solo LED blanco con `led-sources = <1>, <2>` y límites conservadores.
+The stock block called `pm8350c-flash-led` is in SID 1's PM8550. In mainline it
+corresponds to `qcom,spmi-flash-led`. Channels 0 and 1 are connected to the two
+rear emitters and Samsung drives them together; the DT exposes them as a single
+white LED with `led-sources = <1>, <2>` and conservative limits.
 
-Se probó primero linterna mantenida y después estrobo sincronizado con la clase
-V4L2 flash. Las dos rutas encendieron físicamente y cambiaron la iluminación y
-los reflejos de la mesa:
+A held torch was tried first and then a strobe synchronised with the V4L2 flash
+class. Both routes lit physically and changed the illumination and the
+reflections on the desk:
 
-- [captura con estrobo](../work/resultado-flash.jpg);
-- [captura con linterna](../work/resultado-linterna.jpg).
+- [capture with strobe](../work/resultado-flash.jpg);
+- [capture with torch](../work/resultado-linterna.jpg).
 
-### Qué sensores había realmente
+### What sensors there actually were
 
-El DTS público stock no contiene los módulos: Samsung los entrega como blobs
-CamX Parameter Parser V3. El inventario real resultó ser tres HI1337 —principal
-trasero, principal frontal y angular frontal— y un HI847 angular trasero.
+The public stock DTS does not contain the modules: Samsung delivers them as
+CamX Parameter Parser V3 blobs. The real inventory turned out to be three
+HI1337s — main rear, main front and wide front — and one HI847, the wide rear.
 
-El HI847 upstream solo enlazaba por ACPI y suponía alimentación gestionada por
-plataforma. Se añadió DT y su secuencia VDDIO/enable/reset/MCLK. Para HI1337 se
-escribió un driver V4L2 pequeño y específico de la X910. Un extractor local
-decodificó de los blobs la tabla global exacta de 1.476 registros y los tres
-modos exactos; el header generado queda en `kernel/drivers/` para que el build
-sea reproducible sin depender del árbol stock en `work/`.
+Upstream's HI847 bound only through ACPI and assumed platform-managed power. DT
+and its VDDIO/enable/reset/MCLK sequence were added. For the HI1337 a small
+V4L2 driver specific to the X910 was written. A local extractor decoded from
+the blobs the exact global table of 1,476 registers and the three exact modes;
+the generated header lives in `kernel/drivers/` so the build is reproducible
+without depending on the stock tree in `work/`.
 
-Los fallos intermedios que cambiaron el resultado fueron concretos:
+The intermediate failures that changed the result were concrete:
 
-- `slaveAddress = 0x40` del frontal principal era una dirección de ocho bits;
-  Linux necesita `0x20`;
-- CCI1 master 1 usa el par AON GPIO208/209, no el pinmux CCI ordinario;
-- PM8550VS-C L1 y PM8550B L11 necesitan el paso representable de 1.104 V;
-- los dos frontales comparten MCLK4/GPIO104, por lo que solo el principal puede
-  poseer su pinctrl;
-- los GPIO de módulo/reset no pueden quedar reclamados durante toda la vida del
-  subdispositivo: se toman al encender y se sueltan al apagar.
+- the main front's `slaveAddress = 0x40` was an eight-bit address; Linux needs
+  `0x20`;
+- CCI1 master 1 uses the AON GPIO208/209 pair, not the ordinary CCI pinmux;
+- PM8550VS-C L1 and PM8550B L11 need the representable 1,104 V step;
+- both front cameras share MCLK4/GPIO104, so only the main one can own its
+  pinctrl;
+- the module/reset GPIOs cannot stay claimed for the subdevice's whole life:
+  they are taken on power-up and released on power-down.
 
-Al final los cuatro IDs físicos respondieron:
+In the end all four physical IDs answered:
 
 ```
 rear-main       1-0021  model=0x1337 vendor=0x2000
@@ -2706,1532 +2695,1539 @@ front-ultrawide 9-0021  model=0x1337 vendor=0x2000
 rear-ultrawide  0-0021  HI847
 ```
 
-### Cuatro capturas, no cuatro enumeraciones
+### Four captures, not four enumerations
 
-Cada sensor se condujo solo por `msm_csiphyN → msm_csid0 → msm_vfe0_rdi0 →
-/dev/video0`. Cinco frames consecutivos de cada ruta llegaron a unos 30 fps.
-El primer frame guardado y entregado dio:
+Each sensor was driven alone through `msm_csiphyN → msm_csid0 →
+msm_vfe0_rdi0 → /dev/video0`. Five consecutive frames from each route arrived
+at around 30 fps. The first frame saved and delivered gave:
 
-| objetivo | subdev / CSIPHY | frame | SHA-256 RAW10 |
+| Lens | subdev / CSIPHY | Frame | RAW10 SHA-256 |
 |---|---|---|---|
-| trasera principal | `/dev/v4l-subdev32` / 1 | 4128×3096, 16.000.128 B | `104333e0d777448cb3857343a58bf6abbdcf1d4effefee70f7382f77d771ac43` |
-| trasera angular | `/dev/v4l-subdev33` / 2 | 3264×2448, 9.987.840 B | `c72f2fb32c1f21d541b62f85b5cacbc86f1738e5405010864979738987ac4997` |
-| frontal principal | `/dev/v4l-subdev31` / 4 | 3408×2556, 10.919.232 B | `876575b51473f80df986bb6b899a40b1bc93995f6de1baec09127f985fbd7a96` |
-| frontal angular | `/dev/v4l-subdev30` / 5 | 4000×3000, 15.024.000 B | `4978876d3572e11855ee2fa9badc7f89f7cd3ba230d76e8a9d10554ec9c4176a` |
+| main rear | `/dev/v4l-subdev32` / 1 | 4128×3096, 16,000,128 B | `104333e0d777448cb3857343a58bf6abbdcf1d4effefee70f7382f77d771ac43` |
+| wide rear | `/dev/v4l-subdev33` / 2 | 3264×2448, 9,987,840 B | `c72f2fb32c1f21d541b62f85b5cacbc86f1738e5405010864979738987ac4997` |
+| main front | `/dev/v4l-subdev31` / 4 | 3408×2556, 10,919,232 B | `876575b51473f80df986bb6b899a40b1bc93995f6de1baec09127f985fbd7a96` |
+| wide front | `/dev/v4l-subdev30` / 5 | 4000×3000, 15,024,000 B | `4978876d3572e11855ee2fa9badc7f89f7cd3ba230d76e8a9d10554ec9c4176a` |
 
-Las pruebas se repitieron tras un arranque posterior: las cuatro volvieron a
-dar cinco frames, sin errores y con hashes nuevos —por tanto no eran buffers
-congelados—. El revelado Bayer manual produjo las evidencias:
+The tests were repeated after a later boot: all four gave five frames again,
+with no errors and with new hashes — so they were not frozen buffers. Manual
+Bayer development produced the evidence:
 
-- [trasera principal](../work/resultado-trasera-principal.jpg);
-- [trasera angular](../work/resultado-trasera-angular.jpg);
-- [frontal principal](../work/resultado-frontal-principal.jpg);
-- [frontal angular](../work/resultado-frontal-angular.jpg).
+- [main rear](../work/resultado-trasera-principal.jpg);
+- [wide rear](../work/resultado-trasera-angular.jpg);
+- [main front](../work/resultado-frontal-principal.jpg);
+- [wide front](../work/resultado-frontal-angular.jpg).
 
-La mesa/ventilador y el techo/lámpara coinciden con las referencias y el campo
-de las angulares es claramente mayor. La trasera principal está desenfocada:
-falta el driver de su actuador. El color es conversión Bayer manual. Se entrega
-así porque es evidencia honesta de la capa que funciona, no se llama a esto una
-cámara de escritorio terminada.
+The desk/fan and the ceiling/lamp match the references and the wide lenses'
+field is clearly larger. The main rear is out of focus: its actuator's driver
+is missing. The colour is a manual Bayer conversion. It is delivered as such
+because it is honest evidence of the layer that works; this is not being called
+a finished desktop camera.
 
-### Regresión de audio y una comparación A/B que salió cara
+### An audio regression and an A/B comparison that came expensive
 
-Dos arranques dieron micrófono enumerado pero silencioso. Los dos tenían el APM
-sin contestar `APM_CMD_GET_SPF_STATE` y el pinctrl LPASS rechazado con
-`-EACCES`. Para distinguir regresión de carrera se probó temporalmente un
-`boot`/`vendor_boot` anterior, con backup, escritura y relectura. Fue una mala
-comparación: el kernel antiguo no coincidía con los módulos ath12k instalados y
-la tablet se quedó sin Wi‑Fi. La dueña la dejó en TWRP; por ADB se restauraron
-exclusivamente `/dev/sda21` y `/dev/sda24`, verificando los hashes
-`579bf1ec…` y `9293c93b…`. No se tocó ninguna otra partición.
+Two boots gave an enumerated but silent microphone. Both had the APM not
+answering `APM_CMD_GET_SPF_STATE` and the LPASS pinctrl rejected with
+`-EACCES`. To tell a regression from a race, an earlier `boot`/`vendor_boot`
+was tried temporarily, with a backup, a write and a read-back. It was a bad
+comparison: the old kernel did not match the installed ath12k modules and the
+tablet was left with no Wi-Fi. The owner left it in TWRP; over ADB only
+`/dev/sda21` and `/dev/sda24` were restored, verifying the hashes `579bf1ec…`
+and `9293c93b…`. No other partition was touched.
 
-El arranque completo desde TWRP cerró la duda: con la misma imagen de cámaras,
-PipeWire grabó 729.285 muestras no nulas antes de usar CAMSS y 733.706 después
-de capturar con los cuatro sensores. Las cámaras no silencian los DMIC; el fallo
-del APM es una carrera de arranque preexistente que debe medirse por sus logs,
-no inferirse de un solo WAV cero.
+A complete boot from TWRP settled the question: with the same camera image,
+PipeWire recorded 729,285 non-zero samples before using CAMSS and 733,706 after
+capturing with all four sensors. The cameras do not silence the DMICs; the
+APM's failure is a pre-existing boot race that must be measured by its logs,
+not inferred from a single zero WAV.
 
-### Build limpia final, teclado y regresión cerrada
+### The final clean build, the keyboard and a closed regression
 
-La build final se hizo con `KERNEL_CLEAN=1` desde el checkout fijado de
-7.2-rc3. Produjo `boot.img` SHA-256
-`f24fce56c9cbb816f15c61f907369ccc5d0fdae516dcfd219e2f4fdb920503b6` y
+The final build was made with `KERNEL_CLEAN=1` from the pinned 7.2-rc3
+checkout. It produced `boot.img` SHA-256
+`f24fce56c9cbb816f15c61f907369ccc5d0fdae516dcfd219e2f4fdb920503b6` and
 `vendor_boot.img`
-`9293c93b0ab1a1d0ad90353ec50969a120046aa2835aa2a05a28528c3ca3702d`.
-Los dos se escribieron y releyeron completos; los módulos ath12k firmados se
-instalaron desde esa misma compilación.
+`9293c93b0ab1a1d0ad90353ec50969a120046aa2835aa2a05a28528c3ca3702d`. Both were
+written and read back in full; the signed ath12k modules were installed from
+that same compilation.
 
-El arranque desde TWRP reveló una regresión lateral real: el STM32 del teclado
-había vuelto a V34 y el restaurador automático no lo encontraba. CAMSS añade
-adaptadores CCI y desplazó la numeración Linux del pogo de `6-002a` a
-`11-002a`; el helper asumía el primer número. Ahora localiza `*-002a` bajo el
-driver `samsung-gts9u-stm32-pogo`, que es la identidad estable. Restauró y
-releyó los 52.132 bytes oficiales, confirmó `00370037`, recibió el modelo
-`0xd6` y creó de nuevo `Book Cover Keyboard Slim (EF-DX920)`. Un reinicio
-posterior conservó V37 y el servicio concluyó sin escribir.
+Booting from TWRP revealed a real side regression: the keyboard's STM32 had
+gone back to V34 and the automatic restorer could not find it. CAMSS adds CCI
+adapters and shifted the pogo's Linux numbering from `6-002a` to `11-002a`; the
+helper assumed the first number. It now locates `*-002a` under the
+`samsung-gts9u-stm32-pogo` driver, which is the stable identity. It restored
+and read back the 52,132 official bytes, confirmed `00370037`, received model
+`0xd6` and created `Book Cover Keyboard Slim (EF-DX920)` again. A later reboot
+kept V37 and the service concluded without writing.
 
-Sobre la build limpia se hicieron dos pasadas de cinco frames por cada sensor,
-siempre a unos 30 fps y con hashes distintos. También se repitieron el estrobo
-de veinte frames y la linterna a dos intensidades, terminando ambos apagados.
-La regresión consolidada dejó Wi-Fi con 3/3 respuestas, Bluetooth activo,
-teclado, Wacom, Goodix, DSI, acelerómetro, brújula y audio presentes. El
-micrófono dio 756.694 muestras no nulas antes de CAMSS y 757.065 después de las
-cuatro capturas; una tercera toma consolidada dio 455.636. Otro arranque de la
-misma imagen volvió a caer en la carrera APM y produjo ceros, confirmando que el
-problema sigue siendo intermitente y anterior al uso de cámaras. El único
-servicio fallido fue el `lxc-net` preexistente. La batería estaba al 98 %, por
-lo que se verificó el contrato PD de 5 V/3 A, no una sesión térmica de 25 W.
+On the clean build, two passes of five frames per sensor were made, always at
+around 30 fps and with different hashes. The twenty-frame strobe and the torch
+at two intensities were also repeated, both ending switched off. The
+consolidated regression left Wi-Fi with 3/3 replies, Bluetooth active, and the
+keyboard, Wacom, Goodix, DSI, accelerometer, compass and audio all present. The
+microphone gave 756,694 non-zero samples before CAMSS and 757,065 after the
+four captures; a third consolidated take gave 455,636. Another boot of the same
+image fell into the APM race again and produced zeros, confirming the problem
+remains intermittent and predates any camera use. The only failed service was
+the pre-existing `lxc-net`. The battery was at 98 %, so the 5 V/3 A PD contract
+was verified, not a 25 W thermal session.
 
-## Sesión 29 — color procesado y cámaras para aplicaciones
+## Session 29 — processed colour, and cameras for applications
 
-Fecha: 2026-08-09.
+Date: 2026-08-09.
 
-El siguiente criterio fue más alto que el de la sesión anterior: las fotos ya
-no podían ser un revelado Bayer manual. Las cuatro cámaras tenían que converger
-en exposición y balance de blancos, abrir sin root y presentarse al escritorio
-como fuentes repetibles.
+The next criterion was higher than the previous session's: the photographs
+could no longer be a manual Bayer development. All four cameras had to converge
+in exposure and white balance, open without root, and present themselves to the
+desktop as repeatable sources.
 
-Se fijó `libcamera` en `62d4bfc` (0.7.2 + 53 commits) y se compiló solo el
-pipeline `simple`, su software ISP, `cam` y el plugin GStreamer. HI1337 e HI847
-recibieron ayudantes con la ganancia real `(code + 16) / 16` y pedestal 64 de
-RAW10. El tuning común parte de ganancias roja/azul `[1, 4]`, usa AWB de mundo
-gris, AE y una CCM conservadora. Esto eliminó la dominante de canales de la
-primera conversión y permitió que paredes, techo, metal, blancos y el objeto
-rojo conservaran relaciones de color coherentes.
+`libcamera` was pinned at `62d4bfc` (0.7.2 + 53 commits) and only the `simple`
+pipeline, its software ISP, `cam` and the GStreamer plugin were compiled. The
+HI1337 and HI847 received helpers with the real gain `(code + 16) / 16` and
+RAW10's pedestal of 64. The common tuning starts from red/blue gains `[1, 4]`,
+uses grey-world AWB, AE and a conservative CCM. This removed the channel cast
+of the first conversion and let walls, ceiling, metal, whites and the red
+object keep coherent colour relationships.
 
-PipeWire Noble necesitó tres backports acotados. El mapper 1.0.5 no entendía el
-`string_view` de libcamera 0.7, trataba `ColourGains` array como escalar y
-abortaba, y confundía nombres DRM RGB con orden de bytes en memoria. El último
-fallo era la causa directa de la imagen magenta. Se empaquetó el SPA corregido
-sin reemplazar el resto de PipeWire. Una regla udev entrega `/dev/udmabuf` al
-grupo `video`, así que GStreamer y el software ISP funcionan como `ubuntu`, no
-como root.
+Noble's PipeWire needed three bounded backports. The 1.0.5 mapper did not
+understand libcamera 0.7's `string_view`, treated the `ColourGains` array as a
+scalar and aborted, and confused DRM RGB names with in-memory byte order. That
+last failure was the direct cause of the magenta image. The corrected SPA was
+packaged without replacing the rest of PipeWire. A udev rule hands
+`/dev/udmabuf` to the `video` group, so GStreamer and the software ISP run as
+`ubuntu`, not as root.
 
-Las pruebas físicas finales fueron:
+The final physical tests were:
 
-- 150/150 frames RGB de cada una de las cuatro cámaras, con imágenes finales
-  [frontal angular](../work/resultado-frontal-angular.jpg),
-  [frontal principal](../work/resultado-frontal-principal.jpg),
-  [trasera principal](../work/resultado-trasera-principal.jpg) y
-  [trasera angular](../work/resultado-trasera-angular.jpg);
-- 99 frames por PipeWire y una [captura de esa ruta](../work/resultado-pipewire-app.jpg);
-- 30 frames negociados en cada fuente PipeWire y otros 30 al reabrir la
-  frontal angular; PipeWire, `pipewire-pulse` y WirePlumber siguieron activos;
-- GNOME Cámara (`Snapshot` 46.2) abierta en una sesión gráfica, con su stream
-  mostrado por WirePlumber como `active`;
-- linterna en niveles 32 y 128, estrobo durante una secuencia de 20 frames y
-  comprobación final `strobe=0`, `torch=0`, sin fallo latente.
+- 150/150 RGB frames from each of the four cameras, with final images
+  [wide front](../work/resultado-frontal-angular.jpg),
+  [main front](../work/resultado-frontal-principal.jpg),
+  [main rear](../work/resultado-trasera-principal.jpg) and
+  [wide rear](../work/resultado-trasera-angular.jpg);
+- 99 frames through PipeWire and a [capture of that route](../work/resultado-pipewire-app.jpg);
+- 30 frames negotiated on each PipeWire source and another 30 on reopening the
+  wide front camera; PipeWire, `pipewire-pulse` and WirePlumber all stayed
+  active;
+- GNOME Camera (`Snapshot` 46.2) opened in a graphical session, with its stream
+  shown by WirePlumber as `active`;
+- the torch at levels 32 and 128, the strobe through a 20-frame sequence, and a
+  final check of `strobe=0`, `torch=0`, with no latent fault.
 
-Los paquetes instalados son `libcamera-gts9u 0.7.2+53.g62d4bfc-gts9u1`,
-`libspa-0.2-libcamera-gts9u 1.0.5-gts9u1` y `ubuntu-gts9u-device 2.0`. La build
-limpia final produjo `boot.img`
-`d4323b9acd26a8b2179af1fda58536a1d8e622cde787a86406293e71d47b3eba` y
+The installed packages are `libcamera-gts9u 0.7.2+53.g62d4bfc-gts9u1`,
+`libspa-0.2-libcamera-gts9u 1.0.5-gts9u1` and `ubuntu-gts9u-device 2.0`. The
+final clean build produced `boot.img`
+`d4323b9acd26a8b2179af1fda58536a1d8e622cde787a86406293e71d47b3eba` and
 `vendor_boot.img`
-`4441ae918f878a9592b2e5c863833d20dfefb44e50bb29645de97aa1f33eef5d`;
-ambos se escribieron y releyeron con esos mismos hashes.
+`4441ae918f878a9592b2e5c863833d20dfefb44e50bb29645de97aa1f33eef5d`; both were
+written and read back with those same hashes.
 
-La última corrección fue de metadatos, no de imagen: el valor DT `2` significa
-cámara externa, no trasera. Las dos traseras pasaron a `orientation = <1>` y el
-DTB tuvo que llegar mediante `vendor_boot`. El DT vivo, los controles V4L2,
-`cam --list` y PipeWire coinciden ahora: dos `Internal/Built-in Front Camera` y
-dos `Internal/Built-in Back Camera`.
+The last correction was metadata, not image: the DT value `2` means an external
+camera, not a rear one. Both rear cameras moved to `orientation = <1>` and the
+DTB had to arrive through `vendor_boot`. The live DT, the V4L2 controls, `cam
+--list` and PipeWire now agree: two `Internal/Built-in Front Camera` and two
+`Internal/Built-in Back Camera`.
 
-Tras reiniciar, Wi-Fi respondió 3/3, el teclado volvió a enumerar como
-`Book Cover Keyboard Slim (EF-DX920)` con firmware V37, Bluetooth estaba
-encendido, Wacom/Goodix presentes, DSI conectado, acelerómetro y brújula
-entregando datos, y el micrófono produjo 438.846 muestras no nulas. El único
-servicio fallido siguió siendo `lxc-net`, anterior y ajeno a cámaras. Queda
-abierto el actuador de enfoque de la trasera principal; color, exposición y
-ruta de aplicaciones ya no son el bloqueo.
+After rebooting, Wi-Fi answered 3/3, the keyboard enumerated again as
+`Book Cover Keyboard Slim (EF-DX920)` with firmware V37, Bluetooth was on,
+Wacom/Goodix present, DSI connected, the accelerometer and compass delivering
+data, and the microphone produced 438,846 non-zero samples. The only failed
+service was still `lxc-net`, pre-existing and unrelated to cameras. The main
+rear camera's focus actuator remains open; colour, exposure and the application
+path are no longer the blocker.
 
-## Sesión 30 — linterna de escritorio, reinicio multimedia y orientación
+## Session 30 — a desktop torch, a media restart and orientation
 
-Fecha: 2026-08-09.
+Date: 2026-08-09.
 
-El flash ya encendía físicamente, pero todavía no era una función diaria. El
-paquete `ubuntu-gts9u-device 2.1` añade un mosaico **Linterna** a los ajustes
-rápidos de GNOME 46, un icono propio y el comando `gts9u-flashlight`. Udev
-entrega a `video` solamente `brightness` con modo 0660; la ruta de estrobo
-sigue reservada a root. Nivel 32, nivel 128, toggle, rechazo de 999 y apagado
-previo a suspensión se probaron como el usuario `ubuntu`. En todos los cierres
-el LED acabó en cero. El usuario confirmó que el mosaico funciona en la UI.
+The flash already lit physically, but it was not yet an everyday feature.
+Package `ubuntu-gts9u-device 2.1` adds a **Flashlight** tile to GNOME 46's
+quick settings, an icon of its own and the `gts9u-flashlight` command. Udev
+hands `video` only `brightness` with mode 0660; the strobe path stays reserved
+for root. Level 32, level 128, toggle, rejecting 999 and switching off before
+suspend were all tested as the `ubuntu` user. On every close the LED ended at
+zero. The user confirmed the tile works in the UI.
 
-La tablet se reinició además porque ninguna aplicación reproducía vídeo y la
-cámara había dejado de avanzar. Antes del reinicio había servicios activos,
-pero también varias instancias históricas y errores
-`spa.libcamera: can't add buffer ...: El archivo ya existe`. Tras arrancar con
-boot ID `58ff3ce2-64c6-48f8-827a-ee52ccaa5e7c`, la ruta de vídeo procesó 120
-frames RAW y codificó/decodificó 60 frames VP9. Después de limpiar una vez la
-sesión PipeWire, las cuatro fuentes de cámara dieron 30 frames y la frontal se
-reabrió otros 30; los tres servicios multimedia quedaron activos.
+The tablet was also rebooted because no application would play video and the
+camera had stopped advancing. Before the reboot there were active services, but
+also several historical instances and `spa.libcamera: can't add buffer ...:
+File exists` errors. After booting with boot ID
+`58ff3ce2-64c6-48f8-827a-ee52ccaa5e7c`, the video path processed 120 RAW frames
+and encoded/decoded 60 VP9 frames. After cleaning the PipeWire session once,
+the four camera sources gave 30 frames each and the front one reopened for
+another 30; all three media services stayed active.
 
-La orientación se comprobó con escena conocida. Cada fuente produjo 150 JPEG
-por PipeWire y se revisó el último: las dos frontales muestran a la persona
-derecha y la línea de la pared horizontal; la trasera angular muestra el
-billete de 50 derecho. La principal trasera volvió a quedar demasiado
-desenfocada a esa distancia para extraer orientación. Los controles V4L2 son
-coherentes con el montaje —frontales 270°, traseras 90°— y PipeWire conserva
-dos ubicaciones `front` y dos `back`, sin publicar una transformación adicional.
-No se cambió una rotación correcta basándose en la única imagen no evaluable.
+Orientation was checked against a known scene. Each source produced 150 JPEGs
+through PipeWire and the last one was reviewed: both front cameras show the
+person upright and the wall's line horizontal; the wide rear shows the 50 note
+upright. The main rear was again too far out of focus at that distance to
+extract an orientation from. The V4L2 controls agree with the mounting — fronts
+270°, rears 90° — and PipeWire keeps two `front` and two `back` locations,
+without publishing an additional transform. A correct rotation was not changed
+on the basis of the single unevaluable image.
 
-## Sesión 31 — estabilidad entre aplicaciones y autofoco DW9808
+## Session 31 — stability across applications, and DW9808 autofocus
 
-Fecha: 2026-08-09.
+Date: 2026-08-09.
 
-El criterio de cierre pasó a ser el uso real de las cuatro cámaras en GNOME
-Cámara, navegador y OBS, con cambios repetidos sin pantallas negras. PipeWire
-recibió cuatro correcciones adicionales: reutilización explícita de buffers en
-los requests, no cerrar descriptores prestados por PipeWire, procesar los
-completados en el bucle de datos y suprimir una transformación redundante. La
-regresión alternó las cuatro fuentes en ambos sentidos: 16 capturas de 45
-frames, 720 frames totales, cero fallos, cero `EEXIST`, cero descriptores
-inválidos y el mismo PID de PipeWire al terminar.
+The closing criterion became real use of the four cameras in GNOME Camera, a
+browser and OBS, with repeated switching and no black screens. PipeWire
+received four further fixes: explicit buffer reuse in the requests, not closing
+descriptors borrowed from PipeWire, processing completions on the data loop,
+and suppressing a redundant transform. The regression alternated the four
+sources in both directions: 16 captures of 45 frames, 720 frames in total, zero
+failures, zero `EEXIST`, zero invalid descriptors and the same PipeWire PID at
+the end.
 
-GNOME Cámara completó dos ciclos y guardó ocho fotos; las imágenes físicas
-confirmaron que las cuatro salen derechas. Chrome enumeró cuatro identificadores
-WebRTC distintos —dos frontales y dos traseros— y abrió cada uno a
-1280×720/30 fps sin errores. OBS usó cuatro escenas GStreamer/PipeWire, produjo
-cuatro capturas correctas y mantuvo PipeWire estable. El plugin queda fijado en
-el commit `a936d45` y empaquetado como `obs-gstreamer-gts9u`.
+GNOME Camera completed two cycles and saved eight photographs; the physical
+images confirmed all four come out upright. Chrome enumerated four distinct
+WebRTC identifiers — two front and two rear — and opened each at
+1280×720/30 fps with no errors. OBS used four GStreamer/PipeWire scenes,
+produced four correct captures and kept PipeWire stable. The plugin is pinned
+at commit `a936d45` and packaged as `obs-gstreamer-gts9u`.
 
-Después se abordó el enfoque. El módulo CamX stock identificó `dw9808` y dio su
-secuencia exacta; una barrida I²C de 0 a 1023 demostró movimiento y cambio de
-plano antes de escribir driver. El kernel incorpora ahora un subdispositivo
-V4L2 de lente, comparte GPIO15 de forma segura con VIO del HI1337 y enlaza la
-lente mediante `lens-focus`. El control `focus_absolute` respondió en vivo en
-todo su rango.
+Focus was tackled next. The stock CamX module identified the `dw9808` and gave
+its exact sequence; an I²C sweep from 0 to 1023 demonstrated movement and a
+change of plane before any driver was written. The kernel now includes a V4L2
+lens subdevice, shares GPIO15 safely with the HI1337's VIO, and links the lens
+through `lens-focus`. The `focus_absolute` control answered live across its
+whole range.
 
-La IPA software de libcamera recibió estadística de contraste, barrido grueso,
-afinación local y seguimiento continuo. El primer intento mezcló los mapas
-V4L2 del sensor y de la lente; WirePlumber abortó correctamente porque sus
-identificadores pertenecen a subdispositivos distintos. Se sustituyó por un
-canal IPC dedicado `setLensPosition`, se reinstaló el paquete y WirePlumber
-volvió a publicar exactamente cuatro cámaras. Una captura de 41 fotogramas con
-el flash registró el recorrido real de la lente y terminó con «Plano
-Esquemático de la Red» legible. Las fotos posteriores de GNOME Cámara y las
-capturas de OBS confirmaron el enfoque por la ruta completa de aplicaciones.
+libcamera's software IPA received contrast statistics, a coarse sweep, local
+refinement and continuous tracking. The first attempt mixed the sensor's and
+the lens's V4L2 maps; WirePlumber correctly aborted because their identifiers
+belong to different subdevices. It was replaced with a dedicated
+`setLensPosition` IPC channel, the package reinstalled, and WirePlumber
+published exactly four cameras again. A 41-frame capture with the flash
+recorded the lens's real travel and ended with "Plano Esquemático de la Red"
+legible. The later GNOME Camera photographs and OBS captures confirmed the
+focus through the full application path.
 
-Los paquetes finales instalados son `libcamera-gts9u
-0.7.2+53.g62d4bfc-gts9u2` y `libspa-0.2-libcamera-gts9u
-1.0.5-gts9u6`. Los SHA-256 de los artefactos finales instalados son
-`8078a33e33081568dee2406a26fe2b54b26047f9bc12a2bc4171748fab9c2f7e` y
+The final installed packages are `libcamera-gts9u 0.7.2+53.g62d4bfc-gts9u2` and
+`libspa-0.2-libcamera-gts9u 1.0.5-gts9u6`. The final installed artefacts'
+SHA-256 are
+`8078a33e33081568dee2406a26fe2b54b26047f9bc12a2bc4171748fab9c2f7e` and
 `f8f938d4e38e4d5dfecdf7191854ab98990883d4b702602dadd8309f9088ea9a`.
-También quedaron instalados `obs-gstreamer-gts9u
-0.4.0+git20260809.a936d45-gts9u1` y `ubuntu-gts9u-device 2.2`, con SHA-256 de
-paquete `8b3ae0e64d5ce98aeaa83d92a51ec99c8537bf1a50516ffa1b69bbdba07267cc`
-y `2131a585a22d93f9d26cc97571885dd07f2e4bebe2ce0c858661198e60095935`.
-Al cerrar las pruebas, Snapshot, Chrome y OBS estaban cerrados, el flash en
-`off`, PipeWire/PipeWire Pulse/WirePlumber activos y las cuatro fuentes
-libcamera publicadas. `lxc-net` seguía siendo el único servicio fallido,
-preexistente y ajeno a este trabajo.
+`obs-gstreamer-gts9u 0.4.0+git20260809.a936d45-gts9u1` and
+`ubuntu-gts9u-device 2.2` were also installed, with package SHA-256
+`8b3ae0e64d5ce98aeaa83d92a51ec99c8537bf1a50516ffa1b69bbdba07267cc` and
+`2131a585a22d93f9d26cc97571885dd07f2e4bebe2ce0c858661198e60095935`. On closing
+the tests, Snapshot, Chrome and OBS were closed, the flash `off`,
+PipeWire/PipeWire Pulse/WirePlumber active and the four libcamera sources
+published. `lxc-net` was still the only failed service, pre-existing and
+unrelated to this work.
 
-## Sesión 32 — cámaras V4L2 de sistema, campo completo y OBS estable
+## Session 32 — system V4L2 cameras, full field and a stable OBS
 
-Fecha: 2026-08-09.
+Date: 2026-08-09.
 
-Las escenas GStreamer de OBS demostraban que los píxeles llegaban, pero no
-resolvían la interfaz de sistema: navegadores y la fuente «Dispositivo de
-captura de video (V4L2)» no podían descubrir las cuatro cámaras en una
-instalación limpia. Se sustituyó esa integración por cuatro nodos
-`v4l2loopback`, `/dev/video20`–`23`, con nombres GTS9U estables. El módulo queda
-fijado en `9ef83fb9`, recibe dos correcciones de eventos/colas, se compila contra
-el kernel exacto y se firma con su clave de build. Cuatro `v4l2-relayd` de
-sistema conectan esos nodos bajo demanda con las fuentes libcamera de PipeWire.
+OBS's GStreamer scenes proved the pixels arrived, but did not solve the system
+interface: browsers and the "Video Capture Device (V4L2)" source could not
+discover the four cameras on a clean installation. That integration was
+replaced with four `v4l2loopback` nodes, `/dev/video20`–`23`, with stable GTS9U
+names. The module is pinned at `9ef83fb9`, receives two event/queue fixes, is
+compiled against the exact kernel and signed with its build key. Four system
+`v4l2-relayd` processes connect those nodes on demand to PipeWire's libcamera
+sources.
 
-CAMSS sólo permite una entrada física activa. El relé serializa por ello las
-cuatro entradas con un bloqueo común, agrupa cierres de negociación durante
-500 ms y destruye la entrada entre clientes reales. Una primera guarda de
-750 ms pasó una ronda pero PipeWire terminó en `SIGSEGV` al acumular cambios:
-el registro mostró dos configuraciones casi simultáneas y callbacks CAMSS aún
-en vuelo. La guarda final de dos segundos se aplica también a la ruta de error.
-Dos rondas consecutivas completaron después 24 aperturas, diez frames cada una,
-con los mismos PID de PipeWire y del servicio y cuatro relés vivos.
+CAMSS allows only one active physical input. The relay therefore serialises the
+four inputs with a shared lock, groups negotiation closes over 500 ms and
+destroys the input between real clients. A first 750 ms guard passed one round
+but PipeWire ended in `SIGSEGV` as changes accumulated: the log showed two
+almost simultaneous configurations and CAMSS callbacks still in flight. The
+final two-second guard is applied to the error path as well. Two consecutive
+rounds then completed 24 openings, ten frames each, with the same PipeWire and
+service PIDs and four relays alive.
 
-Chrome, sin habilitar un backend de cámara especial, enumeró exactamente
-`GTS9U-Front-Ultra-Wide`, `GTS9U-Front-Main`, `GTS9U-Rear-Main` y
-`GTS9U-Rear-Ultra-Wide`; abrió las cuatro por WebRTC a 1280×720/30 fps. OBS
-reprodujo primero el cierre comunicado por la usuaria. Sus nodos CAMSS RAW
-aparecían antes que las cámaras procesadas y, además, el plugin de Noble
-liberaba un puntero sin inicializar cuando faltaban los directorios V4L
-`by-id`/`by-path`. `obs-v4l2-gts9u` corrige ambos casos y oculta únicamente las
-tarjetas `Qualcomm Camera Subsystem`. El diálogo estándar mostró sólo las
-cuatro GTS9U, abrió cada una y permaneció estable; no se instala ninguna escena
-ni configuración de OBS.
+Chrome, without enabling any special camera backend, enumerated exactly
+`GTS9U-Front-Ultra-Wide`, `GTS9U-Front-Main`, `GTS9U-Rear-Main` and
+`GTS9U-Rear-Ultra-Wide`; it opened all four over WebRTC at 1280×720/30 fps. OBS
+first reproduced the crash the owner reported. Its RAW CAMSS nodes appeared
+before the processed cameras and, on top of that, Noble's plugin freed an
+uninitialised pointer when the V4L `by-id`/`by-path` directories were missing.
+`obs-v4l2-gts9u` fixes both cases and hides only the `Qualcomm Camera
+Subsystem` cards. The standard dialog showed only the four GTS9U entries,
+opened each and stayed stable; no OBS scene or configuration is installed.
 
-La sensación de zoom tenía otra causa reproducible. El software ISP escalaba
-para cubrir el destino y recortaba los laterales cuando cambiaba la relación de
-aspecto. `libcamera-gts9u 0.7.2+53.g62d4bfc-gts9u3` usa ahora ajuste *contain*,
-centrado y fondo negro: la salida V4L2 1280×960 conserva el sensor 4:3 completo
-y los clientes 16:9 deciden si añaden barras o recortan. Las capturas físicas
-confirmaron el campo mucho mayor de ambas ultra gran angular; la trasera
-principal sigue siendo ópticamente más estrecha.
+The sensation of zoom had another reproducible cause. The software ISP scaled
+to cover the destination and cropped the sides when the aspect ratio changed.
+`libcamera-gts9u 0.7.2+53.g62d4bfc-gts9u3` now uses a *contain* fit, centred
+and with a black background: the 1280×960 V4L2 output keeps the full 4:3 sensor
+and 16:9 clients decide whether to add bars or crop. The physical captures
+confirmed the much larger field of both ultra-wides; the main rear is still
+optically narrower.
 
-La integración limpia queda en `v4l2-relayd-gts9u 0.1.2-gts9u3`,
-`obs-v4l2-gts9u 30.0.2+dfsg-3build1-gts9u1` y
-`ubuntu-gts9u-device 2.5`. `build-ubuntu-rootfs.sh` incluye esos tres paquetes y
-su huella de entradas, y ya no incluye `obs-gstreamer-gts9u`. Al cerrar la
-validación, Chrome y OBS estaban cerrados, el flash estaba en `off`, PipeWire y
-los cuatro relés seguían activos.
+The clean integration lives in `v4l2-relayd-gts9u 0.1.2-gts9u3`,
+`obs-v4l2-gts9u 30.0.2+dfsg-3build1-gts9u1` and `ubuntu-gts9u-device 2.5`.
+`build-ubuntu-rootfs.sh` includes those three packages and their input
+fingerprint, and no longer includes `obs-gstreamer-gts9u`. On closing the
+validation, Chrome and OBS were closed, the flash was `off`, and PipeWire and
+the four relays were still active.
 
-## Sesión 33 — persistencia tras reinicio y revisión de color
+## Session 33 — persistence after a reboot, and a colour review
 
-Fecha: 2026-08-09.
+Date: 2026-08-09.
 
-La primera prueba de arranque en frío descubrió un fallo real oculto por la
-sesión gráfica. `ubuntu` tenía `Linger=no`: SSH levantaba un PipeWire temporal,
-pero al salir terminaba `user@1000` y los relés de sistema quedaban conectados
-al servidor muerto. Los cuatro nombres seguían presentes aunque las capturas
-eran negras. `ubuntu-gts9u-device 2.6` habilita *linger* tanto en instalaciones
-existentes como al construir un rootfs limpio. El lanzador espera además el
-`MainPID` vivo de PipeWire y reinicia los cuatro relés si cambia o si termina
-uno de ellos. La recuperación se provocó dos veces; en ambas cambió PipeWire,
-se recreó el servicio y quedaron exactamente cuatro relés funcionales.
+The first cold-boot test uncovered a real failure hidden by the graphical
+session. `ubuntu` had `Linger=no`: SSH raised a temporary PipeWire, but on
+exiting it terminated `user@1000` and the system relays were left connected to
+the dead server. All four names were still present even though the captures
+were black. `ubuntu-gts9u-device 2.6` enables lingering both on existing
+installations and when building a clean root filesystem. The launcher also
+waits for PipeWire's live `MainPID` and restarts the four relays if it changes
+or if one of them exits. The recovery was provoked twice; in both cases
+PipeWire changed, the service was recreated and exactly four working relays
+were left.
 
-Se hicieron tres reinicios reales, con `boot_id` distintos. El último arrancó
-el paquete 2.6 exacto, mantuvo estable PipeWire entre conexiones SSH separadas,
-publicó `/dev/video20`–`23` y sus cuatro alias, conservó Wi-Fi, Bluetooth,
-teclado pogo y Wacom, y dejó el flash apagado. Una captura acompasada posterior
-al arranque produjo PNG reales de 1,08–1,43 MB en los cuatro nodos. Desde una
-sesión GNOME normal, Chrome enumeró exactamente las cuatro cámaras y abrió cada
-una a 1280×720/30; el selector estándar de OBS mostró sólo esas cuatro, inició
-captura desde `/dev/video20` y permaneció vivo. La entrada automática usada
-sólo para esa prueba se retiró y se restauró la configuración GDM original.
+Three real reboots were made, with different `boot_id`s. The last one started
+the exact 2.6 package, kept PipeWire stable between separate SSH connections,
+published `/dev/video20`–`23` and their four aliases, kept Wi-Fi, Bluetooth,
+the pogo keyboard and the Wacom, and left the flash off. A capture timed after
+the boot produced real PNGs of 1.08–1.43 MB on all four nodes. From a normal
+GNOME session, Chrome enumerated exactly the four cameras and opened each at
+1280×720/30; OBS's standard selector showed only those four, started capture
+from `/dev/video20` and stayed alive. The automatic login used only for that
+test was removed and the original GDM configuration restored.
 
-La habitación sin luz no permitía una calibración fotométrica completa. En las
-frontales, iluminadas sólo por el monitor, las medias RGB fueron próximas a
-neutro; las traseras, probadas con la linterna, mostraron un sesgo verde
-moderado sobre zonas grises. Como el encuadre estaba dominado por una tarjeta y
-tejidos rojos/marrones, el AWB de mundo gris puede explicar el sesgo y una CCM
-global no sería segura. Se conserva el tuning actual hasta disponer de una
-carta gris/color bajo varias temperaturas de iluminación. Al cerrar, Chrome y
-OBS estaban cerrados, el flash en `off`, la configuración gráfica original
-restaurada y los cuatro relés activos.
-
----
-
-## Sesión 34 — la raíz se muda a la UFS interna, en un solo ZIP
-
-Fecha: 2026-08-10. No se tocó la tablet física: esta sesión produce el artefacto
-que la usuaria probará.
-
-### Contexto
-
-Hasta v0.17 la instalación tenía dos pasos y dos artefactos: escribir a mano una
-imagen de dos particiones en una microSD, y flashear después un ZIP que escribía
-las imágenes de arranque y aplicaba sobre la tarjeta el overlay de firmware. La
-tarjeta era además un punto único de fallo y el cuello de botella de E/S.
-
-El encargo era instalar en la UFS **sin crear, borrar ni modificar
-particiones**, y entregar un único `.zip` flasheable.
-
-### Qué se revisó antes de decidir
-
-El port de Ubuntu Touch de referencia (`../port`) resuelve lo mismo escribiendo
-`super` entero: reconstruye sus particiones lógicas con `lpmake` y mete ahí el
-rootfs como `system`. Eso es exactamente lo que aquí no se quería, y además
-`super` mide 11,2 GiB, que no da para un escritorio.
-
-La inspección del dispositivo (`port/device-inspection/partitions.txt`) daba la
-respuesta: `sda34`, la `userdata` de Android, mide 984 360 924 KiB, es decir
-939 GiB. Ya existe. Reutilizarla no toca la GPT.
-
-### Qué se hizo
-
-- `scripts/build-ufs-image.sh` construye la raíz como **sistema de ficheros a
-  secas**, sin tabla de particiones: `/boot` dentro, overlay de firmware y
-  módulos ya integrado, etiqueta `UBTS9U_UFS`, `fstab` reescrito, `-E resize=`
-  para poder crecer hasta 1 TiB en línea, y `e2fsck -fp` al final para no
-  distribuir un sistema de ficheros sucio.
-- La generación del initramfs sale a `scripts/make-initramfs.sh`, compartido por
-  las dos imágenes; tener dos copias de esa comprobación era pedir que
-  divergiesen justo donde el síntoma es una pantalla negra.
-- El instalador TWRP escribe la raíz en `userdata` y la **verifica releyéndola**
-  y comparando SHA-256, antes de tocar las imágenes de arranque. Aborta si el
-  ZIP está en el propio destino, si `userdata` es menor que la imagen, o si la
-  etiqueta releída no cuadra.
-- `cmdline.txt` pasa a `root=LABEL=UBTS9U_UFS`, que además desambigua contra una
-  microSD antigua.
-- `ubuntu-gts9u-grow-rootfs` distingue los dos casos: en microSD extiende
-  partición y sistema de ficheros; en UFS **solo** `resize2fs`.
-- `validate-bundle.sh` cambia la garantía que comprueba: `userdata` ya puede
-  nombrarse, pero ningún `mkfs`, `parted`, `sgdisk`, `sfdisk`, `fdisk`,
-  `partx` ni `wipefs` puede aparecer en el instalador.
-- `build-release.sh` deja de producir la imagen `.img.xz`: la release es el ZIP.
-
-### Un fallo que la validación estática cazó
-
-La primera build falló en `validate-bundle.sh` con «installer code references a
-partition it must never write». No era un error real de escritura: era un
-`ui_print` que decía la palabra `super` al explicar lo que **no** se toca. La
-comprobación mira código con los comentarios eliminados, y una cadena visible no
-es un comentario. Se reformuló el mensaje. La comprobación es correcta y se
-dejó como está: prefiere un falso positivo a dejar pasar un `dd` a `super`.
-
-### Estado del artefacto
-
-v0.18: ZIP único de 3,1 GiB de imagen de raíz más las cinco imágenes de
-arranque, todas las comprobaciones estáticas en verde. **Sin arrancar todavía en
-la tablet**; hasta que arranque, la fila de almacenamiento del README y la de
-UFS de `hardware-status.md` dicen pendiente.
-
-### Cámaras
-
-Se rehízo el kernel para incluir el parche 3 de `v4l2loopback` que había en el
-árbol de trabajo, y la raíz lleva el conjunto actual de paquetes de cámara
-(`libcamera-gts9u` gts9u5, SPA gts9u10, `v4l2-relayd` gts9u12, device 2.17). El
-trabajo sobre el relevo entre cámaras sigue en curso y sin commitear; la
-documentación pasa a decir lo que de verdad ocurre: cada cámara y el flash
-funcionan, y cambiar de una a otra todavía falla.
+The unlit room did not allow a complete photometric calibration. On the front
+cameras, lit only by the monitor, the RGB means were close to neutral; the rear
+ones, tested with the torch, showed a moderate green bias over grey areas. As
+the framing was dominated by a card and red/brown fabrics, grey-world AWB can
+explain the bias and a global CCM would not be safe. The current tuning is kept
+until a grey/colour chart under several lighting temperatures is available. On
+closing, Chrome and OBS were closed, the flash `off`, the original graphical
+configuration restored and the four relays active.
 
 ---
 
-## Sesión 35 — el primer flasheo real de la v0.18, y por qué abortó
+## Session 34 — the root moves to the internal UFS, in a single ZIP
 
-Fecha: 2026-08-10. Dos intentos en la tablet, ninguno llegó a escribir nada.
+Date: 2026-08-10. The physical tablet was not touched: this session produces
+the artefact the owner will test.
 
-### Intento 1, desde el almacenamiento interno
+### Context
+
+Up to v0.17 the installation had two steps and two artefacts: writing a
+two-partition image to a microSD by hand, and then flashing a ZIP that wrote
+the boot images and applied the firmware overlay onto the card. The card was
+also a single point of failure and the I/O bottleneck.
+
+The brief was to install on the UFS **without creating, deleting or modifying
+partitions**, and to deliver a single flashable `.zip`.
+
+### What was reviewed before deciding
+
+The reference Ubuntu Touch port (`../port`) solves the same thing by writing
+the whole of `super`: it rebuilds its logical partitions with `lpmake` and puts
+the root filesystem in there as `system`. That is exactly what was not wanted
+here, and `super` is 11.2 GiB anyway, which is not enough for a desktop.
+
+Inspecting the device (`port/device-inspection/partitions.txt`) gave the
+answer: `sda34`, Android's `userdata`, is 984,360,924 KiB, that is 939 GiB. It
+already exists. Reusing it touches no GPT.
+
+### What was done
+
+- `scripts/build-ufs-image.sh` builds the root as a **bare filesystem**, with
+  no partition table: `/boot` inside, the firmware and module overlay already
+  integrated, the `UBTS9U_UFS` label, a rewritten `fstab`, `-E resize=` so it
+  can grow online to 1 TiB, and `e2fsck -fp` at the end so a dirty filesystem
+  is never shipped.
+- Generating the initramfs moves out into `scripts/make-initramfs.sh`, shared
+  by both images; having two copies of that check was asking for them to
+  diverge exactly where the symptom is a black screen.
+- The TWRP installer writes the root into `userdata` and **verifies it by
+  reading it back** and comparing SHA-256, before touching the boot images. It
+  aborts if the ZIP is on the destination itself, if `userdata` is smaller than
+  the image, or if the label read back does not match.
+- `cmdline.txt` moves to `root=LABEL=UBTS9U_UFS`, which also disambiguates
+  against an old microSD.
+- `ubuntu-gts9u-grow-rootfs` tells the two cases apart: on microSD it extends
+  the partition and the filesystem; on UFS, **only** `resize2fs`.
+- `validate-bundle.sh` changes the guarantee it checks: `userdata` may now be
+  named, but no `mkfs`, `parted`, `sgdisk`, `sfdisk`, `fdisk`, `partx` or
+  `wipefs` may appear in the installer.
+- `build-release.sh` stops producing the `.img.xz` image: the release is the
+  ZIP.
+
+### A failure the static validation caught
+
+The first build failed in `validate-bundle.sh` with "installer code references
+a partition it must never write". It was not a real write error: it was a
+`ui_print` that said the word `super` while explaining what is **not** touched.
+The check looks at code with comments stripped, and a visible string is not a
+comment. The message was reworded. The check is correct and was left as it is:
+it prefers a false positive to letting a `dd` to `super` through.
+
+### The artefact's state
+
+v0.18: a single ZIP of a 3.1 GiB root image plus the five boot images, with
+every static check green. **Not yet booted on the tablet**; until it boots, the
+README's storage row and `hardware-status.md`'s UFS row say pending.
+
+### Cameras
+
+The kernel was rebuilt to include the `v4l2loopback` patch 3 that was in the
+working tree, and the root carries the current set of camera packages
+(`libcamera-gts9u` gts9u5, SPA gts9u10, `v4l2-relayd` gts9u12, device 2.17).
+The work on switching between cameras is ongoing and uncommitted; the
+documentation now says what actually happens: each camera and the flash work,
+and switching from one to another still fails.
+
+---
+
+## Session 35 — the first real flash of v0.18, and why it aborted
+
+Date: 2026-08-10. Two attempts on the tablet, neither of which wrote anything.
+
+### Attempt 1, from internal storage
 
 `Installing zip file '/sdcard/ubuntu-24.04-gts9uwifi-v0.18-sm-x910-twrp.zip'` →
 `ERROR: the ZIP is stored on the installation target`.
 
-Esto es la protección funcionando: `/sdcard` es `/data/media`, dentro de la
-partición que el instalador va a sobrescribir. No hay nada que arreglar aquí,
-salvo que el README y `boot-strategy.md` ya lo decían y conviene que se lea
-antes.
-
-### Intento 2, por sideload
+That is the protection working: `/sdcard` is `/data/media`, inside the
+partition the installer is about to overwrite. There is nothing to fix here,
+except that the README and `boot-strategy.md` already said so and it is worth
+reading them first.
+### Attempt 2, by sideload
 
 `Installing zip file '/sideload/package.zip'` → `ERROR: malformed rootfs image
-size`, con el ZIP intacto y verificado.
+size`, with the ZIP intact and verified.
 
-La causa es que TWRP ejecuta `update-binary` con **mksh**, cuya aritmética es de
-32 bits aunque el binario sea aarch64 de 64. La imagen mide 3 271 557 120
-bytes, que pasa de 2³¹ y se lee como negativo, así que `[ "$ROOTFS_SIZE" -gt 0 ]`
-resultaba falso. Las comprobaciones previas pasaron porque todos los tamaños
-anteriores (100 663 296 y menores) caben en 32 bits.
+The cause is that TWRP runs `update-binary` with **mksh**, whose arithmetic is
+32-bit even though the binary is 64-bit aarch64. The image is 3,271,557,120
+bytes, which exceeds 2³¹ and is read as negative, so `[ "$ROOTFS_SIZE" -gt 0 ]`
+came out false. The earlier checks passed because every previous size
+(100,663,296 and smaller) fits in 32 bits.
 
-Se confirmó extrayendo el ramdisk de `TWRP-gts9u-V2.img`: `/sbin/sh` →
-`/system/bin/sh`, ELF aarch64, y sus cadenas incluyen «Use 'exit' to leave
-mksh». El mismo ramdisk confirmó que sí están disponibles `wc`, `dd`, `unzip`,
-`sha256sum`, `tune2fs`, `e2fsck`, `blockdev`, `cut` y `resize2fs`.
+It was confirmed by extracting `TWRP-gts9u-V2.img`'s ramdisk: `/sbin/sh` →
+`/system/bin/sh`, an aarch64 ELF, and its strings include "Use 'exit' to leave
+mksh". The same ramdisk confirmed that `wc`, `dd`, `unzip`, `sha256sum`,
+`tune2fs`, `e2fsck`, `blockdev`, `cut` and `resize2fs` are all available.
 
-### Qué se cambió
+### What was changed
 
-- El manifiesto `ROOTFS-IMAGE` publica ahora un tercer campo con el tamaño en
-  MiB, y el instalador lee ese. Los bytes se conservan para las personas y para
+- The `ROOTFS-IMAGE` manifest now publishes a third field with the size in MiB,
+  and the installer reads that one. The bytes are kept for people and for
   `validate-bundle.sh`.
-- La comprobación de capacidad ya no compara `blockdev --getsize64` de
-  `userdata` (~1,008 × 10¹², imposible en ese shell): lee con `dd` el último MiB
-  que ocupará la imagen y comprueba que devuelve 1 048 576 bytes.
-- `validate-bundle.sh` rechaza cualquier literal de diez cifras o más en el
-  código del instalador.
-- El banco de pruebas de loopback pasa a ejecutarse con `mksh` en lugar de
-  `bash`. Ese es el fallo de método real: el banco había dado verde
-  inmediatamente antes del flasheo, porque `bash` cuenta con 64 bits.
+- The capacity check no longer compares `userdata`'s `blockdev --getsize64`
+  (~1.008 × 10¹², impossible in that shell): it reads with `dd` the last MiB
+  the image will occupy and checks it returns 1,048,576 bytes.
+- `validate-bundle.sh` rejects any literal of ten digits or more in the
+  installer's code.
+- The loopback test bench moves to running under `mksh` instead of `bash`. That
+  is the real methodological failure: the bench had gone green immediately
+  before the flash, because `bash` counts in 64 bits.
 
-### Estado
+### State
 
-v0.18 repaquetada. La imagen de raíz no cambia; sólo el instalador y el
-manifiesto. Sigue sin arrancar en la tablet.
+v0.18 repackaged. The root image does not change; only the installer and the
+manifest. It still has not booted on the tablet.
 
 ---
 
-## Sesión 36 — tercer intento, y la primera sesión con la tablet accesible por adb
+## Session 36 — the third attempt, and the first session with the tablet reachable over adb
 
-Fecha: 2026-08-10. La tablet quedó en TWRP con `adb` disponible, así que por
-primera vez las suposiciones sobre el entorno del instalador se pudieron
-comprobar en el aparato en lugar de deducirlas.
+Date: 2026-08-10. The tablet was left in TWRP with `adb` available, so for the
+first time the assumptions about the installer's environment could be checked
+on the device instead of deduced.
 
-### El fallo
+### The failure
 
-`ERROR: the ZIP carries both a rootfs image and an overlay`, sobre un ZIP que
-no lleva overlay.
+`ERROR: the ZIP carries both a rootfs image and an overlay`, on a ZIP that
+carries no overlay.
 
-Confirmado en el dispositivo: el `unzip` de TWRP es `ziptool`, y `unzip -l ZIP
-MIEMBRO` sale 0 aunque el miembro no exista. Todas las comprobaciones de
-pertenencia del instalador eran verdaderas siempre. La de la sesión anterior
-había enmascarado ésta: se abortaba antes de llegar aquí.
+Confirmed on the device: TWRP's `unzip` is `ziptool`, and `unzip -l ZIP MEMBER`
+exits 0 even when the member does not exist. Every membership check in the
+installer was always true. The previous session's failure had masked this one:
+it aborted before reaching here.
 
-Sustituidas por un listado leído una vez y consultado con `awk` sobre el último
-campo. Verificado contra un ZIP real en el propio dispositivo.
+They were replaced with a listing read once and queried with `awk` on the last
+field. Verified against a real ZIP on the device itself.
 
-### Lo que sí funcionó
+### What did work
 
-El arreglo del desmontaje de la sesión 35 se vio funcionando en el log real:
+Session 35's unmount fix was seen working in the real log:
 
 ```
 Unmounting /data before writing Ubuntu.
 Unmounting /sdcard before writing Ubuntu.
 ```
 
-`/data` y `/sdcard` son dos puntos de montaje del mismo `sda34`, y ambos se
-desmontaron. Con el código anterior no se habría desmontado ninguno.
+`/data` and `/sdcard` are two mount points of the same `sda34`, and both were
+unmounted. With the previous code neither would have been.
 
-### Medido en el dispositivo
+### Measured on the device
 
-| Comprobación | Resultado |
+| Check | Result |
 |---|---|
 | `echo $KSH_VERSION` | `@(#)MIRBSD KSH R59 2020/05/16 Android` |
-| `echo $((3271557120))` | `-1023410176`, confirmando la aritmética de 32 bits |
+| `echo $((3271557120))` | `-1023410176`, confirming the 32-bit arithmetic |
 | `readlink -f /dev/block/by-name/userdata` | `/dev/block/sda34` |
-| `blockdev --getsize64` de `userdata` | `1007985586176` |
-| sonda `dd bs=1M skip=3119 count=1` en `userdata` | `1048576` bytes |
-| la misma sonda en una partición pequeña | 38 bytes, o sea rechaza correctamente |
-| `unzip -l ZIP NO-EXISTE` | sale 0 |
+| `userdata`'s `blockdev --getsize64` | `1007985586176` |
+| the `dd bs=1M skip=3119 count=1` probe on `userdata` | `1048576` bytes |
+| the same probe on a small partition | 38 bytes, i.e. it rejects correctly |
+| `unzip -l ZIP DOES-NOT-EXIST` | exits 0 |
 
-### Una corrección a la documentación
+### A correction to the documentation
 
-`/external_sd` en esta tablet son **224 MiB**: es la partición `UBTS9U_BOOT` de
-la microSD de la v0.17, porque TWRP monta la primera partición de la tarjeta.
-No cabe ahí un ZIP de 992 MB. Decir «cópialo a una microSD» sin más era un mal
-consejo: la vía practicable es **sideload** o un USB-OTG.
-
----
-
-## Sesión 37 — arranca desde la UFS
-
-Fecha: 2026-08-10. Primer arranque real con la raíz en el almacenamiento
-interno.
-
-El ZIP con las tres correcciones (aritmética en MiB, desmontaje por el
-dispositivo resuelto, y pertenencia al ZIP comprobada contra el listado) se
-flasheó por sideload y la tablet arrancó desde `userdata`. La fila de
-almacenamiento del README y las dos de `hardware-status.md` pasan a confirmado.
-
-Antes de flashear se verificó en el propio dispositivo, sin escribir nada, que
-`unzip -p` de ziptool extrae el miembro de 3,1 GB con el SHA-256 exacto del
-manifiesto. Era el último paso de la cadena del que no había prueba en
-hardware.
-
-### Pendiente que aparece al usarlo: VLC entero en la imagen
-
-`obs-v4l2-gts9u` —el complemento V4L2 parcheado con el que se validaron las
-cámaras— declara `Depends: obs-studio`, y `obs-plugins` **recomienda** `vlc`.
-El rootfs base se construye con mmdebstrap sin `Recommends`, que es justo por
-lo que hubo que declarar a mano `snapd`, `yaru-theme-icon` y `gnome-keyring`;
-pero el gancho que instala los paquetes locales usa `apt-get install -y` sin
-más, y ahí los `Recommends` sí se honran. Por esa rendija entraron 77 MiB de
-VLC, de los cuales 41 MiB son `vlc-l10n`.
-
-OBS (21 MiB) sí es intencionado en la práctica: es la dependencia del
-complemento propio y la herramienta con la que se comprobaron las cuatro
-cámaras. VLC no lo es.
+`/external_sd` on this tablet is **224 MiB**: it is the microSD's
+`UBTS9U_BOOT` partition from v0.17, because TWRP mounts the card's first
+partition. A 992 MB ZIP does not fit there. Saying "copy it to a microSD" with
+no further detail was bad advice: the practicable route is **sideload** or a
+USB-OTG drive.
 
 ---
 
-## Sesión 38 — la cuenta deja de venir en la imagen
+## Session 37 — it boots from the UFS
 
-Fecha: 2026-08-10. Build limpia con asistente de primer arranque, para probar
-en el dispositivo.
+Date: 2026-08-10. The first real boot with the root on internal storage.
 
-### Motivo
+The ZIP with the three fixes (arithmetic in MiB, unmounting by resolved device,
+and ZIP membership checked against the listing) was flashed by sideload and the
+tablet booted from `userdata`. The README's storage row and
+`hardware-status.md`'s two rows move to confirmed.
 
-La imagen traía un usuario `ubuntu` creado en el build con la contraseña de
-`GTS9U_PW`. Además de heredar la cuenta de otra persona, esa variable hacía
-**imposible** una build limpia para quien no la supiera; la v0.18 tuvo que
-reutilizar el rootfs de la v0.17 por eso mismo.
+Before flashing, it was verified on the device itself, writing nothing, that
+ziptool's `unzip -p` extracts the 3.1 GB member with the manifest's exact
+SHA-256. That was the last link in the chain with no hardware proof.
 
-### Comprobado antes de decidir
+### A pending item that appears on use: the whole of VLC in the image
 
-- `gnome-initial-setup` 46.3 está en noble arm64, sólo arrastra
-  `libsysmetrics1`, y conserva `gis-account-page.ui` y `gis-password-page.ui`:
-  su página de creación de cuenta sigue existiendo.
-- `ubuntu-desktop-bootstrap`, el asistente Flutter de las imágenes de
-  Raspberry Pi, **no está** en el archivo de noble.
-- `oem-config`/`ubiquity` sí están (24.04.5), pero son el camino pesado y
-  basado en X; el nativo para GNOME Wayland 46 es `gnome-initial-setup`.
-- Nada en la imagen fija `enabled-extensions`: las extensiones de Ubuntu vienen
-  del modo de sesión de gnome-shell, así que un *override* puede poner la
-  nuestra sin desplazar ninguna.
+`obs-v4l2-gts9u` — the patched V4L2 plugin the cameras were validated with —
+declares `Depends: obs-studio`, and `obs-plugins` **recommends** `vlc`. The
+base root filesystem is built with mmdebstrap without `Recommends`, which is
+exactly why `snapd`, `yaru-theme-icon` and `gnome-keyring` had to be declared
+by hand; but the hook that installs the local packages uses a plain `apt-get
+install -y`, and there `Recommends` are honoured. Through that gap came 77 MiB
+of VLC, of which 41 MiB is `vlc-l10n`.
 
-### Lo que había que desenganchar del nombre `ubuntu`
-
-Cuatro sitios en el build y dos en el paquete. El que casi se escapa:
-`ubuntu-gts9u-camera-relays.service` llevaba `User=ubuntu`, `Group=ubuntu` y
-`XDG_RUNTIME_DIR=/run/user/1000` fijos. Sin esa cuenta el servicio no arranca
-siquiera, así que la imagen con OOBE se habría quedado **sin cámaras**, que es
-justo una de las cosas a verificar. Se detectó revisando el resto del paquete,
-no al probarlo.
-
-Solución: `ubuntu-gts9u-desktop-user.service` corre en cada arranque, aplica
-*linger* a todo UID entre `UID_MIN` y `UID_MAX`, y escribe en `/run` un
-*drop-in* con el `User=`, el `XDG_RUNTIME_DIR` y el orden contra
-`user@UID.service` del dueño real. El servicio de relés depende de él y lleva
-una condición sobre ese drop-in, para que una máquina cuyo asistente aún no se
-ha completado no entre en un bucle de reinicio cada dos segundos.
-
-La extensión de la linterna pasa a un *gschema override*, y la clave SSH, si se
-da, va a `/etc/skel`.
-
-### De paso, VLC
-
-`apt-get install -y` del gancho de paquetes locales era el único sitio del
-build que honra `Recommends`. Se purga VLC después de instalar, en vez de usar
-`--no-install-recommends`, que también dejaría fuera `obs-plugins`.
+OBS (21 MiB) is intentional in practice: it is our own plugin's dependency and
+the tool the four cameras were checked with. VLC is not.
 
 ---
 
-## Sesión 39 — linterna, idiomas y una actualización que conserve los datos
+## Session 38 — the account stops shipping in the image
 
-Fecha: 2026-08-10. La v0.19 arrancó y la OOBE funcionó; la usuaria creó su
-cuenta y reportó dos fallos.
+Date: 2026-08-10. A clean build with a first-boot wizard, to test on the
+device.
 
-### La linterna no encendía
+### Why
 
-El mosaico aparecía, pero al pulsarlo se apagaba solo y no salía luz.
+The image carried an `ubuntu` user created at build time with `GTS9U_PW`'s
+password. Beyond inheriting somebody else's account, that variable made a clean
+build **impossible** for anyone who did not know it; v0.18 had to reuse
+v0.17's root filesystem for exactly that reason.
 
-Montando la raíz desde TWRP se vio la causa sin ambigüedad: la cuenta que creó
-el asistente, `agcar`, está en `adm sudo plugdev users`. La regla udev de este
-port hace `chgrp video` y `chmod 0660` sobre el `brightness` del LED, así que
-no tenía permiso de escritura. La cuenta que creaba el build antes sí estaba en
-`video`, junto con `render`, `input`, `audio`, `dialout`, `cdrom` y `netdev`.
+### Checked before deciding
 
-`ubuntu-gts9u-desktop-user` los aplica ahora, y se añade una unidad `.path`
-sobre `/etc/passwd` para que ocurra en el mismo arranque en que el asistente
-crea la cuenta, no en el siguiente.
+- `gnome-initial-setup` 46.3 is in noble arm64, drags in only `libsysmetrics1`,
+  and keeps `gis-account-page.ui` and `gis-password-page.ui`: its
+  account-creation page still exists.
+- `ubuntu-desktop-bootstrap`, the Flutter wizard of the Raspberry Pi images, is
+  **not** in noble's archive.
+- `oem-config`/`ubiquity` are (24.04.5), but they are the heavy, X-based route;
+  the native one for GNOME Wayland 46 is `gnome-initial-setup`.
+- Nothing in the image sets `enabled-extensions`: Ubuntu's extensions come from
+  gnome-shell's session mode, so an override can add ours without displacing
+  any.
 
-Verificado en el chroot contra una cuenta creada con los grupos exactos del
-asistente: pasa de `adm sudo plugdev users` a incluir los siete que faltaban.
+### What had to be unhooked from the name `ubuntu`
 
-### Sólo salía español
+Four places in the build and two in the package. The one that nearly got away:
+`ubuntu-gts9u-camera-relays.service` carried fixed `User=ubuntu`,
+`Group=ubuntu` and `XDG_RUNTIME_DIR=/run/user/1000`. Without that account the
+service does not even start, so the OOBE image would have shipped **with no
+cameras**, which is precisely one of the things to verify. It was caught while
+reviewing the rest of the package, not by testing it.
 
-`/etc/locale.gen` tenía una línea. El asistente ofrece los idiomas que el
-sistema tiene generados, así que ofrecía uno. Con `locales-all` pasan de 22 a
-152 locales UTF-8 disponibles, sin ejecutar `locale-gen` bajo emulación.
+The solution: `ubuntu-gts9u-desktop-user.service` runs on every boot, applies
+lingering to every UID between `UID_MIN` and `UID_MAX`, and writes a drop-in
+into `/run` with the real owner's `User=`, `XDG_RUNTIME_DIR` and ordering
+against their `user@UID.service`. The relay service depends on it and carries a
+condition on that drop-in, so that a machine whose wizard has not been
+completed does not enter a restart loop every two seconds.
 
-### De paso, lo que sí funcionó
+The flashlight extension moves to a gschema override, and the SSH key, if
+given, goes into `/etc/skel`.
 
-El journal de la v0.19 confirma que el servicio de usuario hizo su trabajo:
-`no desktop user yet; the first-boot wizard has not run` en el primer arranque,
-y después `linger enabled for agcar` y `camera relays bound to agcar (uid
-1000)`.
+### And along the way, VLC
 
-### La actualización sin perder datos
-
-Se comprobó en el dispositivo que TWRP no tiene `rsync` y que su `tar` no
-soporta xattrs, así que una copia fichero a fichero desde el recovery perdería
-las capabilities de los binarios. La actualización pasa a `gts9u-upgrade`, en
-el sistema arrancado. Sin probar todavía.
+The local-package hook's `apt-get install -y` was the only place in the build
+that honours `Recommends`. VLC is purged after installing, rather than using
+`--no-install-recommends`, which would also leave out `obs-plugins`.
 
 ---
 
-## Sesión 40 — la linterna, otra vez, y por qué el arreglo anterior no llegó
+## Session 39 — the torch, languages, and an upgrade that keeps the data
 
-Fecha: 2026-08-11.
+Date: 2026-08-10. v0.19 booted and the OOBE worked; the owner created her
+account and reported two failures.
 
-### El arreglo de la v0.20 nunca se aplicó
+### The torch would not light
 
-La cuenta creada por el asistente, `arturo`, seguía sin estar en `video`, y el
-journal sólo tenía `no desktop user yet`: el servicio no volvió a ejecutarse
-tras crearse la cuenta.
+The tile appeared, but pressing it switched itself off and no light came out.
 
-La causa es la unidad `.path`. `PathChanged=/etc/passwd` parecía la elección
-obvia y no funciona: `useradd` y accountsservice escriben un fichero temporal y
-lo renombran encima, así que el inodo que systemd vigila es **sustituido**, no
-modificado, y el evento no llega. Se cambia por `PathExistsGlob=/home/*`, que
-observa el mismo hecho desde donde sí hay un evento.
+Mounting the root from TWRP showed the cause unambiguously: the account the
+wizard created, `agcar`, is in `adm sudo plugdev users`. This port's udev rule
+does `chgrp video` and `chmod 0660` on the LED's `brightness`, so it had no
+write permission. The account the build used to create was in `video`, along
+with `render`, `input`, `audio`, `dialout`, `cdrom` and `netdev`.
 
-### Y aunque hubiera llegado, no habría bastado
+`ubuntu-gts9u-desktop-user` now applies them, and a `.path` unit on
+`/etc/passwd` is added so it happens on the same boot in which the wizard
+creates the account, not the next one.
 
-Los grupos suplementarios de un proceso se fijan al iniciar la sesión, y el
-asistente entra en la sesión en el mismo instante en que crea la cuenta.
-Añadirla a `video` ahí llega tarde para esa sesión.
+Verified in the chroot against an account created with the wizard's exact
+groups: it goes from `adm sudo plugdev users` to including all seven that were
+missing.
 
-Por eso el arreglo real no pasa por grupos: `ubuntu-gts9u-desktop-user` hace
-`chown` del `brightness` del LED a su dueño. La propiedad es del fichero, no de
-la sesión, así que no hay ventana. El grupo se sigue aplicando por lo demás, y
-el ayudante udev vuelve a poner al dueño si el LED se re-enumera, leyéndolo de
+### Only Spanish was offered
+
+`/etc/locale.gen` had one line. The wizard offers the languages the system has
+generated, so it offered one. With `locales-all` the available UTF-8 locales go
+from 22 to 152, without running `locale-gen` under emulation.
+
+### And what did work
+
+v0.19's journal confirms the user service did its job: `no desktop user yet;
+the first-boot wizard has not run` on the first boot, and afterwards `linger
+enabled for agcar` and `camera relays bound to agcar (uid 1000)`.
+
+### The upgrade without losing data
+
+It was checked on the device that TWRP has no `rsync` and that its `tar` does
+not support xattrs, so a file-by-file copy from recovery would lose the
+binaries' capabilities. The upgrade moves to `gts9u-upgrade`, on the booted
+system. Untested so far.
+
+---
+
+## Session 40 — the torch, again, and why the previous fix never arrived
+
+Date: 2026-08-11.
+
+### v0.20's fix was never applied
+
+The account the wizard created, `arturo`, was still not in `video`, and the
+journal had only `no desktop user yet`: the service did not run again after the
+account was created.
+
+The cause is the `.path` unit. `PathChanged=/etc/passwd` looked like the
+obvious choice and does not work: `useradd` and accountsservice write a
+temporary file and rename it over the top, so the inode systemd is watching is
+**replaced**, not modified, and the event never arrives. It is changed to
+`PathExistsGlob=/home/*`, which observes the same fact from where there is an
+event.
+
+### And even if it had arrived, it would not have been enough
+
+A process's supplementary groups are fixed when the session starts, and the
+wizard enters the session at the very moment it creates the account. Adding it
+to `video` there is too late for that session.
+
+That is why the real fix does not go through groups:
+`ubuntu-gts9u-desktop-user` `chown`s the LED's `brightness` to its owner.
+Ownership belongs to the file, not to the session, so there is no window. The
+group is still applied for everything else, and the udev helper puts the owner
+back if the LED is re-enumerated, reading it from
 `/run/ubuntu-gts9u/desktop-user`.
 
-Verificado en el chroot: cuenta con los grupos exactos del asistente, LED en
-`root:video 660` → `arturo:video 660`; y tras devolverlo a `root:video`, el
-ayudante udev lo restaura.
+Verified in the chroot: an account with the wizard's exact groups, the LED
+going from `root:video 660` to `arturo:video 660`; and after returning it to
+`root:video`, the udev helper restores it.
 
-### Idiomas: se corrige un criterio, no un fallo
+### Languages: a criterion corrected, not a failure
 
-Se había descartado incluir todos los paquetes de idioma por pesar cerca de
-1 GiB. Mal calibrado: el dispositivo tiene 256 GB en su versión más pequeña.
-Viajan los 526.
+Including every language pack had been rejected for weighing close to 1 GiB.
+Badly calibrated: the device has 256 GB in its smallest version. All 526
+travel.
 
 ### GNOME Software
 
-El sistema lo referencia y no venía instalado. Se añade junto a su complemento
-de snap.
+The system references it and it was not installed. It is added, along with its
+snap plugin.
 
 ---
 
-## Sesión 41 — por qué hacía falta reiniciar: `RemainAfterExit`
+## Session 41 — why a reboot was needed: `RemainAfterExit`
 
-Fecha: 2026-08-11. Las cámaras y la linterna funcionaban, pero sólo tras un
-primer reinicio después del asistente.
+Date: 2026-08-11. The cameras and the torch worked, but only after a first
+reboot following the wizard.
 
-### Confirmado con el journal, no deducido
+### Confirmed with the journal, not deduced
 
-`ubuntu-gts9u-desktop-user.service` aparece **exactamente dos veces
-«Starting», una por arranque**, en los dos arranques registrados. En el
-primero, `no desktop user yet`; en el segundo, todo el trabajo: grupos, linger,
-LED y relés. La unidad `.path` no consiguió nunca una tercera ejecución.
+`ubuntu-gts9u-desktop-user.service` appears **exactly twice as "Starting", once
+per boot**, across both recorded boots. On the first, `no desktop user yet`; on
+the second, all the work: groups, lingering, the LED and the relays. The
+`.path` unit never achieved a third run.
 
-La causa es `RemainAfterExit=yes`. El servicio corre al arrancar, no encuentra
-cuenta, termina bien y queda en `active (exited)`. Cuando la unidad `.path`
-dispara y hace `systemctl start`, systemd ve una unidad ya activa y no hace
-nada — correctamente. Todo quedaba aplazado al arranque siguiente.
+The cause is `RemainAfterExit=yes`. The service runs at boot, finds no account,
+finishes cleanly and stays `active (exited)`. When the `.path` unit fires and
+does a `systemctl start`, systemd sees an already active unit and does nothing —
+correctly. Everything was deferred to the next boot.
 
-Se quita `RemainAfterExit`. El servicio aplica ajustes y sale; no tiene estado
-que retener, y así vuelve a ser ejecutable, que es la razón de existir de la
-unidad `.path`.
+`RemainAfterExit` is removed. The service applies settings and exits; it has no
+state to retain, and this makes it runnable again, which is the whole reason
+the `.path` unit exists.
 
-### Y un segundo hueco en el mismo sitio
+### And a second gap in the same place
 
-`graphical.target` se alcanza mucho antes de que exista la cuenta, así que el
-servicio de relés se saltaba por su propia condición y nadie volvía a por él.
-Ahora, tras escribir el drop-in, el ayudante hace
-`systemctl start --no-block` sobre los relés. `--no-block` no es opcional: la
-unidad de relés lleva `Requires=` sobre ésta, y esperar su *start job* desde
-dentro sería esperarse a sí misma.
+`graphical.target` is reached long before the account exists, so the relay
+service skipped itself by its own condition and nobody came back for it. Now,
+after writing the drop-in, the helper does `systemctl start --no-block` on the
+relays. `--no-block` is not optional: the relay unit carries `Requires=` on
+this one, and waiting for its start job from inside would be waiting for
+itself.
 
-### Método
+### Method
 
-Tres intentos de arreglar la linterna, y los dos primeros se enviaron sin poder
-probar el camino real. Lo que cerró el asunto fue leer el journal del
-dispositivo: dos ejecuciones, una por arranque, que es una firma inequívoca.
-Conviene mirar el journal antes que el código.
-
----
-
-## Sesión 42 — el puerto USB-C pierde conexiones, y un hub que no se rinde
-
-Fecha: 2026-08-11. Sesión de depuración en caliente sobre la tablet arrancada,
-por SSH, con el hardware delante.
-
-### Lo que se arregla
-
-**El puerto deja de enterarse de conexiones.** Medido, no supuesto: con un hub
-enchufado y sin enumerar, `CC_STATUS=0x22` (hay algo conectado), `INT1..INT5`
-a cero, máscaras correctas y la IRQ 166 congelada desde el desenchufe
-anterior. El chip detecta y no avisa. Un `unbind`/`bind` lo recupera al
-instante.
-
-No es determinista —un enchufe posterior sí se detectó solo—, así que el
-arreglo es un vigilante diferido cada 4 s que solo actúa cuando el hardware
-dice que hay algo **y** la interrupción no lo ha anunciado. La condición es
-estrecha a propósito: el driver ya avisaba de que re-armar la resincronización
-sin condiciones hacía oscilar TCPM entre host y desconectado.
-
-### Lo que no se arregla, y lo que se descarta
-
-El hub sigue sin enumerar. Descartado con evidencia: que esté roto (funciona en
-un PC), que el camino OTG no sirva (en t=369 hubo un dispositivo enumerado con
-la tablet dando VBUS), que las máscaras estén mal, y que una suspensión se
-comiera el evento.
-
-Queda el Rp anunciado, que el driver pone al mínimo en la conexión natural de
-sink. Se añade `otg_rp` como parámetro de módulo **con el valor de hoy por
-defecto**, para poder probarlo en caliente sin arriesgar lo que ya funciona:
-hay precedente de romperlo, porque el Rp se bajó precisamente porque `0x59`
-tiraba un dongle OTG pasivo.
-
-### Método
-
-Tres hipótesis mías cayeron por medirlas: hub muerto, camino OTG roto y Rp
-bajo. La que sobrevivió salió de leer registros del chip por i2c y contar
-interrupciones en `/proc/interrupts`, no de leer código. Y una prueba mal
-diseñada —subir el Rp con el accesorio ya conectado, cuando un sink lo lee al
-conectarse— casi hace descartar la única hipótesis que sigue viva.
+Three attempts at fixing the torch, and the first two were sent without being
+able to test the real path. What closed it was reading the device's journal:
+two runs, one per boot, which is an unmistakable signature. It is worth looking
+at the journal before the code.
 
 ---
 
-## Sesión 43 — la primera actualización en sitio, y lo que rompió
+## Session 42 — the USB-C port misses connections, and a hub that will not give up
 
-Fecha: 2026-08-11. `gts9u-upgrade` se estrenó sobre la tablet arrancada, con la
-v0.23. Funcionó, y encontró tres defectos: dos suyos y uno mucho más viejo.
+Date: 2026-08-11. A live debugging session on the booted tablet, over SSH, with
+the hardware in hand.
 
-### Defecto propio 1: rsync borraba su propio directorio de trabajo
+### What gets fixed
 
-`--delete` con origen la imagen montada y destino `/` fue a por
-`/var/tmp/gts9u-upgrade.XXXX`, que no existe en el origen: intentó borrar el
-punto de montaje del que estaba leyendo, y **sí borró el ZIP** desde el que
-después había que escribir las imágenes de arranque. Se excluye `/var/tmp`, y
-se comprueba explícitamente que el ZIP y el montaje siguen ahí antes de seguir.
+**The port stops noticing connections.** Measured, not assumed: with a hub
+plugged in and not enumerating, `CC_STATUS=0x22` (something is connected),
+`INT1..INT5` at zero, correct masks and IRQ 166 frozen since the previous
+unplug. The chip detects and does not report. An `unbind`/`bind` recovers it
+instantly.
 
-### Defecto propio 2: la lista de «qué conservar» miraba al sitio equivocado
+It is not deterministic — a later plug was detected on its own — so the fix is
+a deferred watcher every 4 s that acts only when the hardware says something is
+there **and** the interrupt has not announced it. The condition is deliberately
+narrow: the driver already warned that re-arming the resynchronisation
+unconditionally made TCPM oscillate between host and disconnected.
 
-Se perdieron el wifi y el brillo. El perfil de red **no** está en
-`/etc/NetworkManager/system-connections` —ese directorio estaba vacío— sino
-generado por netplan en `/run`, con el original en `/etc/netplan`. El brillo
-vive en `/var/lib/systemd/backlight`. La lista pasa a conservar directorios de
-estado enteros.
+### What does not get fixed, and what is ruled out
 
-### Defecto viejo: las imágenes nunca han llevado capabilities
+The hub still does not enumerate. Ruled out with evidence: that it is broken
+(it works on a PC), that the OTG path is no good (at t=369 a device was
+enumerated with the tablet supplying VBUS), that the masks are wrong, and that
+a suspend swallowed the event.
 
-Al verificar si la actualización conservaba `security.capability`, el recorrido
-de la imagen encontró **cero** ficheros con ellas, y el árbol de origen tiene
-tres. No se perdían al actualizar: `tar --xattrs` copia solo `user.*`, así que
-**ninguna imagen de este port las ha llevado nunca**, ni en microSD ni en UFS.
-Arreglado con `--xattrs-include='*'` en los dos constructores de imagen.
+That leaves the advertised Rp, which the driver sets to the minimum on a
+natural sink connection. `otg_rp` is added as a module parameter **with today's
+value as the default**, so it can be tested live without risking what already
+works: there is precedent for breaking it, because the Rp was lowered precisely
+because `0x59` dropped a passive OTG dongle.
 
-Irónico: el argumento para hacer la actualización en el sistema vivo y no en
-TWRP era precisamente no perder las capabilities. Resultó que ya se perdían
-antes, en un sitio que nadie había mirado.
+### Method
 
-### Lo que sí salió bien
-
-Las cuatro imágenes de arranque coincidieron con el manifiesto al releerlas, y
-la cuenta, el `home` y el sistema sobrevivieron. La tablet arrancó con el
-kernel nuevo. Se restauraron las tres capabilities en caliente.
-
----
-
-## Sesión 44 — era la corriente
-
-Fecha: 2026-08-11. Instalación limpia de la v0.24 y cierre del caso del hub.
-
-### El hub funciona
-
-Con `otg_ma=3` (1500 mA) puesto **antes** de enchufar, el hub bus-powered
-arranca a la primera: `BSTCNTL1=0xc6`, y `lsusb` muestra el hub Genesys Logic y
-el RTL8153, que engancha `r8152` y presenta interfaz de red.
-
-Lo que declaran una vez enumerados: hub 100 mA, Ethernet 180 mA. Lo que
-necesitaba el margen era el pico de arranque. Con el techo en 900 mA la
-protección del cargador cortaba antes de que el hub señalizase, y como el corte
-es del cargador y no del host, **no queda rastro en ningún log**. Por eso
-«le falta corriente» y «no hay nada enchufado» se veían idénticos desde Linux.
-
-Se sube el valor por defecto a 1500 mA. El anuncio de Rp se queda como estaba:
-son ajustes independientes, así que se da margen para encender sin decirle a
-nadie que puede consumir 1,5 A de forma continua.
-
-### La instalación limpia validó lo demás
-
-`ping` con `cap_net_raw` —primera vez en el port—, LED de linterna en
-`agcar:video` y los siete grupos aplicados sin reiniciar, 41 catálogos de
-idioma, cinco nodos de cámara.
-
-### Y encontró un fallo mío
-
-`ubuntu-gts9u-desktop-user.service` y su `.path` en estado *failed*. Al quitar
-`RemainAfterExit` en la sesión 41, el servicio pasa a inactivo al terminar, y
-`PathExistsGlob` dispara **por nivel**: relanzaba en bucle hasta el límite de
-arranques de systemd. El trabajo se aplicaba en la primera pasada —por eso
-linterna y cámaras iban—, pero las unidades quedaban marcadas como fallidas.
-Se cambia a `PathChanged=/home`, que es por flanco.
-
-### Y una decisión de idioma
-
-El asistente preseleccionaba español porque la imagen fijaba `locale.gen` en
-`es_ES`, teclado `es` y zona `Europe/Madrid`. Pasa a `en_US.UTF-8`, teclado
-`us` y UTC: es lo que ve quien instale esto sin conocer a nadie del proyecto,
-y el asistente pregunta las tres cosas igualmente.
+Three hypotheses of mine fell to measurement: a dead hub, a broken OTG path and
+a low Rp. The one that survived came from reading the chip's registers over i2c
+and counting interrupts in `/proc/interrupts`, not from reading code. And a
+badly designed test — raising the Rp with the accessory already connected, when
+a sink reads it on connecting — nearly discarded the only hypothesis still
+alive.
 
 ---
 
-## Sesión 45 — relevo de las cuatro cámaras en aplicaciones normales
+## Session 43 — the first in-place upgrade, and what it broke
 
-Fecha: 2026-08-11. Se retomó la v0.25 con cuatro cámaras que funcionaban en
-GNOME Cámara pero podían quedar negras o estáticas al alternarlas desde OBS o
-Chrome. Antes de tocar nada se conservó en el commit `bf6adb8` todo el trabajo
-pendiente de libcamera, `v4l2-relayd`, `v4l2loopback`, WirePlumber y scripts de
-build.
+Date: 2026-08-11. `gts9u-upgrade` made its debut on the booted tablet, with
+v0.23. It worked, and found three defects: two of its own and one much older.
 
-### La actualización ejecutaba código viejo con un fichero nuevo
+### Own defect 1: rsync deleted its own working directory
 
-La tablet seguía llevando `ubuntu-gts9u-device 2.17`, pero el paquete construido
-con ese mismo número contenía todavía `PathExistsGlob=/home/*`. APT no distingue
-dos contenidos con versión idéntica. La condición por nivel relanzaba
-`ubuntu-gts9u-desktop-user` hasta su límite y el servicio de cámaras, que depende
-de él, quedaba parado.
+`--delete` with the mounted image as source and `/` as destination went for
+`/var/tmp/gts9u-upgrade.XXXX`, which does not exist in the source: it tried to
+delete the mount point it was reading from, and **it did delete the ZIP** from
+which the boot images had to be written afterwards. `/var/tmp` is excluded, and
+it now explicitly checks the ZIP and the mount are still there before
+continuing.
 
-El paquete pasa a 2.18. Su `postinst` recarga las unidades, limpia los estados
-fallidos, reinicia el watcher corregido `PathChanged=/home` y ejecuta la
-resolución dinámica de la cuenta. Si los relés estaban activos antes de la
-actualización, los reinicia al final: un mero `start` habría conservado el
-proceso del binario antiguo.
+### Own defect 2: the "what to keep" list looked in the wrong place
 
-### Dos fallos distintos en el relevo
+Wi-Fi and brightness were lost. The network profile is **not** in
+`/etc/NetworkManager/system-connections` — that directory was empty — but
+generated by netplan in `/run`, with the original in `/etc/netplan`.
+Brightness lives in `/var/lib/systemd/backlight`. The list moves to keeping
+whole state directories.
 
-El primer fallo era una carrera con la preempción. Un `SIGUSR1` que llegase
-justo después de cerrar el lector marcaba el relé anterior como preemptado para
-siempre. Ahora sólo se marca si aún hay cliente activo y un error de la entrada
-programa su recreación si el lector continúa abierto.
+### An old defect: the images have never carried capabilities
 
-El segundo apareció en el estrés WebRTC. El fichero de bloqueo se truncaba antes
-de escribir el PID, pero el descriptor conservaba su offset. Los PID sucesivos
-quedaban detrás de huecos NUL; el lector interpretaba dueño cero y no podía
-señalar al proceso que retenía CAMSS. `lseek(..., 0, SEEK_SET)` antes de
-`dprintf()` cierra el fallo. El resultado está empaquetado como
-`v4l2-relayd-gts9u 0.1.2-gts9u15`, y el paquete de dispositivo exige exactamente
-esa versión.
+While verifying whether the upgrade preserved `security.capability`, a walk of
+the image found **zero** files with any, and the source tree has three. They
+were not being lost on upgrade: `tar --xattrs` copies only `user.*`, so **no
+image from this port has ever carried them**, on microSD or UFS. Fixed with
+`--xattrs-include='*'` in both image builders.
 
-### Evidencia de aplicaciones, no sólo de drivers
+Ironic: the argument for doing the upgrade on the live system rather than in
+TWRP was precisely not to lose the capabilities. It turned out they were
+already being lost, somewhere nobody had looked.
 
-Se arrancó OBS con un `XDG_CONFIG_HOME` vacío. La escena comenzó realmente
-vacía y se añadió desde la interfaz una fuente normal «Dispositivo de captura
-de video (V4L2)». El selector mostró exactamente las cuatro GTS9U, sin nodos
-RAW ni escenas preconstruidas. La misma fuente recorrió las cuatro cámaras; dos
-capturas separadas tres segundos cambiaron respectivamente 31,12 %, 20,04 %,
-22,98 % y 23,91 % de los píxeles del preview. Esto descarta la imagen estática
-que había motivado la sesión.
+### What did go well
 
-El banco WebRTC enumera antes de abrir nada, selecciona después cada `deviceId`
-exacto, espera imagen no negra y compara muestras separadas dos segundos. Tres
-rondas consecutivas pasaron 4/4 a 1280×720, con 45,35–97,78 % de píxeles
-cambiantes según cámara y escena. GNOME Cámara guardó además cuatro JPEG reales:
-dos frontales derechas y dos traseras derechas, con campos de visión distintos;
-el flash iluminó las traseras.
+The four boot images matched the manifest on being read back, and the account,
+the `home` and the system all survived. The tablet booted with the new kernel.
+The three capabilities were restored live.
 
-Discord en la sesión Chrome de la persona propietaria enumeró los mismos cuatro
-nombres e identificadores. Su selector de preflight cambió la etiqueta a las
-traseras pero mantuvo abierto `/dev/video20`; la página WebRTC del mismo Chrome
-abrió inmediatamente cada trasera cuando pidió su `deviceId` exacto. Se deja
-como peculiaridad de la interfaz de Discord: no se añade un userscript, escena
-ni preferencia por perfil que no existiría en una instalación limpia.
+---
 
-### Segundo arranque en frío
+## Session 44 — it was the current
 
-El primer reinicio cambió la IP por DHCP y dejó la tablet en GDM, como debe
-ocurrir sin autologin. Los relés no dependen de esa sesión: el marcador resolvió
-`agcar`, habilitó *linger* y generó el drop-in de `/run`. Un intento de medir con
-`v4l2-ctl` consumió el último buffer 75 veces antes del debounce y produjo un
-falso «frame único»; no es una prueba válida de vídeo continuo.
+Date: 2026-08-11. A clean installation of v0.24 and the closing of the hub
+case.
 
-Para excluir cualquier recuperación manual se hizo un segundo reinicio completo
-y Chrome fue el primer consumidor. Con boot ID
-`ea55e3d3-6104-4bc0-a8b1-c0c944764ee0`, cuatro relés y ninguna unidad fallida,
-las cuatro cámaras pasaron a la primera: 1280×720, 2,030–2,034 s de avance y
-98,76–100 % de píxeles cambiantes. La raíz seguía siendo `UBTS9U_UFS`, el
-módulo `v4l2loopback` coincidía con `7.2.0-rc3-dirty` y estaba firmado, y el
-flash terminó en cero.
+### The hub works
 
-No se cambió CCM ni AWB. Las escenas disponibles no contienen una carta gris o
-de color controlada; ajustar una matriz para una pared y una mesa iluminada por
-flash habría sido adivinar y podía empeorar el resto de iluminaciones.
+With `otg_ma=3` (1500 mA) set **before** plugging in, the bus-powered hub
+starts first time: `BSTCNTL1=0xc6`, and `lsusb` shows the Genesys Logic hub and
+the RTL8153, which binds `r8152` and presents a network interface.
 
-### La primera construcción limpia de la v0.26 encontró otro fallo
+What they declare once enumerated: hub 100 mA, Ethernet 180 mA. What needed the
+headroom was the inrush. With the ceiling at 900 mA the charger's protection
+cut in before the hub could signal, and since the cut is the charger's and not
+the host's, **no trace is left in any log**. That is why "it lacks current" and
+"nothing is plugged in" looked identical from Linux.
 
-La primera construcción completa llegó hasta el hook de paquetes locales y se
-detuvo correctamente: la purga de `vlc-plugin-*` había retirado también
-`obs-plugins`. Eso dejaba `obs-studio` y `obs-v4l2-gts9u` instalados, pero sin el
-paquete que aporta las fuentes de OBS. La comprobación que ya existía evitó
-publicar un ZIP incompleto.
+The default is raised to 1500 mA. The Rp advertisement stays as it was: they
+are independent settings, so headroom to start is given without telling anyone
+they may draw 1.5 A continuously.
 
-El hook reinstala ahora `obs-plugins` con `--no-install-recommends` después de
-retirar VLC. Se reprodujo la secuencia sobre aquella misma raíz ARM64 fallida:
-VLC siguió ausente, `obs-plugins 30.0.2+dfsg-3build1` volvió y el SHA-256 del
-`linux-v4l2.so` activo coincidió con la copia de `obs-v4l2-gts9u`, mientras el
-binario original permaneció en la ruta desviada. El build comprueba desde ahora
-esa igualdad, no sólo el estado de dpkg.
+### The clean installation validated the rest
 
-### Release limpia y estado final
+`ping` with `cap_net_raw` — a first for the port — the torch LED at
+`agcar:video` and the seven groups applied without rebooting, 41 language
+catalogues, five camera nodes.
 
-La primera construcción completa salió del commit `978332d`; tras encontrar y
-corregir la carrera de audio, la release definitiva se regeneró desde
-`9081233`. El rootfs contiene 1521 paquetes y conserva exactamente
+### And it found a failure of mine
+
+`ubuntu-gts9u-desktop-user.service` and its `.path` in a *failed* state. On
+removing `RemainAfterExit` in session 41, the service becomes inactive when it
+finishes, and `PathExistsGlob` fires **on level**: it relaunched in a loop up
+to systemd's start limit. The work was applied on the first pass — which is why
+the torch and the cameras worked — but the units were left marked as failed. It
+is changed to `PathChanged=/home`, which is edge-triggered.
+
+### And a language decision
+
+The wizard preselected Spanish because the image fixed `locale.gen` at
+`es_ES`, the keyboard at `es` and the zone at `Europe/Madrid`. It moves to
+`en_US.UTF-8`, keyboard `us` and UTC: that is what somebody installing this
+without knowing anyone on the project sees, and the wizard asks all three
+questions anyway.
+
+---
+
+## Session 45 — switching the four cameras in normal applications
+
+Date: 2026-08-11. v0.25 was picked up with four cameras that worked in GNOME
+Camera but could go black or static when alternated from OBS or Chrome. Before
+touching anything, all the pending libcamera, `v4l2-relayd`, `v4l2loopback`,
+WirePlumber and build-script work was preserved in commit `bf6adb8`.
+
+### The upgrade ran old code with a new file
+
+The tablet still carried `ubuntu-gts9u-device 2.17`, but the package built
+under that same number still contained `PathExistsGlob=/home/*`. APT does not
+distinguish two contents with identical versions. The level condition
+relaunched `ubuntu-gts9u-desktop-user` up to its limit and the camera service,
+which depends on it, stayed stopped.
+
+The package moves to 2.18. Its `postinst` reloads the units, clears the failed
+states, restarts the corrected `PathChanged=/home` watcher and runs the
+account's dynamic resolution. If the relays were active before the upgrade, it
+restarts them at the end: a mere `start` would have kept the old binary's
+process.
+
+### Two different failures in the switching
+
+The first failure was a race with pre-emption. A `SIGUSR1` arriving just after
+the reader closed marked the previous relay as pre-empted forever. Now it is
+marked only if a client is still active, and an input error schedules its
+recreation if the reader is still open.
+
+The second appeared under WebRTC stress. The lock file was truncated before
+writing the PID, but the descriptor kept its offset. Successive PIDs ended up
+behind NUL gaps; the reader read owner zero and could not signal the process
+holding CAMSS. An `lseek(..., 0, SEEK_SET)` before the `dprintf()` closes the
+failure. The result is packaged as `v4l2-relayd-gts9u 0.1.2-gts9u15`, and the
+device package requires exactly that version.
+
+### Evidence from applications, not only from drivers
+
+OBS was started with an empty `XDG_CONFIG_HOME`. The scene really did start
+empty and a normal "Video Capture Device (V4L2)" source was added from the
+interface. The selector showed exactly the four GTS9U entries, with no RAW
+nodes and no prebuilt scenes. That same source went through all four cameras;
+two captures three seconds apart changed 31.12 %, 20.04 %, 22.98 % and 23.91 %
+of the preview's pixels respectively. That rules out the static image that
+prompted the session.
+
+The WebRTC bench enumerates before opening anything, then selects each exact
+`deviceId`, waits for a non-black image and compares samples two seconds apart.
+Three consecutive rounds passed 4/4 at 1280×720, with 45.35–97.78 % changing
+pixels depending on camera and scene.
+GNOME Camera also saved four real JPEGs:
+two front ones upright and two rear ones upright, with different fields of
+view; the flash lit the rear ones.
+
+Discord in the owner's Chrome session enumerated the same four names and
+identifiers. Its preflight selector changed the label to the rear cameras but
+kept `/dev/video20` open; the same Chrome's WebRTC page immediately opened each
+rear camera when it asked for its exact `deviceId`. It is left as a peculiarity
+of Discord's interface: no userscript, scene or per-profile preference that
+would not exist on a clean installation is added.
+
+### A second cold boot
+
+The first reboot changed the IP over DHCP and left the tablet at GDM, as it
+should with no autologin. The relays do not depend on that session: the marker
+resolved `agcar`, enabled lingering and generated the drop-in in `/run`. An
+attempt to measure with `v4l2-ctl` consumed the last buffer 75 times before the
+debounce and produced a false "single frame"; that is not valid proof of
+continuous video.
+
+To exclude any manual recovery, a second complete reboot was made and Chrome
+was the first consumer. With boot ID
+`ea55e3d3-6104-4bc0-a8b1-c0c944764ee0`, four relays and no failed unit, all
+four cameras passed first time: 1280×720, 2.030–2.034 s of progress and
+98.76–100 % changing pixels. The root was still `UBTS9U_UFS`, the
+`v4l2loopback` module matched `7.2.0-rc3-dirty` and was signed, and the flash
+ended at zero.
+
+Neither CCM nor AWB was changed. The available scenes contain no controlled
+grey or colour chart; tuning a matrix for a wall and a flash-lit desk would
+have been guesswork and could have made other lighting worse.
+
+### v0.26's first clean build found another failure
+
+The first complete build reached the local-package hook and stopped correctly:
+purging `vlc-plugin-*` had also removed `obs-plugins`. That left `obs-studio`
+and `obs-v4l2-gts9u` installed, but without the package that provides OBS's
+sources. The check that already existed prevented an incomplete ZIP being
+published.
+
+The hook now reinstalls `obs-plugins` with `--no-install-recommends` after
+removing VLC. The sequence was reproduced on that same failed ARM64 root: VLC
+stayed absent, `obs-plugins 30.0.2+dfsg-3build1` came back and the active
+`linux-v4l2.so`'s SHA-256 matched `obs-v4l2-gts9u`'s copy, while the original
+binary stayed at the diverted path. The build now checks that equality, not
+just dpkg's state.
+
+### A clean release and the final state
+
+The first complete build came from commit `978332d`; after finding and fixing
+the audio race, the definitive release was regenerated from `9081233`. The root
+filesystem contains 1,521 packages and keeps exactly
 `ubuntu-gts9u-device 2.21`, `v4l2-relayd-gts9u 0.1.2-gts9u15`,
-`libcamera-gts9u 0.7.2+53.g62d4bfc-gts9u5` y
-`libspa-0.2-libcamera-gts9u 1.0.5-gts9u10`. No hay cuenta ordinaria, VLC ni
-`/tmp/local-debs`; el plugin V4L2 activo y la copia de `obs-v4l2-gts9u` tienen
-el mismo SHA-256.
+`libcamera-gts9u 0.7.2+53.g62d4bfc-gts9u5` and
+`libspa-0.2-libcamera-gts9u 1.0.5-gts9u10`. There is no ordinary account, no
+VLC and no `/tmp/local-debs`; the active V4L2 plugin and `obs-v4l2-gts9u`'s copy
+have the same SHA-256.
 
-La imagen UFS mide 3.780.116.480 bytes y tiene SHA-256
-`5fbd69982b10d297a8de5f6c1018b6c8a4ca3ee193165a222da0fc6143839386`.
-El ZIP TWRP mide 1.157.003.824 bytes y tiene SHA-256
-`67a9710e2bfd15d86c631222e5ca866f7cd6d65c79f87cd5f3c0dcfec3976164`.
-La validación independiente volvió a pasar tamaños de partición, cabeceras
-Android v4, DTB, LZ4, flags AVB, CRC y contrato del instalador. No se flasheó.
+The UFS image is 3,780,116,480 bytes and has SHA-256
+`5fbd69982b10d297a8de5f6c1018b6c8a4ca3ee193165a222da0fc6143839386`. The TWRP
+ZIP is 1,157,003,824 bytes and has SHA-256
+`67a9710e2bfd15d86c631222e5ca866f7cd6d65c79f87cd5f3c0dcfec3976164`. The
+independent validation again passed partition sizes, Android v4 headers, DTB,
+LZ4, AVB flags, CRC and the installer's contract. Nothing was flashed.
 
-La última lectura del hardware mantuvo el boot ID
-`ea55e3d3-6104-4bc0-a8b1-c0c944764ee0`: servicio de relés activo, cuatro
-procesos, `/dev/video20–23`, `Linger=yes`, raíz `UBTS9U_UFS`, cero unidades
-fallidas y flash apagado. Por tanto, la construcción de la release no alteró el
-estado ya validado de la tablet.
+The last reading from the hardware kept boot ID
+`ea55e3d3-6104-4bc0-a8b1-c0c944764ee0`: the relay service active, four
+processes, `/dev/video20–23`, `Linger=yes`, root `UBTS9U_UFS`, zero failed
+units and the flash off. Building the release therefore did not alter the
+tablet's already-validated state.
 
-## Sesión 46 — el Dummy Input era una carrera con la recuperación del panel
+## Session 46 — the Dummy Input was a race with the panel's recovery
 
-Fecha: 2026-08-11. Tras un reinicio, GNOME sólo ofrecía Dummy Input/Output. No
-faltaba el driver: `/proc/asound/cards` contenía la X910, existían los cinco PCM
-y WirePlumber había creado `alsa_card.platform-sound`. El objeto, sin embargo,
-sólo tenía `off` y `pro-audio`; había arrancado a las 19:17:02 y la tarjeta no
-terminó de registrarse hasta las 19:17:14. Reiniciar únicamente WirePlumber
-recargó UCM, activó `HiFi` y devolvió altavoz y micrófono. Una grabación produjo
-352.871 muestras no nulas.
+Date: 2026-08-11. After a reboot, GNOME offered only Dummy Input/Output. The
+driver was not missing: `/proc/asound/cards` contained the X910, all five PCMs
+existed and WirePlumber had created `alsa_card.platform-sound`. The object,
+however, had only `off` and `pro-audio`; it had started at 19:17:02 and the
+card did not finish registering until 19:17:14. Restarting WirePlumber alone
+reloaded UCM, activated `HiFi` and brought back the speaker and the microphone.
+A recording produced 352,871 non-zero samples.
 
-La primera corrección del paquete esperaba `controlC0` y refrescaba WirePlumber
-una vez por arranque. La prueba negativa dejó el perfil explícitamente en
-`off`; como WirePlumber conserva una selección deliberada, la versión final
-también selecciona y comprueba `HiFi`. El paquete pasa a
-`ubuntu-gts9u-device 2.21` y declara `pulseaudio-utils`, que aporta `pactl`.
+The package's first fix waited for `controlC0` and refreshed WirePlumber once
+per boot. The negative test left the profile explicitly at `off`; since
+WirePlumber keeps a deliberate selection, the final version also selects and
+checks `HiFi`. The package moves to `ubuntu-gts9u-device 2.21` and declares
+`pulseaudio-utils`, which provides `pactl`.
 
-El siguiente reinicio mostró que aquello arreglaba la enumeración pero no toda
-la causa: PipeWire abría el micrófono y recibía exclusivamente ceros, igual que
-ALSA directo. El registro capturó el orden dañino: el ADSP subió, la recuperación
-del panel entró en su suspensión `platform`, APM agotó el opcode `1001021` y
-`va_macro` reanudó con `-EACCES`. Era el fallo intermitente ya documentado, pero
-ahora quedó ligado a una secuencia concreta.
+The next reboot showed that fixed the enumeration but not the whole cause:
+PipeWire opened the microphone and received nothing but zeros, as did ALSA
+directly. The log captured the harmful order: the ADSP came up, the panel's
+recovery entered its `platform` suspend, the APM timed out on opcode `1001021`
+and `va_macro` resumed with `-EACCES`. It was the intermittent failure already
+documented, but now tied to a concrete sequence.
 
-La unidad del ADSP quiere y espera desde ahora a
-`ubuntu-gts9u-panel-coldboot-recover`; la resolución del usuario espera a su vez
-al ADSP y sólo después refresca HiFi y permite arrancar los relés. Dos reinicios
-consecutivos midieron exactamente ese orden. Los boot ID
-`a4f0a3b9-0446-48a2-a915-b8c6995af27f` y
-`7f3fbb28-c259-401f-8762-2807551d149a` produjeron respectivamente 351.781 y
-351.547 muestras de micrófono no nulas, abrieron la salida en silencio, dejaron
-cuatro relés, `/dev/video20–23` y cero unidades fallidas. No volvió a aparecer
-el `-EACCES`. El timeout inicial aislado de APM aún aparece en uno de los dos
-arranques, pero no impide el registro posterior ni la captura real.
+The ADSP's unit now wants and waits for
+`ubuntu-gts9u-panel-coldboot-recover`; the user resolution in turn waits for
+the ADSP and only then refreshes HiFi and allows the relays to start. Two
+consecutive reboots measured exactly that order. Boot IDs
+`a4f0a3b9-0446-48a2-a915-b8c6995af27f` and
+`7f3fbb28-c259-401f-8762-2807551d149a` produced 351,781 and 351,547 non-zero
+microphone samples respectively, opened the output silently, and left four
+relays, `/dev/video20–23` and zero failed units. The `-EACCES` did not return.
+The isolated initial APM timeout still appears on one of the two boots, but it
+prevents neither the later registration nor real capture.
 
-La v0.26 se reconstruyó con esa 2.21 dentro de la imagen, no sólo en la tablet
-de desarrollo. Una segunda inspección montó la UFS en sólo lectura y verificó
-las versiones exactas de dispositivo, libcamera, SPA, relé y complemento de
-OBS, la ausencia de cuenta ordinaria y de paquetes temporales, y el orden de
-las unidades instalado. La validación estática independiente volvió a pasar el
-contrato completo del ZIP. Los hashes definitivos son los indicados en la
-sección de release anterior; sustituyen a la primera v0.26 con 2.18.
+v0.26 was rebuilt with that 2.21 inside the image, not only on the development
+tablet. A second inspection mounted the UFS read-only and verified the exact
+versions of the device package, libcamera, SPA, the relay and the OBS plugin,
+the absence of an ordinary account and of temporary packages, and the installed
+ordering of the units. The independent static validation passed the ZIP's full
+contract again. The definitive hashes are the ones given in the release section
+above; they replace the first v0.26 with 2.18.
 
-## Sesión 47 — brillo automático: las dos rutas STK31610 se detienen en el DSP
+## Session 47 — automatic brightness: both STK31610 routes stop at the DSP
 
-Fecha: 2026-08-11. El punto de partida ya tenía toda la integración de GNOME:
-`org.gnome.settings-daemon.plugins.power ambient-enabled=true`, backlight DCS
-en `/sys/class/backlight/ae94000.dsi.0` y `iio-sensor-proxy` con soporte SSC.
-El sensor de luz seguía oculto por diseño porque reclamarlo bloqueaba el proxy.
+Date: 2026-08-11. The starting point already had all of GNOME's integration:
+`org.gnome.settings-daemon.plugins.power ambient-enabled=true`, the DCS
+backlight at `/sys/class/backlight/ae94000.dsi.0` and `iio-sensor-proxy` with
+SSC support. The light sensor was still hidden by design because claiming it
+blocked the proxy.
 
-Se revisó primero la diferencia de protocolo que aún no estaba probada. El
-cliente Android/CHRE oficial incluye en `sns_std_request` una especificación de
-batch con periodo cero y flush de tres segundos, y marca explícitamente la
-petición como activa. Se construyeron para ARM64 `libssc 0.4.4-gts9u1`
-(`4aa9c17c…`) e `iio-sensor-proxy 3.9-gts9u1` (`b94af25e…`) con ese sobre exacto
-y el driver de luz habilitado. Tras restaurar `is_dri=1` y reiniciar, GNOME
-detectó `HasAmbientLight=true`; a las 21:39:58 `gsd-power` registró
-`Claiming light sensor failed: Se alcanzó el tiempo de expiración`.
-`LightLevel` continuó en 0, el brillo en 284/2047 y el proxy quedó esperando en
-vez de consumir un núcleo gracias al arreglo anterior del bucle síncrono.
+The protocol difference that had not yet been tested was examined first. The
+official Android/CHRE client includes in `sns_std_request` a batch
+specification with a zero period and a three-second flush, and explicitly marks
+the request as active. `libssc 0.4.4-gts9u1` (`4aa9c17c…`) and
+`iio-sensor-proxy 3.9-gts9u1` (`b94af25e…`) were built for ARM64 with that
+exact envelope and the light driver enabled. After restoring `is_dri=1` and
+rebooting, GNOME detected `HasAmbientLight=true`; at 21:39:58 `gsd-power`
+recorded `Claiming light sensor failed: timeout reached`. `LightLevel` stayed
+at 0, brightness at 284/2047, and the proxy waited instead of consuming a core,
+thanks to the earlier fix to the synchronous loop.
 
-La enumeración explícita de `ambient_light_sub` aportó la segunda instancia que
-la consulta predeterminada no muestra:
+Explicitly enumerating `ambient_light_sub` produced the second instance the
+default query does not show:
 
 - `ambient_light`: `stk_stk31610`, SUID
   `5158289438331071126:3046173514946711665`;
 - `ambient_light_sub`: `stk_stk31610_sub`, SUID
   `5230347032368999062:3046173514946711665`.
 
-La secundaria anuncia `available=yes`, 5 Hz y modo *on-change*. Aceptó la
-transacción QMI cuyo cuerpo acababa en
-`0a:07:08:00:10:c0:8d:b7:01:18:00`, exactamente el batch y el cliente activo
-anteriores, pero durante 20 s no emitió configuración ni lux. Esto coincide
-con las pruebas exhaustivas de pmOS de ambas instancias, continuo, DRI,
-polling, petición física Samsung, rails y buses: la frontera restante es el
-driver propietario dentro del DSP, no GNOME ni el cliente Linux.
+The secondary announces `available=yes`, 5 Hz and *on-change* mode. It accepted
+the QMI transaction whose body ended in `0a:07:08:00:10:c0:8d:b7:01:18:00`,
+exactly the earlier batch and active client, but over 20 s it emitted neither a
+configuration nor any lux. This agrees with pmOS's exhaustive tests of both
+instances, continuous, DRI, polling, the physical Samsung request, rails and
+buses: the remaining boundary is the proprietary driver inside the DSP, not
+GNOME and not the Linux client.
 
-Los parches diagnósticos no se conservaron. La tablet volvió a `libssc 0.4.4`
-e `iio-sensor-proxy 3.9`, con `ssc-light` oculto, `is_dri=1` en los dos ficheros
-de registro y el proxy activo. La comprobación de salida dejó cero unidades
-fallidas, `/dev/video20–23`, el sink de altavoces y el micrófono digital. No se
-publica una falsa solución ni se abre una cámara periódicamente como ALS: eso
-sería un sustituto con implicaciones de batería, privacidad y concurrencia que
-requiere una decisión separada.
+The diagnostic patches were not kept. The tablet returned to `libssc 0.4.4` and
+`iio-sensor-proxy 3.9`, with `ssc-light` hidden, `is_dri=1` in both registry
+files and the proxy active. The exit check left zero failed units,
+`/dev/video20–23`, the speaker sink and the digital microphone. No false
+solution is published, and no camera is opened periodically as an ALS: that
+would be a substitute with battery, privacy and concurrency implications
+requiring a separate decision.
 
-## Sesión 48 — artefactos gráficos: investigación descartada
+## Session 48 — graphical artefacts: investigation abandoned
 
-Fecha: 2026-08-12. Chromium mostraba el fondo de Discord dividido en bandas y
-mosaicos verticales, y Configuración de GNOME deformaba el fondo de switches
-desactivados después de scroll o de unos minutos. Los juegos seguían correctos.
-Una herramienta temporal leyó por PRIME el framebuffer KMS primario:
-2960×1848, `XR30`, pitch 11904, modificador lineal. La captura contenía los
-mismos defectos, descartando el panel, DSC y la fotografía del OLED.
+Date: 2026-08-12. Chromium showed Discord's background split into vertical
+bands and tiles, and GNOME Settings deformed the background of disabled
+switches after scrolling or after a few minutes. Games remained correct. A
+temporary tool read the primary KMS framebuffer over PRIME: 2960×1848, `XR30`,
+pitch 11904, linear modifier. The capture contained the same defects, ruling
+out the panel, DSC and the photograph of the OLED.
 
-Chrome con toda la GPU deshabilitada quedó limpio, pero no
-`--disable-gpu-rasterization`, `FD_MESA_DEBUG=noubwc`, `notile`, `nofp16` ni el
-workaround de vendor de ANGLE. `--use-angle=vulkan` sí corrigió la página sin
-perder el proceso GPU. En GTK4, Vulkan y NGL podían parecer correctos al abrir,
-pero el fallo reaparecía con retraso; un dispositivo uinput temporal automatizó
-scroll y cambios de panel. El renderer GL clásico se mantuvo correcto.
+Chrome with the GPU entirely disabled came out clean, but not with
+`--disable-gpu-rasterization`, `FD_MESA_DEBUG=noubwc`, `notile`, `nofp16` or
+ANGLE's vendor workaround. `--use-angle=vulkan` did fix the page without losing
+the GPU process. In GTK4, Vulkan and NGL could look correct on opening, but the
+failure reappeared with a delay; a temporary uinput device automated scrolling
+and panel switching. The classic GL renderer stayed correct.
 
-Se exploró Zink como arreglo común. Un prototipo global arregló inicialmente
-el gradiente, pero tras reiniciar Mutter no encontró salidas y quedó un `_`
-parpadeante. Se recuperó por SSH. Después se parcheó Mesa para limitar Zink a
-clientes Wayland y nodos GBM de render: GDM sobrevivió, pero Discord empezó a
-convertir iconos `#` y de voz en bloques. También se descartó; el paquete Mesa
-de prueba se desinstaló y sus diversiones restauraron los ficheros de Ubuntu.
+Zink was explored as a common fix. A global prototype initially fixed the
+gradient, but after a reboot Mutter found no outputs and a blinking `_` was
+left. It was recovered over SSH. Mesa was then patched to limit Zink to Wayland
+clients and GBM render nodes: GDM survived, but Discord began turning `#` and
+voice icons into blocks. That was discarded too; the test Mesa package was
+uninstalled and its diversions restored Ubuntu's files.
 
-Una segunda ronda acotó el defecto de Chromium a Ozone/Wayland: Xwayland y
-ANGLE/Vulkan eran limpios, mientras que `FD_MESA_DEBUG=flush` era el único
-control de Freedreno que corregía la ruta OpenGL Wayland. Ese modo vacía la GPU
-después de cada dibujo y se rechazó por su coste potencial. El compositor no
-anunciaba sincronización explícita; Chrome entregaba dma-buf y recibía
-`wl_buffer.release`, lo que deja como pista una sincronización implícita tardía.
+A second round narrowed Chromium's defect to Ozone/Wayland: Xwayland and
+ANGLE/Vulkan were clean, while `FD_MESA_DEBUG=flush` was the only Freedreno
+control that fixed the OpenGL Wayland path. That mode drains the GPU after
+every draw and was rejected for its potential cost. The compositor advertised
+no explicit synchronisation; Chrome delivered dma-buf and received
+`wl_buffer.release`, which leaves late implicit synchronisation as the clue.
 
-La gravedad no justificaba seguir añadiendo complejidad ni arriesgar el buen
-rendimiento 3D. A petición del usuario se canceló el trabajo y se restauró el
-estado anterior: sin paquete Mesa alternativo, diversiones, variables
-`GSK_RENDERER`/`ANGLE_DEFAULT_PLATFORM`, flags de Chromium ni cambios de
-Mutter. Los artefactos quedan documentados como limitación menor, no como una
-función reparada.
+The severity did not justify adding more complexity or risking good 3D
+performance. At the user's request the work was cancelled and the previous
+state restored: no alternative Mesa package, no diversions, no
+`GSK_RENDERER`/`ANGLE_DEFAULT_PLATFORM` variables, no Chromium flags and no
+Mutter changes. The artefacts are documented as a minor limitation, not as a
+repaired feature.
 
-## Sesión 48 — brillo automático: la vía AP queda cerrada por medida
+## Session 48 — automatic brightness: the AP route is closed by measurement
 
-Fecha: 2026-08-12. La sesión 47 había dejado el ALS como «frontera en el driver
-DSP». Quedaba sin comprobar una afirmación que se venía arrastrando: que el
-STK31610 estuviese físicamente donde dice su propio registro.
+Date: 2026-08-12. Session 47 had left the ALS as a "boundary in the DSP
+driver". One claim that had been carried along remained unchecked: that the
+STK31610 was physically where its own registry says.
 
-### El registro y el árbol stock coinciden; el silicio no
+### The registry and the stock tree agree; the silicon does not
 
-`kailua_stk31610_0/1.json` (extraídos de `vendor.img` y presentes en el árbol
-HexagonFS instalado) sitúan los dos chips en `bus_type=0` (I²C),
-`bus_instance` 3 y 4, `slave_config=72` (**0x48**), 400 kHz y raíles
-`dummy_vdd`. El DTS stock resuelve `qupv3_hub_i2c3 = i2c@98c000` y
-`qupv3_hub_i2c4 = i2c@990000`, y su overlay les cuelga el SM5440 (0x63) y el
-MAX77816 (0x18) **desde el AP**: los dos motores son compartidos de verdad, no
-exclusivos del SSC.
+`kailua_stk31610_0/1.json` (extracted from `vendor.img` and present in the
+installed HexagonFS tree) place both chips at `bus_type=0` (I²C),
+`bus_instance` 3 and 4, `slave_config=72` (**0x48**), 400 kHz and `dummy_vdd`
+rails. The stock DTS resolves `qupv3_hub_i2c3 = i2c@98c000` and
+`qupv3_hub_i2c4 = i2c@990000`, and its overlay hangs the SM5440 (0x63) and the
+MAX77816 (0x18) off them **from the AP**: both engines are genuinely shared,
+not exclusive to the SSC.
 
-Esta rama ya conduce ambos en GPI-DMA. Un `i2cdetect -y -r` completo devuelve:
+This branch already drives both in GPI-DMA. A complete `i2cdetect -y -r`
+returns:
 
-- SE3 (`/dev/i2c-4`): sólo `UU` en 0x63;
-- SE4 (`/dev/i2c-5`): sólo 0x18.
+- SE3 (`/dev/i2c-4`): only `UU` at 0x63;
+- SE4 (`/dev/i2c-5`): only 0x18.
 
-Y 0x48 hace NAK en los dieciséis buses del AP. Los vecinos contestan en el mismo
-par de hilos, con los raíles de sensores medidos vivos (`vreg_l1b_1p8` y
-`vreg_l16b_3p0`, ambos `enabled`, 1,8 V y 3,0 V, un consumidor cada uno). Con el
-bus acreditado por sus vecinos, **el chip no responde a ninguno de los dos
-maestros**.
+And 0x48 NAKs on all sixteen AP buses. The neighbours answer on the same pair
+of wires, with the sensors' rails measured alive (`vreg_l1b_1p8` and
+`vreg_l16b_3p0`, both `enabled`, 1.8 V and 3.0 V, one consumer each). With the
+bus vouched for by its neighbours, **the chip answers neither master**.
 
-### Barrido de los motores que faltaban, y su control negativo
+### A sweep of the engines that were missing, and its negative control
 
-Para no cerrar en falso se habilitaron `i2c_hub_2` (gpio20/21) e `i2c_hub_5`
-(gpio6/7) en GPI-DMA — los únicos dos que quedaban sin mapear, porque los pines
-de SE0, SE1 y SE7 los usa esta placa para enables de cámara, un regulador y el
-raíl del pogo. Fue necesario reescribir **boot y `vendor_boot`**: con sólo
-`boot` el árbol vivo seguía siendo el antiguo, tal y como ya advierte
-`docs/boot-strategy.md`; se perdió un ciclo por no leerlo antes.
+So as not to close the case falsely, `i2c_hub_2` (gpio20/21) and `i2c_hub_5`
+(gpio6/7) were enabled in GPI-DMA — the only two left unmapped, because this
+board uses SE0, SE1 and SE7's pins for camera enables, a regulator and the
+pogo's rail. **Both boot and `vendor_boot`** had to be rewritten: with `boot`
+alone the live tree was still the old one, exactly as `docs/boot-strategy.md`
+already warns; a cycle was lost for not reading it first.
 
-El empaquetado se validó reproduciendo primero las imágenes instaladas byte a
-byte con el DTB viejo (`boot` `0cf7c7c0…`, `vendor_boot` `e77aca73…`), de modo
-que las de diagnóstico sólo diferían en el DTB.
+The packaging was validated by first reproducing the installed images byte for
+byte with the old DTB (`boot` `0cf7c7c0…`, `vendor_boot` `e77aca73…`), so that
+the diagnostic ones differed only in the DTB.
 
-Resultado: SE2 sólo enseña 0x18, SE3 0x63, SE4 0x18, SE5 vacío. Ni 0x0c ni 0x48.
-El control positivo **falló**: el AK0991x, que el registro pone en
-`bus_instance=2` a 0x0c, tampoco aparece. Es decir, `bus_instance` del SSC no es
-el índice de SE del hub, y la coincidencia para 3/4 se sostiene por el DTS
-stock, no por aritmética. (Salvedad honesta: el adaptador de SE2 mostró 0x18,
-igual que SE4, lo que podría indicar aliasing del canal GPI; el resultado
-negativo de SE2/SE5 es por eso más débil que el de SE3/SE4, que se midieron en
-la configuración de producción ya probada.)
+Result: SE2 shows only 0x18, SE3 0x63, SE4 0x18, SE5 empty. Neither 0x0c nor
+0x48. The positive control **failed**: the AK0991x, which the registry places
+at `bus_instance=2` at 0x0c, does not appear either. That is, the SSC's
+`bus_instance` is not the hub's SE index, and the coincidence for 3/4 rests on
+the stock DTS, not on arithmetic. (An honest caveat: SE2's adapter showed 0x18,
+the same as SE4, which could indicate GPI channel aliasing; SE2/SE5's negative
+result is therefore weaker than SE3/SE4's, which were measured in the
+already-proven production configuration.)
+### A mistake of my own, and the control that corrects it
 
-### Un error propio, y el control que lo corrige
+It was first claimed that no SSC I²C sensor worked under Ubuntu, because
+`gdbus introspect` on `net.hadess.SensorProxy` did not list `.Compass`. **That
+was a methodological error**: that interface lives on the child object
+`/net/hadess/SensorProxy/Compass`. Querying the correct object,
+`HasCompass=true`, and after adding a temporary polkit rule — claiming sensors
+over SSH gives `Not Authorized` because the session is not "active" —
+`monitor-sensor` delivers a live heading between 127° and 134°. The compass
+works.
 
-Se afirmó primero que bajo Ubuntu no funcionaba ningún sensor I²C del SSC,
-porque `gdbus introspect` sobre `net.hadess.SensorProxy` no listaba `.Compass`.
-**Era un error de método**: esa interfaz vive en el objeto hijo
-`/net/hadess/SensorProxy/Compass`. Consultado el objeto correcto,
-`HasCompass=true`, y tras añadir una regla polkit temporal —reclamar sensores
-por SSH da `Not Authorized` porque la sesión no es «activa»— `monitor-sensor`
-entrega rumbo vivo entre 127° y 134°. La brújula funciona.
+That makes the failure more informative, not less. The AK0991x is on the SSC's
+I²C (`bus_instance=2`, 0x0c) and, even while working, **also appears nowhere
+when scanning from the AP**. A healthy SSC sensor is as invisible to the AP as
+the ALS. So 0x48's NAK closes the AP route but does not license the conclusion
+that the chip is missing or unpowered, as had been suggested; the earlier
+conclusion is corrected in `docs/development-notes.md` and in the README.
 
-Eso convierte el fallo en algo más informativo, no menos. El AK0991x está en
-I²C del SSC (`bus_instance=2`, 0x0c) y, aun funcionando, **tampoco aparece por
-ninguna parte al escanear desde el AP**. Un sensor SSC sano es tan invisible
-para el AP como el ALS. Por tanto el NAK de 0x48 cierra la vía AP pero no
-autoriza a concluir que el chip falte o esté sin alimentar, como se había
-sugerido; la conclusión anterior queda corregida en
-`docs/development-notes.md` y en el README.
+With the compass as a control, what works can be compared field by field with
+what does not, on the same transport and the same registry: the ALS is the only
+one declaring `num_rail=2` with `vdd_rail`/`vddio_rail` at
+`/pmic/client/dummy_vdd` and `dri_irq_num=0` with `irq_pull_type=0`, while the
+compass uses the real rail `/pmic/client/sensor_vddio` and DRI 89 with pull 3.
+The ADSP firmware contains the string `i2c_power_on failure`. The live
+hypothesis becomes that the STK31610's registry entry is a reference-board
+template that does not describe this board, not that the sensor is missing.
 
-Con la brújula como control se puede comparar campo a campo lo que sí va contra
-lo que no, mismo transporte y mismo registro: el ALS es el único que declara
-`num_rail=2` con `vdd_rail`/`vddio_rail` a `/pmic/client/dummy_vdd` y
-`dri_irq_num=0` con `irq_pull_type=0`, mientras que la brújula usa el raíl real
-`/pmic/client/sensor_vddio` y DRI 89 con pull 3. El firmware ADSP contiene la
-cadena `i2c_power_on failure`. La hipótesis viva pasa a ser que la entrada de
-registro del STK31610 es una plantilla de placa de referencia que no describe
-esta placa, no que falte el sensor.
+A measured asymmetry between branches: pmOS leaves `i2c_hub_4` disabled on the
+AP and gives that pinctrl to the DSP (`pinctrl-0 = <&hub_i2c4_data_clk>`); this
+branch enables it for the MAX77816 and deletes the ADSP's pinctrl.
+`stk31610_1` is on that `bus_instance` 4. Even so, the ALS gave no lux under
+pmOS either, so returning SE4 is not on its own the solution.
 
-Asimetría medida entre ramas: pmOS deja `i2c_hub_4` deshabilitado en el AP y da
-ese pinctrl al DSP (`pinctrl-0 = <&hub_i2c4_data_clk>`); esta rama lo habilita
-para el MAX77816 y borra el pinctrl del ADSP. `stk31610_1` está en ese
-`bus_instance` 4. Aun así el ALS tampoco daba lux en pmOS, así que devolver el
-SE4 no es por sí solo la solución.
+### Final state
 
-### Estado final
+No functional change survives: the DTS compiles the same DTB as the release
+again (`22db3b18…`) and both partitions were restored from backup with a
+read-back and SHA-256 comparison. The exit check on the tablet: zero failed
+units, `boot` and `vendor_boot` with v0.26's hashes, 16 I²C buses,
+`/dev/video20–23`, the speaker sink, the ADSP `running`, and the accelerometer
+and orientation correct. Automatic brightness is not published: without lux
+there is none, and the ALS is not replaced by the camera behind the owner's
+back.
 
-Ningún cambio funcional sobrevive: el DTS vuelve a compilar el mismo DTB que la
-release (`22db3b18…`) y las dos particiones se restauraron desde copia con
-relectura y comparación de SHA-256. Comprobación de salida en la tablet: cero
-unidades fallidas, `boot` y `vendor_boot` con los hashes de la v0.26, 16 buses
-I²C, `/dev/video20–23`, sink de altavoces, ADSP `running`, acelerómetro y
-orientación correctos. No se publica brillo automático: sin lux no lo hay, y no
-se sustituye el ALS por la cámara a espaldas de la usuaria.
+## Session 49 — the SSC's I²C route was not broken; the ALS is alone
 
-## Sesión 49 — la ruta I²C del SSC no estaba rota; el ALS sigue solo
+Date: 2026-08-12, continued. It opened with the brief to "fix the SSC's I²C
+route", the previous session's conclusion. **The premise was false and it was
+mine: that route works.**
 
-Fecha: 2026-08-12, continuación. Se abrió con el encargo de «arreglar la ruta
-I²C del SSC», conclusión de la sesión anterior. **La premisa era falsa y era mía:
-esa ruta funciona.**
+`ssccli`, which `libssc` itself installs, settles the diagnosis without
+touching `iio-sensor-proxy`:
 
-`ssccli`, que instala el propio `libssc`, resuelve el diagnóstico sin tocar
-`iio-sensor-proxy`:
+- `--sensor accelerometer`: 84 samples (SPI, `bus_instance=1`);
+- `--sensor magnetometer`: 30 samples (I²C, `bus_instance=2`);
+- `--sensor compass`: live heading 127–134°;
+- `--sensor light`: **nothing**.
 
-- `--sensor accelerometer`: 84 muestras (SPI, `bus_instance=1`);
-- `--sensor magnetometer`: 30 muestras (I²C, `bus_instance=2`);
-- `--sensor compass`: rumbo vivo 127–134°;
-- `--sensor light`: **nada**.
+Two of the SSC's I²C sensors deliver data. There is nothing to fix on the bus;
+the ALS is alone in its failure.
 
-Dos sensores I²C del SSC entregan datos. No hay nada que arreglar en el bus; el
-ALS está solo en su fallo.
+### What was ruled out, and with what rigour
 
-### Qué se descartó, y con qué rigor
+With the compass as a control, the only two fields where the ALS's registry
+departs from its own were attacked:
 
-Con la brújula como control se atacaron los dos únicos campos en que el registro
-del ALS se aparta del suyo:
+1. the `dummy_vdd` rails → `/pmic/client/sensor_vdd` and
+   `/pmic/client/sensor_vddio`, the AK0991x's;
+2. `is_dri=1` → `0` in `stk31610_{0,1}.ambient_light.config`, forcing polling.
 
-1. raíles `dummy_vdd` → `/pmic/client/sensor_vdd` y `/pmic/client/sensor_vddio`,
-   los mismos del AK0991x;
-2. `is_dri=1` → `0` en `stk31610_{0,1}.ambient_light.config`, forzando polling.
+Both at once, and verified **after a complete reboot** so the DSP would reread
+the registry rather than only after restarting
+`hexagonrpcd-adsp-sensorspd`. The accelerometer and magnetometer kept giving
+samples; the light, zero. Both fields are ruled out and recorded so they are
+not repeated.
 
-Ambos a la vez, y verificados **tras un reinicio completo** para que el DSP
-releyera el registro y no sólo tras reiniciar `hexagonrpcd-adsp-sensorspd`.
-Acelerómetro y magnetómetro siguieron dando muestras; la luz, cero. Los dos
-campos quedan descartados y anotados para no repetirlos.
+`ssccli -v --sensor light` locates the boundary precisely: the enable request
+goes out, the DSP answers `Control` with `Result = SUCCESS` and a Client ID,
+and from then on **not one indication arrives**. The transport, the QMI client
+and the permissions are all fine; what does not arrive is the sample.
 
-`ssccli -v --sensor light` sitúa la frontera con precisión: la petición de
-habilitación sale, el DSP contesta `Control` con `Result = SUCCESS` y un
-Client ID, y a partir de ahí no llega **ni una sola indicación**. El transporte,
-el cliente QMI y los permisos están bien; lo que no llega es la muestra.
+Given that the SSC publishes the sensor as available — which implies its
+start-up routine passed, and the firmware has an `STK3A6X HW absent` error path
+it does not take — the most consistent reading is still that the chip exists
+and answers on the DSP's private bus, and that the *streaming* configuration
+inside the blob never completes.
 
-Dado que el SSC publica el sensor como disponible —lo que implica que su rutina
-de arranque pasó, y el firmware tiene una ruta de error `STK3A6X HW absent` que
-no toma—, lo más consistente sigue siendo que el chip existe y responde en el
-bus privado del DSP, y que la configuración de *streaming* dentro del blob nunca
-se completa.
+### Unnecessary work, recorded so it is not repeated
 
-### Trabajo innecesario, anotado para que no se repita
+`iio-sensor-proxy` was rebuilt without `disable-broken-ssc-light.patch` in
+order to have an ALS client. It was not needed: `ssccli` already is one. The
+build served to confirm that with `ssc_light` active `HasAmbientLight` becomes
+`true` and `LightLevel` stays at 0, which is what session 47 already said.
 
-Se recompiló `iio-sensor-proxy` sin `disable-broken-ssc-light.patch` para tener
-un cliente del ALS. No hacía falta: `ssccli` ya lo es. La build sirvió para
-confirmar que con `ssc_light` activo `HasAmbientLight` pasa a `true` y
-`LightLevel` se queda en 0, que es lo que ya decía la sesión 47.
+### Final state
 
-### Estado final
+Everything reverted and verified: the registry `identical` to its copy, the
+proxy binary with the release's SHA (`4c2a2a9c…`), `boot` `0cf7c7c0…` and
+`vendor_boot` `e77aca73…`, zero failed units, 21 video nodes, the ADSP
+`running`, the temporary polkit rule and the diagnostic files deleted. No
+automatic brightness.
 
-Todo revertido y verificado: registro `identical` frente a su copia, binario del
-proxy con el SHA de la release (`4c2a2a9c…`), `boot` `0cf7c7c0…` y `vendor_boot`
-`e77aca73…`, cero unidades fallidas, 21 nodos de vídeo, ADSP `running`, regla
-polkit temporal y ficheros de diagnóstico borrados. Sin brillo automático.
+## Session 50 — the sheng reference exhausts the registry route
 
-## Sesión 50 — la referencia sheng agota la vía del registro
+Date: 2026-08-12, continued. The owner supplied an excellent reference: the
+Xiaomi Pad 6S Pro 12.4 (`xiaomi-sheng`), **same SM8550 SoC, same SEE, same
+`libssc` + `adsprpcd-sensorspd`**, with automatic brightness working. It is not
+the Xiaomi Pad 6 (`pipa`) that pmOS had already ruled out: that one is a
+different SoC.
 
-Fecha: 2026-08-12, continuación. La usuaria aportó una referencia excelente: la
-Xiaomi Pad 6S Pro 12.4 (`xiaomi-sheng`), **mismo SoC SM8550, mismo SEE, mismo
-`libssc` + `adsprpcd-sensorspd`**, con brillo automático funcionando. No es la
-Xiaomi Pad 6 (`pipa`) que pmOS ya había descartado: aquélla es otro SoC.
+Its `sheng-sensors-20240917-r1.apk` package yields the complete registry. Its
+ALS is a Sensortek **STK3BCX** on `bus_instance` **4**, slave **72** (0x48):
+the same bus and the same address as our `stk31610_1`. The only configuration
+differences were the four already suspected:
 
-De su paquete `sheng-sensors-20240917-r1.apk` sale el registro completo. Su ALS
-es un Sensortek **STK3BCX** en `bus_instance` **4**, esclavo **72** (0x48): el
-mismo bus y la misma dirección que nuestro `stk31610_1`. Las únicas diferencias
-de configuración eran las cuatro que ya se sospechaban:
-
-| campo | sheng (va) | X910 (no va) |
+| Field | sheng (works) | X910 (does not) |
 |---|---|---|
 | `vdd_rail` / `vddio_rail` | `sensor_vdd` / `sensor_vddio` | `dummy_vdd` / `dummy_vdd` |
 | `is_dri` | 0 (polling) | 1 |
 | `dri_irq_num` | 16 | 0 |
 | `irq_pull_type` | 2 | 0 |
 
-Se replicó la forma exacta de sheng sobre las dos instancias STK31610 y se
-comprobó **tras un reinicio completo**: acelerómetro 544 muestras, magnetómetro
-19, luz ninguna. (Un detalle de método: el primer intento no cambió
-`vddio_rail` porque `sed` sin `/g` sólo sustituye la primera aparición y el JSON
-va en una línea; se corrigió y se repitió el ciclo entero.)
+sheng's exact shape was replicated on both STK31610 instances and checked
+**after a complete reboot**: accelerometer 544 samples, magnetometer 19, light
+none. (A methodological detail: the first attempt did not change `vddio_rail`
+because `sed` without `/g` only substitutes the first occurrence and the JSON
+is on one line; it was corrected and the whole cycle repeated.)
 
-Con esto la vía del registro queda agotada. Lo que separa a las dos tablets no
-es configurable: sheng arranca el firmware ADSP de Xiaomi, que lleva un
-`sns_stk3bcx` funcional, y la X910 arranca el de Samsung con `sns_stk31610`. El
-driver vive dentro del blob firmado y no se puede sustituir: el arranque seguro
-de Samsung rechaza el `adsp.mbn` de referencia de Qualcomm, cosa ya documentada
-en la nota de `&remoteproc_adsp`.
+With that, the registry route is exhausted. What separates the two tablets is
+not configurable: sheng boots Xiaomi's ADSP firmware, which carries a working
+`sns_stk3bcx`, and the X910 boots Samsung's with `sns_stk31610`. The driver
+lives inside the signed blob and cannot be replaced: Samsung's secure boot
+rejects Qualcomm's reference `adsp.mbn`, as already documented in the
+`&remoteproc_adsp` note.
 
-Estado final: registro restaurado a su copia (`dummy_vdd`, `dri_irq_num=0`,
-`is_dri=1`), proxy con el SHA de release `4c2a2a9c…`, `boot` `0cf7c7c0…`,
-`vendor_boot` `e77aca73…`, cero unidades fallidas y acelerómetro dando muestras.
-Sigue sin haber brillo automático, y sigue sin publicarse una solución falsa.
+Final state: the registry restored to its copy (`dummy_vdd`, `dri_irq_num=0`,
+`is_dri=1`), the proxy at the release SHA `4c2a2a9c…`, `boot` `0cf7c7c0…`,
+`vendor_boot` `e77aca73…`, zero failed units and the accelerometer giving
+samples. Still no automatic brightness, and still no false solution published.
 
-## Sesión 51 — el sensor está, y la frontera es el *streaming* del blob
+## Session 51 — the sensor is there, and the boundary is the blob's streaming
 
-Fecha: 2026-08-12, continuación. La usuaria insistió, con razón: el hardware
-existe y en Android funciona. Se revisó el código fuente oficial de Samsung y se
-hizo la prueba que faltaba.
+Date: 2026-08-12, continued. The owner insisted, rightly: the hardware exists
+and works under Android. Samsung's official source was reviewed and the missing
+test performed.
 
-### Prueba de presencia: mover el bus da otra respuesta
+### A presence test: moving the bus gives a different answer
 
-Hasta ahora se sabía que en los buses 3 y 4 el DSP acepta el enable y no manda
-nada. Faltaba el contraste. Apuntando las dos instancias STK31610 al
-`bus_instance` 2 —el de la brújula, donde el ALS no está— y reiniciando:
+Until now it was known that on buses 3 and 4 the DSP accepts the enable and
+sends nothing. The contrast was missing. Pointing both STK31610 instances at
+`bus_instance` 2 — the compass's, where the ALS is not — and rebooting:
 
 ```
 Unable to initialize light sensor: UNKNOWN
 ```
 
-El DSP **no publica el SUID**. Con la configuración original vuelve a
-publicarlo, `HasAmbientLight=true`, y la habilitación se acepta con
+The DSP **does not publish the SUID**. With the original configuration it
+publishes it again, `HasAmbientLight=true`, and the enable is accepted with
 `Result = SUCCESS`.
 
-Esa diferencia es la prueba que faltaba: **publicar implica que la rutina de
-arranque identificó el chip**. Por tanto el STK31610 está presente, alimentado y
-reconocido por el DSP en los buses SSC 3 y 4 a 0x48. Queda descartado de forma
-definitiva que falte, que esté sin alimentar o que el bus sea otro — y queda
-corregida la sugerencia contraria de la sesión 48. Lo único que falla es la
-entrega de muestras dentro del blob.
+That difference is the missing proof: **publishing implies the start-up routine
+identified the chip**. So the STK31610 is present, powered and recognised by
+the DSP on SSC buses 3 and 4 at 0x48. It is definitively ruled out that it is
+missing, unpowered or on another bus — and session 48's contrary suggestion is
+corrected. The only thing that fails is sample delivery inside the blob.
 
-### El fuente de Samsung: no falta nada del lado AP
+### Samsung's source: nothing is missing on the AP side
 
-`kalama-gki_defconfig` del `Kernel.tar.gz` oficial compila
+The official `Kernel.tar.gz`'s `kalama-gki_defconfig` compiles
 `CONFIG_LIGHT_FACTORY=y`, `CONFIG_LIGHT_SUB_FACTORY=y`,
 `CONFIG_SUPPORT_DUAL_OPTIC=y`, `CONFIG_SUPPORT_VIRTUAL_OPTIC=y`,
-`CONFIG_TABLET_MODEL_CONCEPT=y` y `CONFIG_SUPPORT_LIGHT_SEAMLESS=y`. Esto
-**corrige** la sesión 108 de pmOS, que daba `TABLET_MODEL_CONCEPT` por ausente.
+`CONFIG_TABLET_MODEL_CONCEPT=y` and `CONFIG_SUPPORT_LIGHT_SEAMLESS=y`. This
+**corrects** pmOS session 108, which had `TABLET_MODEL_CONCEPT` down as absent.
 
-Pero ninguna de esas opciones es condición para que el sensor emita:
+But none of those options is a condition for the sensor to emit:
 
-- `drivers/adsp_factory/` es el driver de pruebas de fábrica. El HAL de Android
-  lee sensores sin él, y este árbol ni siquiera trae `stk31610_light.c`: el X910
-  usa el `light_factory.c` genérico.
-- `SUPPORT_LIGHT_SEAMLESS` sólo envía `OPTION_TYPE_SSC_LIGHT_SEAMLESS` con
-  cuatro umbrales de lux para conmutar principal/secundario, y únicamente si
-  alguno no es cero.
-- `SUPPORT_PANEL_STATE_NOTIFY_FOR_LIGHT_SENSOR` **no** está activado, lo que
-  concuerda con la prueba negativa de avisos de panel de pmOS.
+- `drivers/adsp_factory/` is the factory test driver. Android's HAL reads
+  sensors without it, and this tree does not even carry `stk31610_light.c`: the
+  X910 uses the generic `light_factory.c`.
+- `SUPPORT_LIGHT_SEAMLESS` only sends `OPTION_TYPE_SSC_LIGHT_SEAMLESS` with
+  four lux thresholds for switching main/secondary, and only if any of them is
+  non-zero.
+- `SUPPORT_PANEL_STATE_NOTIFY_FOR_LIGHT_SENSOR` is **not** enabled, which
+  agrees with pmOS's negative panel-notification test.
 
-No hay ninguna pieza del lado AP que este port esté omitiendo.
+There is no AP-side piece this port is omitting.
 
-### Estado
+### State
 
-Registro restaurado a su forma original (`bus_instance` 3 y 4, `dummy_vdd`,
-`dri_irq_num=0`, `is_dri=1`), sin copias ni ficheros de diagnóstico. `boot`
-`0cf7c7c0…`, `vendor_boot` `e77aca73…`, proxy `4c2a2a9c…`, cero unidades
-fallidas, 21 nodos de vídeo, ADSP `running`, brújula `HasCompass=true`.
+The registry restored to its original form (`bus_instance` 3 and 4,
+`dummy_vdd`, `dri_irq_num=0`, `is_dri=1`), with no copies and no diagnostic
+files. `boot` `0cf7c7c0…`, `vendor_boot` `e77aca73…`, proxy `4c2a2a9c…`, zero
+failed units, 21 video nodes, ADSP `running`, compass `HasCompass=true`.
 
-Lo que queda para un ALS funcional es una sola cosa, y es trabajo de ingeniería
-inversa: desensamblar la ruta `sns_stk31610` del blob ADSP para ver por qué,
-tras un enable aceptado, nunca programa el chip para muestrear.
+What remains for a working ALS is one thing, and it is reverse-engineering
+work: disassembling the blob's `sns_stk31610` path to see why, after an
+accepted enable, it never programs the chip to sample.
 
-## Sesión 52 — el cliente queda descartado; base para desensamblar el blob
+## Session 52 — the client is ruled out; a basis for disassembling the blob
 
-Fecha: 2026-08-12, continuación. Antes de entrar al blob quedaban dos suspects
-del lado de casa. Los dos caen.
+Date: 2026-08-12, continued. Before entering the blob, two suspects remained on
+our side. Both fall.
 
-### libssc no pierde nada: el DSP no transmite
+### libssc loses nothing: the DSP does not transmit
 
-`ambient_light` es un sensor *on-change*, y en SEE eso exige el mensaje 514 sin
-payload en vez del 513 con `sample_rate`. Se revisó `libssc` 0.4.4 y lo hace
-bien (`libssc-sensor.c:230`). Su manejador de luz sólo acepta indicaciones con
-`msg_id == 1025`, así que podría estar descartando en silencio... pero no es el
-caso. Contando mensajes QMI recibidos **después** del enable con `ssccli -v`:
+`ambient_light` is an *on-change* sensor, and in SEE that requires message 514
+with no payload rather than 513 with a `sample_rate`. `libssc` 0.4.4 was
+reviewed and does it correctly (`libssc-sensor.c:230`). Its light handler only
+accepts indications with `msg_id == 1025`, so it could be silently discarding
+— but it is not. Counting QMI messages received **after** the enable with
+`ssccli -v`:
 
-| sensor | `rx` total | `rx` tras el enable |
+| Sensor | total `rx` | `rx` after the enable |
 |---|---|---|
-| acelerómetro | 180 | **171** |
-| luz | 8 | **0** |
+| accelerometer | 180 | **171** |
+| light | 8 | **0** |
 
-Cero. El DSP acepta la habilitación y no manda absolutamente nada. Ni cliente,
-ni parser, ni `iio-sensor-proxy`.
+Zero. The DSP accepts the enable and sends absolutely nothing. Not the client,
+not the parser, not `iio-sensor-proxy`.
 
-### El fuente de Samsung: la vía del panel no se usa en este producto
+### Samsung's source: the panel route is not used in this product
 
-Revisados uno a uno los cuatro defconfig (`kalama-gki_defconfig`,
+Reviewing the four defconfigs one by one (`kalama-gki_defconfig`,
 `kalama_sec_defconfig`, `kalama_sec_userdebug_defconfig`, `kalama_GKI.config`):
 `SUPPORT_BRIGHTNESS_NOTIFY_FOR_LIGHT_SENSOR`,
-`SUPPORT_PANEL_STATE_NOTIFY_FOR_LIGHT_SENSOR` y
-`SUPPORT_DDI_COPR_FOR_LIGHT_SENSOR` **no están activados en ninguno**. Android
-tampoco envía estado de panel ni brillo al ALS. Eso explica por qué la prueba de
-avisos de panel de pmOS salió negativa, y cierra esa hipótesis por la razón
-correcta.
+`SUPPORT_PANEL_STATE_NOTIFY_FOR_LIGHT_SENSOR` and
+`SUPPORT_DDI_COPR_FOR_LIGHT_SENSOR` are **enabled in none of them**. Android
+does not send panel state or brightness to the ALS either. That explains why
+pmOS's panel-notification test came out negative, and closes that hypothesis
+for the right reason.
 
-Sí aparecen, en cambio, cadenas del driver que delatan un ALS bajo pantalla:
+What do appear are driver strings that betray an under-display ALS:
 `skip update bl = %d %d`, `stk3a6x_inst_notify_event: lcd %d->%d`,
-`[TOP-ALGO] AC mode 0 ~ 73 code` y, muy en particular,
-`[TOP-ALGO] all data was skipped`. También el ID del chip en la tabla de
-`light_factory.c`: `{0x66, "SensorTek", "STK31610"}`.
+`[TOP-ALGO] AC mode 0 ~ 73 code` and, most tellingly,
+`[TOP-ALGO] all data was skipped`. Also the chip's ID in `light_factory.c`'s
+table: `{0x66, "SensorTek", "STK31610"}`.
+### A basis established for the reverse engineering
 
-### Base establecida para la ingeniería inversa
-
-- Driver en **`adsp.b18`**, cargado por `adsp.mdt` en **`0xb3200000`** (ELF32,
-  52 program headers, 1 935 448 B, R+X).
-- vaddr de una cadena = `0xb3200000 + offset`. `[TOP-ALGO] all data was skipped`
+- The driver is in **`adsp.b18`**, loaded by `adsp.mdt` at **`0xb3200000`**
+  (ELF32, 52 program headers, 1,935,448 B, R+X).
+- A string's vaddr = `0xb3200000 + offset`. `[TOP-ALGO] all data was skipped`
   → `0xb33c8dd0`; `skip update bl` → `0xb33c8ca0`; `STK3A6X HW absent` →
   `0xb33ab5c8`.
-- Herramienta: `rasm2 -a hexagon -b 32`. `llvm-objdump` lista `hexagon` como
-  target pero **no** acepta `-b binary` ni `--binary-architecture`; hay que
-  envolver el segmento en un ELF32 con `e_machine = 164`.
+- Tool: `rasm2 -a hexagon -b 32`. `llvm-objdump` lists `hexagon` as a target
+  but accepts **neither** `-b binary` nor `--binary-architecture`; the segment
+  has to be wrapped in an ELF32 with `e_machine = 164`.
 
-Y el aviso que hay que tener presente: **el firmware está firmado**. Aunque se
-encuentre el fallo, el blob no se puede parchear. Sólo sirve encontrar una clave
-de registro no evidente o un mensaje que el AP deba mandar. El candidato vivo es
-`MSG_TYPE_OPTION_DEFINE` → **mensaje SSC 615** (la correspondencia
-SSC = 600 + `MSG_TYPE` está verificada con 9→609 y 12→612), con
-`OPTION_TYPE_LCD_ONOFF` = 2. Falta la codificación protobuf exacta del array de
-`int32` que usa `factory.ssc`.
+And the warning to keep in mind: **the firmware is signed**. Even if the fault
+is found, the blob cannot be patched. The only useful outcomes are finding a
+non-obvious registry key or a message the AP should be sending. The live
+candidate is `MSG_TYPE_OPTION_DEFINE` → **SSC message 615** (the
+SSC = 600 + `MSG_TYPE` correspondence is verified with 9→609 and 12→612), with
+`OPTION_TYPE_LCD_ONOFF` = 2. What is missing is the exact protobuf encoding of
+the `int32` array `factory.ssc` uses.
 
-Estado: sin cambios en el dispositivo. Registro original, `boot` `0cf7c7c0…`,
-`vendor_boot` `e77aca73…`, proxy `4c2a2a9c…`, cero unidades fallidas, ADSP
-`running`, brújula viva. Sigue sin haber brillo automático.
+State: no changes on the device. The original registry, `boot` `0cf7c7c0…`,
+`vendor_boot` `e77aca73…`, proxy `4c2a2a9c…`, zero failed units, ADSP
+`running`, the compass alive. Still no automatic brightness.
 
-## Sesión 53 — no hay otro sensor de luz al que suscribirse
+## Session 53 — there is no other light sensor to subscribe to
 
-Fecha: 2026-08-12, continuación. Quedaba una idea con fundamento: el blob
-contiene un sensor **`light_seamless`** (`light_seamless_sensor.c`,
+Date: 2026-08-12, continued. One well-founded idea remained: the blob contains
+a **`light_seamless`** sensor (`light_seamless_sensor.c`,
 `light_seamless_sensor_instance_island.c:send event curr_lux:%u`,
-`Enable light rate %u`). En un producto *dual optic* como éste era razonable que
-el HAL de Android se suscribiera al sensor fusionado y no a cada chip.
+`Enable light rate %u`). On a *dual optic* product like this one it was
+reasonable that Android's HAL subscribed to the fused sensor rather than to
+each chip.
 
-Se compiló una variante de `ssccli` con el `data_type` seleccionable por
-variable de entorno (`libssc-sensor-light.c:277`) y se barrieron los candidatos:
+A variant of `ssccli` was built with the `data_type` selectable by environment
+variable (`libssc-sensor-light.c:277`) and the candidates were swept:
 
-| data_type | publicado | `rx` tras enable |
+| data_type | published | `rx` after enable |
 |---|---|---|
-| `ambient_light` | sí | **0** |
-| `ambient_light_sub` | sí | **0** |
+| `ambient_light` | yes | **0** |
+| `ambient_light_sub` | yes | **0** |
 | `light_seamless` | **no** | — |
 | `rgb`, `als`, `light`, `oem13`, `sns_oem13`, `ambient_light_v` | no | — |
 
-El DSP sólo publica los dos sensores físicos, y los dos aceptan la habilitación
-y no emiten nada. `light_seamless` existe en el código del firmware pero **no se
-instancia** en esta tablet: el registro de Samsung del X910 no trae su
-configuración (el de sheng sí trae un `sns_oem13.Light`). No hay, por tanto, un
-sensor alternativo al que suscribirse.
+The DSP publishes only the two physical sensors, and both accept the enable and
+emit nothing. `light_seamless` exists in the firmware's code but is **not
+instantiated** on this tablet: Samsung's X910 registry does not carry its
+configuration (sheng's does carry an `sns_oem13.Light`). There is therefore no
+alternative sensor to subscribe to.
 
-Se localizó también la ruta de fábrica: `MSG_TYPE_FACTORY_ENABLE` se envía a
-`MSG_SSC_CORE` con payload vacío (`ssc_core.c:672`), es decir el mensaje SSC
-**613**, y el driver tiene una comprobación `is factory`. Queda como único
-candidato accionable no probado, pendiente de averiguar el `data_type` del
-sensor SSC_CORE de Samsung, que no aparece entre las cadenas del segmento.
+The factory route was also located: `MSG_TYPE_FACTORY_ENABLE` is sent to
+`MSG_SSC_CORE` with an empty payload (`ssc_core.c:672`), that is SSC message
+**613**, and the driver has an `is factory` check. It stands as the only
+untested actionable candidate, pending working out the `data_type` of Samsung's
+SSC_CORE sensor, which does not appear among the segment's strings.
 
-Estado: sin cambios en el dispositivo. Binarios de prueba borrados, `boot`
-`0cf7c7c0…`, `vendor_boot` `e77aca73…`, proxy `4c2a2a9c…`, cero unidades
-fallidas, ADSP `running`, acelerómetro dando muestras.
+State: no changes on the device. Test binaries deleted, `boot` `0cf7c7c0…`,
+`vendor_boot` `e77aca73…`, proxy `4c2a2a9c…`, zero failed units, ADSP
+`running`, the accelerometer giving samples.
 
-## Sesión 54 — `factory.ssc`: el «modo fábrica» es nuestro propio mensaje
+## Session 54 — `factory.ssc`: "factory mode" is our own message
 
-Fecha: 2026-08-12, continuación. Quedaba un solo candidato accionable: mandar
-`MSG_TYPE_FACTORY_ENABLE` al sensor SSC_CORE. Para eso hacía falta su
-`data_type`, y para eso desensamblar `factory.ssc`.
+Date: 2026-08-12, continued. One actionable candidate remained: sending
+`MSG_TYPE_FACTORY_ENABLE` to the SSC_CORE sensor. That needed its `data_type`,
+and that needed disassembling `factory.ssc`.
 
-`vendor.img` es EROFS; `fsck.erofs --extract` la abre sin más y deja
-`bin/factory.ssc`, un ELF **aarch64** de 55 KB *stripped*. Es ingeniería inversa
-de ARM64 corriente, mucho más barata que la de Hexagon.
+`vendor.img` is EROFS; `fsck.erofs --extract` opens it without ceremony and
+leaves `bin/factory.ssc`, a 55 KB stripped **aarch64** ELF. It is ordinary
+ARM64 reverse engineering, far cheaper than Hexagon's.
 
-**Primera respuesta: no existe `data_type` para SSC_CORE.** El binario sólo
-contiene seis: `ambient_light`, `ambient_light_sub`, `proximity`,
-`proximity_sub`, `pressure` y `sensor_temperature`. `MSG_SSC_CORE` no es un
-sensor SEE con SUID, de modo que el mensaje de habilitación de fábrica no tiene
-a quién dirigirse.
+**First answer: there is no `data_type` for SSC_CORE.** The binary contains only
+six: `ambient_light`, `ambient_light_sub`, `proximity`, `proximity_sub`,
+`pressure` and `sensor_temperature`. `MSG_SSC_CORE` is not a SEE sensor with a
+SUID, so the factory enable message has nobody to address.
 
-**Segunda respuesta, la que cierra el asunto:** el desensamblado da la
-traducción exacta de `MSG_TYPE` a mensaje SSC, idéntica en los dos sitios donde
-se construye (`0x9850` y `0xa330`):
+**Second answer, the one that closes the matter:** the disassembly gives the
+exact translation from `MSG_TYPE` to SSC message, identical at both places
+where it is built (`0x9850` and `0xa330`):
 
 ```
 9850: cmp  w22, #0xd        // FACTORY_ENABLE
 9858: mov  w4,  #0x202      // -> 514
-9860: add  w8,  w22, #0x258 // resto -> 600 + msg_type
+9860: add  w8,  w22, #0x258 // the rest -> 600 + msg_type
 9868: cmp  w22, #0xe        // FACTORY_DISABLE -> 10
 ```
 
-| `MSG_TYPE` | mensaje SSC |
+| `MSG_TYPE` | SSC message |
 |---|---|
 | 11 `SET_CAL_DATA` | 512 |
 | 13 `FACTORY_ENABLE` | **514** |
 | 14 `FACTORY_DISABLE` | 10 |
-| resto | **600 + `MSG_TYPE`** |
+| the rest | **600 + `MSG_TYPE`** |
 
-Queda confirmada de paso la regla 600+N que pmOS había deducido (609 y 612), y
-por tanto `OPTION_DEFINE` = **615**. Pero lo decisivo es que **`FACTORY_ENABLE`
-es el mensaje 514, que es exactamente el `ENABLE_REPORT_ON_CHANGE` estándar que
-`libssc` ya manda**. El demonio de fábrica de Samsung arranca el ALS con la
-misma petición que nosotros: no hay modo privilegiado, ni secuencia distinta, ni
-nada que estemos omitiendo al habilitarlo.
+The 600+N rule pmOS had deduced (609 and 612) is confirmed along the way, and
+therefore `OPTION_DEFINE` = **615**. But the decisive part is that
+**`FACTORY_ENABLE` is message 514, which is exactly the standard
+`ENABLE_REPORT_ON_CHANGE` `libssc` already sends**. Samsung's factory daemon
+starts the ALS with the same request we do: there is no privileged mode, no
+different sequence, and nothing we are omitting when enabling it.
 
-Con eso cae el último candidato accionable. Sumado a que los cuatro defconfig de
-Samsung no activan los notificadores de panel/brillo —así que Android tampoco
-manda `OPTION_DEFINE` al ALS—, no queda ninguna petición conocida que el AP deba
-enviar y no estemos enviando.
+With that, the last actionable candidate falls. Added to the fact that
+Samsung's four defconfigs do not enable the panel/brightness notifiers — so
+Android does not send `OPTION_DEFINE` to the ALS either — there is no known
+request left that the AP should be sending and we are not.
 
-Estado: sin cambios en el dispositivo (esta sesión fue sólo análisis estático).
+State: no changes on the device (this session was static analysis only).
 
-## Sesión 55 — swap: dos niveles, 23 GiB, y el ALS cerrado
+## Session 55 — swap: two tiers, 23 GiB, and the ALS closed
 
-Fecha: 2026-08-12. Cerrado el brillo automático (ver sesiones 47–54), la
-petición fue habilitar swap ahora que la raíz vive en la UFS.
+Date: 2026-08-12. With automatic brightness closed (see sessions 47–54), the
+request was to enable swap now that the root lives on the UFS.
 
-El punto de partida era **cero swap**, con 14,2 GiB de RAM utilizable y Steam y
-Chrome en marcha: el OOM killer era el único respaldo. Espacio libre, 772 GiB.
+The starting point was **no swap at all**, with 14.2 GiB of usable RAM and
+Steam and Chrome running: the OOM killer was the only backstop. Free space,
+772 GiB.
 
-Lo instalado, en el paquete de dispositivo v2.22:
+What was installed, in device package v2.22:
 
-| nivel | tamaño | prioridad |
+| Tier | Size | Priority |
 |---|---|---|
 | zram `zstd` | 8 GiB | 100 |
-| swapfile UFS | 16 GiB | 10 |
+| UFS swapfile | 16 GiB | 10 |
 
-Tres cosas que había que comprobar antes de decidir, y no suponer:
+Three things that had to be checked before deciding, not assumed:
 
-- **`zstd` sí está disponible para zram** aunque `CONFIG_CRYPTO_ZSTD` sea sólo
-  módulo y este port no instale el árbol genérico: zram moderno trae su propio
-  backend y `comp_algorithm` lo lista. Se corrigió sobre la marcha la conclusión
-  contraria, sacada de leer únicamente el `.config`.
-- **ext4 acepta un swapfile hecho con `fallocate`** en este kernel: `mkswap` y
-  `swapon` lo toman sin protestar. Eso evita el `dd` de 16 GiB y deja la
-  creación instantánea, así que no añade tiempo al primer arranque.
-- La regla `90-gts9u-cs35l45-no-hibernate.rules` **no** tiene nada que ver con
-  la hibernación del sistema: es el *runtime suspend* del códec.
+- **`zstd` is available for zram** even though `CONFIG_CRYPTO_ZSTD` is
+  module-only and this port installs no generic tree: modern zram brings its
+  own backend and `comp_algorithm` lists it. The opposite conclusion, drawn
+  from reading only the `.config`, was corrected on the spot.
+- **ext4 accepts a swapfile made with `fallocate`** on this kernel: `mkswap`
+  and `swapon` take it without complaint. That avoids a 16 GiB `dd` and makes
+  creation instant, so it adds no time to the first boot.
+- The `90-gts9u-cs35l45-no-hibernate.rules` rule has **nothing** to do with
+  system hibernation: it is the codec's *runtime suspend*.
 
-Medidas en la tablet, no estimaciones: compresión **4,53×** (0,65 GiB de páginas
-en 0,16 GiB de RAM), 11 GiB reservados de golpe **sin un solo OOM kill**, y el
-swapfile intacto a 0 B durante toda la prueba — que es exactamente lo que deben
-hacer las prioridades: zram absorbe, la UFS sólo desborda.
+Measurements on the tablet, not estimates: compression **4.53×** (0.65 GiB of
+pages in 0.16 GiB of RAM), 11 GiB reserved at once **without a single OOM
+kill**, and the swapfile untouched at 0 B throughout the test — which is
+exactly what the priorities should do: zram absorbs, the UFS only overflows.
 
-Tras reinicio sin intervención: las dos unidades activas, `swappiness=100`,
-`page-cluster=0`, cero unidades fallidas, GDM y ADSP correctos, y el swapfile
-reutilizado en vez de recreado (`enabled the existing swapfile`, mtime
-conservado).
+After an unattended reboot: both units active, `swappiness=100`,
+`page-cluster=0`, zero failed units, GDM and the ADSP correct, and the swapfile
+reused rather than recreated (`enabled the existing swapfile`, mtime
+preserved).
 
-## Sesión 56 — OBS se baja de la imagen
+## Session 56 — OBS gets off the image
 
-Fecha: 2026-08-12. Cerrado el trabajo de cámaras, se retira OBS de las builds
-futuras. La nota «OBS viaja de prestado» ya dejaba escrito que este día
-llegaría y qué había que deshacer.
+Date: 2026-08-12. With the camera work closed, OBS is withdrawn from future
+builds. The note "OBS was travelling along" had already recorded that this day
+would come and what had to be undone.
 
-Qué sale, en la v2.23 del paquete de dispositivo:
+What goes, in device package v2.23:
 
-- el paso `obs-v4l2` de `build-extra-packages.sh` (88 líneas) y el directorio
-  `packaging/obs-v4l2/`;
-- la dependencia `obs-v4l2-gts9u` del paquete de dispositivo, que era lo único
-  que arrastraba `obs-studio` a la imagen: OBS nunca estuvo en una lista de
-  paquetes, sólo llegaba por esa dependencia;
-- `libobs-dev` de las dependencias del chroot de compilación;
-- y la **danza de VLC** entera. Existía sólo porque `obs-studio` recomienda
-  `obs-plugins` y éste recomienda `vlc`: 77 MiB, de los cuales 41 MiB eran
-  traducciones. Había que purgar la familia `vlc-plugin-*` y volver a instalar
-  `obs-plugins --no-install-recommends`, porque en Noble la purga se llevaba
-  también `obs-plugins`. Sin OBS no queda nada de eso.
+- `build-extra-packages.sh`'s `obs-v4l2` step (88 lines) and the
+  `packaging/obs-v4l2/` directory;
+- the device package's `obs-v4l2-gts9u` dependency, which was the only thing
+  dragging `obs-studio` into the image: OBS was never in a package list, it
+  only arrived through that dependency;
+- `libobs-dev` from the build chroot's dependencies;
+- and the whole **VLC dance**. It existed only because `obs-studio` recommends
+  `obs-plugins` and that recommends `vlc`: 77 MiB, of which 41 MiB were
+  translations. The `vlc-plugin-*` family had to be purged and `obs-plugins
+  --no-install-recommends` reinstalled, because on Noble the purge took
+  `obs-plugins` with it. Without OBS none of that remains.
 
-En su lugar queda una comprobación de tres líneas que **puede fallar**: la build
-aborta si `obs-studio`, `obs-plugins` o `vlc` aparecen instalados. No es una
-comprobación decorativa —los tres llegaron una vez como `Recommends` de otra
-cosa— y una imagen que volviera a engordar así sólo se notaría en el tamaño.
+In its place there is a three-line check that **can fail**: the build aborts if
+`obs-studio`, `obs-plugins` or `vlc` turn up installed. It is not a decorative
+check — all three arrived once as a `Recommends` of something else — and an
+image swelling that way again would only show up in the size.
 
-Lo que **no** cambia: los relés `/dev/video20–23`, `v4l2-relayd-gts9u`, la regla
-udev de cámaras y el software ISP de libcamera siguen igual. La única
-consecuencia visible es que quien instale OBS por su cuenta verá en su selector
-V4L2 los nodos CAMSS internos además de las cuatro cámaras procesadas: eso lo
-ocultaba el complemento parcheado que se acaba de retirar.
+What does **not** change: the `/dev/video20–23` relays, `v4l2-relayd-gts9u`,
+the camera udev rule and libcamera's software ISP all stay as they are. The
+only visible consequence is that anyone installing OBS themselves will see the
+internal CAMSS nodes in their V4L2 selector alongside the four processed
+cameras: that was hidden by the patched plugin just withdrawn.
 
-La instalación de la usuaria se deja intacta a petición suya; esto afecta sólo a
-las imágenes que se construyan a partir de ahora.
+The owner's installation is left untouched at her request; this affects only
+images built from now on.
 
-## Sesión 57 — Tab Companion, fase 0: reconocimiento sin código de producto
+## Session 57 — Tab Companion, phase 0: reconnaissance with no product code
 
-Fecha: 2026-08-12. Se abrió el trabajo del S Pen y las teclas especiales del
-EF-DX920 con una fotografía remota previa. La tablet estaba en
-`192.168.1.171`, con el lápiz acoplado y sin posibilidad de interacción física.
+Date: 2026-08-12. The S Pen and EF-DX920 special-key work was opened with a
+prior remote snapshot. The tablet was at `192.168.1.171`, with the pen docked
+and no possibility of physical interaction.
 
-Salud inicial, medida antes de tocar el producto:
+Initial health, measured before touching the product:
 
 ```text
 0 loaded units listed.
@@ -4245,79 +4241,81 @@ Salud inicial, medida antes de tocar el producto:
 36. Built-in Audio Built-in digital microphones
 ```
 
-`evtest` confirmó en `event2` la ABI actual del lápiz: `BTN_TOOL_PEN`,
-`BTN_TOUCH`, `BTN_STYLUS`, presión 0–4095, distancia 0–255 e inclinación ±63.
-Durante cinco segundos no hubo eventos porque el lápiz permaneció acoplado. El
-teclado estaba presente como `event3`, V37 y modelo `0xd6`; otra ventana de
-cinco segundos terminó con el contador sin cambios:
+`evtest` confirmed the pen's current ABI on `event2`: `BTN_TOOL_PEN`,
+`BTN_TOUCH`, `BTN_STYLUS`, pressure 0–4095, distance 0–255 and tilt ±63. For
+five seconds there were no events because the pen stayed docked. The keyboard
+was present as `event3`, V37 and model `0xd6`; another five-second window ended
+with the counter unchanged:
 
 ```text
 attached=1 model=0xd6 connected=1 data_ready=0 key_events=0
 last_key=0x0000 keys_down=0 recoveries=0 flash_version=00370037
 ```
 
-Por tanto no se han atribuido códigos a Galaxy AI, DeX, buscador/ajustes ni
-`Fn+F1-F5`: sin una pulsación real hacerlo sería inventar evidencia. El
-firmware entrega directamente keycodes Linux de 15 bits y el driver actual los
-publica sin tabla, de modo que la captura física posterior será concluyente.
+No codes have therefore been attributed to Galaxy AI, DeX, finder/settings or
+`Fn+F1-F5`: without a real press, doing so would be inventing evidence. The
+firmware delivers 15-bit Linux keycodes directly and the current driver
+publishes them with no table, so the later physical capture will be
+conclusive.
 
-UPower sólo vio `sm5714-battery`, `sm5714-usb` y
-`tcpm-source-psy-8-0033`: ningún dispositivo del lápiz. Bluetooth arrancó
-bloqueado por software; tras retirar el bloqueo quedó `Powered: yes` y el
-escaneo activo de 25 s descubrió 22 dispositivos. Ninguno se anunció con nombre
-de S Pen y sólo había un Pro Controller emparejado. Como el lápiz no se sacó ni
-se puso en modo de emparejamiento, esto se registra como prueba negativa
-limitada, no como ausencia de BLE.
+UPower saw only `sm5714-battery`, `sm5714-usb` and `tcpm-source-psy-8-0033`: no
+pen device at all. Bluetooth came up soft-blocked; after removing the block it
+was `Powered: yes` and a 25 s active scan discovered 22 devices. None
+advertised an S Pen name and only a Pro Controller was paired. Since the pen
+was neither removed nor put into pairing mode, this is recorded as a limited
+negative test, not as an absence of BLE.
 
-La lectura del fuente oficial Samsung aportó la ruta para la fase 2: GPIO137
-`PDCT` es *pen in/out*, la orientación se consulta al propio Wacom con `0xee` y
-la carga BLE también la gobierna el Wacom. El mismo fuente no expone porcentaje
-de batería. Estas conclusiones quedan en `development-notes.md` para no repetir
-la investigación.
+Reading Samsung's official source gave the route for phase 2: GPIO137 `PDCT` is
+*pen in/out*, orientation is queried from the Wacom itself with `0xee`, and BLE
+charging is also governed by the Wacom. That same source exposes no battery
+percentage. These conclusions live in `development-notes.md` so the
+investigation is not repeated.
 
-## Sesión 58 — Tab Companion, fase 1: app y paquete instalados
+## Session 58 — Tab Companion, phase 1: the app and package installed
 
-Fecha: 2026-08-12. Se creó `ubuntu-gts9u-companion` 0.1.0 como paquete Debian
-independiente y determinista. Instala `tab-companion`, App ID
-`io.github.agcarbajo.TabCompanion`, lanzador, metadatos AppStream, icono hicolor
-escalable y simbólico, esquema GSettings y recursos Gio. El rootfs construye el
-paquete desde las fuentes versionadas y lo incluye en la misma transacción APT
-que el resto de paquetes locales.
+Date: 2026-08-12. `ubuntu-gts9u-companion` 0.1.0 was created as an independent,
+deterministic Debian package. It installs `tab-companion`, App ID
+`io.github.agcarbajo.TabCompanion`, a launcher, AppStream metadata, scalable
+and symbolic hicolor icons, a GSettings schema and Gio resources. The root
+filesystem builds the package from the versioned sources and includes it in the
+same APT transaction as the other local packages.
 
-La interfaz es GTK4/libadwaita y separa hardware de presentación desde el
-primer commit: `HardwareClient` sólo conoce la interfaz D-Bus
-`io.github.agcarbajo.TabCompanion.Hardware`; la ventana no contiene rutas de
-sysfs ni nombres de `eventN`. Las asignaciones de gestos y teclas comparten el
-mismo catálogo de acciones y se guardan en GSettings.
+The interface is GTK4/libadwaita and separates hardware from presentation from
+the first commit: `HardwareClient` knows only the D-Bus interface
+`io.github.agcarbajo.TabCompanion.Hardware`; the window contains no sysfs paths
+and no `eventN` names.
+Gesture and key mappings share the
+same action catalogue and are stored in GSettings.
 
-Se instaló el `.deb` real en la tablet:
+The real `.deb` was installed on the tablet:
 
 ```text
 ubuntu-gts9u-companion  0.1.0
 ```
 
-Sin sesión gráfica desbloqueada, se ejecutó allí bajo Xvfb a 1200×900 y
-`GSK_RENDERER=cairo`. Permaneció activa hasta finalizar la prueba, sin traceback,
-y produjo una captura PNG de 1200×900. La inspección confirma el lápiz grande y
-horizontal, estado debajo, tarjetas de estado y Air actions, y navegación a
-Cover keyboard. El estado dice literalmente «Hardware service unavailable»:
-es deliberado hasta que exista el backend, no un dato simulado que parezca real.
+With no unlocked graphical session, it was run there under Xvfb at 1200×900
+with `GSK_RENDERER=cairo`. It stayed alive until the test finished, with no
+traceback, and produced a 1200×900 PNG capture. The inspection confirms the
+large horizontal pen, the state underneath, the status and Air actions cards,
+and navigation to Cover keyboard. The state says literally "Hardware service
+unavailable": that is deliberate until the backend exists, not a simulated
+figure dressed up as real.
 
-El `.desktop` pasó `desktop-file-validate`, los metadatos pasaron
-`appstreamcli validate`, el esquema se compiló con `--strict` y todos los
-módulos Python pasaron `compileall`. La apariencia en GNOME/Wayland real queda
-pendiente de confirmación por la propietaria; una captura headless no sustituye
-esa observación.
+The `.desktop` passed `desktop-file-validate`, the metadata passed
+`appstreamcli validate`, the schema compiled with `--strict` and every Python
+module passed `compileall`. How it looks in a real GNOME/Wayland session awaits
+the owner's confirmation; a headless capture does not substitute for that
+observation.
 
-## Sesión 59 — Tab Companion, fase 2: garaje y carga discreta del S Pen
+## Session 59 — Tab Companion, phase 2: the S Pen's silo and discrete charging
 
-Fecha: 2026-08-12. Se añadió `pdct-gpios = <&tlmm 137 GPIO_ACTIVE_HIGH>`
-al digitalizador y se extendió el driver Wacom con `SW_PEN_INSERTED`, atributos
-`pen_docked`, `pen_orientation`, `pen_charging` y la fuente de alimentación
-`gts9u-spen`. El comando Samsung `0xee` se serializa con el ajuste de frecuencia
-y su respuesta de garaje se separa de los frames EMR.
+Date: 2026-08-12. `pdct-gpios = <&tlmm 137 GPIO_ACTIVE_HIGH>` was added to the
+digitizer and the Wacom driver extended with `SW_PEN_INSERTED`, the
+`pen_docked`, `pen_orientation` and `pen_charging` attributes, and the
+`gts9u-spen` power supply. Samsung's `0xee` command is serialised with the rate
+adjustment and its silo reply separated from the EMR frames.
 
-El caso físico disponible quedó medido después de arrancar el kernel final:
+The available physical case was measured after booting the final kernel:
 
 ```text
 Wacom EMR digitiser: 19589 x 31376, pressure 4095, tilt +/-63/63, module 2, docked=1
@@ -4333,15 +4331,15 @@ scope=Device
 model_name=Samsung S Pen
 ```
 
-La propietaria dejó el lápiz con la punta hacia la derecha/USB-C. Esto calibra
-`direction=2` como `tip-right`. No se pudo retirar ni invertir, así que el otro
-flanco y `tip-left` siguen sin validación física. Tampoco existe porcentaje en
-el protocolo: UPower no enumera `gts9u-spen` y la aplicación muestra
-«percentage is not exposed».
+The owner left the pen with its tip pointing right, towards the USB-C. That
+calibrates `direction=2` as `tip-right`. It could not be removed or reversed,
+so the other edge and `tip-left` remain physically unvalidated. Nor does the
+protocol contain a percentage: UPower does not enumerate `gts9u-spen` and the
+application shows "percentage is not exposed".
 
-`ubuntu-gts9u-companion` 0.2.0 añade el servicio de usuario activable por D-Bus
-y mantiene la separación: sólo el backend conoce sysfs; la ventana sólo ve
-propiedades D-Bus. La consulta real fue:
+`ubuntu-gts9u-companion` 0.2.0 adds the D-Bus-activatable user service and
+keeps the separation: only the backend knows sysfs; the window sees only D-Bus
+properties. The real query was:
 
 ```text
 PenState = 'docked'
@@ -4353,42 +4351,43 @@ BluetoothAvailable = true
 GestureAvailable = false
 ```
 
-La UI se volvió a capturar bajo Xvfb en la propia tablet. El SVG aparece
-físicamente invertido, con punta derecha, estado `Docked` y carga sin porcentaje.
-La apariencia en la sesión GNOME bloqueada no se considera validada.
+The UI was captured again under Xvfb on the tablet itself. The SVG appears
+physically inverted, tip to the right, state `Docked` and charging with no
+percentage. How it looks in the locked GNOME session is not considered
+validated.
 
-Se guardó un rollback de `boot`, `vendor_boot` y módulos antes de escribir. Las
-imágenes finales se validaron estáticamente y se releyeron de las particiones:
+A rollback of `boot`, `vendor_boot` and the modules was saved before writing.
+The final images were statically validated and read back from the partitions:
 
 ```text
 boot        417d279d472665f0f51b591b0a29c3050de2c29a39ea25c32037510dcca3fba3
 vendor_boot bf312f08a6876194e3ce30d52a81f8da23dd88132c4660698eb5cde17a69e6bc
 ```
 
-Salud final: ninguna unidad fallida; `/dev/video20`–`23` presentes; ADSP
-`running`; `iio-sensor-proxy` activo y `HasAccelerometer=true`; sink y fuente
-PipeWire presentes; `paplay` terminó con 0; Wacom y EF-DX920 enumerados, y el
-diagnóstico pogo conservó `attached=1 connected=1`. La escritura real del S Pen
-después de este reinicio no pudo repetirse sin alguien que moviese el lápiz;
-se comprobó la misma ABI de entrada, pero no se eleva eso a prueba física.
+Final health: no failed unit; `/dev/video20`–`23` present; ADSP `running`;
+`iio-sensor-proxy` active and `HasAccelerometer=true`; the PipeWire sink and
+source present; `paplay` exited 0; the Wacom and the EF-DX920 enumerated, and
+the pogo diagnostics kept `attached=1 connected=1`. Real writing with the S Pen
+after this reboot could not be repeated without somebody to move it; the same
+input ABI was checked, but that is not raised to physical proof.
 
-## Sesión 60 — Tab Companion, fase 3: remapeo del EF-DX920
+## Session 60 — Tab Companion, phase 3: remapping the EF-DX920
 
-Fecha: 2026-08-12. El fuente abierto del X910 aclaró que el modelo `0xd6` usa
-el camino bypass: el STM32 entrega directamente códigos Linux. Se precargaron
-sólo los valores acreditados: Galaxy AI 760 (`0x2f8`), DeX 701 (`0x2bd`) y
-Search 217. No hay tabla para `Fn+F1`–`Fn+F5`; quedan sin valor hasta que la
-propietaria pueda pulsarlos.
+Date: 2026-08-12. The X910's open source clarified that model `0xd6` uses the
+bypass path: the STM32 delivers Linux codes directly. Only the attested values
+were preloaded: Galaxy AI 760 (`0x2f8`), DeX 701 (`0x2bd`) and Search 217.
+There is no table for `Fn+F1`–`Fn+F5`; they stay unset until the owner can
+press them.
 
-`ubuntu-gts9u-companion` 0.3.0 amplía el servicio con lector no exclusivo del
-EF-DX920, aprendizaje de la siguiente tecla, destinos por asignación y un
-teclado virtual `uinput`. La regla `70-tab-companion-uinput.rules` concede el
-nodo al grupo `input`. La aplicación añade a cada fila botón de aprendizaje y
-editor del ID de aplicación o comando.
+`ubuntu-gts9u-companion` 0.3.0 extends the service with a non-exclusive
+EF-DX920 reader, learning of the next key, per-mapping targets and a `uinput`
+virtual keyboard. The `70-tab-companion-uinput.rules` rule grants the node to
+the `input` group. The application adds a learn button and an application-ID or
+command editor to each row.
 
-La ruta de salida se validó por software sin atribuir eventos al teclado real.
-Se guardó temporalmente `key-galaxy-ai='volume-up'`, se invocó la misma ruta
-D-Bus que usa el motor y se observó el dispositivo virtual:
+The output path was validated in software without attributing events to the
+real keyboard. `key-galaxy-ai='volume-up'` was stored temporarily, the same
+D-Bus route the engine uses was invoked, and the virtual device observed:
 
 ```text
 (true,)
@@ -4399,34 +4398,33 @@ Event: type 1 (EV_KEY), code 115 (KEY_VOLUMEUP), value 0
 Event: -------------- SYN_REPORT ------------
 ```
 
-La asignación se restauró a `none`. `BeginKeyCapture key-fn-f1` devolvió
-`true` y publicó `CapturingKey='key-fn-f1'`; después se canceló sin cambiar el
-diccionario, que quedó:
+The mapping was restored to `none`. `BeginKeyCapture key-fn-f1` returned `true`
+and published `CapturingKey='key-fn-f1'`; it was then cancelled without
+changing the dictionary, which stayed:
 
 ```text
 {'key-galaxy-ai': 760, 'key-dex': 701, 'key-search-settings': 217}
 ```
 
-La sección Cover keyboard se capturó bajo Xvfb en la tablet con
-`Connected; remapping active`, las ocho filas y sus controles. También se abrió
-el diálogo `Target for Galaxy AI` sin traceback. Quedan sin prueba física el
-evento de cada tecla especial y el aprendizaje de Fn: no había nadie para
-pulsarlas, y una inyección `uinput` sólo valida la salida, no lo que emite el
-STM32.
+The Cover keyboard section was captured under Xvfb on the tablet with
+`Connected; remapping active`, the eight rows and their controls. The `Target
+for Galaxy AI` dialog was also opened with no traceback. What remains without
+physical proof is each special key's event and the Fn learning: there was
+nobody to press them, and a `uinput` injection only validates the output, not
+what the STM32 emits.
 
-## Sesión 61 — Tab Companion, fase 4: botón EMR y frontera BLE
+## Session 61 — Tab Companion, phase 4: the EMR button and the BLE boundary
 
-Fecha: 2026-08-12. Se buscaron identificadores del S Pen en los árboles
-Samsung Kernel y Platform del paquete abierto X910. No contienen UUID de
-servicio, protocolo GATT ni formato de notificaciones de Air actions. Unido al
-escaneo anterior con el lápiz acoplado, esto no permite construir un
-emparejador que identifique el dispositivo con seguridad. No se añadió uno a
-ciegas.
+Date: 2026-08-12. S Pen identifiers were looked for in the Samsung Kernel and
+Platform trees of the X910 open package. They contain no service UUID, no GATT
+protocol and no format for Air action notifications. Together with the earlier
+scan with the pen docked, this does not allow building a pairer that identifies
+the device safely. None was added blindly.
 
-Sí se cerró la parte independiente de BLE. `ubuntu-gts9u-companion` 0.4.0 abre
-el Wacom EMR ya existente y convierte `BTN_STYLUS` en pulsación simple, doble o
-larga, con ventanas de 300 y 600 ms. El autómata se ejercitó directamente en la
-tablet y entregó:
+The part independent of BLE was closed, though. `ubuntu-gts9u-companion` 0.4.0
+opens the existing Wacom EMR and turns `BTN_STYLUS` into a single, double or
+long press, with 300 and 600 ms windows. The state machine was exercised
+directly on the tablet and delivered:
 
 ```text
 single: ['gesture-single-press']
@@ -4434,25 +4432,26 @@ double: ['gesture-double-press']
 long: ['gesture-long-press']
 ```
 
-El servicio real publica `ButtonActionsAvailable=true` y
-`GestureAvailable=false`: lo primero significa que existe la ruta del botón,
-lo segundo que aún no hay transporte de movimiento. La captura final de la UI
-muestra literalmente «Button actions ready; air motion still needs S Pen BLE».
+The real service publishes `ButtonActionsAvailable=true` and
+`GestureAvailable=false`: the first means the button's path exists, the second
+that there is no motion transport yet. The final UI capture literally shows
+"Button actions ready; air motion still needs S Pen BLE".
 
-La prueba física del botón no fue posible porque el lápiz permaneció acoplado.
-También quedan sin implementar/validar deslizamientos arriba, abajo, izquierda
-y derecha, y círculos horario/antihorario. Su siguiente paso exige a la
-propietaria: desacoplar, activar pairing, inventariar el GATT y producir un
-evento de cada gesto; cualquier código anterior a esa captura sería supuesto.
+The button's physical test was not possible because the pen stayed docked. Also
+unimplemented and unvalidated are the up, down, left and right swipes and the
+clockwise/anticlockwise circles. Their next step requires the owner: undock,
+enable pairing, inventory the GATT and produce one event of each gesture; any
+code written before that capture would be guesswork.
 
-## Sesión 62 — Tab Companion, fase 5: cierre documental
+## Session 62 — Tab Companion, phase 5: documentary closure
 
-Fecha: 2026-08-12. Se añadió `docs/tab-companion.md` con arquitectura, uso de
-los controles, significado del nivel desconocido y un guion físico concreto
-para desacoplamiento, orientación opuesta, botón, teclas especiales y GATT.
+Date: 2026-08-12. `docs/tab-companion.md` was added with the architecture, the
+use of the controls, the meaning of the unknown level and a concrete physical
+script for undocking, the opposite orientation, the button, the special keys
+and the GATT.
 
-El estado final instalado es `ubuntu-gts9u-companion` 0.4.0. La última lectura
-del servicio fue:
+The final installed state is `ubuntu-gts9u-companion` 0.4.0. The last reading
+from the service was:
 
 ```text
 PenState='docked'
@@ -4463,42 +4462,42 @@ ButtonActionsAvailable=true
 GestureAvailable=false
 ```
 
-La comprobación final mantuvo cero unidades fallidas, `/dev/video20`–`23`,
-ADSP `running`, `iio-sensor-proxy` activo, sink/entrada PipeWire y EF-DX920
-`attached=1 connected=1`. Las particiones que siguen arrancadas son:
+The final check kept zero failed units, `/dev/video20`–`23`, ADSP `running`,
+`iio-sensor-proxy` active, the PipeWire sink/source and the EF-DX920 at
+`attached=1 connected=1`. The partitions still booted are:
 
 ```text
 boot        417d279d472665f0f51b591b0a29c3050de2c29a39ea25c32037510dcca3fba3
 vendor_boot bf312f08a6876194e3ce30d52a81f8da23dd88132c4660698eb5cde17a69e6bc
 ```
 
-No se elevan a «funciona» la extracción/reinserción, punta izquierda,
-pulsaciones físicas, códigos Fn, emparejamiento ni movimientos BLE. El backup
-previo de `boot`, `vendor_boot` y módulos queda fuera de Git en
-`artifacts/backup-pre-spen-phase2/` y también en la tablet para recuperación.
+Removal/reinsertion, the left-hand tip, physical presses, the Fn codes, pairing
+and BLE movements are not raised to "works". The prior backup of `boot`,
+`vendor_boot` and the modules stays outside Git in
+`artifacts/backup-pre-spen-phase2/` and also on the tablet for recovery.
 
-## Sesión 63 — carga automática y keycodes físicos
+## Session 63 — automatic charging and physical keycodes
 
-Fecha: 2026-08-13. La propietaria confirmó que retirada, reinserción y las dos
-orientaciones del S Pen funcionan. Se capturó después el EF-DX920 físico, sin
-inferir la tabla: Finder 710, Fn+Finder/Ajustes 709, DeX 701 y Fn+F1–F11 como
-757, 758, 759, 705, 254, 172, 224, 225, 113, 114 y 115. Fn+F12 no produjo
-evento Linux ni incrementó el contador bruto del STM32. La asociación observada
-de Alt 56 a Fn+F3 era un aprendizaje pendiente: Fn+F3 no se había capturado y
-la siguiente pulsación quedó guardada.
+Date: 2026-08-13. The owner confirmed that removal, reinsertion and both S Pen
+orientations work. The physical EF-DX920 was then captured, with nothing about
+the table inferred: Finder 710, Fn+Finder/Settings 709, DeX 701 and Fn+F1–F11
+as 757, 758, 759, 705, 254, 172, 224, 225, 113, 114 and 115. Fn+F12 produced
+neither a Linux event nor an increment of the STM32's raw counter. The observed
+association of Alt 56 with Fn+F3 was a pending learn: Fn+F3 had not been
+captured and the next press was stored.
 
-`ubuntu-gts9u-companion` 0.5.0 migra los códigos corruptos, separa Finder y
-Ajustes, muestra Fn+F1–F12 y preserva las acciones predeterminadas de F6–F11.
-El aprendizaje ahora dice «Learn», permite cancelar y caduca a los ocho
-segundos. Los `Adw.ComboRow` se sustituyeron por una ventana con `Gtk.ListBox`:
-no recicla filas y evita que, después de desplazar, se active otra opción. Para
-que un remapeo sustituya en vez de sumarse al evento original, el servicio
-captura el teclado y retransmite por uinput todos los eventos no remapeados,
-incluidos `SW_LID` y el LED de Caps Lock.
+`ubuntu-gts9u-companion` 0.5.0 migrates the corrupt codes, separates Finder and
+Settings, shows Fn+F1–F12 and preserves F6–F11's default actions. Learning now
+says "Learn", allows cancelling and expires after eight seconds. The
+`Adw.ComboRow`s were replaced with a window using `Gtk.ListBox`: it does not
+recycle rows and avoids a different option being activated after scrolling. So
+that a remap replaces rather than adds to the original event, the service grabs
+the keyboard and relays every non-remapped event through uinput, including
+`SW_LID` and the Caps Lock LED.
 
-El fuente oficial Wacom confirmó los comandos de carga 0xe9/0xeb/0xec
-(enable/start/keep-on). El kernel los envía automáticamente al detectar el
-lápiz y consulta 0xee cada 30 segundos. En un arranque limpio, sin bind manual:
+The official Wacom source confirmed the charging commands 0xe9/0xeb/0xec
+(enable/start/keep-on). The kernel sends them automatically on detecting the
+pen and queries 0xee every 30 seconds. On a clean boot, with no manual bind:
 
 ```text
 [    4.542848] S Pen charging started
@@ -4510,648 +4509,648 @@ pen_charging:charging
 gts9u-spen/status:Charging
 ```
 
-El protocolo del garaje no contiene porcentaje: el driver oficial tampoco lee
-ninguno. `CAPACITY=100` sólo existe cuando devuelve `BLE_C_FULL`; el nivel
-intermedio se deja desconocido hasta leer el servicio Battery por BLE. Un
-primer arranque sufrió `ETIMEDOUT` de Wacom y exigió bind manual; se cambió el
-fallo temprano a `-EPROBE_DEFER`. El arranque final enlazó Wacom a los 4,48 s.
+The silo's protocol contains no percentage: the official driver does not read
+one either. `CAPACITY=100` exists only when it returns `BLE_C_FULL`; the
+intermediate level is left unknown until the Battery service is read over BLE.
+A first boot suffered a Wacom `ETIMEDOUT` and required a manual bind; the early
+failure was changed to `-EPROBE_DEFER`. The final boot bound the Wacom at
+4.48 s.
 
-Se intentó primero escribir `/dev/block/by-name/boot`; la ruta no existe bajo
-Ubuntu y `dd` abortó antes de abrir el destino. Después se acreditó
-`/dev/sda21` mediante `PARTLABEL=boot` y tamaño 100663296, se escribió sólo esa
-partición y se releyó completa. El estado arrancado final es:
+Writing `/dev/block/by-name/boot` was tried first; that path does not exist
+under Ubuntu and `dd` aborted before opening the destination. `/dev/sda21` was
+then vouched for through `PARTLABEL=boot` and the size 100663296, only that
+partition was written, and it was read back in full. The final booted state is:
 
 ```text
 boot        ff013634e1bd551cf2adcf0c94865ae5c511aee70cd12bce74c0f227585bd294
 vendor_boot bf312f08a6876194e3ce30d52a81f8da23dd88132c4660698eb5cde17a69e6bc
 ```
 
-La regresión final mantuvo cero unidades fallidas, cuatro nodos de cámara y
-ADSP `running`. La funda volvió a conectarse y el servicio publicó
-`KeyboardPresent=true` y `RemappingAvailable=true`. Una captura sobre el
-teclado virtual confirmó que las asignaciones elegidas producen, entre otros,
-`KEY_MUTE` y `KEY_SYSRQ`; el último origen especial registrado fue Galaxy AI
-760. La propietaria confirmó después que Galaxy AI, DeX, Finder, Ajustes y
-Fn+F1–F11 funcionan; la única combinación inoperante es Fn+F12, coherente con
-la ausencia de evento en el controlador. Queda validar visualmente en GNOME el
-selector desplazado antes de dar por cerrada esa corrección de interfaz.
+The final regression kept zero failed units, four camera nodes and the ADSP
+`running`.
+ The cover was
+reconnected and the service published `KeyboardPresent=true` and
+`RemappingAvailable=true`. A capture on the virtual keyboard confirmed that the
+chosen mappings produce, among others, `KEY_MUTE` and `KEY_SYSRQ`; the last
+special source recorded was Galaxy AI 760. The owner afterwards confirmed that
+Galaxy AI, DeX, Finder, Settings and Fn+F1–F11 all work; the only inoperative
+combination is Fn+F12, consistent with the absence of an event from the
+controller. Visually validating the scrolled selector in GNOME remains before
+that interface fix can be considered closed.
 
-## Sesión 64 — emparejamiento BLE iniciado desde el garaje
+## Session 64 — BLE pairing initiated from the silo
 
-Fecha: 2026-08-13. One UI no presenta el S Pen como un accesorio que la usuaria
-empareje manualmente: basta con dejarlo insertado. El fuente Wacom oficial
-explica la parte física: `0xea` hace reset del patrón y un minuto de carga. Se
-añadió el atributo de escritura `pen_ble_reset`, limitado a lápiz acoplado; el
-kernel cancela el trabajo de carga, envía el comando y reanuda la secuencia de
-mantenimiento. La nueva imagen arrancada y verificada es:
+Date: 2026-08-13. One UI does not present the S Pen as an accessory the owner
+pairs by hand: leaving it docked is enough. The official Wacom source explains
+the physical part: `0xea` resets the pattern and gives a minute of charging.
+The writable attribute `pen_ble_reset` was added, restricted to a docked pen;
+the kernel cancels the charging work, sends the command and resumes the
+maintenance sequence. The new booted and verified image is:
 
 ```text
 boot        bbaaf263740850c4f50906b96ae621b70cf732176e4c1a7760ed83f73e0f2f31
 vendor_boot bf312f08a6876194e3ce30d52a81f8da23dd88132c4660698eb5cde17a69e6bc
 ```
 
-El lápiz anunció simultáneamente los servicios Samsung FD6C y FEF5. Un intento
-de `Pair()` clásico falla con Authentication Failed porque invierte el flujo.
-La decompilación de `AirCommand.apk` mostró el comportamiento real: conecta
-GATT con el lápiz aún sin vínculo, registra un receptor de pairing y acepta la
-solicitud de consentimiento que inicia el propio S Pen. Al hacer lo mismo con
-BlueZ, la prueba física produjo `Connected`, `Bonded`, `Paired` y servicios
-resueltos, sin PIN ni intervención en pantalla.
+The pen advertised the Samsung FD6C and FEF5 services simultaneously. A classic
+`Pair()` attempt fails with Authentication Failed because it inverts the flow.
+Decompiling `AirCommand.apk` showed the real behaviour: it connects the GATT
+with the pen still unbonded, registers a pairing receiver and accepts the
+consent request the S Pen itself initiates. Doing the same with BlueZ, the
+physical test produced `Connected`, `Bonded`, `Paired` and resolved services,
+with no PIN and no on-screen intervention.
 
-FD6C expone Battery Level, Button State, Status, FW Version, Mode, Battery Raw,
-fecha de fabricación y canales de prueba/sensores. Battery Level devolvió
-`64 00`, es decir 100 %, y Mode aceptó `10`. El formato de Button State coincide
-con Air Command: 0/3 son botón arriba/abajo; 14/15 y 142/143 llevan `dx`, `dy`
-incrementales y número de secuencia. Una captura sin vínculo había caído justo
-al sacar el lápiz; esto ya se entiende como consecuencia de no haber completado
-la autorización, no como ausencia de datos de movimiento.
+FD6C exposes Battery Level, Button State, Status, FW Version, Mode, Battery
+Raw, the manufacturing date and test/sensor channels. Battery Level returned
+`64 00`, that is 100 %, and Mode accepted `10`. Button State's format matches
+Air Command's: 0/3 are button up/down; 14/15 and 142/143 carry incremental
+`dx`, `dy` and a sequence number. An unbonded capture had fallen through
+exactly as the pen was taken out; that is now understood as a consequence of
+not having completed the authorisation, not as an absence of motion data.
 
-`ubuntu-gts9u-companion` 0.6.0 instala
-`tab-companion-spen-pairing.service`. Corre como root sólo para escribir el
-reset Wacom y hablar con el bus de sistema. Su agente rechaza cualquier petición
-salvo que `pen_docked=1`, el nombre sea SPEN y el candidato anuncie FD6C y FEF5;
-después marca únicamente ese lápiz como confiable. Sólo ocupa el agente BlueZ
-predeterminado durante la ventana de 65 segundos y lo libera al terminar, de
-modo que no bloquea el emparejamiento de otros accesorios. El servicio de usuario lee
-Battery Level, escribe Mode 0x10, se suscribe a Battery/Button y decodifica las
-muestras de movimiento. Ambos servicios quedaron instalados y activos. Para
-probar el flujo definitivo se retiró únicamente el vínculo incompleto del S Pen
-y se reinició el servicio con `pen_docked=1`: abrió una sola ventana, emparejó
-sin interacción y Tab Companion publicó `PenBattery=100` y
-`GestureAvailable=true`.
+`ubuntu-gts9u-companion` 0.6.0 installs
+`tab-companion-spen-pairing.service`. It runs as root only to write the Wacom
+reset and talk to the system bus. Its agent rejects any request unless
+`pen_docked=1`, the name is SPEN and the candidate advertises FD6C and FEF5;
+afterwards it marks only that pen as trusted. It occupies BlueZ's default agent
+only during the 65-second window and releases it at the end, so it does not
+block pairing other accessories. The user service reads Battery Level, writes
+Mode 0x10, subscribes to Battery/Button and decodes the motion samples. Both
+services were installed and active. To test the definitive flow, only the S
+Pen's incomplete bond was removed and the service restarted with
+`pen_docked=1`: it opened a single window, paired with no interaction, and Tab
+Companion published `PenBattery=100` and `GestureAvailable=true`.
 
-Con el lápiz fuera se capturaron las seis trayectorias. La primera serie se
-clasificó exactamente como arriba, abajo, izquierda, derecha, horario y
-antihorario. Tras integrar el clasificador, una segunda serie en vivo produjo
-los seis eventos correspondientes; una repetición aislada del círculo horario
-confirmó el signo del área. Los deslizamientos usan eje dominante y suma
-firmada; los círculos exigen recorrido amplio en ambos ejes y área orientada.
-El inicio de movimiento cancela la pulsación larga para no duplicar acciones.
-Quedan abiertas la prueba visual con destinos distintos y la reconexión tras
-un arranque completo de la tablet.
+With the pen out, the six trajectories were captured. The first series was
+classified exactly as up, down, left, right, clockwise and anticlockwise. After
+integrating the classifier, a second live series produced the six corresponding
+events; an isolated repeat of the clockwise circle confirmed the area's sign.
+The swipes use the dominant axis and a signed sum; the circles require a wide
+excursion on both axes and an oriented area. The start of movement cancels the
+long press so actions are not duplicated. Still open are the visual test with
+different targets and reconnection after a full reboot of the tablet.
 
-## Sesión 65 — Tab Companion 0.7 y familias de fundas
+## Session 65 — Tab Companion 0.7 and cover families
 
-Fecha: 2026-08-13. Se retiró «Learn»: los códigos del DX920 ya estaban medidos
-y mantener aprendizaje en producción permitía corromper una tabla correcta con
-la siguiente tecla casual. La nueva restauración global restablece acciones,
-destinos y códigos físicos. El selector de acciones pasó a filas con iconos;
-«Abrir una aplicación» enumera los escritorios visibles con sus iconos y
-búsqueda, y «Ejecutar un comando» abre un campo explícito. La prueba táctil en
-la tablet desplazó la lista antes de abrir ambas rutas sin reproducir la
-selección de la fila equivocada. Una pulsación real de Galaxy AI reveló que
-`gtk-launch` no está instalado en la imagen; se sustituyó por
-`Gio.DesktopAppInfo.launch()` y la asignación existente a Configuración devolvió
-después `TriggerMapping=true` sin error. Los métodos D-Bus de aprendizaje y su
-estado de captura también se eliminaron, no sólo sus controles visuales.
+Date: 2026-08-13. "Learn" was withdrawn: the DX920's codes were already
+measured and keeping learning in production allowed a correct table to be
+corrupted by the next stray key. The new global restore resets actions, targets
+and physical codes. The action picker moved to rows with icons; "Open an
+application" enumerates the visible desktops with their icons and a search box,
+and "Run a command" opens an explicit field. The touch test on the tablet
+scrolled the list before opening both routes without reproducing the wrong
+row's selection. A real press of Galaxy AI revealed that `gtk-launch` is not
+installed in the image; it was replaced with `Gio.DesktopAppInfo.launch()` and
+the existing mapping to Settings then returned `TriggerMapping=true` with no
+error. The learning D-Bus methods and their capture state were also removed,
+not merely their visual controls.
 
-La página de teclado tiene ahora tres estados. Sin historial muestra una
-bienvenida que no permite configurar; conectado enseña modelo y nombre;
-desconectado mantiene las asignaciones editables y ofrece una X para olvidar el
-dispositivo. La lista de compatibles procede de la propiedad
-`stm32,model_name` del DTS X910 y de los nombres comerciales publicados por
-Samsung: EF-DX900, DX910, DX915, DX920 y DX925. El controlador usa el modelo de
-protocolo y VERSION para diferenciarlos. Sólo el DX920 disponible se considera
-validado; no se infiere funcionamiento de teclas ni touchpad para los otros.
+The keyboard page now has three states. With no history it shows a welcome that
+does not allow configuring; connected it shows model and name; disconnected it
+keeps the mappings editable and offers an X to forget the device. The
+compatible list comes from the X910 DTS's `stm32,model_name` property and from
+the commercial names Samsung publishes: EF-DX900, DX910, DX915, DX920 and
+DX925. The controller uses the protocol model and VERSION to tell them apart.
+Only the available DX920 is considered validated; no key or touchpad operation
+is inferred for the others.
 
-La página del S Pen eliminó orientación textual y datos Bluetooth redundantes.
-Conserva el dibujo orientado y presenta una barra de batería. El porcentaje BLE
-se guarda para no convertir 100 % en «desconocido» cuando GATT duerme. El flujo
-stock de Air Command contiene una política KeepConnected y una ruta de
-desconexión GATT. Se probó la interpretación más agresiva: desconectar al estar
-acoplado y conectar al retirarlo. La transición física demostró que no sirve:
-fuera no apareció ningún anuncio, tampoco durante una búsqueda activa, y BlueZ
-devolvió `org.bluez.Error.Failed`. Se retiró la desconexión forzada; insertarlo
-sigue siendo el mecanismo fiable para despertar y reconectar un lápiz dormido.
+The S Pen page removed the textual orientation and the redundant Bluetooth
+data. It keeps the oriented drawing and presents a battery bar. The BLE
+percentage is stored so that 100 % does not turn into "unknown" when the GATT
+sleeps. The stock Air Command flow contains a KeepConnected policy and a GATT
+disconnection path. The most aggressive interpretation was tested:
+disconnecting while docked and connecting on removal. The physical transition
+showed it does not work: outside, no advertisement appeared, not even during an
+active scan, and BlueZ returned `org.bluez.Error.Failed`. The forced
+disconnection was withdrawn; docking it remains the reliable mechanism for
+waking and reconnecting a sleeping pen.
 
-La interfaz completa, incluido «Acerca de», quedó traducida al inglés, español,
-francés, alemán, italiano y portugués. Una auditoría AST comparó las 97 cadenas
-traducibles con las seis tablas y no encontró ausencias. El paquete 0.7.0 pasó
-la validación pedante de esquema, escritorio y AppStream; su SHA-256 es:
+The whole interface, "About" included, was translated into English, Spanish,
+French, German, Italian and Portuguese. An AST audit compared the 97
+translatable strings against the six tables and found no gaps. Package 0.7.0
+passed pedantic schema, desktop and AppStream validation; its SHA-256 is:
 
 ```text
 ubuntu-gts9u-companion_0.7.0_all.deb
 313a71fb6ee8dc860ec6a08edf87d846f795b2b8ccda97a26b6581492c2e1b2c
 ```
 
-El kernel construido registró el DX920 real como
-`Book Cover Keyboard Slim with AI Key (EF-DX920)`, modelo de protocolo `0xd6`,
-V37, remapeo disponible y cero recuperaciones. Se validó el bundle Android v4,
-se acreditó `sda21` por `PARTLABEL=boot` y 100663296 bytes, se respaldó la
-imagen anterior y sólo se escribió esa partición. Los hashes arrancados son:
+The built kernel registered the real DX920 as `Book Cover Keyboard Slim with AI
+Key (EF-DX920)`, protocol model `0xd6`, V37, remapping available and zero
+recoveries. The Android v4 bundle was validated, `sda21` vouched for by
+`PARTLABEL=boot` and 100663296 bytes, the previous image backed up, and only
+that partition written. The booted hashes are:
 
 ```text
 boot        8d102343c34288e38c4322a5d7503dfc52274c2267abf0cc3db727e6b11ee6cd
 vendor_boot bf312f08a6876194e3ce30d52a81f8da23dd88132c4660698eb5cde17a69e6bc
 ```
 
-La regresión posterior mantuvo cero unidades fallidas, ADSP `running`, salida
-de cuatro altavoces y entrada DMIC en PipeWire, cuatro cámaras V4L2 y los cuatro
-relés libcamera. Los `oneshot` de sensores y firmware pogo terminaron con
-`Result=success`; el servicio de Companion publicó DX920 conectado y conservó
-la batería real del S Pen al 100 %. La extracción produjo `PenState=paired` y
-la ausencia de anuncio descrita arriba; la reinserción se usó para recuperar el
-enlace con la política definitiva.
+The subsequent regression kept zero failed units, ADSP `running`, four-speaker
+output and DMIC input in PipeWire, four V4L2 cameras and the four libcamera
+relays. The sensor and pogo firmware `oneshot`s finished with `Result=success`;
+Companion's service published the DX920 connected and kept the S Pen's real
+battery at 100 %. Removal produced `PenState=paired` and the absence of
+advertisement described above; reinsertion was used to recover the link with
+the definitive policy.
 
-## Sesión 66 — Tab Companion 0.8 y políticas EMR
+## Session 66 — Tab Companion 0.8 and EMR policies
 
-Fecha: 2026-08-13. El S Pen conservaba en BlueZ un enlace que el lápiz ya no
-reconocía tras la prueba de desconexión anterior. Se eliminó sólo ese enlace y
-el flujo del garaje volvió a emparejarlo sin interacción. El servicio ahora
-repara automáticamente ese caso tras cuatro fallos consecutivos únicamente si
-el S Pen sigue insertado, y espera al adaptador durante el arranque.
+Date: 2026-08-13. The S Pen still had a bond in BlueZ that the pen no longer
+recognised after the previous disconnection test. Only that bond was removed
+and the silo's flow paired it again with no interaction. The service now
+repairs that case automatically after four consecutive failures, and only if
+the S Pen is still docked, and waits for the adapter during boot.
 
-«Simular una tecla» añade un teclado gráfico con F1–F12, alfanuméricas,
-navegación y modificadores. También captura cualquier teclado físico mientras
-el selector tiene foco. El backend valida los códigos evdev y emite la
-combinación por uinput; la interfaz real mostró correctamente `Ctrl+Alt+T`.
-«Activar/desactivar la linterna» se verificó con dos activaciones D-Bus que
-produjeron los estados físicos `on` y `off`.
+"Simulate a key" adds a graphical keyboard with F1–F12, alphanumerics,
+navigation and modifiers. It also captures any physical keyboard while the
+picker has focus. The backend validates the evdev codes and emits the
+combination through uinput; the real interface correctly showed `Ctrl+Alt+T`.
+"Toggle the flashlight" was verified with two D-Bus activations that produced
+the physical states `on` and `off`.
 
-Fn+F12 desaparece porque el firmware V37 no produce evento. Los valores de
-fábrica asignan Galaxy AI a Tab Companion, Finder a búsqueda, Ajustes a
-Configuración, Fn+F1/F2/F3 a Archivos/navegador/terminal, Fn+F4 a aplicaciones,
-Fn+F5 a vista general y DeX a maximizar/restaurar. Fn+F6–F11 conservan los
-eventos nativos de inicio, brillo y volumen.
+Fn+F12 disappears because firmware V37 produces no event. The factory values
+assign Galaxy AI to Tab Companion, Finder to search, Settings to Settings,
+Fn+F1/F2/F3 to Files/browser/terminal, Fn+F4 to applications, Fn+F5 to the
+overview and DeX to maximise/restore. Fn+F6–F11 keep the native home,
+brightness and volume events.
 
-El kernel comparte la proximidad Wacom con Goodix. Cuando el rechazo está
-activo, Goodix libera sus slots y descarta dedos desde el primer hover. La
-segunda opción desactiva la IRQ de coordenadas Wacom con `pen_docked=1`, pero
-conserva PDCT, carga y BLE. Los registros mostraron `digitiser disabled` al
-insertar y `enabled` al extraer; la propietaria confirmó físicamente que ambas
-opciones funcionan como se esperaba. Udev permite al usuario escribir sólo
-estas dos políticas booleanas.
+The kernel shares Wacom proximity with the Goodix. When rejection is active,
+the Goodix releases its slots and discards fingers from the first hover. The
+second option disables the Wacom's coordinate IRQ with `pen_docked=1`, but
+keeps PDCT, charging and BLE. The logs showed `digitiser disabled` on
+insertion and `enabled` on removal; the owner physically confirmed both options
+behave as expected. Udev lets the user write only these two boolean policies.
 
-La app 0.8.0 y el bundle Android v4 pasaron todas sus validaciones. Se acreditó
-la partición `boot` por etiqueta y tamaño, se guardó una copia recuperable y se
-escribió sólo esa partición. Los hashes arrancados son:
+App 0.8.0 and the Android v4 bundle passed all their validations. The `boot`
+partition was vouched for by label and size, a recoverable copy saved, and only
+that partition written. The booted hashes are:
 
 ```text
 boot        524a4ded657f1419640b051f580f8519f6fa79af1aac5e4f68a4505bb042ca02
 vendor_boot bf312f08a6876194e3ce30d52a81f8da23dd88132c4660698eb5cde17a69e6bc
 ```
 
-El paquete reproducido desde el árbol definitivo pasó `compileall`, esquema
-GSettings estricto, Desktop Entry y AppStream pedante:
+The package reproduced from the definitive tree passed `compileall`, strict
+GSettings schema, Desktop Entry and pedantic AppStream:
 
 ```text
 ubuntu-gts9u-companion_0.8.0_all.deb
 b0eca63313975a28634bc367106bc42556aa939abb4baef788ec3137f6b75dd3
 ```
 
-El primer reinicio posterior a la imagen final se detuvo exactamente en
-`PM: suspend entry (deep)`, dentro del `pm_test=platform` preexistente que
-recupera el panel ANA38407 tras un arranque frío. No llegó a iniciarse el
-servicio de hardware de Tab Companion y no hubo mensajes Wacom ni Goodix que
-precedieran al bloqueo. Tras forzar el reinicio, el mismo ciclo retornó en unos
-siete segundos (`PM: suspend exit`) y el sistema arrancó normalmente. Se trata
-por tanto de un fallo intermitente pendiente del recuperador del panel, no de
-una regresión observada en las dos políticas nuevas del S Pen.
+The first reboot after the final image stopped exactly at `PM: suspend entry
+(deep)`, inside the pre-existing `pm_test=platform` that recovers the ANA38407
+panel after a cold boot. Tab Companion's hardware service never started and
+there were no Wacom or Goodix messages preceding the hang. After forcing a
+reboot, the same cycle returned in about seven seconds (`PM: suspend exit`) and
+the system booted normally. It is therefore an intermittent failure belonging
+to the panel recovery, not a regression observed in the S Pen's two new
+policies.
 
-La regresión del arranque recuperado dejó cero unidades fallidas, ambos
-servicios de Companion activos y sin avisos, DX920 conectado y remapeable, S Pen
-emparejado al 100 % y cargando, y las dos políticas sysfs activas. La propietaria
-ya había validado físicamente el rechazo de dedos en hover y la
-desactivación/reactivación del digitalizador.
+The recovered boot's regression left zero failed units, both Companion services
+active and warning-free, the DX920 connected and remappable, the S Pen paired
+at 100 % and charging, and both sysfs policies active. The owner had already
+physically validated finger rejection during hover and the digitizer being
+disabled and re-enabled.
 
-## Sesión 67 — semántica real de los valores predeterminados
+## Session 67 — the real semantics of the default values
 
-Fecha: 2026-08-13. La primera implementación guardaba explícitamente como
-acciones personalizadas las utilidades elegidas para Galaxy AI, DeX, Finder,
-Ajustes y Fn+F1–F5. Eso hacía que el selector mostrase «Abrir una aplicación»,
-«Simular una tecla» o «Vista general», aunque conceptualmente debían ser la
-conducta de «Mantener la acción predeterminada».
+Date: 2026-08-13. The first implementation explicitly stored the utilities
+chosen for Galaxy AI, DeX, Finder, Settings and Fn+F1–F5 as custom actions.
+That made the picker show "Open an application", "Simulate a key" or
+"Overview", when conceptually they should have been the behaviour of "Keep the
+default action".
 
-Tab Companion 0.8.1 mantiene ahora todas las claves GSettings de teclado en
-`none`. El backend distingue dos clases: Fn+F6–F11 ya tienen un evento Linux
-útil y se retransmiten intactas; las teclas especiales sin función nativa se
-sustituyen por la utilidad base del port sólo mientras continúen en `none`.
-Una selección del usuario tiene prioridad y volver a «Mantener» recupera la
-utilidad base sin conservar una asignación oculta. La migración 4 convierte
-únicamente las combinaciones exactas que 0.8.0 había instalado, respetando
-cualquier personalización diferente.
+Tab Companion 0.8.1 now keeps every keyboard GSettings key at `none`. The
+backend distinguishes two classes: Fn+F6–F11 already have a useful Linux event
+and are relayed intact; the special keys with no native function are replaced
+by the port's base utility only while they remain at `none`. A user's selection
+takes priority, and returning to "Keep" recovers the base utility without
+keeping a hidden mapping. Migration 4 converts only the exact combinations
+0.8.0 had installed, respecting any different customisation.
 
-El README se redujo a compatibilidad, instalación y funciones orientadas al
-usuario final. La evidencia, las decisiones del port y las limitaciones
-detalladas permanecen en `docs/`.
+The README was reduced to compatibility, installation and end-user-facing
+features. The evidence, the port's decisions and the detailed limitations stay
+in `docs/`.
 
-El paquete 0.8.1 pasó `compileall`, esquema estricto, Desktop Entry y AppStream
-pedante, y se instaló sobre 0.8.0:
+Package 0.8.1 passed `compileall`, the strict schema, Desktop Entry and
+pedantic AppStream, and was installed over 0.8.0:
 
 ```text
 ubuntu-gts9u-companion_0.8.1_all.deb
 648267df87b9ec5810613e9278e6dd7eafea83b348ce272b87c66c94119902ef
 ```
 
-La migración en la tablet terminó en versión 4. Galaxy AI, DeX, Finder,
-Ajustes y Fn+F1–F10 quedaron en `none`; se conservó una personalización posterior
-de Fn+F11 con su destino de comando. `TriggerMapping` ejecutó correctamente la
-utilidad base de Galaxy AI y dos activaciones de DeX maximizaron y restauraron
-sin escribir ninguna asignación. Ambos servicios siguieron activos y sin avisos.
+The migration on the tablet ended at version 4. Galaxy AI, DeX, Finder,
+Settings and Fn+F1–F10 were left at `none`; a later customisation of Fn+F11
+with its command target was preserved. `TriggerMapping` correctly ran Galaxy
+AI's base utility and two DeX activations maximised and restored without
+writing any mapping. Both services stayed active and warning-free.
 
-## Sesión 68 — modos remotos del S Pen, puntero y vibración
+## Session 68 — the S Pen's remote modes, pointer and haptics
 
-Fecha: 2026-08-13. Tab Companion 0.9.0 separa la escritura EMR de las funciones
-remotas BLE. La preferencia `spen-remote-enabled` llega por D-Bus del servicio
-de usuario al servicio raíz de emparejamiento. Al apagarla, éste cancela su
-ventana, desconecta únicamente el S Pen y conserva el vínculo BlueZ; además
-persiste el estado en `/var/lib/tab-companion` para no reconectar antes del
-login. Al encenderla vuelve a permitir conexión y pairing. La interfaz oculta
-batería y controles remotos mientras está apagada y sólo conserva insertado/no
-insertado, pero no toca las políticas independientes de Goodix/Wacom.
+Date: 2026-08-13. Tab Companion 0.9.0 separates EMR writing from the BLE remote
+features. The `spen-remote-enabled` preference travels over D-Bus from the user
+service to the root pairing service. Turning it off makes the latter cancel its
+window, disconnect the S Pen alone and keep the BlueZ bond; it also persists
+the state in `/var/lib/tab-companion` so it does not reconnect before login.
+Turning it on allows connection and pairing again. The interface hides the
+battery and the remote controls while it is off and keeps only docked/undocked,
+but it does not touch the independent Goodix/Wacom policies.
 
-El modo puntero toma como referencia conceptual PenMouseS, que integra los
-incrementos del giroscopio del S Pen para desplazar un cursor y usa el botón
-para clic/arrastre. En GNOME no necesita overlay ni accesibilidad: el backend
-crea `Tab Companion S Pen pointer`, un dispositivo `uinput` relativo con
-`REL_X`, `REL_Y` y `BTN_LEFT`. Los mismos paquetes Button State que alimentan el
-clasificador de gestos se enrutan alternativamente al puntero. Se invierte Y,
-se conservan residuos subpíxel y se aplican sensibilidad, filtro exponencial y
-aceleración configurables. Gestos y puntero no pueden activarse a la vez.
+Pointer mode takes PenMouseS as its conceptual reference, which integrates the
+S Pen's gyroscope increments to move a cursor and uses the button for
+click/drag. In GNOME it needs neither an overlay nor accessibility: the backend
+creates `Tab Companion S Pen pointer`, a relative `uinput` device with `REL_X`,
+`REL_Y` and `BTN_LEFT`. The same Button State packets that feed the gesture
+classifier are routed to the pointer instead. Y is inverted, sub-pixel
+remainders are kept, and configurable sensitivity, exponential filtering and
+acceleration are applied. Gestures and pointer cannot be active at the same
+time.
 
-El fallo de orientación al insertar al revés provenía de
-`disable_digitizer_when_docked`: apagaba la IRQ I²C principal, pero las
-respuestas `GARAGE_STATUS` de orientación/carga viajan por esa misma línea. El
-driver conserva ahora la IRQ, consume primero las respuestas de garaje y sólo
-descarta después los paquetes de coordenadas si la política está activa. Cada
-borde PDCT borra también la orientación anterior hasta recibir una respuesta
-nueva, evitando mostrar un sentido obsoleto.
+The orientation failure on inserting the pen the other way round came from
+`disable_digitizer_when_docked`: it switched off the main I²C IRQ, but the
+orientation/charge `GARAGE_STATUS` replies travel on that same line. The driver
+now keeps the IRQ, consumes the garage replies first and only then discards the
+coordinate packets if the policy is active. Every PDCT edge also clears the
+previous orientation until a fresh reply arrives, so a stale direction is never
+shown.
 
-El DTS downstream identifica el actuador como `samsung,dc_vibrator`, tipo
-`COINDC`, con enable en TLMM GPIO18. Mainline se configura con
-`CONFIG_INPUT_GPIO_VIBRA=y` y un nodo `gpio-vibrator`; su interfaz es evdev
-`FF_RUMBLE`. El backend carga/reutiliza un efecto y ofrece `Vibrate(uu)` en el
-D-Bus de sesión. El GPIO no regula amplitud, de modo que la intensidad aparente
-del teclado se representa mediante pulsos de 8, 14 o 22 ms.
+The downstream DTS identifies the actuator as `samsung,dc_vibrator`, type
+`COINDC`, with its enable on TLMM GPIO18. Mainline is configured with
+`CONFIG_INPUT_GPIO_VIBRA=y` and a `gpio-vibrator` node; its interface is evdev
+`FF_RUMBLE`. The backend loads and reuses one effect and offers `Vibrate(uu)`
+on the session D-Bus. The GPIO does not regulate amplitude, so the keyboard's
+apparent intensity is represented by pulses of 8, 14 or 22 ms.
 
-GNOME Shell 46 no trae una opción nativa de vibración para su teclado en
-pantalla. La extensión `tab-companion-haptics@agcarbajo` escucha sólo
-`TOUCH_BEGIN` dentro del actor visible del teclado y comprueba la clase
-`keyboard-key` antes de solicitar el pulso. Un helper añade su UUID a
-`enabled-extensions` sin reemplazar las extensiones de la usuaria. La app añade
-una tercera página con interruptor, intensidad y un botón temporal de prueba.
+GNOME Shell 46 ships no native haptics option for its on-screen keyboard. The
+`tab-companion-haptics@agcarbajo` extension listens only for `TOUCH_BEGIN`
+inside the keyboard's visible actor and checks the `keyboard-key` class before
+requesting the pulse. A helper adds its UUID to `enabled-extensions` without
+replacing the owner's extensions. The app adds a third page with a switch, an
+intensity setting and a momentary test button.
 
-Antes de reiniciar se preservó la conexión BLE del lápiz desacoplado. Tras
-varias horas el Battery Level seguía entregando 100 %, así que no se inventa ni
-interpola un valor intermedio: esa validación física continúa pendiente.
+Before rebooting, the undocked pen's BLE connection was preserved. After
+several hours Battery Level was still delivering 100 %, so no intermediate
+value is invented or interpolated: that physical validation is still pending.
 
-La primera escritura actualizó sólo `boot`. El kernel nuevo arrancó sin fallos,
-pero `/proc/device-tree` demostró que Samsung ABL seguía tomando el DTB de
-`vendor_boot`: el nodo `vibrator` aún no existía. Antes de actualizar esa
-partición se extrajeron ambas imágenes v4 y se compararon sus secciones. La
-línea de arranque, el ramdisk de plataforma, su tabla y bootconfig eran
-idénticos byte a byte; la única diferencia era el DTB de 177740 frente a 177812
-bytes. Se respaldó y verificó la imagen anterior y se escribió la nueva en la
-partición acreditada por etiqueta y tamaño.
+The first write updated only `boot`. The new kernel booted without failures,
+but `/proc/device-tree` showed that Samsung's ABL was still taking the DTB from
+`vendor_boot`: the `vibrator` node did not exist yet. Before updating that
+partition, both v4 images were extracted and their sections compared. The
+command line, the platform ramdisk, its table and the bootconfig were identical
+byte for byte; the only difference was the DTB, 177,740 against 177,812 bytes.
+The previous image was backed up and verified and the new one written to the
+partition vouched for by label and size.
 
-Los hashes arrancados y los respaldos recuperables son:
+The booted hashes and the recoverable backups are:
 
 ```text
-boot nuevo          5f33dcd527bf0693ddf5b6ae1100912f82d0f055ab7f965cabb89053f1df5e0b
-boot respaldo       524a4ded657f1419640b051f580f8519f6fa79af1aac5e4f68a4505bb042ca02
-vendor_boot nuevo   ded9ae5ddd3f86ab0ff0c77c410553f86c8d900f663751c95c9751efc5bfb98b
-vendor_boot respaldo bf312f08a6876194e3ce30d52a81f8da23dd88132c4660698eb5cde17a69e6bc
+boot new             5f33dcd527bf0693ddf5b6ae1100912f82d0f055ab7f965cabb89053f1df5e0b
+boot backup          524a4ded657f1419640b051f580f8519f6fa79af1aac5e4f68a4505bb042ca02
+vendor_boot new      ded9ae5ddd3f86ab0ff0c77c410553f86c8d900f663751c95c9751efc5bfb98b
+vendor_boot backup   bf312f08a6876194e3ce30d52a81f8da23dd88132c4660698eb5cde17a69e6bc
 ```
 
-El segundo arranque dejó cero unidades fallidas de sistema y usuario. El DT
-vivo contenía `gpio-vibrator`, el driver publicó `event2` con `FF_RUMBLE` y
-`HapticsAvailable=true`. `Vibrate(500, 65535)` devolvió éxito y la traza
-`gpio:gpio_value` midió el GPIO global 554 a 1 y, 500,741 ms después, a 0. Esto
-valida todo el recorrido software y eléctrico de control; queda que la usuaria
-confirme la sensación física.
+The second boot left zero failed system and user units. The live DT contained
+`gpio-vibrator`, the driver published `event2` with `FF_RUMBLE` and
+`HapticsAvailable=true`. `Vibrate(500, 65535)` returned success and the
+`gpio:gpio_value` trace measured global GPIO 554 at 1 and, 500.741 ms later, at
+0. That validates the whole software and electrical control path; what remains
+is for the owner to confirm the physical sensation.
 
-Con el S Pen ya dormido por el reinicio se probó sin perder una conexión útil
-el ciclo remoto `true → false → true`. El estado privilegiado cambió 1/0/1,
-BlueZ conservó el vínculo y `ignore_finger_while_hovering` y
-`disable_digitizer_when_docked` permanecieron ambos a 1. La política final no
-intenta conectar un vínculo dormido mientras está fuera del garaje; espera una
-inserción y evita errores periódicos en el journal.
+With the S Pen already asleep after the reboot, the remote cycle `true → false
+→ true` was tested without losing a useful connection. The privileged state
+changed 1/0/1, BlueZ kept the bond, and `ignore_finger_while_hovering` and
+`disable_digitizer_when_docked` both stayed at 1. The final policy does not try
+to connect a sleeping bond while the pen is out of the silo; it waits for an
+insertion and avoids periodic errors in the journal.
 
-El parser del puntero se ejercitó con pulsación, cinco muestras firmadas y
-liberación: produjo `BTN_LEFT` down/up y desplazamientos positivos coherentes
-tras invertir Y. El dispositivo vivo publica `EV_KEY`, `REL_X` y `REL_Y`. La
-app abrió durante ocho segundos en la sesión Wayland sin excepción. El helper
-añadió la extensión háptica preservando las cuatro extensiones existentes; se
-cargará al próximo login gráfico de la usuaria, que aún no había ocurrido tras
-el reinicio.
+The pointer's parser was exercised with a press, five signed samples and a
+release: it produced `BTN_LEFT` down/up and coherent positive displacements
+after inverting Y. The live device publishes `EV_KEY`, `REL_X` and `REL_Y`. The
+app opened for eight seconds in the Wayland session with no exception. The
+helper added the haptics extension while preserving the four existing ones; it
+will load at the owner's next graphical login, which had not yet happened after
+the reboot.
 
-El artefacto reproducible definitivo pasó `compileall`, esquema estricto,
-Desktop Entry, AppStream pedante y validación sintáctica de la extensión:
+The definitive reproducible artefact passed `compileall`, the strict schema,
+Desktop Entry, pedantic AppStream and syntactic validation of the extension:
 
 ```text
 ubuntu-gts9u-companion_0.9.0_all.deb
 18e7e34641184806e1c6ff8d1204f5851059cb2250a0a8fde543dd6996d2996a
 ```
 
-## Sesión 69 — recuperación del vínculo BLE tras reiniciar
+## Session 69 — recovering the BLE bond after a reboot
 
-Fecha: 2026-08-13. Con el lápiz insertado, el garaje informó orientación y
-carga al 90 %, pero el vínculo BlueZ anterior rechazaba `Connect`. El
-recuperador alcanzó correctamente cuatro fallos, eliminó sólo el SPEN obsoleto
-y abrió otra ventana con el comando de reset. El dispositivo reapareció como
-visible y no emparejado, pero no avanzó: BlueZ lo recreó antes de que el
-receptor de `InterfacesAdded` pudiera actuar y después no emitió otra propiedad
-relevante.
+Date: 2026-08-13. With the pen docked, the silo reported orientation and
+charging at 90 %, but the previous BlueZ bond rejected `Connect`. The recovery
+correctly reached four failures, removed only the stale SPEN and opened another
+window with the reset command. The device reappeared as visible and unpaired,
+but got no further: BlueZ recreated it before the `InterfacesAdded` receiver
+could act, and afterwards emitted no other relevant property.
 
-Durante los 65 segundos acotados de pairing, el servicio recorre ahora también
-el conjunto actual de objetos BlueZ y aplica la misma validación estricta de
-nombre, UUID, garaje y candidato. Esto cierra la carrera sin ampliar qué
-dispositivos puede autorizar ni repetir resets fuera de una ventana activa.
+During the bounded 65 seconds of pairing, the service now also walks BlueZ's
+current object set and applies the same strict validation of name, UUIDs, silo
+and candidate. That closes the race without widening which devices it may
+authorise and without repeating resets outside an active window.
 
-Tab Companion 0.9.1 se instaló con el S Pen todavía insertado. El servicio abrió
-la ventana, encontró el objeto ya visible, completó `Bonded/Paired/Trusted` y
-BlueZ lo dejó conectado sin intervención física adicional. El backend publicó
-`GestureAvailable=true`; Battery Level pasó de la lectura inicial del 90 % a
-80 %, cerrando también la validación pendiente de porcentajes intermedios.
+Tab Companion 0.9.1 was installed with the S Pen still docked. The service
+opened the window, found the already-visible object, completed
+`Bonded/Paired/Trusted` and BlueZ left it connected with no additional physical
+intervention. The backend published `GestureAvailable=true`; Battery Level went
+from the initial 90 % reading to 80 %, also closing the pending validation of
+intermediate percentages.
 
 ```text
 ubuntu-gts9u-companion_0.9.1_all.deb
 3cac7cb597659ab403810323bd54948e2262896a263b9d6f8a166cf3e8671471
 ```
 
-## Sesión 70 — puntero con giroscopio raw y vibración de notificaciones
+## Session 70 — a raw-gyroscope pointer and notification haptics
 
-Fecha: 2026-08-13. La primera versión del puntero creaba correctamente el
-ratón `uinput`, pero dejaba el S Pen en modo `0x10`: Button State sólo aporta
-movimiento durante el reconocimiento de gestos y el cursor permanecía quieto.
-La decompilación del controlador stock distingue `DEFAULT` (`0x10`) de
-`SENSOR_ON` (`0x04`) y activa por separado Raw Sensor Data. Una captura física
-en este último modo produjo 430 muestras en 18 segundos. La primera prueba
-guiada dio para movimiento horizontal una desviación de gyro X de 1643 frente
-a 376 en Y, y para movimiento vertical 1455 en Y frente a 1135 en X. La prueba
-visual posterior descubrió que X era en realidad el giro longitudinal del
-lápiz: movía el cursor al hacerlo rodar, y el eje Y cambiaba de signo al
-rotarlo 180°. La corrección final descarta gyro X y usa la gravedad del
-acelerómetro en el plano local Y/Z. Proyecta gyro Y/Z sobre gravedad para el
-eje horizontal y sobre su perpendicular para el vertical, manteniendo ambos
-invariantes ante cualquier giro axial. La zona muerta es de 120 cuentas.
+Date: 2026-08-13. The pointer's first version created the `uinput` mouse
+correctly, but left the S Pen in mode `0x10`: Button State only supplies
+movement during gesture recognition and the cursor stayed still. Decompiling
+the stock controller distinguishes `DEFAULT` (`0x10`) from `SENSOR_ON` (`0x04`)
+and enables Raw Sensor Data separately. A physical capture in the latter mode
+produced 430 samples in 18 seconds. The first guided test gave, for horizontal
+movement, a gyro X deviation of 1,643 against 376 on Y, and for vertical
+movement 1,455 on Y against 1,135 on X. The later visual test discovered that X
+was in fact the pen's lengthwise roll: it moved the cursor when the pen was
+rolled, and the Y axis changed sign when it was rotated 180°. The final
+correction discards gyro X and uses the accelerometer's gravity in the local
+Y/Z plane. It projects gyro Y/Z onto gravity for the horizontal axis and onto
+its perpendicular for the vertical, keeping both invariant under any axial
+roll. The dead zone is 120 counts.
 
-El backend suscribe Raw Sensor Data sólo en modo puntero y con el lápiz fuera,
-integra las muestras a unos 24 Hz y vuelve a `0x10` al seleccionar gestos o
-insertarlo. Esta última condición corrige una regresión observada físicamente:
-`SENSOR_ON` durante la carga hacía caer el enlace antes de terminar el ciclo de
-emparejamiento y batería. Tras instalar la corrección, BlueZ mantuvo
-`Paired/Bonded/Trusted/Connected` durante más de 20 segundos con `pen_docked=1`
-y carga activa. Al retirarlo, el modo raw vuelve sin intervención.
+The backend subscribes to Raw Sensor Data only in pointer mode and with the pen
+out, integrates the samples at about 24 Hz, and returns to `0x10` when gestures
+are selected or the pen is docked. That last condition fixes a physically
+observed regression: `SENSOR_ON` during charging made the link drop before the
+pairing and battery cycle finished. After installing the fix, BlueZ kept
+`Paired/Bonded/Trusted/Connected` for more than 20 seconds with `pen_docked=1`
+and charging active. On removal, raw mode returns with no intervention.
 
-Sensibilidad, suavizado y aceleración se recalibraron para el rango real del
-sensor. Con el servicio instalado, mover el lápiz generó 621 eventos relativos
-no nulos en 18 segundos, con ambos signos y ambos ejes, a través de
-`/dev/input/event9`. Queda la confirmación visual subjetiva de dirección y
-velocidad.
+Sensitivity, smoothing and acceleration were recalibrated for the sensor's real
+range. With the service installed, moving the pen generated 621 non-zero
+relative events in 18 seconds, with both signs and both axes, through
+`/dev/input/event9`. The subjective visual confirmation of direction and speed
+remains.
 
-Los tres pulsos del teclado pasan de 8/14/22 a 12/22/34 ms. El servicio traduce
-también las peticiones de la extensión que GNOME Shell ya tuviera en memoria,
-por lo que no exige cerrar sesión tras actualizar. Para notificaciones se evitó
-depender de una recarga de JavaScript en Wayland: el propio servicio observa
-las llamadas estándar `org.freedesktop.Notifications.Notify`, agrupa duplicados
-durante 300 ms y aplica un pulso de 60 ms cuando la preferencia, activa de
-fábrica, está encendida. Una notificación real trazó GPIO554 alto durante
-64,456 ms.
+The keyboard's three pulses go from 8/14/22 to 12/22/34 ms. The service also
+translates the requests of whatever extension copy GNOME Shell may already have
+in memory, so it does not require logging out after an update. For
+notifications, depending on a JavaScript reload under Wayland was avoided: the
+service itself watches the standard `org.freedesktop.Notifications.Notify`
+calls, groups duplicates over 300 ms and applies a 60 ms pulse when the
+preference, on by default, is enabled. A real notification traced GPIO554 high
+for 64.456 ms.
 
-El paquete 0.10.0 superó compilación Python, sintaxis JavaScript, esquema
-GSettings estricto, Desktop Entry y AppStream pedante:
+Package 0.10.0 passed Python compilation, JavaScript syntax, the strict
+GSettings schema, Desktop Entry and pedantic AppStream:
 
 ```text
 ubuntu-gts9u-companion_0.10.0_all.deb
 f5cccca41923c9230aae28ba8f9f08964c6614e6053749adfcf8e08d050b18ef
 ```
 
-## Sesión 71 — detección y recuperación de una conexión GATT fantasma
+## Session 71 — detecting and recovering from a phantom GATT connection
 
-Fecha: 2026-08-13. Aunque BlueZ publicaba simultáneamente `Connected`,
-`Paired`, `Bonded`, `Trusted` y `ServicesResolved`, los gestos y el puntero no
-recibían datos y la app mostraba 0 %. La inspección de todas las características
-separó el estado superficial del enlace real: cada `ReadValue` y `WriteValue`
-fallaba, Mode conservaba en caché `0x04` pese a estar seleccionado Gestos y
-Battery Level reproducía el antiguo `00 00`. Por tanto, ese cero no era una
-medición física.
+Date: 2026-08-13. Although BlueZ published `Connected`, `Paired`, `Bonded`,
+`Trusted` and `ServicesResolved` all at once, the gestures and the pointer
+received no data and the app showed 0 %. Inspecting every characteristic
+separated the surface state from the real link: every `ReadValue` and
+`WriteValue` failed, Mode kept a cached `0x04` despite Gestures being selected,
+and Battery Level reproduced the old `00 00`. That zero was therefore not a
+physical measurement.
 
-Reiniciar únicamente `bluetooth.service` hizo efectivo el descarte pendiente
-del S Pen. El servicio del garaje volvió a autorizarlo sin interacción; una
-lectura GATT real devolvió Battery Level `[100, 0]`, Mode aceptó `0x10` y Tab
-Companion publicó 100 %, carga y gestos disponibles.
+Restarting `bluetooth.service` alone made the S Pen's pending removal
+effective. The silo's service authorised it again with no interaction; a real
+GATT read returned Battery Level `[100, 0]`, Mode accepted `0x10` and Tab
+Companion published 100 %, charging and gestures available.
 
-Tab Companion 0.10.1 no acepta ya una notificación de batería almacenada hasta
-que `ReadValue` haya respondido en la conexión actual. También exige una
-operación GATT correcta para anunciar gestos disponibles. Tres fallos GATT
-consecutivos con el lápiz insertado solicitan al servicio privilegiado que
-reemplace exclusivamente ese vínculo; si BlueZ no responde a `RemoveDevice`,
-reinicia sólo el daemon Bluetooth y continúa el emparejamiento acotado.
+Tab Companion 0.10.1 no longer accepts a stored battery notification until
+`ReadValue` has answered on the current connection. It also requires a
+successful GATT operation before announcing gestures as available. Three
+consecutive GATT failures with the pen docked ask the privileged service to
+replace that bond alone; if BlueZ does not answer `RemoveDevice`, it restarts
+the Bluetooth daemon alone and continues the bounded pairing.
 
-La ruta nueva se probó de extremo a extremo forzando su llamada sobre un vínculo
-sano: pasó por no emparejado, abrió la ventana del garaje y regresó por sí sola
-a `Paired/Bonded/Trusted/Connected`, Battery Level 100 % y
-`GestureAvailable=true`. Ya con el lápiz fuera, una conmutación final abrió Raw
-Sensor Data y recibió muestras nuevas en Puntero; al volver a Gestos lo cerró,
-mantuvo Button State suscrito y las lecturas directas devolvieron Mode `[16]`
-(`0x10`) y Battery Level `[100, 0]`.
+The new route was tested end to end by forcing its call on a healthy bond: it
+went through unpaired, opened the silo's window and returned by itself to
+`Paired/Bonded/Trusted/Connected`, Battery Level 100 % and
+`GestureAvailable=true`. With the pen out, a final switch opened Raw Sensor
+Data and received new samples in Pointer; returning to Gestures closed it, kept
+Button State subscribed, and the direct reads returned Mode `[16]` (`0x10`) and
+Battery Level `[100, 0]`.
 
 ```text
 ubuntu-gts9u-companion_0.10.1_all.deb
 a3aeabd722727df80c2d8ad2370d95643b46729fafbe10ec75c6400a7f8c0c75
 ```
 
-## Sesión 72 — dirección, recorrido horizontal, hápticos y créditos
+## Session 72 — direction, horizontal travel, haptics and credits
 
-Fecha: 2026-08-13. La prueba visual de 0.10.1 confirmó que la compensación de
-giro axial ya era estable, pero ambos ejes se percibían con el signo contrario
-y el recorrido horizontal quedaba corto frente al ancho del panel. La salida
-final invierte X e Y y aplica a X una ganancia adicional de 1,6×, próxima a la
-relación 2960:1848 de la pantalla. Sensibilidad, aceleración y suavizado siguen
-actuando antes de esa corrección geométrica.
+Date: 2026-08-13. The visual test of 0.10.1 confirmed that the axial-roll
+compensation was now stable, but both axes felt inverted and the horizontal
+travel fell short of the panel's width. The final output inverts X and Y and
+applies an additional 1.6× gain to X, close to the screen's 2960:1848 ratio.
+Sensitivity, acceleration and smoothing still act before that geometric
+correction.
 
-Los niveles hápticos del teclado aumentan de 12/22/34 a 24/42/66 ms. La
-extensión nueva solicita directamente esos valores; el backend sigue traduciendo
-8/14/22, los tokens de la copia que GNOME Shell puede mantener cargada, para que
-la mejora sea inmediata sin cerrar sesión. Las tres llamadas físicas devolvieron
-éxito con el motor disponible.
+The keyboard's haptic levels increase from 12/22/34 to 24/42/66 ms. The new
+extension requests those values directly; the backend still translates 8/14/22,
+the tokens of the copy GNOME Shell may keep loaded, so the improvement is
+immediate without logging out. All three physical calls returned success with
+the motor available.
 
-«Acerca de», el README y la documentación acreditan ahora a
-[PenMouse S](https://github.com/jojczak/PenMouseS), de Jakub J (`@jojczak`),
-como inspiración conceptual del puntero aéreo y enlazan su repositorio
-GPL-3.0. Se aclara que Tab Companion no reutiliza su código Android: la ruta
-BLE + `uinput` es una implementación nativa Linux independiente. La API
-libadwaita instalada confirmó soporte para el enlace adicional.
+"About", the README and the documentation now credit
+[PenMouse S](https://github.com/jojczak/PenMouseS), by Jakub J (`@jojczak`), as
+the conceptual inspiration for the air pointer and link to its GPL-3.0
+repository. It is made clear that Tab Companion reuses none of its Android
+code: the BLE + `uinput` route is an independent native Linux implementation.
+The installed libadwaita API confirmed support for the additional link.
 
-Tras instalar 0.10.2, el S Pen continuó conectado, publicó una nueva medición
-real de batería del 70 % y conservó los gestos disponibles. Al dejar seleccionado
-Puntero, Raw Sensor Data quedó suscrito y entregó una muestra nueva.
+After installing 0.10.2, the S Pen stayed connected, published a new real
+battery measurement of 70 % and kept gestures available. With Pointer left
+selected, Raw Sensor Data stayed subscribed and delivered a fresh sample.
 
 ```text
 ubuntu-gts9u-companion_0.10.2_all.deb
 215450fcdff6a6ccf0f90da6dee95ac07064e5e62545122a09923dcf9ead7c7b
 ```
 
-## Sesión 73 — clic izquierdo mantenido en modo puntero
+## Session 73 — a held left click in pointer mode
 
-Fecha: 2026-08-13. Raw Sensor Data entregó 1094 paquetes de 13 bytes durante
-45 segundos: marcador y seis enteros de acelerómetro/giroscopio, sin campo de
-botón. Button State no notificó durante esa captura en `SENSOR_ON`. El código
-de PenMouse S confirma asimismo que su SDK registra movimiento y botón como
-unidades independientes y conserva los eventos `ACTION_DOWN`/`ACTION_UP` para
-construir el gesto pulsado.
+Date: 2026-08-13. Raw Sensor Data delivered 1,094 packets of 13 bytes over 45
+seconds: a marker and six accelerometer/gyroscope integers, with no button
+field. Button State did not notify during that capture in `SENSOR_ON`. PenMouse
+S's code likewise confirms that its SDK registers movement and button as
+independent units and keeps the `ACTION_DOWN`/`ACTION_UP` events to build the
+held gesture.
 
-Linux ya entrega el botón lateral por el digitalizador como `BTN_STYLUS`, pero
-`_pen_button` lo enviaba siempre al temporizador simple/doble/larga de Gestos.
-En Puntero se enruta ahora directamente al ratón virtual: down produce
-`BTN_LEFT=1`, el movimiento raw continúa sin soltarlo y up produce
-`BTN_LEFT=0`. Esto permite clic normal y arrastre continuo. Cambiar de modo,
-desactivar las funciones remotas o perder el lector fuerza una liberación para
-evitar que el botón quede atascado.
+Linux already delivers the side button through the digitizer as `BTN_STYLUS`,
+but `_pen_button` always sent it to Gestures' single/double/long timer. In
+Pointer it is now routed straight to the virtual mouse: down produces
+`BTN_LEFT=1`, the raw movement continues without releasing it, and up produces
+`BTN_LEFT=0`. That allows a normal click and a continuous drag. Changing mode,
+disabling the remote features or losing the reader forces a release so the
+button cannot get stuck.
 
-Una prueba aislada del backend confirmó la secuencia exacta
-`[('BTN_LEFT', 1), ('BTN_LEFT', 0)]` y que eventos duplicados no generan bordes
-adicionales. La 0.10.3 quedó instalada con Puntero activo, vínculo GATT sano y
-una nueva lectura real de batería del 40 %. La validación física del arrastre
-queda pendiente de la prueba interactiva de la usuaria.
+An isolated backend test confirmed the exact sequence `[('BTN_LEFT', 1),
+('BTN_LEFT', 0)]` and that duplicate events generate no additional edges.
+0.10.3 was installed with Pointer active, a healthy GATT bond and a new real
+battery reading of 40 %. Physical validation of the drag awaits the owner's
+interactive test.
 
 ```text
 ubuntu-gts9u-companion_0.10.3_all.deb
 7a7c8398382eccbeda82af20d0a4f3e6c73f8a63291bab704d684b0b12fbeb6f
 ```
 
-## Sesión 74 — recuperación rápida del vínculo BLE tras reiniciar
+## Session 74 — fast recovery of the BLE bond after a reboot
 
-Fecha: 2026-08-13. Después de un reinicio, el S Pen permaneció insertado pero
-el vínculo guardado no volvió a conectar. El servicio sí detectó el caso y acabó
-recuperándolo solo, aunque demasiado tarde: cuatro llamadas `Connect` fallidas,
-cada una capaz de esperar unos 30 segundos, retrasaron el nuevo emparejamiento
-hasta 91 segundos. A las 15:01 eliminó exclusivamente el vínculo del S Pen,
-abrió el anuncio del garaje y regresó a `Paired/Bonded/Trusted/Connected`.
-Una lectura GATT directa confirmó que el estado recuperado era real: Battery
-Level `[80, 0]` y Mode `[16]`, no propiedades almacenadas por BlueZ.
+Date: 2026-08-13. After a reboot, the S Pen stayed docked but the stored bond
+would not reconnect. The service did detect the case and eventually recovered
+it on its own, but too late: four failed `Connect` calls, each able to wait
+some 30 seconds, delayed the new pairing to 91 seconds. At 15:01 it removed the
+S Pen's bond alone, opened the silo's advertisement and returned to
+`Paired/Bonded/Trusted/Connected`. A direct GATT read confirmed the recovered
+state was real: Battery Level `[80, 0]` and Mode `[16]`, not properties stored
+by BlueZ.
 
-Tab Companion 0.10.4 limita ahora cada conexión a 12 segundos y sustituye el
-vínculo después de dos fallos, incluidos los `NoReply`. Tanto la recuperación
-por conexión como la solicitada por el backend GATT usan la misma eliminación
-asíncrona; esta última admite también el estado `Paired` pero desconectado. Si
-vence la ventana de anuncio, el servicio libera su estado de reparación y
-vuelve a abrirla sin exigir retirar el lápiz. Además, el objeto D-Bus ya no se
-exporta hasta que BlueZ y su adaptador existen, evitando el manejador duplicado
-observado durante dos arranques.
+Tab Companion 0.10.4 now bounds each connection to 12 seconds and replaces the
+bond after two failures, `NoReply` included. Both connection-driven recovery
+and the one requested by the GATT backend use the same asynchronous removal;
+the latter also accepts the `Paired` but disconnected state. If the
+advertisement window expires, the service releases its repair state and reopens
+it without requiring the pen to be removed. Also, the D-Bus object is no longer
+exported until BlueZ and its adapter exist, avoiding the duplicate handler
+observed across two boots.
 
-La ruta completa se repitió deliberadamente con el lápiz insertado tras
-instalar 0.10.4. `RecoverStaleBond` eliminó el vínculo, activó el anuncio y lo
-dejó otra vez emparejado y conectado sin interacción. Las lecturas finales
-devolvieron Battery Level `[100, 0]`, Mode `[16]` y Tab Companion publicó
-`GestureAvailable=true`.
+The complete route was deliberately repeated with the pen docked after
+installing 0.10.4. `RecoverStaleBond` removed the bond, enabled the
+advertisement and left it paired and connected again with no interaction. The
+final reads returned Battery Level `[100, 0]`, Mode `[16]` and Tab Companion
+published `GestureAvailable=true`.
 
 ```text
 ubuntu-gts9u-companion_0.10.4_all.deb
 70e3d50715782081c1e0641178bced1505def8437487bed8cd6955b44619f5d9
 ```
 
-## Sesión 75 — orden de controles del S Pen y página de vibración compacta
+## Session 75 — the order of the S Pen's controls, and a compact haptics page
 
-Fecha: 2026-08-13. La página S Pen presenta ahora Batería y Comportamiento antes
-de Funciones remotas. Así, los dos ajustes independientes del digitalizador se
-leen antes de elegir si Bluetooth se usa para Gestos o Puntero. No cambia la
-lógica, los valores guardados ni la disponibilidad dinámica de cada grupo.
+Date: 2026-08-13. The S Pen page now presents Battery and Behaviour before
+Remote features. That way the digitizer's two independent settings are read
+before choosing whether Bluetooth is used for Gestures or Pointer. It changes
+neither the logic, the stored values, nor each group's dynamic availability.
 
-La página Vibración elimina la cabecera `Adw.StatusPage` con el icono de
-teléfono. Teclado en pantalla y Notificaciones pasan a ser el contenido inicial,
-evitando la altura vacía y el desplazamiento vertical innecesario observado a
-960 × 760. El paquete mantuvo las validaciones estrictas de GSettings, Desktop
-Entry y AppStream.
+The Haptics page removes the `Adw.StatusPage` header with the phone icon.
+On-screen keyboard and Notifications become the initial content, avoiding the
+empty height and the unnecessary vertical scrolling observed at 960 × 760. The
+package kept the strict GSettings, Desktop Entry and AppStream validations.
 
 ```text
 ubuntu-gts9u-companion_0.10.5_all.deb
 1b8455b62ce72db71d18300c5d1ff0313b4ef7366c2855f41c5bc8f28d81c0d9
 ```
 
-## Sesión 76 — prueba háptica fiel a la intensidad del teclado
+## Session 76 — a haptic test faithful to the keyboard's intensity
 
-Fecha: 2026-08-13. El botón Probar vibración utilizaba antes un pulso fijo de
-100 ms, por lo que no representaba ninguno de los tres niveles configurables.
-Ahora lee `keyboard-haptics-strength` en el momento de pulsarlo y usa la misma
-tabla que el teclado en pantalla: Ligera 24 ms, Media 42 ms y Fuerte 66 ms, con
-magnitud 65535. Los valores fuera de rango se limitan al extremo válido igual
-que en la extensión de GNOME Shell. El subtítulo aclara que la prueba reproduce
-la intensidad elegida para el teclado.
+Date: 2026-08-13. The Test vibration button used a fixed 100 ms pulse, so it
+represented none of the three configurable levels. It now reads
+`keyboard-haptics-strength` at the moment it is pressed and uses the same table
+as the on-screen keyboard: Light 24 ms, Medium 42 ms and Strong 66 ms, at
+magnitude 65535. Out-of-range values are clamped to the valid extreme, as in
+the GNOME Shell extension. The subtitle makes clear that the test reproduces
+the intensity chosen for the keyboard.
 
 ```text
 ubuntu-gts9u-companion_0.10.6_all.deb
 0dc708f72abc8fa95d77a7ac5a3a21ea6f56109d2940e98d8d81f8c3851a945c
 ```
 
-## Sesión 77 — texto explícito para la prueba de intensidad
+## Session 77 — explicit text for the intensity test
 
-Fecha: 2026-08-13. El selector Intensidad indica ahora que su valor se aplica
-al teclado en pantalla y al botón de prueba. La fila se titula «Probar intensidad
-seleccionada» y explica que reproduce exactamente la vibración de una pulsación
-del teclado en pantalla. El botón conserva la etiqueta breve «Probar». Los
-textos equivalentes se actualizaron en español, francés, alemán, italiano y
-portugués; la lógica 24/42/66 ms de la 0.10.6 no cambia.
+Date: 2026-08-13. The Intensity selector now states that its value applies to
+the on-screen keyboard and to the test button. The row is titled "Test the
+selected intensity" and explains that it reproduces exactly the vibration of an
+on-screen keyboard press. The button keeps the short label "Test". The
+equivalent texts were updated in Spanish, French, German, Italian and
+Portuguese; 0.10.6's 24/42/66 ms logic does not change.
 
 ```text
 ubuntu-gts9u-companion_0.10.7_all.deb
 dabd01e77dfca45e1d59e1699a17602352389551588787eca1927c5bf4e86c91
 ```
 
-## Sesión 78 — funciones remotas condicionadas por Bluetooth
+## Session 78 — remote features conditioned on Bluetooth
 
-Fecha: 2026-08-13. `BluetoothAvailable` comprobaba únicamente la existencia de
-`/sys/class/bluetooth/hci0`, que permanece aunque el usuario apague el adaptador.
-El backend consulta ahora `org.bluez.Adapter1.Powered` y escucha su cambio por
-D-Bus. La disponibilidad efectiva es la conjunción de ese estado y la
-preferencia `spen-remote-enabled`.
+Date: 2026-08-13. `BluetoothAvailable` only checked for the existence of
+`/sys/class/bluetooth/hci0`, which persists even when the user switches the
+adapter off. The backend now queries `org.bluez.Adapter1.Powered` and listens
+for its change over D-Bus. Effective availability is the conjunction of that
+state and the `spen-remote-enabled` preference.
 
-Al apagar Bluetooth se limpian GATT y el puntero, el servicio privilegiado deja
-de conectar y la UI muestra el mismo estado reducido que con las funciones
-remotas desactivadas. El interruptor aparece apagado y no se puede accionar; una
-fila explica que es necesario activar Bluetooth. El valor GSettings no se
-sobrescribe. Al recibir `Powered=true`, backend y ventana restauran de inmediato
-ese valor guardado: desactivado permanece desactivado y activado vuelve a
-habilitar modos, batería y acciones. También se bloquean los eventos tardíos de
-botón o sensor raw mientras el estado efectivo es falso.
+Switching Bluetooth off clears the GATT and the pointer, the privileged service
+stops connecting, and the UI shows the same reduced state as with the remote
+features disabled. The switch appears off and cannot be operated; a row
+explains that Bluetooth has to be turned on. The GSettings value is not
+overwritten. On receiving `Powered=true`, the backend and the window
+immediately restore that stored value: off stays off, and on re-enables modes,
+battery and actions. Late button or raw-sensor events are also blocked while
+the effective state is false.
 
-La prueba física midió 0,23 s desde la orden de apagado hasta la propiedad D-Bus
-falsa. El encendido completo del controlador tardó 1,8 s; la restauración se
-produjo en la misma señal `Powered=true`. Se verificaron ambos valores guardados
-y el S Pen regresó a `Connected`, Battery Level 70 % y gestos disponibles. Un
-`UnknownObject` observado cuando `RemoveDevice` invalidaba el vínculo entre la
-lectura y la escritura de `Trusted` queda tratado como la carrera esperada, sin
-traza ni interrupción del bucle GLib. Un segundo ciclo físico con esa corrección
-terminó sin traceback, conservó la preferencia activa y volvió a publicar
-Bluetooth disponible, Battery Level 90 % y gestos disponibles.
+The physical test measured 0.23 s from the switch-off command to the false
+D-Bus property. Powering the controller up fully took 1.8 s; the restoration
+happened on that same `Powered=true` signal. Both stored values were verified
+and the S Pen returned to `Connected`, Battery Level 70 % and gestures
+available. An `UnknownObject` observed when `RemoveDevice` invalidated the bond
+between reading and writing `Trusted` is treated as the expected race, with no
+traceback and no interruption of the GLib loop. A second physical cycle with
+that fix finished with no traceback, kept the preference active and published
+Bluetooth available, Battery Level 90 % and gestures available again.
 
 ```text
 ubuntu-gts9u-companion_0.10.8_all.deb
 bf9e04819278947039d29d26710bce277ea8f8287aa0868722530637bc78781b
 ```
 
-## Sesión 79 — base experimental del lector EL721/UDFPS
+## Session 79 — the experimental base of the EL721/UDFPS reader
 
-Fecha: 2026-08-13. El overlay R03 y el controlador GPL de Samsung identifican
-el lector en pantalla como un EgisTec EL721 seguro: LDO2 del PM8550B a 3,3 V,
-enable/reset en GPIO155 y modelo `X916`. El SPI queda asignado a TrustZone; no es
-correcto exponer imágenes o transacciones crudas desde Linux.
+Date: 2026-08-13. The R03 overlay and Samsung's GPL driver identify the
+under-display reader as a secure EgisTec EL721: PM8550B's LDO2 at 3.3 V,
+enable/reset on GPIO155 and model `X916`. The SPI is assigned to TrustZone; it
+is not correct to expose raw images or transactions from Linux.
 
-Se preparan cuatro capas independientes: un controlador mínimo de
-alimentación/reset con `/dev/esfp0`, QTEE integrado para el futuro acceso a la
-aplicación firmada `securefp`, el modo óptico/círculo del panel ANA38407 con
-restauración de brillo y watchdog, y la exclusión Goodix limitada al rectángulo
-del sensor. La intención es que una lectura no pulse controles bajo el dedo sin
-bloquear el resto de la pantalla.
+Four independent layers are prepared: a minimal power/reset controller with
+`/dev/esfp0`, QTEE integrated for future access to the signed `securefp`
+application, the ANA38407 panel's optical/circle mode with brightness
+restoration and a watchdog, and Goodix exclusion limited to the sensor's
+rectangle. The intention is that a read should not press controls under the
+finger without blocking the rest of the screen.
 
-Esta infraestructura no convierte todavía el lector en una fuente de
-autenticación. `libfprint` no soporta el EL721 y la pila Samsung depende de
-TrustZone y de componentes Android. El análisis del firmware fija la cadena
-`fingerprint-service` → `libsfp_sensor` → `libsfp_teegw` →
-`libQSEEComAPI` por objetos → AppLoader compatible UID 122 →
-`lookupTA("securefp")`. `securefp` es un TA precargado, no un `.mbn` ausente; la
-ruta opcional `fpta` está vacía y `authnr.mbn` corresponde a otro autenticador.
+This infrastructure does not yet turn the reader into an authentication source.
+`libfprint` does not support the EL721 and Samsung's stack depends on TrustZone
+and Android components. Analysing the firmware fixes the chain
+`fingerprint-service` → `libsfp_sensor` → `libsfp_teegw` → `libQSEEComAPI` by
+objects → compatible AppLoader UID 122 → `lookupTA("securefp")`. `securefp` is
+a preloaded TA, not a missing `.mbn`; the optional `fpta` path is empty and
+`authnr.mbn` corresponds to a different authenticator.
 
-Quedan pendientes el arranque físico de las cuatro capas, comprobar de forma
-no destructiva que UID 122 devuelve el objeto de `securefp` y crear un backend
-seguro para `fprintd`. Registro, verificación, desbloqueo y GDM siguen marcados
-como no disponibles hasta su validación completa. La arquitectura, ABI y
-protocolo de pruebas quedan en `fingerprint-reader.md`.
+Still pending are physically starting the four layers, checking
+non-destructively that UID 122 returns `securefp`'s object, and creating a
+secure backend for `fprintd`. Enrolment, verification, unlocking and GDM remain
+marked unavailable until fully validated. The architecture, ABI and test
+protocol live in `fingerprint-reader.md`.
 
-La implementación final se recompiló desde cero sobre Linux `7.2-rc3` con
-Clang 22. El kernel, el DTB y la configuración resultantes contienen los
-símbolos de EL721, QTEE, FOD del panel y FOD Goodix:
+The final implementation was rebuilt from scratch on Linux `7.2-rc3` with
+Clang 22. The resulting kernel, DTB and configuration contain the EL721, QTEE,
+panel FOD and Goodix FOD symbols:
 
 ```text
 Image.gz  5057fcc1eba5d3b824fd4c6315f791df43ee5886e34fce577431403fb5f75ea5
@@ -5159,61 +5158,60 @@ DTB       b69f6d138e028ca507007e037d307c6ba859959d883a9be09999243d2520f3a9
 config    16421292ef8d604803d44cbd202521004d42832ac230c4bc2d2caa6f9fb09a8c
 ```
 
-El bundle Android v4 pasó todas las comprobaciones estáticas: tamaños de
-partición, AVB, LZ4 legacy, DTB anexado, DTB de `vendor_boot`, símbolos y
-configuración. Sus dos imágenes modificadas quedaron en:
+The Android v4 bundle passed every static check: partition sizes, AVB, legacy
+LZ4, the appended DTB, `vendor_boot`'s DTB, symbols and configuration. Its two
+modified images were:
 
 ```text
 boot.img        fe1f274af9d3ed524007093560bd3ab46158c2eb13717c19327407f341add041
 vendor_boot.img 8599e133383e4e50227d9e2ac480bd3e0c53aa162dfad9bd83e1ee52b2ae63d9
 ```
 
-Antes de la primera escritura se guardaron fuera del dispositivo `boot`,
-`init_boot`, `vendor_boot` y los módulos. Una compilación inmediatamente
-anterior, funcionalmente equivalente salvo por limpieza de código y el apagado
-del EL721 al suspender, se escribió y verificó por lectura antes de reiniciar.
-La tablet no volvió a anunciar SSH después de ese reinicio. Todavía no hay
-consola o USB para distinguir un arranque detenido del conocido primer reinicio
-problemático del port, por lo que no se atribuye el incidente al lector ni se
-considera validado el arranque. El bundle final no se vuelve a escribir a
-ciegas: primero se recuperará el equipo con un reinicio forzado y se ejecutará
-la matriz no destructiva documentada.
+Before the first write, `boot`, `init_boot`, `vendor_boot` and the modules were
+saved off the device. An immediately preceding build, functionally equivalent
+apart from code cleanup and powering the EL721 down on suspend, was written and
+verified by reading back before rebooting. The tablet did not announce SSH
+again after that reboot. There is still no console or USB to distinguish a
+halted boot from the port's known problematic first reboot, so the incident is
+not attributed to the reader and the boot is not considered validated. The
+final bundle is not written again blindly: the machine will first be recovered
+with a forced reboot and the documented non-destructive matrix run.
 
-El probe `scripts/probe-qtee-securefp.c` también quedó fijado. Su fuente
-tiene SHA-256 `06c664e0d322c8c6cbcb034274ad34c5ea9cdb6f8c68b1af0842c0e898bdf51e`
-y el binario AArch64 estático de prueba
-`44fc85bbb1547b9007e9adffc997e4662ac7bed3f3ce4fbd056a6e8d0260fba1`.
-Sólo consulta `lookupTA("securefp")`; no abre el objeto de aplicación ni ejecuta
-operaciones biométricas.
+The probe `scripts/probe-qtee-securefp.c` was also pinned. Its source has
+SHA-256 `06c664e0d322c8c6cbcb034274ad34c5ea9cdb6f8c68b1af0842c0e898bdf51e` and
+the static AArch64 test binary
+`44fc85bbb1547b9007e9adffc997e4662ac7bed3f3ce4fbd056a6e8d0260fba1`. It only
+queries `lookupTA("securefp")`; it neither opens the application object nor
+runs biometric operations.
 
-## Sesión 80 — recuperación del bootloop y aislamiento experimental
+## Session 80 — recovering from the bootloop, and experimental isolation
 
-Fecha: 2026-08-13. Tras escribir la primera infraestructura UDFPS, ABL aceptó
-`boot`, `vendor_boot` e `init_boot`, descomprimió el kernel y saltó a él, pero la
-tablet se reinició antes de montar Ubuntu. `/proc/last_kmsg` conservó catorce
-intentos con la misma secuencia y ningún `Linux version`, panic o journal nuevo:
-no fue un rechazo AVB, un initramfs incorrecto ni corrupción del rootfs, sino
-una regresión anterior a disponer de logs persistentes.
+Date: 2026-08-13. After writing the first UDFPS infrastructure, ABL accepted
+`boot`, `vendor_boot` and `init_boot`, decompressed the kernel and jumped to
+it, but the tablet rebooted before mounting Ubuntu. `/proc/last_kmsg` kept
+fourteen attempts with the same sequence and no `Linux version`, no panic and
+no new journal: it was not an AVB rejection, a bad initramfs or root filesystem
+corruption, but a regression earlier than having persistent logs.
 
-Se probó una segunda imagen con QCOMTEE convertido de built-in a módulo
-firmado, bloqueado para carga automática. Sus particiones se verificaron por
-hash después de escribir y `init_boot` quedó intacto, pero tampoco alcanzó SSH.
-Esto descarta el sondeo de QCOMTEE como causa única; otra capa experimental o
-su interacción participa en el reinicio.
+A second image was tried with QCOMTEE converted from built-in to a signed
+module, blocked from automatic loading. Its partitions were verified by hash
+after writing and `init_boot` was left intact, but it did not reach SSH either.
+That rules out QCOMTEE's probe as the sole cause; another experimental layer or
+an interaction takes part in the reboot.
 
-La estrategia queda corregida para que una build normal sea conservadora:
-recupera desde `5046f92` el DT y el panel exactos del último arranque validado,
-no compila EL721 y no aplica los cambios FOD de Goodix. QCOMTEE conserva el
-estado modular de la configuración base y se empaqueta firmado, pero una regla
-de modprobe impide su carga automática. Sólo
-`ENABLE_FINGERPRINT_EXPERIMENTAL=1` introduce DT, panel, EL721 y Goodix-FOD.
-Así se podrán reintroducir sensor, panel, táctil y TEE una capa cada vez desde
-un arranque conocido, en lugar de volver a flashear las cuatro juntas.
+The strategy is corrected so that a normal build is conservative: it recovers
+from `5046f92` the exact DT and panel of the last validated boot, does not
+compile the EL721 and does not apply the Goodix FOD changes. QCOMTEE keeps the
+base configuration's modular state and is packaged signed, but a modprobe rule
+prevents automatic loading. Only `ENABLE_FINGERPRINT_EXPERIMENTAL=1` introduces
+the DT, panel, EL721 and Goodix-FOD. That way the sensor, panel, touch and TEE
+can be reintroduced one layer at a time from a known boot, instead of flashing
+all four together again.
 
-La segunda imagen quedó fuera de ADB y SSH tras cuatro minutos. Al no haber
-control remoto de teclas ni canal de bootloader, no es posible devolverla a
-TWRP por software. La recuperación preparada usa los respaldos byte a byte del
-último arranque físico validado, no una recompilación aproximada:
+The second image was out of reach of ADB and SSH after four minutes. With no
+remote key control and no bootloader channel, it cannot be returned to TWRP by
+software. The prepared recovery uses byte-for-byte backups of the last
+physically validated boot, not an approximate rebuild:
 
 ```text
 boot        5f33dcd527bf0693ddf5b6ae1100912f82d0f055ab7f965cabb89053f1df5e0b
@@ -5222,52 +5220,51 @@ vendor_boot ded9ae5ddd3f86ab0ff0c77c410553f86c8d900f663751c95c9751efc5bfb98b
 modules     ee5ef8855223d8229c764980bc10ba36aa4d8e6eb487dac4ed672f8fd3185f5f
 ```
 
-Con TWRP disponible de nuevo se restauraron `boot`, `vendor_boot` y los módulos
-desde esos tres respaldos. Antes de escribir se verificaron los ficheros
-transferidos y después se releyeron completas ambas particiones; los hashes
-coincidieron. `init_boot` siguió intacto y también conservó el hash del respaldo.
-El árbol de módulos fallido quedó apartado con sufijo
-`.20260813-fingerprint-failed`, y el árbol activo ya no contiene `qcomtee.ko` ni
-la regla temporal de modprobe.
+With TWRP available again, `boot`, `vendor_boot` and the modules were restored
+from those three backups. The transferred files were verified before writing
+and both partitions read back in full afterwards; the hashes matched.
+`init_boot` stayed intact and also kept the backup's hash. The failed module
+tree was set aside with the suffix `.20260813-fingerprint-failed`, and the
+active tree no longer contains `qcomtee.ko` or the temporary modprobe rule.
 
-El primer arranque tras esa restauración exacta no publicó ADB ni SSH en cuatro
-minutos. Como el conjunto restaurado es byte a byte el mismo que arrancó y fue
-validado en la sesión 74, se trata como el atasco conocido de primer reinicio o
-como estado de hardware persistente, no como evidencia de otra diferencia en
-las imágenes. Hace falta un reinicio forzado físico antes de continuar las
-pruebas A/B.
+The first boot after that exact restoration published neither ADB nor SSH in
+four minutes. Since the restored set is byte for byte the same one that booted
+and was validated in session 74, it is treated as the known first-reboot hang
+or as a persistent hardware state, not as evidence of another difference in the
+images. A forced physical reboot is needed before continuing the A/B tests.
 
-## Sesión 81 — aislamiento del panel y transporte seguro de `fingerpr`
+## Session 81 — isolating the panel, and secure transport of `fingerpr`
 
-Fecha: 2026-08-14. Se dividió el selector experimental en tres capas
-independientes: panel FOD, Goodix-FOD y EL721. Una compilación desde cero con
-únicamente el panel activado arrancó correctamente, por lo que esa capa queda
-descartada como causa del bootloop inicial. En hardware se validaron HBM, el
-watchdog de 15 segundos y la restauración exacta del brillo. El host DSI
-devuelve `0` en una escritura genérica correcta y el driver exigía erróneamente
-el número de bytes; corregido ese contrato, `fod_circle=1` alcanza el DDIC pero
-no produce imagen visible. El kernel Samsung carga antes una imagen Self
-Display y valida su checksum. Se descartó portar ese subsistema gráfico y se
-añadió un objetivo de GNOME que sigue la rotación, bloquea los toques exteriores
-y compensa el HBM global con la relación oficial 420/650 cd/m². El círculo queda
-fuera de la máscara y recibe el máximo óptico, mientras el fondo conserva su
-luminancia previa. La usuaria validó físicamente posición, HBM y compensación.
+Date: 2026-08-14. The experimental selector was split into three independent
+layers: panel FOD, Goodix-FOD and EL721. A from-scratch build with only the
+panel enabled booted correctly, so that layer is ruled out as the cause of the
+initial bootloop. On hardware, HBM, the 15-second watchdog and the exact
+brightness restoration were validated. The DSI host returns `0` on a correct
+generic write and the driver wrongly required the byte count; with that
+contract corrected, `fod_circle=1` reaches the DDIC but produces no visible
+image. The Samsung kernel first loads a Self Display image and validates its
+checksum.
+ Porting that graphics subsystem was
+ruled out and a GNOME target added that follows rotation, blocks the touches
+outside it and compensates the global HBM with the official 420/650 cd/m²
+ratio. The circle is left out of the mask and receives the optical maximum,
+while the background keeps its previous luminance. The owner physically
+validated position, HBM and compensation.
 
-QCOMTEE continúa modular y bloqueado para carga automática. Cargado a mano
-publica `/dev/tee0`, informa QTEE 5.2.0 y supera Qualcomm Diagnostics. El
-AppLoader UID 122 responde, pero `lookupTA("securefp")` devuelve `2` incluso
-desde el cliente privilegiado interno del kernel. `NON-HLOS.bin` contiene la
-imagen firmada `fingerpr.b00`–`b08`; se reconstruyó con los offsets ELF del
-driver Qualcomm, con un tamaño de 13.725.784 bytes. El allocator upstream no
-puede reservar ese bloque por `MAX_ORDER`, así que sólo los mensajes mayores de
-4 MiB pasan ahora por CMA/`qcom_tzmem`; el control normal conserva el camino
-upstream. La imagen completa alcanza `loadFromBuffer`, pero TrustZone devuelve
-`1` con los nombres `securefp` y `fingerpr`, tanto desde usuario como desde el
-cliente privilegiado. No se obtuvo el objeto de aplicación ni se ejecutó una
-operación biométrica.
+QCOMTEE stays modular and blocked from automatic loading. Loaded by hand it
+publishes `/dev/tee0`, reports QTEE 5.2.0 and passes Qualcomm Diagnostics. The
+UID 122 AppLoader answers, but `lookupTA("securefp")` returns `2` even from the
+kernel's internal privileged client. `NON-HLOS.bin` contains the signed image
+`fingerpr.b00`–`b08`; it was reassembled with the Qualcomm driver's ELF
+offsets, at 13,725,784 bytes. The upstream allocator cannot reserve that block
+because of `MAX_ORDER`, so only messages larger than 4 MiB now go through
+CMA/`qcom_tzmem`; normal control keeps the upstream path. The complete image
+reaches `loadFromBuffer`, but TrustZone returns `1` for both the `securefp` and
+`fingerpr` names, from user space and from the privileged client alike. Neither
+the application object was obtained nor a biometric operation run.
 
-La imagen de panel corregida quedó verificada por AVB y por lectura completa de
-la partición después de escribirla:
+The corrected panel image was verified by AVB and by reading the partition in
+full after writing it:
 
 ```text
 Image.gz  3f62bafce653866570c79ed7a829cc47c143cb0ff08e79d335040b7768cadded
@@ -5276,24 +5273,24 @@ boot.img  f08073bb6c1295775d3043c2ceb6ad0e72fa4c761fc96547240cc50e5a71bc2e
 modules   b7976a8cd4eb4a2e4af01a4f63bce4c69298dc830401ae375cf65374664e6768
 ```
 
-## Sesión 82 — eventos FOD reales y aislamiento regional
+## Session 82 — real FOD events and regional isolation
 
-Fecha: 2026-08-14. La capa Goodix-FOD arrancó de forma independiente junto al
-panel. La primera versión encontraba una dirección falsa (`0x06015447`) porque
-la estructura mainline omitía los 10 bytes reservados que Samsung coloca al
-final de `IC_INFO.misc`. La lectura cruda de los 181 bytes publicados por el
-GT6936 confirmó la extensión SEC real: sponge `0x00029800`, longitud 1024.
+Date: 2026-08-14. The Goodix-FOD layer was started independently alongside the
+panel. The first version found a false address (`0x06015447`) because the
+mainline structure omitted the 10 reserved bytes Samsung places at the end of
+`IC_INFO.misc`. A raw read of the 181 bytes the GT6936 publishes confirmed the
+real SEC extension: sponge `0x00029800`, length 1024.
 
-Se restauró el campo reservado y la secuencia stock completa: antes de cada
-acceso al sponge se envía `0x9f` con modo normal, y después de escribir se
-confirma con `0xf2`. También se respeta el orden rectángulo → bit FOD → política
-`fast/strict`, con `fod_property=3` por defecto y ajustable en vivo.
+The reserved field and the complete stock sequence were restored: before every
+sponge access `0x9f` is sent with normal mode, and after writing it is
+confirmed with `0xf2`. The order rectangle → FOD bit → `fast/strict` policy is
+also respected, with `fod_property=3` by default and adjustable live.
 
-En la tablet física el toque central produjo primero
-`released 911 2808` y después `released 945 2809`. Una escucha simultánea del
-dispositivo Goodix no recibió tracking ID, `BTN_TOUCH` ni coordenadas normales,
-por lo que el contacto dentro del sensor queda aislado de GNOME. La imagen
-arrancada fue verificada antes y después de escribir:
+On the physical tablet the central touch produced first `released 911 2808` and
+then `released 945 2809`. A simultaneous listen on the Goodix device received
+no tracking ID, no `BTN_TOUCH` and no normal coordinates, so the contact inside
+the sensor is isolated from GNOME. The booted image was verified before and
+after writing:
 
 ```text
 Image.gz  861624962e12df39de7945430b83468736bf72286feedbbd46a159e5a9415e22
@@ -5302,54 +5299,52 @@ boot.img  8f260c5c74606886fd961cfdabfee7400c3430ec30210256ab1a560f77ebe0f3
 modules   7528c67b18c6a0a842f069bc8aa54203f7adfd1f40a7980d8d909d2fa502521a
 ```
 
-El siguiente bloqueo ya no está en panel ni táctil: TrustZone sigue sin
-publicar el objeto lógico `securefp`, así que todavía no se instala ni anuncia
-un dispositivo funcional en `fprintd`.
+The next blockage is no longer the panel or touch: TrustZone still does not
+publish the `securefp` logical object, so no working device is installed or
+announced in `fprintd` yet.
 
-## Sesión 83 — TA `dualfp` aceptada y transporte BAUTH
+## Session 83 — the `dualfp` TA accepted, and BAUTH transport
 
-Fecha: 2026-08-14. Se comprobó primero que no existía una mezcla de firmware:
-la partición activa `apnhlos` coincide byte a byte con el `NON-HLOS.bin`
-oficial analizado (SHA-256 `1aa9de73…`) y la partición `tz` con el `tz.mbn`
-oficial (`865b32e1…`). Quedan descartados una versión incompatible y el
-antirollback como explicación del rechazo anterior.
+Date: 2026-08-14. It was first checked that there was no firmware mismatch: the
+active `apnhlos` partition matches the analysed official `NON-HLOS.bin` byte for
+byte (SHA-256 `1aa9de73…`) and the `tz` partition matches the official `tz.mbn`
+(`865b32e1…`). An incompatible version and anti-rollback are ruled out as
+explanations for the earlier rejection.
 
-El análisis de todas las imágenes divididas de `NON-HLOS` identificó dos piezas
-distintas. `fingerpr.b00`–`b08` ensambla un motor Qualcomm QFP genérico de
-13.725.784 bytes. `dualfp.b00`–`b08` ensambla 19.927.128 bytes y contiene la
-implementación Samsung/Egis del EL721, BAUTH, matching y plantillas. El nombre
-`securefp` usado por `libsfp_teegw` es lógico; no es el nombre de la imagen que
-había que cargar.
+Analysing all of `NON-HLOS`'s split images identified two distinct pieces.
+`fingerpr.b00`–`b08` assembles a generic Qualcomm QFP engine of 13,725,784
+bytes. `dualfp.b00`–`b08` assembles 19,927,128 bytes and contains the
+Samsung/Egis implementation of the EL721, BAUTH, matching and templates. The
+name `securefp` used by `libsfp_teegw` is logical; it is not the name of the
+image that had to be loaded.
 
-El límite upstream de 4 MiB del mensaje QTEE impedía probar `dualfp` con
-`loadFromBuffer`. En lugar de agrandar el mensaje se reservó un objeto de
-memoria TEE, se copió allí la imagen firmada y se llamó a `loadFromRegion` del
-AppLoader UID 122. TrustZone aceptó `dualfp`, devolvió su controlador
-QSEEComCompat y la descargó limpiamente. La tablet permaneció estable, QCOMTEE
-volvió a quedar descargado y `sensor_power` siguió en cero.
+QTEE's upstream 4 MiB message limit prevented testing `dualfp` with
+`loadFromBuffer`. Instead of enlarging the message, a TEE memory object was
+reserved, the signed image copied into it, and the UID 122 AppLoader's
+`loadFromRegion` called. TrustZone accepted `dualfp`, returned its
+QSEEComCompat handle and unloaded it cleanly. The tablet stayed stable, QCOMTEE
+was unloaded again and `sensor_power` stayed at zero.
 
-También se reconstruyó el sobre `sendRequest` y los dos objetos de memoria que
-Samsung usa para `BAuth_Type_Check`. El transporte devuelve éxito (`0`) tanto
-con UID 0 como con UID 1000. El análisis posterior de `SensorInfo` confirmó el
-mapeo stock exacto `EL721 → nombre 21 → tipo 8`; al repetir la petición con el
-identificador correcto `21`, la TA conserva el resultado `29` mientras el
-sensor físico está apagado. Esto descarta el enum incorrecto y deja como
-siguiente prueba la misma consulta después de la alimentación diferida. No se
-ejecutó ninguna captura.
+The `sendRequest` envelope and the two memory objects Samsung uses for
+`BAuth_Type_Check` were also reconstructed. The transport returns success (`0`)
+with both UID 0 and UID 1000. Later analysis of `SensorInfo` confirmed the
+exact stock mapping `EL721 → name 21 → type 8`; repeating the request with the
+correct identifier `21`, the TA keeps the result `29` while the physical sensor
+is powered down. That rules out the wrong enum and leaves the same query after
+the deferred power-up as the next test. No capture was run.
 
-El overlay stock aclara además que el X910 no usa el supuesto LDO2 como
-regulador Linux: `etspi-ldoPin` es TLMM GPIO91 y `etspi-sleepPin` es GPIO155.
-El controlador se corrigió para mapear ambas líneas mediante una tabla GPIO de
-plataforma creada después del arranque. Su adquisición y conmutación siguen
-siendo diferidas hasta una operación explícita, por lo que no se vuelve a
-modificar el DTB que provocaba resets tempranos. El objeto compila limpio con
-Clang 22; esta nueva secuencia todavía no se flashea ni se activa sin una vía de
-recuperación física disponible.
+The stock overlay also clarifies that the X910 does not use the supposed LDO2
+as a Linux regulator: `etspi-ldoPin` is TLMM GPIO91 and `etspi-sleepPin` is
+GPIO155. The controller was corrected to map both lines through a platform GPIO
+table created after boot. Their acquisition and switching remain deferred until
+an explicit operation, so the DTB that caused early resets is not modified
+again. The object compiles cleanly with Clang 22; this new sequence is not yet
+flashed or enabled without a physical recovery route available.
 
-La pila completa se reconstruyó desde cero sobre Linux 7.2-rc3 con Clang 22.
-La compilación tardó 575 segundos, confirmó `FINGERPRINT_EGIS_EL721=y`,
-`QCOMTEE=m` y no contiene ya el probe/cargador `securefp` específico del kernel.
-Los artefactos preparados, todavía sin flashear, son:
+The whole stack was rebuilt from scratch on Linux 7.2-rc3 with Clang 22. The
+compilation took 575 seconds, confirmed `FINGERPRINT_EGIS_EL721=y`, `QCOMTEE=m`
+and no longer contains the kernel-specific `securefp` probe/loader. The prepared
+artefacts, still unflashed, are:
 
 ```text
 Image.gz  d5021f8c99332149454a3c79fbfa7f648d10ae4abc9b8e1b15ffae5bc93e8e56
@@ -5357,78 +5352,78 @@ DTB       613b3bb7729d55d1c60aaeda348a098163b79aed1efbf24cdcc582ff0d58ccc4
 config    db2503329105ca65454354262958ea9515e2028961e4c3c02e18625bc81e0c78
 ```
 
-Quedó además preparado `test-el721-type-check.sh` para la primera validación
-del kernel nuevo. Encapsula alimentación, carga de QCOMTEE, `TypeCheck` y
-limpieza incondicional, y se niega a operar si encuentra el sensor o TEE ya
-activos. No se ejecuta sobre la imagen actualmente arrancada.
+`test-el721-type-check.sh` was also prepared for the new kernel's first
+validation. It encapsulates power-up, loading QCOMTEE, `TypeCheck` and
+unconditional cleanup, and refuses to operate if it finds the sensor or the TEE
+already active. It is not run against the currently booted image.
 
-## Sesión 84 — el EL721 se alimenta y la TA sigue rechazando la petición
+## Session 84 — the EL721 powers up and the TA still rejects the request
 
-Fecha: 2026-08-14. Se flasheó por fin el kernel de la sesión 83, el que
-corresponde exactamente a los fuentes commiteados. Antes de escribir se respaldó
-la partición arrancada y se releyó después; la tablet arrancó a la primera:
+Date: 2026-08-14. Session 83's kernel — the one that corresponds exactly to the
+committed sources — was finally flashed. The booted partition was backed up
+before writing and read back afterwards; the tablet booted first time:
 
 ```text
 Image.gz  d5021f8c99332149454a3c79fbfa7f648d10ae4abc9b8e1b15ffae5bc93e8e56
 DTB       613b3bb7729d55d1c60aaeda348a098163b79aed1efbf24cdcc582ff0d58ccc4
 boot.img  b4df747fda34b22b4258ecc7cfca646a389da0c42f9d341a81d47158da622f2d
-previo    b8e7a938c9ac5f0a1a73c23cb5db2d677290bc158461ed2108791d0cccf6cad0
+previous  b8e7a938c9ac5f0a1a73c23cb5db2d677290bc158461ed2108791d0cccf6cad0
 ```
 
-La imagen que corría era la experimental de las 04:00, no la corregida: pedía
-todavía el regulador `vdd` y fallaba con `error -ENOENT: failed to get enable
-GPIO`. Con el kernel nuevo, **la alimentación diferida funciona en hardware por
-primera vez**: `sensor_power` sube a 1, el reset incrementa `reset_count`,
-GPIO91 y GPIO155 pasan de entrada a salida y vuelven a cero al terminar. Antes
-de flashear se comprobó que ambas líneas estaban libres y que `gpiochip3` se
-llama `f100000.pinctrl`, el nombre que asume la tabla de lookup. La tablet no se
-reinició en ningún momento.
+The image running was the experimental one from 04:00, not the corrected one:
+it still asked for the `vdd` regulator and failed with `error -ENOENT: failed
+to get enable GPIO`. With the new kernel, **the deferred power-up works on
+hardware for the first time**: `sensor_power` rises to 1, the reset increments
+`reset_count`, GPIO91 and GPIO155 go from input to output and return to zero at
+the end. Before flashing it was checked that both lines were free and that
+`gpiochip3` is called `f100000.pinctrl`, the name the lookup table assumes. The
+tablet did not reboot at any point.
 
-Con el sensor alimentado, `TypeCheck` sigue devolviendo `29`. Queda por tanto
-refutada la hipótesis de la sesión 83. El análisis del gateway y de la HAL
-stock aclaró además que `29` **no es un diagnóstico**: es el código de fallo
-genérico de la pila Samsung; `readSensorType` lo devuelve ante un puntero nulo y
-`BAuth_Get_Ta_Version` para cualquier error. Al desensamblar hubo que resolver
-los PLT contra la GOT, porque objdump los etiqueta desplazados: lo que parecía
-un `BAuth_SessionOpen` previo al comando es en realidad `memset`.
+With the sensor powered, `TypeCheck` still returns `29`. Session 83's
+hypothesis is therefore refuted. Analysing the gateway and the stock HAL also
+clarified that `29` **is not a diagnosis**: it is the Samsung stack's generic
+failure code; `readSensorType` returns it for a null pointer and
+`BAuth_Get_Ta_Version` for any error. Disassembling required resolving the PLTs
+against the GOT, because objdump labels them shifted: what looked like a
+`BAuth_SessionOpen` before the command is really `memset`.
 
-Se descartaron experimentalmente, sobre la tablet física, todas las causas
-atribuibles a este port:
+Every cause attributable to this port was ruled out experimentally on the
+physical tablet:
 
-- alimentación: idéntico resultado con el sensor encendido y apagado;
-- tamaño de búfer: reproducir la página dmabuf completa de stock no cambia nada;
-- enum de nombre: barrido de `0` a `40` en una sola carga, `29` en los 41 casos
-  y búfer de salida intacto, luego la TA falla antes de leer el payload;
-- nombre de carga: `dualfp` y `securefp` se comportan igual;
-- sobre de la petición: el volcado de los búferes devueltos demuestra que QTEE
-  inyecta punteros embebidos reales (`0x921885000` y `0x924e64000`) en los
-  offsets 4 y 16 con longitud 8, como hace `QSEECom_send_modified_cmd_64`;
-- sesión previa: `BAuth_Type_Check` no abre ninguna, la HAL sólo reintenta;
-- controlador de kernel: en la build segura de Samsung `el7xx_pin_control` está
-  compilado fuera y `spi_clk_enable` es un no-op en Qualcomm, así que el driver
-  stock tampoco hace pinctrl ni entrega relojes SPI.
+- power: identical result with the sensor on and off;
+- buffer size: reproducing the stock's complete dmabuf page changes nothing;
+- name enum: a sweep from `0` to `40` in a single load, `29` in all 41 cases and
+  the output buffer untouched, so the TA fails before reading the payload;
+- load name: `dualfp` and `securefp` behave identically;
+- the request's envelope: dumping the returned buffers shows QTEE does inject
+  real embedded pointers (`0x921885000` and `0x924e64000`) at offsets 4 and 16
+  with length 8, as `QSEECom_send_modified_cmd_64` does;
+- a prior session: `BAuth_Type_Check` opens none, the HAL only retries;
+- the kernel driver: in Samsung's secure build `el7xx_pin_control` is compiled
+  out and `spi_clk_enable` is a no-op on Qualcomm, so the stock driver does no
+  pinctrl and hands over no SPI clocks either.
 
-`qcomtee` no registra ningún error durante la transacción. La hipótesis que
-queda es que la TA depende de servicios que en Android presta el lado HLOS de
-QSEECom —los *listener* de `qseecomd`— o de un estado que sólo establece esa
-pila. El probe pasó a admitir `--type-check=PRIMERO-ÚLTIMO` y el script
-transaccional un quinto argumento con ese selector, porque lo caro es cargar los
-19 MB, no repetir la consulta.
+`qcomtee` records no error during the transaction. The remaining hypothesis is
+that the TA depends on services that on Android are provided by QSEECom's HLOS
+side — `qseecomd`'s listeners — or on a state only that stack establishes. The
+probe gained `--type-check=FIRST-LAST` and the transactional script a fifth
+argument with that selector, because the expensive part is loading the 19 MB,
+not repeating the query.
 
-La tablet queda con el kernel nuevo arrancado, `sensor_power=0`, QCOMTEE
-descargado y el sistema en `running`.
+The tablet is left with the new kernel booted, `sensor_power=0`, QCOMTEE
+unloaded and the system `running`.
 
-## Sesión 85 — resuelto el `29`: la TA exige shared buffers de 0x2a4000
+## Session 85 — `29` solved: the TA requires shared buffers of 0x2a4000
 
-Fecha: 2026-08-14. El `29` que bloqueaba las tres últimas sesiones no venía del
-sensor ni del sobre de la petición. Se resolvió desensamblando la propia TA: su
-imagen ensamblada es un ELF **sin cifrar**, y sus cadenas y su código son
-legibles.
+Date: 2026-08-14. The `29` that had blocked the last three sessions came
+neither from the sensor nor from the request's envelope. It was solved by
+disassembling the TA itself: its assembled image is an **unencrypted** ELF, and
+its strings and its code are readable.
 
-El despachador (`0xb03c`) valida la petición antes de mirar el `cmd_id` y
-escribe `29` en `rsp[4]` si esa validación falla. La comprobación previa
-(`0x4420`) reconstruye los punteros de 64 bits que hay en `cmd[4]` y `cmd[16]` y
-llama a `0x4280` con un tamaño fijo de `0x2a4000`:
+The dispatcher (`0xb03c`) validates the request before looking at the `cmd_id`
+and writes `29` into `rsp[4]` if that validation fails. The prior check
+(`0x4420`) reconstructs the 64-bit pointers in `cmd[4]` and `cmd[16]` and calls
+`0x4280` with a fixed size of `0x2a4000`:
 
 ```text
 4280:  bl   0x1b0                 ; qsee_register_shared_buffer(ptr, 0x2a4000)
@@ -5438,229 +5433,233 @@ llama a `0x4280` con un tamaño fijo de `0x2a4000`:
 42dc:  mov  w0, #0x1d             ; 29
 ```
 
-Es decir, la TA vuelve a registrar cada búfer embebido como shared buffer de
-2.768.896 bytes. El gateway stock declara 8 bytes de payload pero respalda esos
-punteros con asignaciones `dmabuf` mucho mayores, así que allí el registro
-funciona. Reservando los dos objetos de memoria TEE con ese tamaño exacto y
-manteniendo la longitud declarada en 8, la TA **acepta y ejecuta** el comando:
+That is, the TA re-registers each embedded buffer as a 2,768,896-byte shared
+buffer. The stock gateway declares 8 bytes of payload but backs those pointers
+with much larger `dmabuf` allocations, so the registration works there.
+Reserving both TEE memory objects at that exact size while keeping the declared
+length at 8, the TA **accepts and runs** the command:
 
 ```text
 TypeCheck name=21: invoke result 0; trustlet=0, payload=0, sensor=0.
 ```
 
-El sobre de respuesta vuelve a ceros, que es exactamente lo que el host stock
-interpreta como éxito. Antes de llegar aquí se descartaron, sobre la tablet
-física, la alimentación, el enum de nombre (barrido `0`–`40`), el nombre de
-carga y el tamaño de página; y el volcado de los búferes devueltos demostró que
-QTEE sí inyecta punteros reales en los offsets 4 y 16.
+The response envelope comes back zeroed, which is exactly what the stock host
+interprets as success. Before getting here, power, the name enum (a `0`–`40`
+sweep), the load name and the page size were all ruled out on the physical
+tablet; and dumping the returned buffers demonstrated that QTEE does inject
+real pointers at offsets 4 and 16.
 
-El desensamblado aclaró además dos cosas que se habían supuesto mal. El `21` no
-es un enum que se pase: es el **ID que la TA lee del sensor por SPI**. Su
-`type_check` de la familia Egis (`0x17dc`) hace hasta tres transferencias de 4
-bytes y exige `rx[42]==0x07` y `rx[46]==0x15` para declarar `ET721` y devolver
-el tipo `8`; si no, registra `Type check Fail !!!` y devuelve `0`. Y el selector
-por familia (`0x1d64`) sólo acepta `sensor_name == 21`, con hasta 40 reintentos:
-cualquier otro valor cae en `invalid sensor_name parameter`.
+The disassembly also clarified two things that had been assumed wrongly. The
+`21` is not an enum that gets passed: it is the **ID the TA reads from the
+sensor over SPI**. Its Egis-family `type_check` (`0x17dc`) performs up to three
+4-byte transfers and requires `rx[42]==0x07` and `rx[46]==0x15` to declare
+`ET721` and return type `8`; otherwise it logs `Type check Fail !!!` and
+returns `0`. And the family selector (`0x1d64`) accepts only `sensor_name ==
+21`, with up to 40 retries: any other value falls into `invalid sensor_name
+parameter`.
 
-Queda por tanto un bloqueo nuevo y bien delimitado: `TypeCheck` devuelve tipo
-`0`, con resultado idéntico con `sensor_power=1` y con el sensor apagado, así
-que el SPI de TrustZone no está alcanzando el chip. Ese bus no es de Linux —en
-el árbol stock `etspi,el7xx` cuelga de `soc`, no de un controlador SPI, y la TA
-lleva su propio `sec_tzspi_*` y su propio control TLMM—, por lo que el port no
-tiene dónde intervenir a ciegas. La TA sí registra el motivo
-(`gpio control tz_open error : %d`, `Sensor is not ready!!`, los bytes leídos)
-en el log de TrustZone, que este kernel todavía no expone; instrumentarlo es el
-siguiente paso.
+What remains, then, is a new and well-bounded blockage: `TypeCheck` returns
+type `0`, with identical results at `sensor_power=1` and with the sensor off,
+so TrustZone's SPI is not reaching the chip. That bus is not Linux's — in the
+stock tree `etspi,el7xx` hangs off `soc`, not off an SPI controller, and the TA
+carries its own `sec_tzspi_*` and its own TLMM control — so the port has nowhere
+to intervene blindly. The TA does record the reason (`gpio control tz_open
+error : %d`, `Sensor is not ready!!`, the bytes read) in TrustZone's log, which
+this kernel does not yet expose; instrumenting that is the next step.
 
-La tablet queda con `sensor_power=0`, QCOMTEE descargado y el sistema estable.
+The tablet is left with `sensor_power=0`, QCOMTEE unloaded and the system
+stable.
 
-## Sesión 86 — el bus del lector es QUP1_SE2 y TrustZone no lo agita
+## Session 86 — the reader's bus is QUP1_SE2 and TrustZone does not drive it
 
-Fecha: 2026-08-14. Con el transporte ya resuelto se atacó el resultado
-`sensor=0`. Lo primero fue descartar que la TA no llegara a ejecutar la
-consulta: envenenando el búfer de salida con `0xa5` antes de la llamada, vuelve
-con sus ocho primeros bytes a cero y el resto intacto. La TA sí ejecuta
-`TypeCheck`, escribe su resultado y declara tipo `0`.
+Date: 2026-08-14. With the transport solved, the `sensor=0` result was
+attacked. The first thing was to rule out the TA not getting as far as running
+the query: poisoning the output buffer with `0xa5` before the call, it comes
+back with its first eight bytes zeroed and the rest untouched. The TA does run
+`TypeCheck`, writes its result and declares type `0`.
 
-El desensamblado dio el bus exacto. La TA resuelve sus pads por nombre —
-`qup1_se2_l0` es MISO, `l1` MOSI, `l2` CLK y `l3` CS—, es decir **QUP1_SE2**,
-que en SM8550 son `gpio64`–`gpio67`. En la tablet esos cuatro pines están en
-`func0`, entrada, sin reclamar por Linux, y `spi10@888000` ni siquiera existe
-como dispositivo: este port no habilita ningún nodo SPI.
+The disassembly gave the exact bus. The TA resolves its pads by name —
+`qup1_se2_l0` is MISO, `l1` MOSI, `l2` CLK and `l3` CS — that is, **QUP1_SE2**,
+which on SM8550 is `gpio64`–`gpio67`. On the tablet those four pins are in
+`func0`, input, unclaimed by Linux, and `spi10@888000` does not even exist as a
+device: this port enables no SPI node.
 
-`scripts/probe-fp-spi-pins.c` los muestrea por el chardev GPIO a unas 445.000
-lecturas por segundo, porque `/dev/mem` está bloqueado y un bucle de shell sobre
-debugfs es varios órdenes de magnitud demasiado lento. Durante una transacción
-completa, con 13.357.820 muestras en 30 segundos, **ninguna de las cuatro líneas
-cambia de estado**. TrustZone no llega a la primera transferencia.
+`scripts/probe-fp-spi-pins.c` samples them through the GPIO chardev at some
+445,000 reads a second, because `/dev/mem` is blocked and a shell loop over
+debugfs is several orders of magnitude too slow. During a complete transaction,
+with 13,357,820 samples in 30 seconds, **none of the four lines changes state**.
+TrustZone never reaches the first transfer.
 
-Se descartaron además, con la TA ya ejecutando el comando:
+With the TA now running the command, these were also ruled out:
 
-- `QSEECom_set_bandwidth` no es la pieza que falta: en la build compat de
-  `libQSEEComAPI.so` es literalmente `mov w0, wzr; ret`;
-- el driver stock no hace nada especial: en la build segura es un
-  `platform_driver` colgado de `soc`, con `el7xx_pin_control` compilado fuera y
-  `spi_clk_enable` como no-op en Qualcomm;
-- no es que Linux retenga los pines del sensor: desenganchando `egis-el721` el
-  resultado es idéntico;
-- tampoco es la alimentación: idéntico con `sensor_power` a 1 y a 0.
+- `QSEECom_set_bandwidth` is not the missing piece: in `libQSEEComAPI.so`'s
+  compat build it is literally `mov w0, wzr; ret`;
+- the stock driver does nothing special: in the secure build it is a
+  `platform_driver` hanging off `soc`, with `el7xx_pin_control` compiled out and
+  `spi_clk_enable` a no-op on Qualcomm;
+- it is not that Linux is holding the sensor's pins: unbinding `egis-el721`
+  gives an identical result;
+- nor is it power: identical with `sensor_power` at 1 and at 0.
 
-Los símbolos importados por la TA acotan dónde falla. Usa `qsee_spi_open`,
-`qsee_spi_full_duplex`, `qsee_tlmm_get_gpio_id`, `qsee_tlmm_config_gpio_id` y
-`qsee_tlmm_select_gpio_id_mode`, y tiene mensajes propios para cada fallo
-(`qsee_tlmm_get_gpio_id: BLSP_CLK Failed`, `sec_tzspi_open failed : %d`,
-`gpio control tz_open error : %d`). El fallo está en esa capa, dentro de
-TrustZone, donde el port no tiene ninguna palanca.
+The symbols the TA imports bound where it fails. It uses `qsee_spi_open`,
+`qsee_spi_full_duplex`, `qsee_tlmm_get_gpio_id`, `qsee_tlmm_config_gpio_id` and
+`qsee_tlmm_select_gpio_id_mode`, and has its own messages for each failure
+(`qsee_tlmm_get_gpio_id: BLSP_CLK Failed`, `sec_tzspi_open failed : %d`, `gpio
+control tz_open error : %d`). The failure is in that layer, inside TrustZone,
+where the port has no lever at all.
 
-El siguiente paso es por tanto instrumental y no especulativo: portar un lector
-del log de diagnóstico de TrustZone, estilo `tzdbg`, que este kernel no expone.
-Ese log contiene el motivo exacto. Sin él, cualquier cambio en el port sería
-adivinar.
+The next step is therefore instrumental rather than speculative: porting a
+reader for TrustZone's diagnostic log, `tzdbg`-style, which this kernel does not
+expose. That log contains the exact reason. Without it, any change in the port
+would be guesswork.
 
-La tablet queda con `sensor_power=0`, QCOMTEE descargado, GPIO91/155 a cero y el
-sistema en `running`.
+The tablet is left with `sensor_power=0`, QCOMTEE unloaded, GPIO91/155 at zero
+and the system `running`.
 
-## Sesión 87 — corrección del bus, y TrustZone sigue sin log
+## Session 87 — correcting the bus, and TrustZone still has no log
 
-Fecha: 2026-08-14. La sesión anterior afirmó que el bus del lector eran
-`gpio64`–`gpio67` y publicó una medición de 13,4 millones de muestras sobre
-ellos. **Esa identificación era incorrecta y la medición queda retirada.** La TA
-nombra sus pads `qup1_se2_l0..l3`, y `qup1_se2` es `gpio36`–`gpio39`;
-`gpio64`–`gpio67` son `qup2_se2`. La numeración coincide entre el árbol stock y
-mainline —`gpio26` es `qup1_se7` en ambos—, así que no hay ambigüedad.
+Date: 2026-08-14. The previous session claimed the reader's bus was
+`gpio64`–`gpio67` and published a measurement of 13.4 million samples over them.
+**That identification was wrong and the measurement is withdrawn.** The TA names
+its pads `qup1_se2_l0..l3`, and `qup1_se2` is `gpio36`–`gpio39`;
+`gpio64`–`gpio67` are `qup2_se2`. The numbering agrees between the stock tree
+and mainline — `gpio26` is `qup1_se7` in both — so there is no ambiguity.
 
-Los pines reales están fuera del alcance de Linux **por diseño y en los dos
-árboles**: este port declara `gpio-reserved-ranges = <36 4>` y el stock
-`qcom,gpios-reserved = <0x20 … 0x27>`, porque los gobierna TrustZone. El kernel
-no los expone en `/sys/kernel/debug/gpio` ni por el chardev, de modo que no
-existe forma de observarlos desde el espacio de usuario y **no hay medición
-válida sobre si TrustZone agita ese bus**. `probe-fp-spi-pins.c` se conserva
-como muestreador genérico, con la primera línea seleccionable y su premisa
-corregida en la cabecera.
+The real pins are out of Linux's reach **by design and in both trees**: this
+port declares `gpio-reserved-ranges = <36 4>` and the stock one
+`qcom,gpios-reserved = <0x20 … 0x27>`, because TrustZone governs them. The
+kernel exposes them neither in `/sys/kernel/debug/gpio` nor through the chardev,
+so there is no way to observe them from user space and **there is no valid
+measurement of whether TrustZone drives that bus**. `probe-fp-spi-pins.c` is
+kept as a generic sampler, with a selectable first line and its premise
+corrected in the header.
 
-Se verificó, una a una, que la capa Linux ya replica a stock:
+It was verified, item by item, that the Linux layer already mirrors stock:
 
-- `spi@a88000` (`qupv3_se2_spi`) está deshabilitado también en el árbol stock, y
-  el overlay del X910 —confirmado sobre `dtbo.img`, board-id 00, con
-  `etspi-chipid = "EL721"` y `etspi-modelinfo = "X916"`— no lo referencia nunca;
-- el controlador de Samsung en build segura es un `platform_driver` colgado de
-  `soc` (`el7xx_probe(struct platform_device *)`), no un `spi_driver`;
-- los relojes del SE vienen apagados del bootloader y Linux no los apaga: la
-  línea de comandos ya incluye `clk_ignore_unused`, `pd_ignore_unused` y
-  `regulator_ignore_unused`. Sujetar `gcc_qupv3_wrap1_s2_clk` encendido desde un
-  módulo (`scripts/tzlog/gts9u-fpclk.c`) no cambia el resultado de `TypeCheck`.
+- `spi@a88000` (`qupv3_se2_spi`) is disabled in the stock tree too, and the
+  X910's overlay — confirmed against `dtbo.img`, board-id 00, with
+  `etspi-chipid = "EL721"` and `etspi-modelinfo = "X916"` — never references
+  it;
+- Samsung's controller in a secure build is a `platform_driver` hanging off
+  `soc` (`el7xx_probe(struct platform_device *)`), not an `spi_driver`;
+- the SE's clocks come up disabled from the bootloader and Linux does not
+  disable them: the command line already includes `clk_ignore_unused`,
+  `pd_ignore_unused` and `regulator_ignore_unused`. Holding
+  `gcc_qupv3_wrap1_s2_clk` on from a module (`scripts/tzlog/gts9u-fpclk.c`) does
+  not change `TypeCheck`'s result.
 
-El intento de leer el log de TrustZone tampoco prosperó, y su recorrido queda
-documentado para no repetirlo:
+The attempt to read TrustZone's log did not prosper either, and its route is
+documented so it is not repeated:
 
-- el árbol stock describe `tz-log@146AA720`, `reg = <0x146aa720 0x3000>`. Esa
-  ventana se puede mapear, pero es un área de punteros en IMEM: su primer
-  cuadword vale `0x14696000`, y mapear esa dirección **reinicia la tablet**
-  porque es memoria segura;
-- la llamada SIP clásica (owner 2, servicio 6, comando 2) responde `-1`, «no
-  soportada», en este firmware. La plomería SMC es correcta: el comando 1
-  (`is_svc_available`) devuelve 0. Los comandos 3 y 7 existen pero rechazan las
-  formas de argumento probadas (`0x80000001`);
-- el servicio Diagnostics de QTEE (UID 143) responde: su operación 1 devuelve la
-  lista de TAs cargadas (`keymaster64`, `featenabler`, `tz_hdm`, `tz_iccc` y dos
-  UUID), pero ninguna operación de 0 a 31 entrega el log.
+- the stock tree describes `tz-log@146AA720`, `reg = <0x146aa720 0x3000>`. That
+  window can be mapped, but it is an area of pointers in IMEM: its first
+  quadword is `0x14696000`, and mapping that address **reboots the tablet**
+  because it is secure memory;
+- the classic SIP call (owner 2, service 6, command 2) answers `-1`, "not
+  supported", on this firmware. The SMC plumbing is correct: command 1
+  (`is_svc_available`) returns 0. Commands 3 and 7 exist but reject the argument
+  forms tried (`0x80000001`);
+- QTEE's Diagnostics service (UID 143) answers: its operation 1 returns the
+  list of loaded TAs (`keymaster64`, `featenabler`, `tz_hdm`, `tz_iccc` and two
+  UUIDs), but no operation from 0 to 31 delivers the log.
 
-Queda en el árbol `scripts/tzlog/` con el lector (`gts9u-tzlog.c`, que admite
-tanto mapear una ventana como pedir el volcado por SMC) y el módulo de relojes,
-más `scripts/probe-qtee-diag.c`. Un primer lector que copiaba los 12 KB de golpe
-provocó un oops y dejó el módulo en estado `Unloading`, lo que bloqueó el
-apagado; la versión commiteada lee sólo la ventana pedida y en accesos alineados
-de 32 bits.
+`scripts/tzlog/` stays in the tree with the reader (`gts9u-tzlog.c`, which
+accepts both mapping a window and requesting the dump over SMC) and the clock
+module, plus `scripts/probe-qtee-diag.c`. A first reader that copied the 12 KB
+in one go caused an oops and left the module in state `Unloading`, which blocked
+shutdown; the committed version reads only the requested window and in aligned
+32-bit accesses.
 
-El estado real del bloqueo es por tanto: la TA ejecuta `TypeCheck`, escribe su
-resultado y devuelve tipo `0`; todo lo que el port controla coincide con stock; y
-no hay visibilidad dentro de TrustZone para decidir si el fallo está en su SPI o
-en que el sensor no responde. Sin esa visibilidad —o sin medir físicamente los
-raíles del sensor— cualquier cambio adicional en el port sería adivinar.
+The blockage's real state is therefore: the TA runs `TypeCheck`, writes its
+result and returns type `0`; everything the port controls matches stock; and
+there is no visibility inside TrustZone to decide whether the failure is in its
+SPI or in the sensor not answering. Without that visibility — or without
+physically measuring the sensor's rails — any further change in the port would
+be guesswork.
 
-## Sesión 88 — agotadas las palancas del port sobre el EL721
+## Session 88 — the port's levers on the EL721 are exhausted
 
-Fecha: 2026-08-14. Ronda final de intentos sobre `TypeCheck`, todos negativos y
-anotados para no repetirlos:
+Date: 2026-08-14. A final round of attempts on `TypeCheck`, all negative and
+recorded so they are not repeated:
 
-- **Pulso de reset previo.** La HAL stock, antes de pedir el tipo, se asegura de
-  que el dispositivo esté abierto (`EgisOptSensorControl::SensorType` comprueba
-  un flag y llama a su método de apertura). Lo único físico de esa ruta es la
-  secuencia LDO/enable más un reset. Alimentando el sensor y dando dos pulsos de
-  reset antes de la consulta, `TypeCheck` sigue devolviendo tipo `0`.
-- **Relojes del SE sujetos.** Sin efecto, y además Linux nunca los apagó: la
-  línea de comandos ya lleva `clk_ignore_unused`; venían apagados del
-  bootloader.
-- **Estado de arranque.** `/proc/cmdline` no trae ningún parámetro de estado
-  seguro (`verifiedbootstate`, warranty, lock) que permitiera comprobar desde
-  aquí si TrustZone está degradando funciones por el bootloader desbloqueado.
-  ABL sí añade sus parámetros Samsung (`hdm.status=NONE`, `sec_sysup.edtbo_ver`,
-  etc.), pero ninguno indica ese estado.
+- **A reset pulse beforehand.** The stock HAL, before asking for the type,
+  makes sure the device is open (`EgisOptSensorControl::SensorType` checks a
+  flag and calls its open method). The only physical thing on that route is the
+  LDO/enable sequence plus a reset. Powering the sensor and giving two reset
+  pulses before the query, `TypeCheck` still returns type `0`.
+- **The SE's clocks held on.** No effect, and Linux never switched them off
+  anyway: the command line already carries `clk_ignore_unused`; they came up
+  disabled from the bootloader.
+- **Boot state.** `/proc/cmdline` carries no secure-state parameter
+  (`verifiedbootstate`, warranty, lock) that would allow checking from here
+  whether TrustZone is degrading functions because of the unlocked bootloader.
+  ABL does add its Samsung parameters (`hdm.status=NONE`,
+  `sec_sysup.edtbo_ver`, etc.), but none indicates that state.
 
-Con esto se agotan las palancas del port. El resumen honesto del bloqueo es:
-la TA se carga, acepta la petición, ejecuta `TypeCheck`, escribe su resultado y
-declara «sensor no identificado»; todo lo que Linux controla coincide con stock;
-los pines del bus están reservados a TrustZone en ambos árboles y no son
-observables; y no existe ruta conocida para leer el log de TrustZone en este
-firmware. No queda ninguna hipótesis comprobable desde el port.
+With this the port's levers are exhausted. The honest summary of the blockage
+is: the TA loads, accepts the request, runs `TypeCheck`, writes its result and
+declares "sensor not identified"; everything Linux controls matches stock; the
+bus's pins are reserved for TrustZone in both trees and are not observable; and
+there is no known route to read TrustZone's log on this firmware. No testable
+hypothesis remains within the port.
 
-Lo que sí decidiría el asunto es una prueba que no depende del port: confirmar
-que el lector responde en este mismo aparato bajo Android stock. Si responde, el
-problema está en el entorno que ofrecemos a la TA y merece seguir; si no
-responde, ninguna cantidad de trabajo en el port lo arreglará.
+What would settle the matter is a test that does not depend on the port:
+confirming the reader answers on this same device under stock Android. If it
+answers, the problem is in the environment we offer the TA and is worth
+pursuing; if it does not, no amount of work in the port will fix it.
 
-## Sesión 89 — el lector funciona en One UI: el fallo es de entorno
+## Session 89 — the reader works under One UI: the failure is environmental
 
-Fecha: 2026-08-14. La propietaria confirmó que **el lector funciona sin
-problemas bajo One UI en este mismo aparato**. Eso fija dos cosas: el sensor y
-su cableado están bien, y TrustZone sabe manejar su SPI aquí. Queda descartado
-que el bootloader desbloqueado degrade la función. El fallo está por tanto en el
-entorno que este port ofrece a la TA, no en el hardware.
+Date: 2026-08-14. The owner confirmed that **the reader works without problems
+under One UI on this same device**. That fixes two things: the sensor and its
+wiring are fine, and TrustZone knows how to drive its SPI here. It is ruled out
+that the unlocked bootloader degrades the function. The failure is therefore in
+the environment this port offers the TA, not in the hardware.
 
-Conviene además precisar un malentendido: la detección de dedo que se documentó
-en la sesión 82 (`released 911 2808`) venía del **controlador táctil Goodix** a
-través de `fod_state`, es decir la pantalla notando un dedo dentro del
-rectángulo del lector. Es la señal que dispara una lectura, pero no es el EL721
-leyendo por SPI; no demuestra que esa ruta funcione.
+A misunderstanding is also worth clearing up: the finger detection documented in
+session 82 (`released 911 2808`) came from the **Goodix touch controller**
+through `fod_state`, that is, the screen noticing a finger inside the reader's
+rectangle. It is the signal that triggers a read, but it is not the EL721
+reading over SPI; it does not demonstrate that route works.
 
-Intentos de esta ronda, todos negativos:
+This round's attempts, all negative:
 
-- **Votos de interconnect del QUP.** El reloj del SE no basta: un QUP mueve
-  datos con los relojes de núcleo de su wrapper, y en mainline salen del voto
-  `qup-core`, no de una propiedad `clocks`. En Android hay SEs activos que
-  mantienen ese voto y aquí no. Se añadió a `gts9u-fpclk.c` la reserva de los
-  tres caminos (`qup-core`, `qup-config`, `qup-memory`) creando un dispositivo
-  que toma prestado el nodo del SE. Los tres votos entran —el reloj del SE
-  incluso cambia de tasa—, pero `TypeCheck` sigue devolviendo tipo `0`.
-- **`BAuth_SessionOpen` no es un comando de la TA.** Se desensambló entero: no
-  llama nunca a `QSEECom_send_modified_cmd_64`. Sólo reserva los dos búferes
-  —de `0x2a4000` bytes, lo que confirma de forma independiente el tamaño que
-  descubrimos— y arranca la app con el nombre `securefp` o `dualfp`. No existe
-  una sesión previa que abrir en la TA.
-- **Llamada de diagnóstico de TrustZone.** Se amplió el lector para barrer
-  *owner* y convención de llamada. Con owner SIP la respuesta es `-1`, «no
-  soportada». Con owner 50 (OS de confianza) responde `0x80000001` para las doce
-  formas de argumento probadas, lo que en ese espacio de servicios significa que
-  el comando no es ése. No hay ruta conocida al log desde este firmware.
+- **QUP interconnect votes.** The SE's clock is not enough: a QUP moves data
+  with its wrapper's core clocks, and in mainline those come from the `qup-core`
+  vote, not from a `clocks` property. On Android there are active SEs that hold
+  that vote and here there are none. Reserving all three paths (`qup-core`,
+  `qup-config`, `qup-memory`) was added to `gts9u-fpclk.c` by creating a device
+  that borrows the SE's node. All three votes go in — the SE's clock even
+  changes rate — but `TypeCheck` still returns type `0`.
+- **`BAuth_SessionOpen` is not a command of the TA's.** It was disassembled in
+  full: it never calls `QSEECom_send_modified_cmd_64`. It only reserves the two
+  buffers — of `0x2a4000` bytes, which independently confirms the size we
+  discovered — and starts the app with the name `securefp` or `dualfp`. There is
+  no prior session in the TA to open.
+- **A TrustZone diagnostic call.** The reader was extended to sweep owner and
+  calling convention. With the SIP owner the answer is `-1`, "not supported".
+  With owner 50 (trusted OS) it answers `0x80000001` for all twelve argument
+  forms tried, which in that service space means the command is not that one.
+  There is no known route to the log from this firmware.
 
-El siguiente paso ya no es del port sino de instrumentación cruzada: el kernel
-stock sí incluye `tzdbg`. Ejecutar la consulta fallida bajo Ubuntu y leer
-después `/sys/kernel/debug/tzdbg/log` desde el arranque stock daría el motivo
-exacto que la TA registra, siempre que el anillo sobreviva al reinicio en
-caliente.
+The next step is no longer the port's but cross-instrumentation: the stock
+kernel does include `tzdbg`. Running the failing query under Ubuntu and then
+reading `/sys/kernel/debug/tzdbg/log` from the stock boot would give the exact
+reason the TA records, provided the ring survives a warm reboot.
 
-## Sesión 90 — el log de TrustZone existe, pero está cifrado
+## Session 90 — TrustZone's log exists, but it is encrypted
 
-Fecha: 2026-08-14. Se localizó por fin dónde vive el diagnóstico de TrustZone
-en este aparato, y resultó accesible sin arrancar Android: Samsung no lo lee de
-memoria viva sino de una **partición de depuración**. El módulo
-`sec_qc_hw_param.ko`, presente en TWRP, usa
-`sec_qc_dbg_part_read(debug_index_reset_tzlog, …)`, y el overlay del X910 da la
-ubicación: `sec,bdev_path = "PARTUUID=a17d0ddb-cec4-4a80-9e22-7d43fec26358"`,
-que en la tablet es `/dev/sda8`, etiqueta `debug`, 10 MB.
+Date: 2026-08-14. Where TrustZone's diagnostics live on this device was finally
+located, and it turned out to be reachable without booting Android: Samsung does
+not read it from live memory but from a **debug partition**. The
+`sec_qc_hw_param.ko` module, present in TWRP, uses
+`sec_qc_dbg_part_read(debug_index_reset_tzlog, …)`, and the X910's overlay gives
+the location: `sec,bdev_path =
+"PARTUUID=a17d0ddb-cec4-4a80-9e22-7d43fec26358"`, which on the tablet is
+`/dev/sda8`, label `debug`, 10 MB.
 
-Barriendo la partición aparece el magic `tzda` (`0x747a6461`, el mismo que ya
-usaba nuestro lector) en el offset **`0x90000`**. La tabla es legible:
+Sweeping the partition, the magic `tzda` (`0x747a6461`, the same one our reader
+already used) appears at offset **`0x90000`**. The table is readable:
 
 ```text
 version    = 0x00090004
@@ -5670,290 +5669,291 @@ ring_len   = 0x1e40   (7744 bytes)
 ring_wrap  = 1
 ```
 
-El anillo, en cambio, **está cifrado**: sólo 2996 de sus 7744 bytes son
-imprimibles y el resto es ruido de alta entropía. La explicación está en la
-propia cabecera de Samsung: a partir de `TZBSP_DIAG_VERSION_V9_2` el log usa
-`tzbsp_encr_info_t`, con AES-GCM, `nonce[12]`, `tag[16]` y una clave de **256
-bytes que va a su vez envuelta** (`TZBSP_AES_256_ENCRYPTED_KEY_SIZE`). Su
-código no lo descifra: lo vuelca en hexadecimal bajo la clave `"TZDA"` para
-analizarlo fuera del dispositivo. Nuestra versión es la 9.4, por encima del
-umbral.
+The ring, however, **is encrypted**: only 2,996 of its 7,744 bytes are
+printable and the rest is high-entropy noise. The explanation is in Samsung's
+own header: from `TZBSP_DIAG_VERSION_V9_2` onwards the log uses
+`tzbsp_encr_info_t`, with AES-GCM, `nonce[12]`, `tag[16]` and a **256-byte key
+that is itself wrapped** (`TZBSP_AES_256_ENCRYPTED_KEY_SIZE`). Their code does
+not decrypt it: it dumps it in hexadecimal under the key `"TZDA"` for analysis
+off the device. Our version is 9.4, above the threshold.
 
-Conclusión firme: **no hay forma de leer el log de TrustZone en este firmware**,
-ni desde Ubuntu ni arrancando One UI, porque el contenido sale cifrado en ambos
-casos. La instrumentación por esa vía queda descartada con evidencia, no por
-falta de intentos, y no justifica formatear para tener dualboot.
+A firm conclusion: **there is no way to read TrustZone's log on this firmware**,
+neither from Ubuntu nor by booting One UI, because the content comes out
+encrypted in both cases. Instrumentation by that route is ruled out with
+evidence rather than for want of trying, and it does not justify formatting the
+tablet to get dual boot.
 
-Queda anotado como dato útil que la propietaria confirmó que **el lector
-funciona sin problemas bajo One UI en este mismo aparato**: el sensor, su
-cableado y la capacidad de TrustZone para manejar su SPI están fuera de duda.
+It is recorded as a useful fact that the owner confirmed **the reader works
+without problems under One UI on this same device**: the sensor, its wiring and
+TrustZone's ability to drive its SPI are beyond doubt.
 
-## Sesión 91 — cierre del frente de huella
+## Session 91 — closing the fingerprint front
 
-Fecha: 2026-08-14. Última comprobación antes de aparcar el asunto: si la HAL
-stock envía a la TA algún comando previo al `TypeCheck` que no estuviéramos
-reproduciendo. El candidato era
-`FPBAuthService::turnOnSensorPowerAndOpenSession(int, bool)`, que por nombre es
-exactamente el paso de inicio. Desensamblado, resulta que llama al **mismo
-método virtual** (ranura 3 del objeto en `this+80`) que `readSensorType`, y que
-el «abrir sesión» es el `BAuth_SessionOpen` del host, del cual ya se demostró
-que no envía ningún comando a la TA: sólo reserva los búferes y arranca la app.
+Date: 2026-08-14. One last check before parking the matter: whether the stock
+HAL sends the TA any command before `TypeCheck` that we were not reproducing.
+The candidate was `FPBAuthService::turnOnSensorPowerAndOpenSession(int, bool)`,
+which by name is exactly the start-up step. Disassembled, it turns out to call
+the **same virtual method** (slot 3 of the object at `this+80`) as
+`readSensorType`, and that the "open session" is the host's
+`BAuth_SessionOpen`, which was already shown to send no command to the TA: it
+only reserves the buffers and starts the app.
 
-**No hay ningún comando previo que falte.** Con esto se agotan las vías
-comprobables desde el port:
+**There is no missing prior command.** With this, the routes testable from the
+port are exhausted:
 
-- transporte: resuelto, la TA ejecuta el comando y escribe su resultado;
-- parámetros: enum, nombre de carga, tamaños y sobre, todos verificados;
-- capa Linux: idéntica a stock en nodo SPI, tipo de driver, pines reservados,
-  relojes y línea de comandos;
-- estímulos físicos: alimentación, reset y tiempos, sin efecto;
-- relojes e interconnect del QUP forzados, sin efecto;
-- log de TrustZone: existe, se localizó, y está cifrado con clave envuelta.
+- transport: solved, the TA runs the command and writes its result;
+- parameters: enum, load name, sizes and envelope, all verified;
+- the Linux layer: identical to stock in SPI node, driver type, reserved pins,
+  clocks and command line;
+- physical stimuli: power, reset and timing, with no effect;
+- the QUP's clocks and interconnect forced, with no effect;
+- TrustZone's log: it exists, it was located, and it is encrypted with a
+  wrapped key.
 
-Lo único que queda es información que sólo se puede obtener con el aparato
-funcionando: capturar bajo One UI el estado del hardware mientras el lector
-opera —relojes, votos de interconnect, configuración de los pads `gpio36`–`39`
-y estado de los raíles del PMIC— y compararlo con el nuestro. Eso exige poder
-arrancar Android, que pasa a ser el siguiente objetivo por sí mismo.
+All that remains is information obtainable only with the device working:
+capturing under One UI the hardware's state while the reader operates — clocks,
+interconnect votes, the configuration of pads `gpio36`–`39` and the state of
+the PMIC's rails — and comparing it with ours. That requires being able to boot
+Android, which becomes the next objective in its own right.
 
 ---
 
-## Sesión 92 — por qué One UI no arranca tras TWRP, y preparación del reparto
+## Session 92 — why One UI does not boot after TWRP, and preparing the split
 
-Fecha: 2026-08-15. No se escribió nada en la tablet: esta sesión resuelve el
-problema abierto que condicionaba el ciclo de pruebas y deja el utillaje listo.
+Date: 2026-08-15. Nothing was written to the tablet: this session resolves the
+open problem that was constraining the test cycle and leaves the tooling ready.
+### The open problem was the encryption, not the boot
 
-### El problema abierto era el cifrado, no el arranque
+Symptom: One UI is flashed, then TWRP, and One UI stops booting even when
+restarting to system from the recovery. The cause is FBE. Once TWRP is in
+`recovery`, Android can no longer decrypt `userdata` and goes to recovery in a
+loop. The solution is one single thing, and it is the one the device's own
+thread documents three times:
 
-Síntoma: se flashea One UI, después TWRP, y One UI deja de arrancar aunque se
-reinicie a sistema desde el recovery. La causa es FBE. Una vez TWRP está en
-`recovery`, Android ya no puede descifrar `userdata` y se va a recovery en
-bucle. La solución es una sola cosa, y es la que el hilo del propio aparato
-documenta tres veces:
+**In TWRP, `Wipe → Format Data`.** Not "Wipe", and above all not "Factory
+reset".
 
-**En TWRP, `Wipe → Format Data`.** No «Wipe», y sobre todo no «Factory reset».
+- The port's maintainer, asked whether formatting data and flashing
+  `repack.zip` is still needed after installing TWRP, answers "yep"; and his
+  recipe for installing LineageOS begins with "Format data (**not wipe**) in
+  twrp".
+- A user with the exact symptom: "the solution is just that when you get into
+  TWRP you go wipe → format data".
+- Another (`flamadiddle`, Tab S9 Ultra) tried "factory reset" instead of
+  "format data": he got `Failed to mount /data` and stayed in the loop. That
+  error is exactly what distinguishes the two options: "factory reset" tries to
+  empty `/data`'s contents, which requires decrypting it; "format data" remakes
+  the partition and `metadata`, and Android regenerates the keys on the next
+  boot.
 
-- El mantenedor del port, preguntado si tras instalar TWRP sigue haciendo falta
-  formatear datos y flashear `repack.zip`, responde «yep»; y su receta para
-  instalar LineageOS empieza por «Format data (**not wipe**) in twrp».
-- Un usuario con el síntoma exacto: «the solution is just that when you get into
-  TWRP you go wipe → format data».
-- Otro (`flamadiddle`, Tab S9 Ultra) probó «factory reset» en lugar de «format
-  data»: obtuvo `Failed to mount /data` y siguió en bucle. Ese error es
-  justamente lo que distingue las dos opciones: «factory reset» intenta vaciar
-  el contenido de `/data`, que exige descifrarla; «format data» rehace la
-  partición y `metadata`, y Android regenera las claves en el arranque
-  siguiente.
+It fits mine no. 1 already recorded for milestone 4 — `metadata` has to be
+erased too — except it bites earlier than expected: in the first cycle, not in
+the installer.
 
-Encaja con la mina nº 1 ya anotada para el Hito 4 —hay que borrar también
-`metadata`—, sólo que muerde antes de lo previsto: en el primer ciclo, no en el
-instalador.
+### Two of milestone 4's mines were false for this TWRP
 
-### Dos minas del Hito 4 eran falsas para este TWRP
+`TWRP-gts9u-V2.img`'s ramdisk was unpacked (boot image v2, gzip+cpio) instead
+of continuing to assume:
 
-Se desempaquetó el ramdisk de `TWRP-gts9u-V2.img` (boot image v2, gzip+cpio) en
-lugar de seguir suponiendo:
+- **`sgdisk` is included**: `/system/bin/sgdisk`, an aarch64 ELF, 181,520
+  bytes, from `external/gptfdisk`. No static binary has to be packaged. Mine
+  no. 3 is withdrawn.
+- **`bash` is included too**: `/system/bin/bash`, aarch64, a real GNU bash.
+  `mksh`'s 32-bit arithmetic (session 35) is dodged by re-executing the
+  installer's body under `bash`, rather than contorting the arithmetic.
+  `/system/bin/sh` is still `mksh`, so the test bench's `mksh` check stays as it
+  is.
+- `make_f2fs`, `mke2fs`, `e2fsdroid`, `resize2fs` and `sload_f2fs` are also
+  there.
 
-- **`sgdisk` sí viene**: `/system/bin/sgdisk`, ELF aarch64, 181 520 bytes, de
-  `external/gptfdisk`. No hay que empaquetar ningún binario estático. La mina
-  nº 3 queda retirada.
-- **`bash` también viene**: `/system/bin/bash`, aarch64, GNU bash de verdad.
-  La aritmética de 32 bits de `mksh` (sesión 35) se esquiva re-ejecutando el
-  cuerpo del instalador bajo `bash`, en vez de contorsionar las cuentas.
-  `/system/bin/sh` sigue siendo `mksh`, así que la comprobación con `mksh` del
-  banco de pruebas se queda como está.
-- Están además `make_f2fs`, `mke2fs`, `e2fsdroid`, `resize2fs` y `sload_f2fs`.
+### A danger in `twrp.flags`
 
-### Un peligro en `twrp.flags`
-
-Ese TWRP hereda del árbol del Fold 5 esta línea:
+That TWRP inherits this line from the Fold 5's tree:
 
 ```text
 /usb-otg  vfat  /dev/block/sda1  /dev/block/sda  flags=...;storage;wipeingui;removable
 ```
 
-En esta tablet `/dev/block/sda` **es la UFS interna** —`userdata` es `sda34`,
-comprobado por `adb` contra `by-name`—, así que la entrada «USB-OTG» del menú
-apunta al disco interno y está marcada `wipeingui`. No se toca esa entrada, y
-conviene comprobar a qué resuelve de verdad ya dentro de TWRP.
+On this tablet `/dev/block/sda` **is the internal UFS** — `userdata` is `sda34`,
+checked over `adb` against `by-name` — so the menu's "USB-OTG" entry points at
+the internal disk and is marked `wipeingui`. That entry is not touched, and it
+is worth checking what it really resolves to once inside TWRP.
 
-### Qué hace `repack.zip` exactamente
+### What `repack.zip` does exactly
 
-Es un **AnyKernel3** del equipo OrangeFox (1 865 371 bytes, SHA-256
-`262827a2…f06a`). De todo el script sólo hay dos líneas activas, `split_boot` y
-`flash_boot`, sobre `block=/dev/block/bootdevice/by-name/boot`, con
-`patch_vbmeta_flag=auto`. Es decir: **reescribe `boot`** y pone el flag de
-verificación desactivada en `vbmeta`. Conviene tenerlo presente porque el Hito 3
-va precisamente de alternar `boot`, y porque el flag de `vbmeta` toca al Hito 2:
-el instalador escribe su propio `vbmeta` si el recovery lo expone escribible, y
-sólo exige `flags=2` cuando está en solo lectura. Cuál de los dos casos aplica
-se sabe con `blockdev --getro` en cuanto haya TWRP.
+It is an **AnyKernel3** from the OrangeFox team (1,865,371 bytes, SHA-256
+`262827a2…f06a`). Of the whole script only two lines are active, `split_boot`
+and `flash_boot`, on `block=/dev/block/bootdevice/by-name/boot`, with
+`patch_vbmeta_flag=auto`. That is: it **rewrites `boot`** and sets the
+verification-disabled flag in `vbmeta`. Worth keeping in mind because milestone
+3 is precisely about alternating `boot`, and because the `vbmeta` flag touches
+milestone 2: the installer writes its own `vbmeta` if the recovery exposes it
+writable, and only requires `flags=2` when it is read-only. Which of the two
+cases applies is known from `blockdev --getro` as soon as TWRP is there.
 
-### Cosas que resultaron no ser lo que parecían
+### Things that turned out not to be what they looked like
 
-- Las imágenes de arranque de `D:\gts9u-backup\` son **las de Ubuntu**, no las
-  de One UI: `vendor_boot.img` lleva `root=LABEL=UBTS9U_UFS` en su línea de
-  comandos. Sirven como una de las dos parejas del Hito 3; la de One UI sale del
-  AP de DZA1.
-- En la GPT, `userdata` tiene **el mismo valor como tipo y como GUID único**,
-  `1B81E7E6-F50D-419B-A739-2AEEF8DA3335`. Es manía del PIT de Samsung, y se
-  reproduce al recrear la entrada.
+- The boot images in `D:\gts9u-backup\` are **Ubuntu's**, not One UI's:
+  `vendor_boot.img` carries `root=LABEL=UBTS9U_UFS` on its command line. They
+  serve as one of milestone 3's two pairs; One UI's comes from DZA1's AP.
+- In the GPT, `userdata` has **the same value as its type and as its unique
+  GUID**, `1B81E7E6-F50D-419B-A739-2AEEF8DA3335`. It is a quirk of Samsung's
+  PIT, and it is reproduced when recreating the entry.
 
-### Utillaje preparado
+### Tooling prepared
 
-- `scripts/repartition-ufs.sh`: parte `userdata` en `userdata` + `linuxroot`
-  por porcentaje, sobre ADB, con la tablet en TWRP. Inspecciona por defecto y
-  exige `--write` y `--backup-dir`. Toda la aritmética ocurre en `bash` en el
-  PC y a la tablet sólo le llegan números de sector literales, que es la forma
-  limpia de no volver a pisar la aritmética de 32 bits.
-- `TWRP-gts9u-V2-odin.tar`, generado a partir de la `.img` del proyecto. El
-  fichero interno **debe** llamarse `recovery.img` o Odin responde «unassigned
-  file»; con bloque de 512 y sin relleno de registro sale de 109 577 728 bytes,
-  exactamente el tamaño del `.tar` que publica el mantenedor.
+- `scripts/repartition-ufs.sh`: splits `userdata` into `userdata` +
+  `linuxroot` by percentage, over ADB, with the tablet in TWRP. It inspects by
+  default and requires `--write` and `--backup-dir`. All the arithmetic happens
+  in `bash` on the PC and only literal sector numbers reach the tablet, which is
+  the clean way not to step on the 32-bit arithmetic again.
+- `TWRP-gts9u-V2-odin.tar`, generated from the project's `.img`. The internal
+  file **must** be called `recovery.img` or Odin answers "unassigned file"; with
+  a 512-byte block and no record padding it comes to 109,577,728 bytes, exactly
+  the size of the `.tar` the maintainer publishes.
 
-### Estado
+### State
 
-Tablet intacta, en One UI 8, sin root (`uid=2000`), FBE activo
-(`ro.crypto.type=file`), bootloader desbloqueado. Nada flasheado todavía.
+The tablet intact, on One UI 8, unrooted (`uid=2000`), FBE active
+(`ro.crypto.type=file`), bootloader unlocked. Nothing flashed yet.
 
 ---
 
-## Sesión 93 — Hito 1: la UFS queda partida en dos y One UI arranca
+## Session 93 — milestone 1: the UFS is split in two and One UI boots
 
-Fecha: 2026-08-15. `userdata` pasa a ser dos particiones y Android vuelve a
-arrancar en la suya. El problema abierto de la sesión 92 queda además
-confirmado en hardware: era el cifrado, y `Format Data` lo resuelve.
+Date: 2026-08-15. `userdata` becomes two partitions and Android boots again in
+its own. Session 92's open problem is also confirmed on hardware: it was the
+encryption, and `Format Data` resolves it.
 
-### Flasheo de TWRP sin Odin gráfico
+### Flashing TWRP without graphical Odin
 
-`usbipd-win` ya estaba instalado, así que el «WSL no ve el USB» de las notas
-tiene arreglo: `usbipd bind --force` más `usbipd attach --wsl` exponen la
-tablet dentro de WSL, y ahí `heimdall` 1.4.2 habla con ella. Copiar el par de
-claves de `~/.android` de Windows a `/root/.android` de WSL evita tener que
-autorizar la depuración a mano en la pantalla.
+`usbipd-win` was already installed, so the "WSL cannot see USB" of the notes has
+a fix: `usbipd bind --force` plus `usbipd attach --wsl` expose the tablet inside
+WSL, and there `heimdall` 1.4.2 talks to it. Copying the key pair from Windows's
+`~/.android` into WSL's `/root/.android` avoids having to authorise debugging by
+hand on the screen.
 
-Dos cosas que costaron tiempo y conviene no repetir:
+Two things that cost time and are worth not repeating:
 
-- **`--no-reboot` y `--resume` van en pareja.** Se lanzó `print-pit
-  --no-reboot`, que deja la sesión Odin abierta, y después un `flash` sin
-  `--resume`. El propio `heimdall help` lo advierte. El resultado no es que
-  falle esa orden: deja el protocolo del aparato sin poder reabrirse, y ni
-  `--resume`, ni sesión nueva, ni reciclar el enganche USB lo recuperan. Hay
-  que apagar y volver a entrar en Download con los botones.
-- **Del modo Download sólo se sale con botones.** No hay orden de heimdall ni
-  de Odin que salte a recovery. La única vía software candidata era escribir el
-  *bootloader control block* en `misc` —que sí es flasheable, está en el PIT en
-  el offset 25356—, pero es mecanismo AOSP genérico, sin confirmar en un ABL de
-  Samsung, y además exigiría una sesión Odin viva. No ahorra el reinicio.
+- **`--no-reboot` and `--resume` go together.** `print-pit --no-reboot` was run,
+  which leaves the Odin session open, and then a `flash` without `--resume`.
+  `heimdall help` itself warns about it. The result is not that the command
+  fails: it leaves the device's protocol unable to reopen, and neither
+  `--resume`, nor a new session, nor recycling the USB attachment recovers it.
+  It has to be powered off and put back into Download with the buttons.
+- **Download mode is only left with the buttons.** No heimdall or Odin command
+  jumps to recovery. The only candidate software route was writing the
+  *bootloader control block* in `misc` — which is flashable and is in the PIT at
+  offset 25356 — but that is generic AOSP mechanism, unconfirmed on a Samsung
+  ABL, and it would require a live Odin session anyway. It saves no reboot.
 
-Con la secuencia correcta —una sola invocación, `heimdall flash --RECOVERY
-TWRP-gts9u-V2.img --no-reboot`— la escritura fue limpia, y desde Download se
-entra a TWRP con Volumen Abajo + Power y acto seguido Volumen Arriba + Power.
+With the correct sequence — a single invocation, `heimdall flash --RECOVERY
+TWRP-gts9u-V2.img --no-reboot` — the write was clean, and from Download one
+enters TWRP with Volume Down + Power and immediately Volume Up + Power.
 
-### El reparto
+### The split
 
-`scripts/repartition-ufs.sh` con `--android-percent 40`. Comprobó contra el
-aparato el GUID del disco, el nombre, el tipo y el sector inicial de la entrada
-34, y que no existiese ya una entrada 35, antes de escribir:
+`scripts/repartition-ufs.sh` with `--android-percent 40`. It checked against the
+device the disk's GUID, and entry 34's name, type and start sector, and that no
+entry 35 already existed, before writing:
 
-| Entrada | Antes | Después |
+| Entry | Before | After |
 |---|---|---|
-| 34 `userdata` | 3 626 496 – 249 716 726, 938,8 GiB | 3 626 496 – 102 062 079, **375,5 GiB** |
-| 35 `linuxroot` | no existía | 102 062 080 – 249 716 726, **563,3 GiB** |
+| 34 `userdata` | 3,626,496 – 249,716,726, 938.8 GiB | 3,626,496 – 102,062,079, **375.5 GiB** |
+| 35 `linuxroot` | did not exist | 102,062,080 – 249,716,726, **563.3 GiB** |
 
-El script tenía un fallo que **cazó su propio guardián**: corre en WSL pero
-llama al `adb.exe` de Windows, al que le pasaba la ruta de destino en formato
-WSL. El `adb pull` del respaldo fallaba y abortaba antes de tocar la tabla.
-Buen resultado por el motivo equivocado; ahora convierte con `wslpath -w`.
+The script had a bug that **its own guard caught**: it runs in WSL but calls
+Windows's `adb.exe`, to which it was passing the backup's destination path in
+WSL format. The backup's `adb pull` failed and it aborted before touching the
+table. A good outcome for the wrong reason; it now converts with `wslpath -w`.
 
-Verificado después de reiniciar a recovery para que el kernel relea la tabla:
-`sda34` mide 403 192 152 064 bytes y `sda35` 604 793 434 112, exactamente lo
-calculado. `by-name/linuxroot` aparece solo, sin tocar ningún `fstab`, y
-también lo ve Android una vez arrancado.
+Verified after rebooting to recovery so the kernel would reread the table:
+`sda34` is 403,192,152,064 bytes and `sda35` 604,793,434,112, exactly as
+calculated. `by-name/linuxroot` appears on its own, without touching any
+`fstab`, and Android sees it too once booted.
 
-`twrp format data` dejó `userdata` en f2fs (magic `10 20 f5 f2`) y **formateó
-también `metadata`**, que es literalmente lo que hacía falta. `linuxroot` se
-creó con `mke2fs -t ext4 -m 0 -L UBTS9U_UFS`: monta, se lista —sólo
-`lost+found`— y desmonta sin quejas.
+`twrp format data` left `userdata` as f2fs (magic `10 20 f5 f2`) and **also
+formatted `metadata`**, which is literally what was needed. `linuxroot` was
+created with `mke2fs -t ext4 -m 0 -L UBTS9U_UFS`: it mounts, lists — only
+`lost+found` — and unmounts without complaint.
 
-### Criterio de éxito, cumplido
+### The success criterion, met
 
-One UI 8 arranca, se configura y ve sus 376 GiB con 370 libres. El bootloader
-sigue desbloqueado (`flash.locked=0`, `orange`) y el híbrido intacto: `abl`
-`X910XXS5CYG1` bajo sistema `X910XXS5DZA1`. `ro.crypto.state=encrypted` y
-`ro.crypto.type=file`: Android regeneró sus claves FBE, que era la prueba de
-fondo. No se tocó `super`, ni la cadena del bootloader, ni `efs`, `persist` o
-`modem`.
+One UI 8 boots, sets itself up and sees its 376 GiB with 370 free. The
+bootloader stays unlocked (`flash.locked=0`, `orange`) and the hybrid intact:
+`abl` `X910XXS5CYG1` under system `X910XXS5DZA1`. `ro.crypto.state=encrypted`
+and `ro.crypto.type=file`: Android regenerated its FBE keys, which was the real
+proof. `super` was not touched, nor the bootloader chain, nor `efs`, `persist`
+or `modem`.
 
-La GPT quedó respaldada dos veces: el `gpt-sda.bin` anterior y el que el script
-sacó en vivo justo antes de escribir, `gpt-sda-20260815-044329.bin`
-(`3b71a2d0…`).
+The GPT was backed up twice: the previous `gpt-sda.bin` and the one the script
+pulled live just before writing, `gpt-sda-20260815-044329.bin` (`3b71a2d0…`).
 
-### Dos medidas que condicionan el Hito 2
+### Two measurements that condition milestone 2
 
-- **`vbmeta` está en solo lectura desde TWRP** (`blockdev --getro` = 1) y sus
-  flags AVB, leídas en el offset 120, son `00000000` con magic `AVB0`. El
-  instalador de Ubuntu, cuando `vbmeta` no es escribible, exige `flags=2` y
-  aborta si no las tiene. Así que **abortará** tal y como está el aparato.
-  `repack.zip` pone ese flag, y pasa a ser requisito previo del Hito 2, no una
-  comodidad para conservar TWRP.
-- **El peligro de `twrp.flags` está confirmado en vivo**: `/dev/block/sda` es
-  la UFS interna —`userdata` es `sda34`— y `sda1` es `modemst1`. La entrada
-  «USB-OTG» del menú de TWRP apunta ahí y está marcada `wipeingui`.
+- **`vbmeta` is read-only from TWRP** (`blockdev --getro` = 1) and its AVB
+  flags, read at offset 120, are `00000000` with magic `AVB0`. Ubuntu's
+  installer, when `vbmeta` is not writable, requires `flags=2` and aborts if it
+  does not have them. So it **will abort** with the device as it stands.
+  `repack.zip` sets that flag, and becomes a prerequisite for milestone 2, not
+  a convenience for keeping TWRP.
+- **The `twrp.flags` danger is confirmed live**: `/dev/block/sda` is the
+  internal UFS — `userdata` is `sda34` — and `sda1` is `modemst1`. TWRP's menu
+  entry "USB-OTG" points there and is marked `wipeingui`.
 
 ---
 
-## Sesión 94 — `repack.zip` es un callejón sin salida, y el aparato queda pidiendo recovery
+## Session 94 — `repack.zip` is a dead end, and the device is left asking for recovery
 
-Fecha: 2026-08-15. Sesión con saldo negativo: el Hito 1 seguía válido al
-empezar y al terminar la tablet arranca siempre en TWRP. Nada se ha perdido
-—las particiones, `super` y el respaldo están intactos— pero conviene dejar
-escrito qué se probó y, sobre todo, en qué orden **no** hay que probarlo.
+Date: 2026-08-15. A session with a negative balance: milestone 1 was still valid
+at the start and by the end the tablet always boots into TWRP. Nothing has been
+lost — the partitions, `super` and the backup are intact — but it is worth
+writing down what was tried and, above all, in what order **not** to try it.
 
-### Confirmado: One UI restaura el recovery de stock
+### Confirmed: One UI restores the stock recovery
 
-Tras cerrar el Hito 1 se arrancó One UI y después `adb reboot recovery`.
-Contestó el recovery **de stock**: se identifica como `product:gts9uwifixx`
-frente al `product:twrp_gts9u` de TWRP, enumera como `18d1:d001` en vez de
-`18d1:6860`, y su `adb shell` muere con `Could not set SELinux context for
-subprocess` y SIGABRT. Queda confirmado en este firmware.
+After closing milestone 1, One UI was booted and then `adb reboot recovery`.
+The **stock** recovery answered: it identifies itself as `product:gts9uwifixx`
+against TWRP's `product:twrp_gts9u`, enumerates as `18d1:d001` instead of
+`18d1:6860`, and its `adb shell` dies with `Could not set SELinux context for
+subprocess` and SIGABRT. It is confirmed on this firmware.
 
-### `repack.zip` no sirve en este aparato
+### `repack.zip` is no use on this device
 
-Se instaló con TWRP, tras respaldar el juego de arranque completo de One UI
-con el hash comparado en los dos lados. Resultado:
+It was installed with TWRP, after backing up One UI's complete boot set with
+the hash compared on both sides. Result:
 
-- **Reescribió `boot`** (`bb7be3ce…` → `495aaeb2…`), como anunciaba su
-  `anykernel.sh`.
-- **No pudo tocar `vbmeta`**, porque esa partición es de solo lectura para el
-  kernel: vive en otro LUN, `sde15`, y `blockdev --getro` devuelve 1.
-- Desde entonces el aparato arranca siempre en recovery.
+- **It rewrote `boot`** (`bb7be3ce…` → `495aaeb2…`), as its `anykernel.sh`
+  announced.
+- **It could not touch `vbmeta`**, because that partition is read-only to the
+  kernel: it lives on another LUN, `sde15`, and `blockdev --getro` returns 1.
+- Since then the device always boots into recovery.
 
-Que hiciera sólo la mitad es lo peor que podía pasar: deja un `boot` que ya no
-cuadra con un `vbmeta` que sigue exigiendo verificación.
+Doing only half the job is the worst thing that could have happened: it leaves a
+`boot` that no longer matches a `vbmeta` still demanding verification.
 
-### La cadena de errores de diagnóstico, que es lo aprovechable
+### The chain of diagnostic errors, which is the useful part
 
-Se persiguió el síntoma equivocado durante tres ciclos:
+The wrong symptom was chased for three cycles:
 
-1. **Parchear el `vbmeta` firmado byte a byte fue un error.** Se copió el
-   `vbmeta` de la propia tablet y se puso `02` en el offset 123 para dejar
-   `flags=2`. Es lo que hace `patch_vbmeta_flag` de AnyKernel, pero sólo vale
-   en aparatos cuyo ABL no revalida la firma del propio vbmeta. Aquí el
-   resultado es una imagen firmada con la firma rota.
-2. **Restaurar `boot` tampoco arregló nada**, aun quedando byte a byte igual
-   que en el estado que arrancaba.
-3. **El `vbmeta` del port tampoco.** `port/sources/samsung-gts9u/vbmeta.img`
-   son 4096 bytes con magic `AVB0`, `flags=00000002` y bloques de
-   autenticación y auxiliar **a cero**: un vbmeta vacío y sin firmar, de
-   `avbtool 1.3.0`. Es la forma correcta, y el ABL lo acepta —lo dice él
-   mismo—, pero el aparato siguió yendo a recovery.
+1. **Patching the signed `vbmeta` byte by byte was a mistake.** The tablet's own
+   `vbmeta` was copied and `02` written at offset 123 to leave `flags=2`. That
+   is what AnyKernel's `patch_vbmeta_flag` does, but it only works on devices
+   whose ABL does not revalidate the vbmeta's own signature. Here the result is
+   a signed image with a broken signature.
+2. **Restoring `boot` did not fix anything either**, even ending up byte for
+   byte identical to the state that used to boot.
+3. **Nor did the port's `vbmeta`.** `port/sources/samsung-gts9u/vbmeta.img` is
+   4096 bytes with magic `AVB0`, `flags=00000002` and authentication and
+   auxiliary blocks **at zero**: an empty, unsigned vbmeta from `avbtool 1.3.0`.
+   It is the correct shape, and the ABL accepts it — it says so itself — but the
+   device kept going to recovery.
 
-Lo que debió hacerse primero, y ahora es la lección: **leer el log del ABL
-antes de flashear nada**. Está en `/proc/last_kmsg`, con las líneas marcadas
-`[ ABL ]`, y cuenta el arranque entero.
+What should have been done first, and is now the lesson: **read the ABL's log
+before flashing anything**. It is in `/proc/last_kmsg`, in the lines marked
+`[ ABL ]`, and it tells the whole boot.
 
-### Lo que dice el ABL, que es lo que de verdad pasa
+### What the ABL says, which is what is really happening
 
 ```text
 [ ABL ] BootReason: 1
@@ -5962,170 +5962,169 @@ antes de flashear nada**. Está en `/proc/last_kmsg`, con las líneas marcadas
 [ ABL ] BootMode = 2
 ```
 
-**El bootloader ni siquiera intenta arrancar el sistema**: le piden recovery y
-va a recovery. Todo el rato se estuvo arreglando una cadena de arranque que
-nadie estaba rechazando. De hecho, sobre el vbmeta sin firmar el propio ABL
-dice `(Booting) AUTHENTICATE fail but allow Vbmeta binary: vbmeta`, y sigue.
-Los arranques que sí llegaron al sistema se distinguen por `BootReason: 14`
-con `PARAM Flag is PARAM_BOOT_CHARGING` y `Booting Into Mission Mode`.
+**The bootloader is not even trying to boot the system**: it is asked for
+recovery and it goes to recovery. All that time was spent fixing a boot chain
+nobody was rejecting. In fact, on the unsigned vbmeta the ABL itself says
+`(Booting) AUTHENTICATE fail but allow Vbmeta binary: vbmeta`, and carries on.
+The boots that did reach the system are distinguished by `BootReason: 14` with
+`PARAM Flag is PARAM_BOOT_CHARGING` and `Booting Into Mission Mode`.
 
-El byte 0 de la partición `param` vale `0x02`, que es el mismo valor que el
-ABL llama `BootMode = 2`; `1` es download y `0` es normal. El ABL dice que lo
-resetea al entrar en recovery, pero **sigue valiendo 2 ya estando dentro**, así
-que ese reset no cuaja y el bucle se realimenta. `param` sí es escribible
-(`blockdev --getro` = 0).
+Byte 0 of the `param` partition is `0x02`, which is the same value the ABL calls
+`BootMode = 2`; `1` is download and `0` is normal. The ABL says it resets it on
+entering recovery, but **it is still 2 once inside**, so that reset does not
+take and the loop feeds itself. `param` is writable (`blockdev --getro` = 0).
 
-Se probó además la vía oficial de TWRP: escribir `reboot system` en
-`/cache/recovery/openrecoveryscript`. TWRP **consumió** el fichero —desaparece
-tras ejecutarlo— y aun así volvió a recovery. Ni el reinicio desde modo
-Download rompe el bucle.
+TWRP's official route was also tried: writing `reboot system` into
+`/cache/recovery/openrecoveryscript`. TWRP **consumed** the file — it disappears
+after being executed — and still returned to recovery. Rebooting from Download
+mode does not break the loop either.
 
-### Estado en que queda
+### The state it is left in
 
-- Particionado del Hito 1 **intacto**: `userdata` 375,5 GiB y `linuxroot`
-  563,3 GiB con su ext4 `UBTS9U_UFS`.
-- `super` entero: las siete particiones lógicas montan, y `/system` da
+- Milestone 1's partitioning **intact**: `userdata` 375.5 GiB and `linuxroot`
+  563.3 GiB with its `UBTS9U_UFS` ext4.
+- `super` whole: all seven logical partitions mount, and `/system` gives
   `ro.build.display.id=BP2A.250605.031.A3.X910XXS5DZA1`.
-- `boot`, `vendor_boot`, `init_boot` y `dtbo` byte a byte como el respaldo
-  previo a `repack.zip`.
-- `vbmeta` es ahora el del port, sin firmar y con `flags=2`. Se deja así a
-  propósito: es lo que el instalador de Ubuntu exige, y el ABL lo admite.
-- TWRP en `recovery`, accesible por adb como root.
-- Respaldos nuevos en `D:\gts9u-backup\oneui-boot-set\`: `boot`,
-  `vendor_boot`, `init_boot`, `dtbo` y `vbmeta` de stock, con hash verificado.
-  Es además **la pareja de One UI que faltaba para el Hito 3**.
+- `boot`, `vendor_boot`, `init_boot` and `dtbo` byte for byte as the backup
+  taken before `repack.zip`.
+- `vbmeta` is now the port's, unsigned and with `flags=2`. It is left that way
+  on purpose: it is what Ubuntu's installer requires, and the ABL accepts it.
+- TWRP in `recovery`, reachable over adb as root.
+- New backups in `D:\gts9u-backup\oneui-boot-set\`: stock `boot`,
+  `vendor_boot`, `init_boot`, `dtbo` and `vbmeta`, hash-verified. It is also
+  **the One UI pair that milestone 3 was missing**.
 
-### Por dónde seguir
+### Where to go next
 
-1. **Arranque en frío**, que no exige escribir nada: apagar del todo con Power
-   y volver a encender. Los arranques buenos traen `BootReason: 14`, que huele
-   a arranque en frío frente al `1` de los reinicios en caliente.
-2. Si eso no basta, **poner a cero el byte 0 de `param`**
-   (`dd if=/dev/zero of=/dev/block/by-name/param bs=1 count=1 conv=notrunc`) y
-   reiniciar por `sysrq` para no pasar por el userspace de TWRP.
-3. Como último recurso, Odin con el BL, que reescribe `param.bin` entero.
+1. **A cold boot**, which requires writing nothing: power off completely with
+   Power and turn it on again. The good boots carry `BootReason: 14`, which
+   smells like a cold boot as against the `1` of warm reboots.
+2. If that is not enough, **zero byte 0 of `param`** (`dd if=/dev/zero
+   of=/dev/block/by-name/param bs=1 count=1 conv=notrunc`) and reboot via
+   `sysrq` so as not to go through TWRP's userspace.
+3. As a last resort, Odin with the BL, which rewrites the whole `param.bin`.
 
-Y para el Hito 2: `repack.zip` queda descartado. Conservar TWRP habrá que
-resolverlo de otra forma, o asumir un ciclo de heimdall cada vez, que ya es
-barato: `usbipd attach` más `heimdall flash --RECOVERY … --no-reboot`.
+And for milestone 2: `repack.zip` is discarded. Keeping TWRP will have to be
+solved some other way, or a heimdall cycle accepted each time, which is cheap
+enough already: `usbipd attach` plus `heimdall flash --RECOVERY … --no-reboot`.
 
 ---
 
-## Sesión 95 — el bucle de recovery lo pedía Android, y One UI convive con `flags=2`
+## Session 95 — the recovery loop was Android's doing, and One UI coexists with `flags=2`
 
-Fecha: 2026-08-15. Se sale del atasco de la sesión 94 y, de paso, cae el
-requisito que bloqueaba el Hito 2.
+Date: 2026-08-15. Session 94's impasse is escaped and, along the way, the
+requirement that was blocking milestone 2 falls.
 
-### Un arranque en frío no lo arreglaba, y eso fue el dato bueno
+### A cold boot did not fix it, and that was the good datum
 
-Apagar del todo y encender con el botón siguió entrando en TWRP. El log del
-ABL explicó por qué, nombrando la bandera:
+Powering off completely and turning on with the button still entered TWRP. The
+ABL's log explained why, naming the flag:
 
 ```text
-[ ABL ] BootReason: 0                            ← sin motivo de reinicio
-[ ABL ] PARAM Flag is PARAM_BOOT_RECOVERY_ENTER  ← lo pide la particion param
-[ ABL ] PonReason.KPDPWR = 1                     ← encendido con el boton
+[ ABL ] BootReason: 0                            ← no reboot reason
+[ ABL ] PARAM Flag is PARAM_BOOT_RECOVERY_ENTER  ← the param partition asks for it
+[ ABL ] PonReason.KPDPWR = 1                     ← powered on with the button
 [ ABL ] BootMode = 2
 ```
 
-El byte 0 de `param` valía `0x02`, que es `PARAM_BOOT_RECOVERY_ENTER`, y
-**sobrevive a un apagado completo**. Los arranques buenos muestran ahí
-`PARAM_BOOT_CHARGING`. Poniéndolo a cero
-(`dd if=/dev/zero of=/dev/block/by-name/param bs=1 count=1 conv=notrunc`) y
-reiniciando por `sysrq` para no pasar por el userspace de TWRP, el ABL sí
-eligió `Booting Into Mission Mode`.
+Byte 0 of `param` was `0x02`, which is `PARAM_BOOT_RECOVERY_ENTER`, and **it
+survives a complete power-off**. The good boots show `PARAM_BOOT_CHARGING`
+there. Setting it to zero (`dd if=/dev/zero of=/dev/block/by-name/param bs=1
+count=1 conv=notrunc`) and rebooting via `sysrq` so as not to go through TWRP's
+userspace, the ABL did choose `Booting Into Mission Mode`.
 
-### Quien pedía recovery era Android
+### The one asking for recovery was Android
 
-Ese arranque llegó al kernel y se cayó montando `/data`:
+That boot reached the kernel and fell over mounting `/data`:
 
 ```text
 init: [libfs_mgr] Failure while mounting metadata ... at /data: Invalid argument
 init: fs_mgr_mount_all suggested recovery, so wiping data via recovery with prompt.
 ```
 
-Android no puede abrir el cifrado de metadatos, y **es él quien escribe
-`PARAM_BOOT_RECOVERY_ENTER`** para que el arranque siguiente vaya a recovery a
-borrar los datos. De ahí que `param` volviera a `0x02` solo. El bucle era:
-Android no monta `/data` → pide recovery → recovery no borra nada → repetir.
+Android cannot open the metadata encryption, and **it is Android that writes
+`PARAM_BOOT_RECOVERY_ENTER`** so the next boot goes to recovery to erase the
+data. Hence `param` returning to `0x02` on its own. The loop was: Android does
+not mount `/data` → asks for recovery → recovery erases nothing → repeat.
 
-La causa de fondo es que **la clave de cifrado de `metadata` está ligada al
-estado de verified boot**. Al cambiar `vbmeta` deja de poder derivarse. Eso
-refina la conclusión de la sesión 92: el «One UI no arranca tras TWRP» no es
-del recovery en sí, es de que cambió el estado de arranque verificado. El
-remedio es el mismo, `Format Data`, y lo pide el propio `init` por escrito.
+The underlying cause is that **`metadata`'s encryption key is tied to the
+verified-boot state**. Changing `vbmeta` makes it underivable. That refines
+session 92's conclusion: "One UI does not boot after TWRP" is not about the
+recovery itself, it is about the verified-boot state having changed. The remedy
+is the same, `Format Data`, and `init` itself asks for it in writing.
 
-### Lo que esto desbloquea
+### What this unblocks
 
-Tras `twrp format data`, **One UI arranca y funciona con el `vbmeta` sin firmar
-de `flags=2` puesto**. Es el mismo que el instalador de Ubuntu exige, así que:
+After `twrp format data`, **One UI boots and works with the unsigned `flags=2`
+`vbmeta` in place**. It is the same one Ubuntu's installer requires, so:
 
-- **El requisito que bloqueaba el Hito 2 ya está cumplido**, y de forma
-  permanente mientras no se reflashee el firmware.
-- **El arranque dual no va a necesitar cambiar `vbmeta` entre sistemas**, que
-  era el riesgo serio que asomaba: cada cambio invalida el `/data` de Android.
-  Conviene no olvidarlo, porque implica que **tocar `vbmeta` en el futuro
-  cuesta un borrado de los datos de Android**.
+- **The requirement blocking milestone 2 is now met**, and permanently as long
+  as the firmware is not reflashed.
+- **Dual boot will not need to change `vbmeta` between systems**, which was the
+  serious risk on the horizon: every change invalidates Android's `/data`. It
+  is worth not forgetting, because it means **touching `vbmeta` in future costs
+  an erasure of Android's data**.
 
-El `vbmeta` correcto es el vacío y sin firmar de `avbtool`
-(`port/sources/samsung-gts9u/vbmeta.img`, 4096 bytes, bloques de autenticación
-y auxiliar a cero). El ABL lo acepta explícitamente:
-`(Booting) AUTHENTICATE fail but allow Vbmeta binary`. Parchear el firmado de
-Samsung byte a byte no vale y además no arreglaba nada, porque el problema
-nunca estuvo en la cadena de arranque.
+The correct `vbmeta` is `avbtool`'s empty, unsigned one
+(`port/sources/samsung-gts9u/vbmeta.img`, 4096 bytes, authentication and
+auxiliary blocks at zero). The ABL accepts it explicitly: `(Booting)
+AUTHENTICATE fail but allow Vbmeta binary`. Patching Samsung's signed one byte
+by byte does not work and fixed nothing anyway, because the problem was never in
+the boot chain.
 
-### Estado
+### State
 
-One UI 8 `X910XXS5DZA1` arrancado y reconfigurado, `abl` `X910XXS5CYG1`,
-bootloader desbloqueado, FBE regenerado. `userdata` 376 GiB con 371 libres y
-`linuxroot` intacta. TWRP ha vuelto a perderse al arrancar One UI, como ya se
-sabía; recuperarlo es un `heimdall flash --RECOVERY` y la combinación de
-botones.
+One UI 8 `X910XXS5DZA1` booted and reconfigured, `abl` `X910XXS5CYG1`,
+bootloader unlocked, FBE regenerated. `userdata` 376 GiB with 371 free and
+`linuxroot` intact. TWRP has been lost again by booting One UI, as was already
+known; recovering it is a `heimdall flash --RECOVERY` and the button
+combination.
 
-### Corrección a la sesión 94
+### A correction to session 94
 
-Allí se escribió que «el bootloader ni siquiera intenta arrancar el sistema».
-Era cierto sólo mientras `param` pedía recovery. Limpiada la bandera, el ABL sí
-lo intenta; lo que fallaba estaba una capa más arriba.
+There it was written that "the bootloader is not even trying to boot the
+system". That was true only while `param` was asking for recovery. With the
+flag cleared, the ABL does try; what was failing was one layer above.
 
 ---
 
-## Sesión 96 — v0.27 instala en `linuxroot` y Android conserva su partición
+## Session 96 — v0.27 installs into `linuxroot` and Android keeps its partition
 
-Fecha: 2026-08-15. Primera instalación sobre la UFS partida. **La validación en
-hardware del Hito 2 está pendiente**: esta entrada cubre sólo la instalación.
+Date: 2026-08-15. The first installation onto the split UFS. **Milestone 2's
+hardware validation is pending**: this entry covers the installation only.
 
-### El instalador elige destino
+### The installer chooses its destination
 
-`configs/twrp/ubuntu-update-binary` pasa a escribir la raíz en `linuxroot` si
-esa partición existe, y en `userdata` si no. El respaldo no es un resto: es lo
-que hace que **el mismo ZIP de instalación sirva por sí solo** a quien quiera
-Linux en toda la UFS, sin necesitar el de reparticionar. Quedan así dos
-artefactos independientes, uno para partir y otro para instalar, y el segundo
-vale también en solitario.
+`configs/twrp/ubuntu-update-binary` moves to writing the root into `linuxroot`
+if that partition exists, and into `userdata` if not. The fallback is not a
+leftover: it is what makes **the same installation ZIP work on its own** for
+anyone who wants Linux across the whole UFS, with no need for the
+repartitioning one. That leaves two independent artefacts, one to split and one
+to install, and the second works alone too.
 
-Cambios asociados: la guarda de «el ZIP está en el destino» sólo aplica cuando
-el destino es `userdata` —en una tablet partida el ZIP puede vivir en el
-`/data` de Android sin riesgo—; la ruta de actualización por overlay cae a
-`userdata` si `linuxroot` existe pero no es la raíz instalada; y la línea de
-contrato pasa a `writes boot init_boot vendor_boot dtbo vbmeta linuxroot
-userdata only`, con `validate-bundle.sh` al día.
+Associated changes: the "the ZIP is on the destination" guard applies only when
+the destination is `userdata` — on a split tablet the ZIP can live in Android's
+`/data` with no risk; the overlay update path falls back to `userdata` if
+`linuxroot` exists but is not the installed root; and the contract line becomes
+`writes boot init_boot vendor_boot dtbo vbmeta linuxroot userdata only`, with
+`validate-bundle.sh` up to date.
 
-La selección se probó **con `mksh`**, que es el shell con el que TWRP ejecuta
-`update-binary`, no con `bash`: los cuatro casos —ambas, sólo `userdata`, sólo
-`linuxroot`, ninguna— salen bien. El banco imprime además `2147483647 + 1` y
-obtiene `-2147483648`, que confirma que se está probando en el shell de 32 bits
-y no en uno cómodo. Ese fue el fallo de método de la sesión 35.
+The selection was tested **with `mksh`**, which is the shell TWRP runs
+`update-binary` with, not with `bash`: all four cases — both, `userdata` only,
+`linuxroot` only, neither — come out right. The bench also prints
+`2147483647 + 1` and gets `-2147483648`, which confirms it is testing in the
+32-bit shell and not a comfortable one. That was session 35's methodological
+failure.
 
-### La release
+### The release
 
-v0.27, reutilizando kernel y rootfs y regenerando imagen, bundle y ZIP. Todas
-las comprobaciones estáticas en verde, incluida la del contrato nuevo.
+v0.27, reusing the kernel and root filesystem and regenerating the image, the
+bundle and the ZIP. Every static check green, including the new contract's.
 `ubuntu-24.04-gts9uwifi-v0.27-sm-x910-twrp.zip`, SHA-256 `281d9a9a…`.
 
-### La instalación, medida
+### The installation, measured
 
-Enviada por `adb sideload` desde TWRP. Del log del instalador:
+Sent by `adb sideload` from TWRP. From the installer's log:
 
 ```text
 Installing into linuxroot.
@@ -6138,141 +6137,142 @@ Writing boot... init_boot... vendor_boot... dtbo...
 Updater process ended with RC=0
 ```
 
-Comprobado después contra las particiones: `linuxroot` con etiqueta
-`UBTS9U_UFS` y limpia; `boot` da `5f33dcd5…` y `vendor_boot` `ded9ae5d…`,
-idénticos a los que produjo la build; `vbmeta` conservado.
+Checked afterwards against the partitions: `linuxroot` labelled `UBTS9U_UFS`
+and clean; `boot` gives `5f33dcd5…` and `vendor_boot` `ded9ae5d…`, identical to
+the ones the build produced; `vbmeta` preserved.
 
-**La `userdata` de Android sigue intacta.** Leída en crudo ya no muestra el
-magic de f2fs sino texto cifrado, que es lo correcto: Android la tiene con
-cifrado de metadatos, así que verla ilegible desde TWRP es la prueba de que
-está puesta y no de que se haya roto.
+**Android's `userdata` is still intact.** Read raw it no longer shows f2fs's
+magic but ciphertext, which is correct: Android has it under metadata
+encryption, so seeing it illegible from TWRP is proof that it is in place, not
+that it has been broken.
 
-Un aviso del log que no es un fallo del instalador: TWRP cierra con
-`operation_end - status=1` porque después intenta montar `/data` para su propia
-interfaz y no puede descifrarla. El instalador ya había terminado con `RC=0`.
+A warning in the log that is not an installer failure: TWRP finishes with
+`operation_end - status=1` because it then tries to mount `/data` for its own
+interface and cannot decrypt it. The installer had already finished with
+`RC=0`.
 
-### Estado
+### State
 
-Ubuntu instalado en `linuxroot`; One UI no arranca porque sus cuatro imágenes
-de arranque son ahora las de Ubuntu, que es lo previsto y lo que resuelve el
-Hito 3. La vuelta es un `dd` desde TWRP con las de
-`D:\gts9u-backup\oneui-boot-set\`, respaldadas con hash verificado en ambos
-lados.
+Ubuntu installed on `linuxroot`; One UI does not boot because its four boot
+images are now Ubuntu's, which is what was expected and what milestone 3
+solves. The way back is a `dd` from TWRP with those in
+`D:\gts9u-backup\oneui-boot-set\`, backed up with the hash verified on both
+sides.
 
 ---
 
-## Sesión 97 — el intercambio de arranque, y Android con root para hacerlo solo
+## Session 97 — swapping the boot set, and Android rooted to do it alone
 
-Fecha: 2026-08-15. Se valida el Hito 2 en hardware, se escribe el intercambio
-de sistemas y se roota Android para que el cambio no dependa de un PC.
+Date: 2026-08-15. Milestone 2 is validated on hardware, the system swap is
+written, and Android is rooted so the change does not depend on a PC.
 
-### Hito 2 validado
+### Milestone 2 validated
 
-Con la v0.28 instalada, comprobado por SSH: raíz en `/dev/sda35` **crecida a
-555 GiB** con 513 libres, `ubuntu-gts9u-companion` 0.10.8 y
-`ubuntu-gts9u-device` 2.29 instalados, `tab-companion-hardware` y
-`tab-companion-spen-pairing` corriendo, **ni un servicio fallido**, y ni rastro
-de `obs-studio`, `obs-plugins`, `vlc` ni `obs-v4l2-gts9u`. Entre los
-dispositivos de entrada aparecen `Wacom EMR Digitizer`, `Tab Companion virtual
-keyboard` y `Book Cover Keyboard Slim with AI Key (EF-DX920)`. El propietario
-confirmó a mano pantalla, brillo, táctil, WiFi, audio, cámara, rotación,
-suspensión, S Pen y teclado.
+With v0.28 installed, checked over SSH: the root on `/dev/sda35` **grown to
+555 GiB** with 513 free, `ubuntu-gts9u-companion` 0.10.8 and
+`ubuntu-gts9u-device` 2.29 installed, `tab-companion-hardware` and
+`tab-companion-spen-pairing` running, **not one failed service**, and no trace
+of `obs-studio`, `obs-plugins`, `vlc` or `obs-v4l2-gts9u`. Among the input
+devices are `Wacom EMR Digitizer`, `Tab Companion virtual keyboard` and `Book
+Cover Keyboard Slim with AI Key (EF-DX920)`. The owner confirmed by hand the
+display, brightness, touch, Wi-Fi, audio, camera, rotation, suspend, S Pen and
+keyboard.
 
-`ubuntu-gts9u-desktop-user.service` aparece `inactive (dead)` y **eso es
-correcto**: no lleva `RemainAfterExit` a propósito, para que el `.path` pueda
-volver a dispararlo. Su registro muestra que corrió bien y vinculó los relés de
-cámara a `agcar`.
+`ubuntu-gts9u-desktop-user.service` shows as `inactive (dead)` and **that is
+correct**: it deliberately has no `RemainAfterExit`, so the `.path` can fire it
+again. Its log shows it ran correctly and bound the camera relays to `agcar`.
 
 ### `scripts/swap-boot-set.sh`
 
-Alterna las cuatro particiones que separan los dos sistemas —`boot`,
-`init_boot`, `vendor_boot` y `dtbo`— desde TWRP por ADB, verificando cada
-imagen por tamaño antes de enviarla, por hash tras enviarla, y releyendo la
-partición después de escribir.
+It alternates the four partitions that separate the two systems — `boot`,
+`init_boot`, `vendor_boot` and `dtbo` — from TWRP over ADB, verifying each image
+by size before sending it, by hash after sending it, and reading the partition
+back after writing.
 
-**`vbmeta` queda deliberadamente fuera de esa lista.** One UI funciona con el
-vbmeta sin firmar de `flags=2` que Ubuntu necesita, así que no hay que
-alternarlo; y como cambiarlo invalida la clave de `metadata` de Android, cada
-cambio costaría un borrado completo de sus datos. Dejarlo quieto es lo que hace
-barato cambiar de sistema.
+**`vbmeta` is deliberately left off that list.** One UI works with the unsigned
+`flags=2` vbmeta Ubuntu needs, so there is no need to alternate it; and since
+changing it invalidates Android's `metadata` key, every change would cost a
+complete erasure of its data. Leaving it alone is what makes switching systems
+cheap.
 
-Los dos juegos quedan respaldados con hash comparado en ambos lados, en
+Both sets are backed up with the hash compared on both sides, in
 `D:\gts9u-backup\{ubuntu,oneui}-boot-set\`.
 
-### Android rooteado con Magisk
+### Android rooted with Magisk
 
-El fichero a parchear es **`init_boot.img`**, no `boot.img`: este aparato tiene
-partición `init_boot`, así que ahí vive el ramdisk con el init de primera
-etapa. Se confirmó extrayéndolo del AP de One UI 8 y comparándolo con el que se
-sacó de la propia tablet: **idénticos**, `c5bff79e…`.
+The file to patch is **`init_boot.img`**, not `boot.img`: this device has an
+`init_boot` partition, so that is where the ramdisk with the first-stage init
+lives. It was confirmed by extracting it from One UI 8's AP and comparing it
+with the one pulled from the tablet itself: **identical**, `c5bff79e…`.
 
-Magisk v30.7 —cuyas notas citan soporte de Android 16 QPR2— parchea sin
-quejarse: `Stock boot image detected`, `Patching ramdisk`, `Pre-init storage
-partition: sda28`. La imagen resultante se escribió en `init_boot` con
-heimdall, sin botones, porque a modo Download se llega con `adb reboot
-download` desde One UI.
+Magisk v30.7 — whose notes cite Android 16 QPR2 support — patches without
+complaint: `Stock boot image detected`, `Patching ramdisk`, `Pre-init storage
+partition: sda28`. The resulting image was written to `init_boot` with heimdall,
+with no buttons, because Download mode is reached with `adb reboot download`
+from One UI.
 
-Root confirmado: `uid=0(root) context=u:r:magisk:s0`, y **las cuatro
-particiones de arranque son escribibles por root**. Eso es lo que hace viable
-la idea real: una app de Android que escriba el juego de Ubuntu y reinicie, sin
-PC y sin modo Download.
+Root confirmed: `uid=0(root) context=u:r:magisk:s0`, and **all four boot
+partitions are writable by root**. That is what makes the real idea viable: an
+Android app that writes Ubuntu's set and reboots, with no PC and no Download
+mode.
 
-Una trampa que costó varios intentos: **una petición de superusuario que caduca
-queda guardada como denegada**. El primer `su` se dejó expirar los 10 segundos
-del plazo, y a partir de ahí Magisk rechazaba en seco con
-`su: request rejected (2000)` sin volver a preguntar. Se arregla en la pestaña
-Superusuario, activando el interruptor de la entrada `[SharedUID] Shell`.
+A trap that cost several attempts: **a superuser request that times out is
+stored as denied**. The first `su` was left to expire its 10-second window, and
+from then on Magisk refused flatly with `su: request rejected (2000)` without
+asking again. It is fixed in the Superuser tab, by enabling the switch on the
+`[SharedUID] Shell` entry.
 
-También conviene saber que en este One UI `which su` y `which magisk` devuelven
-rutas en `/product/bin`: son los binarios que Magisk inyecta por su montaje
-systemless, no los de Samsung.
+It is also worth knowing that on this One UI `which su` and `which magisk`
+return paths under `/product/bin`: those are the binaries Magisk injects through
+its systemless mount, not Samsung's.
 
-## Sesión 98 — el reparticionado como `.zip`, probado sobre un disco falso
+## Session 98 — repartitioning as a `.zip`, tested against a fake disk
 
-Hasta ahora dividir la UFS pedía un PC: `scripts/repartition-ufs.sh` por ADB
-desde TWRP. El instalador equivalente, `configs/twrp/repartition-update-binary`,
-hace lo mismo desde el propio aparato, y `scripts/make-repartition-zip.py` lo
-empaqueta con el porcentaje dentro. El reparto va escrito en el ZIP y no se
-pregunta en la tablet, porque TWRP no tiene forma de preguntar y una división
-no es algo que deba salir mal por un toque de más.
+Until now, splitting the UFS needed a PC: `scripts/repartition-ufs.sh` over ADB
+from TWRP. The equivalent installer,
+`configs/twrp/repartition-update-binary`, does the same from the device itself,
+and `scripts/make-repartition-zip.py` packages it with the percentage inside.
+The share is written into the ZIP and not asked for on the tablet, because TWRP
+has no way of asking and a split is not something that should go wrong from one
+tap too many.
 
-Dos cosas cambian al mover la lógica al aparato.
+Two things change on moving the logic to the device.
 
-La primera es la aritmética. TWRP ejecuta el script con mksh, cuyo `$(( ))` y
-cuyo `test` son de 32 bits con signo. Un modelo de 1 TB tiene aquí unos 246
-millones de sectores, y multiplicar eso por un porcentaje desborda antes de
-llegar a la división. Todos los números los calcula `awk`, que trabaja en
-dobles y guarda exactos todos los enteros que salen.
+The first is the arithmetic. TWRP runs the script with mksh, whose `$(( ))` and
+whose `test` are 32-bit signed. A 1 TB model has some 246 million sectors here,
+and multiplying that by a percentage overflows before the division is reached.
+Every number is computed by `awk`, which works in doubles and holds exactly
+every integer in play.
 
-La segunda es que ya no hay un PC donde dejar el respaldo de la GPT. Se escribe
-al lado del ZIP cuando el ZIP está en una microSD o en un OTG, y a `/tmp` si
-no, avisando de que eso es un disco RAM. Un primer intento abortaba la
-instalación entera si ese directorio no era escribible; ahora recurre a `/tmp`,
-que es lo razonable: una tarjeta montada en solo lectura no es motivo para
-negarse a particionar.
+The second is that there is no longer a PC to leave the GPT's backup on. It is
+written next to the ZIP when the ZIP is on a microSD or an OTG drive, and to
+`/tmp` if not, with a warning that this is a RAM disk. A first attempt aborted
+the whole installation if that directory was not writable; it now falls back to
+`/tmp`, which is the reasonable thing: a card mounted read-only is no reason to
+refuse to partition.
 
-El borrado y la creación van en **una sola invocación de sgdisk**. sgdisk aplica
-todas las opciones sobre la tabla que tiene en memoria y escribe una vez al
-final, así que el aparato nunca llega a ver una tabla sin la entrada 34. Partido
-en dos llamadas, un fallo entre medias dejaría el disco sin `userdata`.
+The deletion and the creation go in **a single sgdisk invocation**. sgdisk
+applies every option to the table it holds in memory and writes once at the
+end, so the device never sees a table without entry 34. Split across two calls,
+a failure in between would leave the disk with no `userdata`.
 
-### Probado sin tocar la tablet
+### Tested without touching the tablet
 
-Como esta tablet ya está dividida, el guarda la rechazaría, y probar el camino
-bueno costaría los datos de One UI. Así que se montó un disco falso: un fichero
-disperso de 249 720 832 sectores en un loop con `-b 4096`, con el GUID de disco
-real y la entrada 34 en su sitio, y se ejecutó el instalador **con mksh**, que
-es el shell que usa TWRP, con `getprop` y `unzip` simulados.
+Since this tablet is already split, the guard would reject it, and testing the
+good path would cost One UI's data. So a fake disk was assembled: a sparse file
+of 249,720,832 sectors on a loop device with `-b 4096`, with the real disk GUID
+and entry 34 in place, and the installer was run **with mksh**, the shell TWRP
+uses, with `getprop` and `unzip` simulated.
 
-El 40/60 sale exacto: `userdata` 375,5 GiB, `linuxroot` 563,3 GiB, la segunda
-alineada a 512 sectores y los dos GUID de `userdata` reproducidos. Y lo que más
-importa: cargar el respaldo devuelve una tabla **byte a byte idéntica** a la de
-antes. Los cuatro rechazos también se comprobaron —tablet ya dividida, aparato
-que no es un X910, porcentaje absurdo, y disco que no es la UFS interna—, todos
-antes de escribir nada.
+The 40/60 comes out exact: `userdata` 375.5 GiB, `linuxroot` 563.3 GiB, the
+second aligned to 512 sectors and both of `userdata`'s GUIDs reproduced. And
+what matters most: loading the backup returns a table **byte for byte
+identical** to the previous one. All four rejections were checked as well —
+tablet already split, a device that is not an X910, an absurd percentage, and a
+disk that is not the internal UFS — all before writing anything.
 
-Lo que el ZIP deliberadamente **no** hace es formatear. Acortar `userdata` deja
-dentro un sistema de ficheros que describe una partición que ya no llega hasta
-ahí, así que Android no puede montarlo y hay que rehacerlo; pero eso lo hace el
-Format Data de TWRP, que pide confirmación escrita. Este ZIP no debería ser lo
-que borra una tablet en silencio.
+What the ZIP deliberately does **not** do is format. Shortening `userdata`
+leaves inside it a filesystem describing a partition that no longer reaches that
+far, so Android cannot mount it and it has to be remade; but that is TWRP's
+Format Data, which asks for written confirmation. This ZIP should not be the
+thing that erases a tablet silently.
