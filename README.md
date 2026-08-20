@@ -1,5 +1,7 @@
 # Ubuntu 24.04 LTS for Samsung Galaxy Tab S9 Ultra Wi-Fi
 
+<img width="2319" height="1306" alt="20260805_041759" src="https://github.com/user-attachments/assets/1d8ddb29-a499-430c-b1b8-078672399d81" />
+
 Ubuntu 24.04 LTS arm64 for the Samsung Galaxy Tab S9 Ultra Wi-Fi
 (`SM-X910`, `gts9uwifi`), running GNOME 46 on Wayland and upstream Linux
 7.2-rc3.
@@ -42,6 +44,7 @@ The evidence and technical limitations for every component are documented in
 [hardware-status.md](docs/hardware-status.md).
 
 ## Tab Companion
+<img width="2164" height="1764" alt="Screenshot from 2026-08-20 04-02-55" src="https://github.com/user-attachments/assets/df7cddca-46e8-438a-bcb8-be713cc93bed" />
 
 Tab Companion 1.0.0 is preinstalled and provides:
 
