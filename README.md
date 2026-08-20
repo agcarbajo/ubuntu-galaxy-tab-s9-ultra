@@ -62,7 +62,7 @@ split the UFS first.
 > [!WARNING]
 > Either way, **everything Android keeps in `userdata` is erased**: its apps,
 > its settings and its files. Android's system itself is not touched. Back up
-> anything you want to keep first.
+> anything you want to keep first. On another note, the project seems really stable so far, but as always: I'm not responsible for bricked devices, missing recovery partitions, nuclear wars or you getting fired because you forgot to boot back into android for the alarm.
 
 ### Before you start
 
@@ -98,6 +98,8 @@ From **Android**, install the `Dualboot-vX.X.X.apk` app and give it root access,
 
 Both One UI and LineageOS have been tested in dual boot with Ubuntu and they work fine.
 
+Liked the project? you might want to [buy me a coffee](https://paypal.me/agcarbajo1), I'll be very grateful!
+
 ## Known issues
 
 - Regarding the official cover keyboard, as I said, only EF-DX920 cover keyboard has been tested. EF-DX900, EF-DX910, EF-DX915 and
@@ -132,6 +134,8 @@ work/         Scratch space for builds; not versioned
 ```
 
 ## Firmware and licensing
+
+Keep in mind project has been made with the help of agentic AIs (codex and claude code), so some things might not be done in the best possible way.
 
 Proprietary Samsung and Qualcomm firmware is not stored in Git. Build helpers
 stage it from the owner's tablet or official Samsung firmware and verify pinned
