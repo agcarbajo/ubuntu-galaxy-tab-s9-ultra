@@ -1,24 +1,29 @@
 diff --git a/drivers/tee/qcomtee/shm.c b/drivers/tee/qcomtee/shm.c
 --- a/drivers/tee/qcomtee/shm.c
 +++ b/drivers/tee/qcomtee/shm.c
-@@ -97,7 +97,12 @@ void qcomtee_msg_buffers_free(struct qcomtee_object_invoke_ctx *oic)
+@@ -97,7 +97,20 @@ void qcomtee_msg_buffers_free(struct qcomtee_object_invoke_ctx *oic)
  	tee_shm_free(oic->out_shm);
  }
  
 -/* Dynamic shared memory pool based on tee_dyn_shm_alloc_helper(). */
 +/*
-+ * Keep ordinary QTEE messages on the proven page-backed path. Large client
-+ * memory objects cannot be allocated there when they exceed MAX_ORDER, so
-+ * those are backed by DMA-coherent CMA memory through qcom_tzmem instead.
-+ * The compat AppLoader receives large signed images through a memory object,
-+ * while the message itself retains upstream's 4 MiB ceiling.
++ * Keep ordinary QTEE messages on the proven page-backed path. Samsung's
++ * QSEECom compatibility layer gives dualfp two contiguous 0x2a4000-byte
++ * objects in addition to its large signed image. Back those objects with
++ * Qualcomm's TZMEM allocator: unlike a DMA address returned for the qcomtee
++ * platform device, qcom_tzmem_to_phys() is the physical address expected by
++ * the SHM bridge and by the secure-world memory-object callback.
++ *
++ * The EL721 ABI uses 32-bit physical addresses, matching stock's qseecom and
++ * qseecom-ta CMA pools, so every TZMEM allocation is requested from DMA32 and
++ * checked before it is exposed to TrustZone.
 + */
 +#define QCOMTEE_SHM_POOL_MAX_SIZE	SZ_32M
-+#define QCOMTEE_PAGE_SHM_MAX_SIZE	SZ_4M
++#define QCOMTEE_TZMEM_OBJECT_MIN_SIZE	SZ_2M
  
  static int qcomtee_shm_register(struct tee_context *ctx, struct tee_shm *shm,
  				struct page **pages, size_t num_pages,
-@@ -114,20 +119,57 @@ static int qcomtee_shm_unregister(struct tee_context *ctx, struct tee_shm *shm)
+@@ -114,20 +127,69 @@ static int qcomtee_shm_unregister(struct tee_context *ctx, struct tee_shm *shm)
  	return 0;
  }
  
@@ -37,20 +42,28 @@ diff --git a/drivers/tee/qcomtee/shm.c b/drivers/tee/qcomtee/shm.c
  {
 -	return tee_dyn_shm_alloc_helper(shm, size, align, qcomtee_shm_register);
 +	struct qcomtee_shm_pool *qpool = to_qcomtee_shm_pool(pool);
++	phys_addr_t paddr;
 +	void *vaddr;
 +
-+	if (size <= QCOMTEE_PAGE_SHM_MAX_SIZE)
++	if (size < QCOMTEE_TZMEM_OBJECT_MIN_SIZE)
 +		return tee_dyn_shm_alloc_helper(shm, size, align,
 +						qcomtee_shm_register);
 +
 +	size = PAGE_ALIGN(size);
-+	vaddr = qcom_tzmem_alloc(qpool->tzmem, size, GFP_KERNEL);
++	vaddr = qcom_tzmem_alloc(qpool->tzmem, size,
++				  GFP_KERNEL | GFP_DMA32);
 +	if (!vaddr)
 +		return -ENOMEM;
 +
++	paddr = qcom_tzmem_to_phys(vaddr);
++	if (!paddr || paddr > U32_MAX || size - 1 > U32_MAX - paddr) {
++		qcom_tzmem_free(vaddr);
++		return -EOVERFLOW;
++	}
++
 +	memzero_explicit(vaddr, size);
 +	shm->kaddr = vaddr;
-+	shm->paddr = qcom_tzmem_to_phys(vaddr);
++	shm->paddr = paddr;
 +	shm->size = size;
 +	shm->pages = NULL;
 +	shm->num_pages = 0;
@@ -83,7 +96,7 @@ diff --git a/drivers/tee/qcomtee/shm.c b/drivers/tee/qcomtee/shm.c
  }
  
  static const struct tee_shm_pool_ops pool_ops = {
-@@ -134,18 +176,29 @@ static const struct tee_shm_pool_ops pool_ops = {
+@@ -138,13 +200,25 @@ static const struct tee_shm_pool_ops pool_ops = {
  
  struct tee_shm_pool *qcomtee_shm_pool_alloc(void)
  {
