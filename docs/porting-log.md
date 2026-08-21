@@ -6276,3 +6276,84 @@ leaves inside it a filesystem describing a partition that no longer reaches that
 far, so Android cannot mount it and it has to be remade; but that is TWRP's
 Format Data, which asks for written confirmation. This ZIP should not be the
 thing that erases a tablet silently.
+
+---
+
+## Session 99 — One UI 8 identifies the missing QTEE client context
+
+Date: 2026-08-21. The rooted half of the dual boot gives a live reference for
+the EL721 instead of another inference from blobs. The tablet is running
+Android 16 / One UI 8 build `X910XXS5DZA1`; its fingerprint service is AIDL v2,
+runs as `system` (UID 1000), opens `/dev/esfp0` and uses `/dev/smcinvoke`.
+Nothing in the enrolled-template store was read or copied.
+
+Stock reports `EGISTEC`, `EL721`, type `8`, `EL721-B`, a secure SPI clock of
+20 MHz and the unchanged position string. A clean service restart also shows
+the expected brief Linux-side sequence: sensor SPI control on, operation 22,
+then control off. Current `dualfp.b00`–`b08` still assemble to 19,927,128 bytes;
+their code keeps the same TypeCheck command, the `0x2a4000` shared-buffer
+registration, QUP1_SE2 at 20 MHz and the enum `21` → type `8` mapping. The
+dual-boot work has not introduced fingerprint protocol drift.
+
+### The decisive live trace
+
+`simpleperf` can record the stock kernel's `smcinvoke` tracepoints even though
+SELinux correctly refuses direct tracefs writes. A system-wide recording of a
+fresh fingerprint-service start produced 70 records with none lost. The
+relevant calls are:
+
+```text
+AppLoader handle 1, op 2, counts 0x1100 -> result 0, controller 0x1a
+controller 0x1a, op 0, counts 0x0424 -> result 0
+```
+
+The first line is `lookupTA("securefp")`: unlike the Ubuntu UID 0 probe, One UI
+gets the preloaded controller. The second is BAUTH. `0x0424` means four input
+buffers, two output buffers and four input objects, exactly the probe's current
+packing. That independently confirms the reconstructed transport and removes
+another possible cause of the type-zero result.
+
+The best remaining difference is the client's credential. In Qualcomm's pinned
+`quic-teec` commit `736419e…`, `qcomtee_object_credentials_init()` serialises
+`getuid()` and the system time into CBOR, and that callback is passed to root
+operation 2, `registerAsClient`. Every previous Ubuntu experiment registered
+UID 0; Samsung registers UID 1000. TA visibility can therefore legitimately
+differ even though both clients open AppLoader UID 122.
+
+### A bounded UID test, not a service shortcut
+
+Both QTEE probes now accept `--client-uid=UID`. They first open `/dev/tee0`,
+then clear supplementary groups and irreversibly set real/effective/saved UID
+and GID before creating the credential object. The probe cannot regain root;
+the outer one-shot shell remains privileged only so its `trap` can power the
+EL721 off and unload QCOMTEE. The split TA is read before the drop, and if UID
+1000 finds `securefp`, TypeCheck runs on that returned controller without
+loading or unloading a duplicate TA.
+
+This is only a controlled hypothesis test. A final backend must have its own
+unprivileged account and narrowly granted device access; it must not impersonate
+Android's UID. The next physical Ubuntu invocation passes client UID 1000 as
+the sixth argument to `test-el721-type-check.sh`. A result of type `8` would
+close the secure hardware path. If it remains type `0`, the next branch is the
+TrustZone log, not taking QUP1_SE2 away from secure firmware.
+
+### Prepared without replacing the running Android set
+
+The experimental kernel was rebuilt cleanly with
+`ENABLE_FINGERPRINT_EXPERIMENTAL=1`, including EL721, Goodix FOD and panel FOD.
+Because that clean build also regenerated the module signing key, its matching
+QCOMTEE, ath12k, Wi-Fi 7 and v4l2loopback modules were packaged with it instead
+of mixing two builds that happen to share `7.2.0-rc3-dirty` as their release.
+
+The rooted Android side mounted `linuxroot` read-write only for staging. Before
+changing it, it copied the normal Ubuntu `boot.img` and complete module tree to
+`/var/lib/gts9u-fingerprint-backup-20260821`. The test bundle and probes live in
+`/var/lib/gts9u-fingerprint-test-20260821`; the saved Ubuntu boot set now points
+to the experimental image. Its SHA-256 is
+`a624eeeab4f1d32ba8e95338205dfc896b5b8f0aa4f702ce2d4918139cfd9905`.
+
+No live boot partition was written. The active `boot` hash remained
+`bb7be3cea122f3ac60c710c7b6932d7f3bf98e46b086aa8e6dad4b9c113a68dc`,
+identical to the stored Android set, and `linuxroot` was cleanly unmounted.
+Selecting Ubuntu in Boot Switcher is therefore the explicit boundary that
+writes the prepared four-image set and starts the physical test.

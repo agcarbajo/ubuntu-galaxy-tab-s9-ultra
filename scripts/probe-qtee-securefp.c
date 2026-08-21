@@ -2,11 +2,14 @@
 // Minimal, read-only QTEE presence probe for Samsung's preloaded securefp TA.
 // Uses Qualcomm's quic-teec test helpers for root/client-environment setup.
 
+#define _GNU_SOURCE
+
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
 #include "tests_private.h"
+#include "qtee-client-identity.h"
 
 #define QSEECOM_COMPAT_APP_LOADER_UID UINT32_C(122)
 #define QSEECOM_COMPAT_LOOKUP_TA_OP UINT32_C(2)
@@ -20,15 +23,26 @@ int main(int argc, char **argv)
 	struct qcomtee_object *app_controller = QCOMTEE_OBJECT_NULL;
 	struct qcomtee_param params[2] = { 0 };
 	qcomtee_result_t result = -1;
+	uid_t client_uid = 0;
+	int use_client_uid = 0;
+	int app_name_set = 0;
+	int i;
 	int transport_ret;
 	int exit_code = 1;
 
-	if (argc > 2) {
-		fprintf(stderr, "Usage: %s [TA-name]\n", argv[0]);
-		return 64;
+	for (i = 1; i < argc; i++) {
+		if (!strncmp(argv[i], "--client-uid=", 13)) {
+			if (use_client_uid ||
+			    qtee_parse_client_uid(argv[i], &client_uid))
+				goto usage;
+			use_client_uid = 1;
+		} else if (!app_name_set) {
+			app_name = argv[i];
+			app_name_set = 1;
+		} else {
+			goto usage;
+		}
 	}
-	if (argc == 2)
-		app_name = argv[1];
 	if (!app_name[0] || strlen(app_name) > 63 || strchr(app_name, '/')) {
 		fprintf(stderr, "FAIL: invalid TA name\n");
 		return 64;
@@ -39,6 +53,8 @@ int main(int argc, char **argv)
 		fprintf(stderr, "FAIL: could not open /dev/tee0\n");
 		goto out;
 	}
+	if (use_client_uid && qtee_drop_client_identity(client_uid))
+		goto out;
 
 	client_env = test_get_client_env_object(root);
 	if (client_env == QCOMTEE_OBJECT_NULL) {
@@ -93,4 +109,8 @@ out:
 	qcomtee_object_refs_dec(client_env);
 	qcomtee_object_refs_dec(root);
 	return exit_code;
+
+usage:
+	fprintf(stderr, "Usage: %s [TA-name] [--client-uid=UID]\n", argv[0]);
+	return 64;
 }
