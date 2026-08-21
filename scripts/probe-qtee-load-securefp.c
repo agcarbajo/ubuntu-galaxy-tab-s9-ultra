@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Load Samsung's signed split fingerprint TA and optionally query its type.
 
+#define _GNU_SOURCE
+
 #include <elf.h>
 #include <errno.h>
 #include <stdint.h>
@@ -9,6 +11,7 @@
 #include <string.h>
 
 #include "tests_private.h"
+#include "qtee-client-identity.h"
 
 #define QSEECOM_COMPAT_APP_LOADER_UID UINT32_C(122)
 #define QSEECOM_COMPAT_LOOKUP_TA_OP UINT32_C(2)
@@ -408,21 +411,38 @@ int main(int argc, char **argv)
 	uint32_t name_first = EL721_SENSOR_NAME;
 	uint32_t name_last = EL721_SENSOR_NAME;
 	uint32_t sensor_name;
+	uid_t client_uid = 0;
+	int use_client_uid = 0;
 	int run_type_check = 0;
+	int i;
 	int exit_code = 1;
 
-	if (argc < 4 || argc > 5 ||
-	    (argc == 5 && parse_type_check(argv[4], &name_first, &name_last))) {
-		fprintf(stderr,
-			"usage: %s SPLIT_DIRECTORY BASENAME LOAD_NAME [--type-check[=FIRST[-LAST]]]\n",
-			argv[0]);
-		return 64;
+	if (argc < 4 || argc > 6)
+		goto usage;
+	for (i = 4; i < argc; i++) {
+		if (!strncmp(argv[i], "--type-check", 12)) {
+			if (run_type_check ||
+			    parse_type_check(argv[i], &name_first, &name_last))
+				goto usage;
+			run_type_check = 1;
+		} else if (!strncmp(argv[i], "--client-uid=", 13)) {
+			if (use_client_uid ||
+			    qtee_parse_client_uid(argv[i], &client_uid))
+				goto usage;
+			use_client_uid = 1;
+		} else {
+			goto usage;
+		}
 	}
 	basename = argv[2];
 	load_name = argv[3];
-	run_type_check = argc == 5;
+	/* Read the signed image before an optional irreversible UID drop. */
+	if (assemble_ta(argv[1], basename, &image, &image_size))
+		goto out;
 	root = test_get_root();
 	if (root == QCOMTEE_OBJECT_NULL)
+		goto out;
+	if (use_client_uid && qtee_drop_client_identity(client_uid))
 		goto out;
 	client_env = test_get_client_env_object(root);
 	if (client_env == QCOMTEE_OBJECT_NULL)
@@ -440,6 +460,12 @@ int main(int argc, char **argv)
 		printf("FOUND: %s is already loaded; no load was attempted.\n",
 		       name);
 		exit_code = 0;
+		for (sensor_name = name_first; run_type_check; sensor_name++) {
+			if (type_check_ta(controller, root, sensor_name))
+				exit_code = 1;
+			if (sensor_name == name_last)
+				break;
+		}
 		goto out;
 	}
 	qcomtee_object_refs_dec(controller);
@@ -447,8 +473,6 @@ int main(int argc, char **argv)
 	printf("lookupTA(%s) returned %u; trying the signed stock image.\n",
 	       name, result);
 
-	if (assemble_ta(argv[1], basename, &image, &image_size))
-		goto out;
 	if (image_size > QCOMTEE_MAX_INBOUND_BUFFER_SIZE) {
 		load_method = "loadFromRegion";
 		if (qcomtee_memory_object_alloc(image_size, root,
@@ -512,19 +536,21 @@ int main(int argc, char **argv)
 			FINGERPRINT_TA_NAME,
 			"dualfp",
 		};
-		size_t i;
+		size_t lookup_index;
 
-		for (i = 0; i < sizeof(lookup_names) / sizeof(lookup_names[0]); i++) {
+		for (lookup_index = 0;
+		     lookup_index < sizeof(lookup_names) / sizeof(lookup_names[0]);
+		     lookup_index++) {
 			struct qcomtee_object *found = QCOMTEE_OBJECT_NULL;
 			qcomtee_result_t lookup_result = QCOMTEE_ERROR;
 
-			if (lookup_ta(app_loader, lookup_names[i], &found,
+			if (lookup_ta(app_loader, lookup_names[lookup_index], &found,
 				      &lookup_result)) {
 				fprintf(stderr, "WARN: lookupTA(%s) transport error\n",
-					lookup_names[i]);
+					lookup_names[lookup_index]);
 			} else {
 				printf("lookupTA(%s) after load returned %u (%s).\n",
-				       lookup_names[i], lookup_result,
+				       lookup_names[lookup_index], lookup_result,
 				       found == QCOMTEE_OBJECT_NULL ? "no object" :
 				       "controller object");
 			}
@@ -541,6 +567,13 @@ int main(int argc, char **argv)
 		if (sensor_name == name_last)
 			break;
 	}
+	goto out;
+
+usage:
+	fprintf(stderr,
+		"usage: %s SPLIT_DIRECTORY BASENAME LOAD_NAME [--type-check[=FIRST[-LAST]]] [--client-uid=UID]\n",
+		argv[0]);
+	return 64;
 
 out:
 	if (loaded_here && controller != QCOMTEE_OBJECT_NULL) {
