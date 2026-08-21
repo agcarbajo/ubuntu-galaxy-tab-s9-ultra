@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Load and unload one signed QSEECom-compatible TA without invoking it.
 
+#define _GNU_SOURCE
+
 #include <elf.h>
 #include <errno.h>
 #include <stdint.h>
@@ -9,6 +11,7 @@
 #include <string.h>
 
 #include "tests_private.h"
+#include "qtee-client-identity.h"
 
 #define QSEECOM_COMPAT_APP_LOADER_UID UINT32_C(122)
 #define QSEECOM_COMPAT_LOAD_BUFFER_OP UINT32_C(1)
@@ -91,18 +94,32 @@ int main(int argc, char **argv)
 	unsigned char *image = NULL;
 	size_t image_size = 0;
 	qcomtee_result_t result = QCOMTEE_ERROR;
+	int use_kernel_client_env = 0;
+	int lookup_name_set = 0;
+	int i;
 	int loaded_here = 0;
 	int exit_code = 1;
 
-	if (argc < 3 || argc > 4) {
-		fprintf(stderr, "usage: %s TA_IMAGE LOAD_NAME [LOOKUP_AFTER]\n",
+	if (argc < 3 || argc > 5) {
+		fprintf(stderr,
+			"usage: %s TA_IMAGE LOAD_NAME [LOOKUP_AFTER] [--kernel-client-env]\n",
 			argv[0]);
 		return 64;
 	}
 	path = argv[1];
 	load_name = argv[2];
-	if (argc == 4)
-		lookup_name = argv[3];
+	for (i = 3; i < argc; i++) {
+		if (!strcmp(argv[i], "--kernel-client-env")) {
+			if (use_kernel_client_env)
+				goto usage;
+			use_kernel_client_env = 1;
+		} else if (!lookup_name_set) {
+			lookup_name = argv[i];
+			lookup_name_set = 1;
+		} else {
+			goto usage;
+		}
+	}
 	if (!load_name[0] || strlen(load_name) > 63 || strchr(load_name, '/') ||
 	    (lookup_name && (!lookup_name[0] || strlen(lookup_name) > 63 ||
 			     strchr(lookup_name, '/')))) {
@@ -115,7 +132,9 @@ int main(int argc, char **argv)
 	root = test_get_root();
 	if (root == QCOMTEE_OBJECT_NULL)
 		goto out;
-	client_env = test_get_client_env_object(root);
+	client_env = use_kernel_client_env ?
+		qtee_get_kernel_compat_client_env(root) :
+		test_get_client_env_object(root);
 	if (client_env == QCOMTEE_OBJECT_NULL)
 		goto out;
 	loader = test_get_service_object(client_env,
@@ -195,4 +214,10 @@ out:
 	qcomtee_object_refs_dec(client_env);
 	qcomtee_object_refs_dec(root);
 	return exit_code;
+
+usage:
+	fprintf(stderr,
+		"usage: %s TA_IMAGE LOAD_NAME [LOOKUP_AFTER] [--kernel-client-env]\n",
+		argv[0]);
+	return 64;
 }

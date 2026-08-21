@@ -25,6 +25,7 @@ int main(int argc, char **argv)
 	qcomtee_result_t result = -1;
 	uid_t client_uid = 0;
 	int use_client_uid = 0;
+	int use_kernel_client_env = 0;
 	int app_name_set = 0;
 	int i;
 	int transport_ret;
@@ -32,10 +33,14 @@ int main(int argc, char **argv)
 
 	for (i = 1; i < argc; i++) {
 		if (!strncmp(argv[i], "--client-uid=", 13)) {
-			if (use_client_uid ||
+			if (use_client_uid || use_kernel_client_env ||
 			    qtee_parse_client_uid(argv[i], &client_uid))
 				goto usage;
 			use_client_uid = 1;
+		} else if (!strcmp(argv[i], "--kernel-client-env")) {
+			if (use_kernel_client_env || use_client_uid)
+				goto usage;
+			use_kernel_client_env = 1;
 		} else if (!app_name_set) {
 			app_name = argv[i];
 			app_name_set = 1;
@@ -56,7 +61,9 @@ int main(int argc, char **argv)
 	if (use_client_uid && qtee_drop_client_identity(client_uid))
 		goto out;
 
-	client_env = test_get_client_env_object(root);
+	client_env = use_kernel_client_env ?
+		qtee_get_kernel_compat_client_env(root) :
+		test_get_client_env_object(root);
 	if (client_env == QCOMTEE_OBJECT_NULL) {
 		fprintf(stderr, "FAIL: could not obtain IClientEnv\n");
 		goto out;
@@ -111,6 +118,8 @@ out:
 	return exit_code;
 
 usage:
-	fprintf(stderr, "Usage: %s [TA-name] [--client-uid=UID]\n", argv[0]);
+	fprintf(stderr,
+		"Usage: %s [TA-name] [--client-uid=UID | --kernel-client-env]\n",
+		argv[0]);
 	return 64;
 }

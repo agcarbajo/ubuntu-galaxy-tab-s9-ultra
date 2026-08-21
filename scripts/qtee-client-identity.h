@@ -13,7 +13,10 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-static int qtee_parse_client_uid(const char *argument, uid_t *uid)
+#define QTEE_CLIENT_ENV_REGISTER_WITH_CREDENTIALS UINT32_C(5)
+
+static __attribute__((unused)) int
+qtee_parse_client_uid(const char *argument, uid_t *uid)
 {
 	static const char prefix[] = "--client-uid=";
 	unsigned long value;
@@ -39,7 +42,7 @@ static int qtee_parse_client_uid(const char *argument, uid_t *uid)
  * then drops every local privilege irreversibly before quic-teec serialises
  * getuid() into the credentials object used by registerAsClient.
  */
-static int qtee_drop_client_identity(uid_t uid)
+static __attribute__((unused)) int qtee_drop_client_identity(uid_t uid)
 {
 	if (geteuid() != 0) {
 		if (getuid() == uid && geteuid() == uid)
@@ -65,6 +68,41 @@ static int qtee_drop_client_identity(uid_t uid)
 	printf("QTEE client identity irreversibly reduced to UID/GID %u.\n",
 	       (unsigned int)uid);
 	return 0;
+}
+
+/*
+ * Samsung's in-kernel QSEECom compatibility path does not use the userspace
+ * CBOR credentials object.  Its get_client_env_object() invokes root operation
+ * 5 (IClientEnv_registerWithCredentials) with Object_NULL.  Reproduce that
+ * exact, narrower difference without importing the downstream smcinvoke
+ * driver or pretending that a numeric Linux UID is an Android client.
+ */
+static struct qcomtee_object *qtee_get_kernel_compat_client_env(
+	struct qcomtee_object *root)
+{
+	struct qcomtee_param params[2] = { 0 };
+	qcomtee_result_t result = QCOMTEE_ERROR;
+
+	params[0].attr = QCOMTEE_OBJREF_INPUT;
+	params[0].object = QCOMTEE_OBJECT_NULL;
+	params[1].attr = QCOMTEE_OBJREF_OUTPUT;
+	if (qcomtee_object_invoke(root,
+			QTEE_CLIENT_ENV_REGISTER_WITH_CREDENTIALS,
+			params, 2, &result)) {
+		fprintf(stderr,
+			"FAIL: registerWithCredentials(NULL) transport error\n");
+		return QCOMTEE_OBJECT_NULL;
+	}
+	if (result || params[1].object == QCOMTEE_OBJECT_NULL) {
+		fprintf(stderr,
+			"FAIL: registerWithCredentials(NULL) returned %d\n",
+			result);
+		qcomtee_object_refs_dec(params[1].object);
+		return QCOMTEE_OBJECT_NULL;
+	}
+
+	printf("QTEE client environment registered through the kernel-compatible NULL-credentials path.\n");
+	return params[1].object;
 }
 
 #endif

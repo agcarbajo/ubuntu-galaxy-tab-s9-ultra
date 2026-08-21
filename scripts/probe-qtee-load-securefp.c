@@ -413,6 +413,7 @@ int main(int argc, char **argv)
 	uint32_t sensor_name;
 	uid_t client_uid = 0;
 	int use_client_uid = 0;
+	int use_kernel_client_env = 0;
 	int run_type_check = 0;
 	int i;
 	int exit_code = 1;
@@ -426,10 +427,14 @@ int main(int argc, char **argv)
 				goto usage;
 			run_type_check = 1;
 		} else if (!strncmp(argv[i], "--client-uid=", 13)) {
-			if (use_client_uid ||
+			if (use_client_uid || use_kernel_client_env ||
 			    qtee_parse_client_uid(argv[i], &client_uid))
 				goto usage;
 			use_client_uid = 1;
+		} else if (!strcmp(argv[i], "--kernel-client-env")) {
+			if (use_kernel_client_env || use_client_uid)
+				goto usage;
+			use_kernel_client_env = 1;
 		} else {
 			goto usage;
 		}
@@ -444,7 +449,9 @@ int main(int argc, char **argv)
 		goto out;
 	if (use_client_uid && qtee_drop_client_identity(client_uid))
 		goto out;
-	client_env = test_get_client_env_object(root);
+	client_env = use_kernel_client_env ?
+		qtee_get_kernel_compat_client_env(root) :
+		test_get_client_env_object(root);
 	if (client_env == QCOMTEE_OBJECT_NULL)
 		goto out;
 	app_loader = test_get_service_object(client_env,
@@ -571,7 +578,7 @@ int main(int argc, char **argv)
 
 usage:
 	fprintf(stderr,
-		"usage: %s SPLIT_DIRECTORY BASENAME LOAD_NAME [--type-check[=FIRST[-LAST]]] [--client-uid=UID]\n",
+		"usage: %s SPLIT_DIRECTORY BASENAME LOAD_NAME [--type-check[=FIRST[-LAST]]] [--client-uid=UID | --kernel-client-env]\n",
 		argv[0]);
 	return 64;
 

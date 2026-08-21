@@ -29,27 +29,28 @@ fingerprint-service
   → libsfp_teegw
   → libQSEEComAPI (objects)
   → compatible AppLoader, UID 122
-  → logical name "securefp"
-  → signed dualfp TA
+  → lookupTA("dualfp") → 23 (not loaded)
+  → signed dualfp TA from /vendor/firmware_mnt/image
+  → QSEEComCompat controller → BAUTH
 ```
 
-Samsung's service asks for the logical name `securefp`, but no `securefp.mbn`
-file exists in `system`, `vendor`, `odm` or in the biometric APEX. The `fpta`
-path allows an update or override, but is empty in this firmware. A full
-analysis of `NON-HLOS.bin` resolved the ambiguity: `fingerpr.b00`–`b08` holds
-the generic QFP engine, while `dualfp.b00`–`b08` holds the Samsung/Egis
-implementation of the EL721, BAUTH, matching and templates. `authnr.mbn` is
-another authenticator that references both `securefp` and `dualfp`, not the
-main matcher.
+No `securefp.mbn` file exists in `system`, `vendor`, `odm` or the biometric
+APEX. Static analysis had shown that Samsung's gateway can use either
+`securefp` or `dualfp`, but a traced One UI 8 service restart settled the live
+path: it asks for `dualfp`, receives AppLoader result `23`, and loads the split
+image explicitly. Both the mounted fingerprint APEX and its active update
+directory are empty of TAs. A full analysis of `NON-HLOS.bin` resolved the
+remaining ambiguity: `fingerpr.b00`–`b08` holds the generic QFP engine, while
+`dualfp.b00`–`b08` holds the Samsung/Egis implementation of the EL721, BAUTH,
+matching and templates. Preloading `authnr.mbn`, another authenticator that
+references both names, did not alter Ubuntu's result.
 
 The assembled `dualfp` image is 19,927,128 bytes. The compatible AppLoader UID
 122 accepts it with `loadFromRegion` and returns a valid QSEEComCompat handle;
 the subsequent unload also completes correctly. That proves the required secure
 TA is present and executable from Ubuntu. A root client registered by the
-upstream `quic-teec` helper did not see the logical alias, so the first probe
-loaded the signed image explicitly. One UI 8 later proved that the alias does
-exist for Samsung's UID 1000 client; client identity is now the first difference
-to test, rather than assuming the alias is globally absent.
+upstream `quic-teec` helper does not find a preloaded object and therefore
+loads the signed image explicitly, just as the measured One UI path does.
 
 ### One UI 8 as the live reference
 
@@ -60,14 +61,21 @@ reading or copying any enrolled template. Its public kernel interfaces report
 `vendor.samsung.hardware.biometrics.fingerprint-service`, runs as Android's
 `system` UID 1000, opens `/dev/esfp0` and talks through `/dev/smcinvoke`.
 
-A system-wide `smcinvoke` trace of a clean service start settles two important
-details:
+A system-wide `smcinvoke` trace of a clean service start and a real fingerprint
+unlock settles the important transport details:
 
-- AppLoader UID 122 receives operation 2 with counts `0x1100` and
-  `lookupTA("securefp")` succeeds, returning controller handle `0x1a`;
-- BAUTH requests use that controller's operation 0 with counts `0x0424` — four
-  input buffers, two output buffers and four input objects — exactly the layout
-  already emitted by the Ubuntu probe.
+- the service calls `lookupTA("dualfp")`, gets result `23`, allocates the TA
+  image from `qcom,qseecom-ta` and opens a session successfully;
+- its two persistent BAUTH buffers are `0x2a4000` bytes each and come from the
+  CMA-backed `qcom,qseecom` dma-heap;
+- the SHM bridges expose the rounded TA at physical `0xf5400000` with size
+  `0x1302000`, and the BAUTH buffers at `0xfc300000` and `0xfc600000`; all
+  three use HLOS VMID 3 and read/write permission 6;
+- BAUTH requests use controller operation 0 with counts `0x0424` — four input
+  buffers, two output buffers and four input objects — exactly the layout
+  emitted by the Ubuntu probe;
+- the real unlock trace recorded 3,839 samples with none lost; every one of the
+  fingerprint service's observed controller calls completed with result zero.
 
 The current `dualfp` image is still 19,927,128 bytes and its code still opens
 QUP1_SE2 at 20 MHz, maps input sensor-name enum `21` (`EL721`) to output type
@@ -333,11 +341,11 @@ experience in GDM and in all four orientations, once the backend exists.
 ### 5. QTEE and full authentication
 
 The read-only query with the official `quic-teec` tools already confirms QTEE
-5.2.0, Qualcomm Diagnostics and the compatible UID 122 AppLoader. A root
-Ubuntu client gets result `2` from `lookupTA("securefp")`, but the live One UI
-8 service gets a controller from the same operation. The earlier conclusion
-that the alias was not published to any client was therefore wrong: its
-visibility is client-dependent.
+5.2.0, Qualcomm Diagnostics and the compatible UID 122 AppLoader. Ubuntu gets
+result `2` from `lookupTA("securefp")` as root and after reproducing Android's
+numeric UID 1000. The live One UI 8 service does not use that alias either: it
+gets `23` from `lookupTA("dualfp")` and loads the signed image. Client identity
+and a supposedly hidden preloaded controller are therefore ruled out.
 
 `scripts/probe-qtee-securefp.c` implements exactly that query. It is built
 against `quic-teec` `736419e25a2036aac3292a10a93e394a90750ca3` and QCBOR
@@ -346,8 +354,8 @@ against `quic-teec` `736419e25a2036aac3292a10a93e394a90750ca3` and QCBOR
 application object or sending it an operation. Its optional
 `--client-uid=UID` opens `/dev/tee0` first and then irreversibly removes the
 process's groups, UID and GID before `registerAsClient`; it cannot regain root.
-This lets one diagnostic reproduce Samsung's UID 1000 credential without
-loosening `/dev/tee0` permissions.
+This reproduced Samsung's numeric UID 1000 credential without loosening
+`/dev/tee0` permissions and gave the same negative result as UID 0.
 
 `scripts/probe-qtee-load-securefp.c` reassembles a stock split image with the
 ELF offsets Qualcomm uses. It takes the segments' base name and the load name
@@ -359,13 +367,14 @@ enum `21` and translates it to sensor type `8`; the probe reproduces that exact
 mapping. No capture, enrolment or match is started.
 
 Qualcomm's pinned credential callback serialises `getuid()` and the current
-time into the CBOR object passed to `IClientEnv.registerAsClient`. The load
-probe accepts the same `--client-uid=UID` option and, if the logical alias is
-found, can issue TypeCheck directly on the returned controller without loading
-or unloading a second TA. This is a controlled hypothesis test, not the final
-service design: a production backend will run under a dedicated unprivileged
-identity with narrowly granted device access rather than impersonating another
-UID.
+time into the CBOR object passed to `IClientEnv.registerAsClient`. The probes
+also expose a diagnostic `--kernel-client-env` path: with a narrowly gated
+kernel patch it reproduces downstream smcinvoke's root operation 5 with a NULL
+credentials object. That exact path also loads `dualfp` but TypeCheck remains
+at type zero. The patch is disabled in normal and release builds. These are
+controlled hypothesis tests, not a service design: a production backend will
+run under a dedicated unprivileged identity with narrowly granted device
+access.
 
 For three sessions the TA answered `29` to everything. The cause was resolved
 on 14 August 2026 by disassembling the TA itself, which is not encrypted. Its
@@ -459,20 +468,30 @@ illumination and the Goodix FOD signal/suppression are all checked. So is the
 deferred power: on 14 August 2026 the 3.3 V rail and the enable line were
 switched on and off on the tablet, with a reset and without rebooting it.
 
-The BAUTH transport is solved too: with shared buffers of the size the TA
-demands, it accepts and runs the command, and One UI's live IPC trace confirms
-the same parameter counts. The previous UID 0 test then returned sensor type
-`0`. That no longer proves the secure SPI itself is broken, because it also
-used a different QTEE client identity and a manually loaded controller.
+The BAUTH packing is solved: with shared buffers of the size the TA demands it
+accepts and runs the command, and One UI's live IPC trace confirms the same
+parameter counts. Numeric UID 1000, downstream's operation-5/NULL client
+environment and preloading `authnr` have each returned the same sensor type
+zero, so none explains the difference.
 
-The immediate next test is therefore UID 1000 on Ubuntu. If
-`lookupTA("securefp")` now returns the preloaded controller and TypeCheck yields
-type `8`, the secure hardware path is solved without exposing TrustZone logs or
-porting Samsung's legacy QSEECOM driver. If it still returns `0`, the four
-QUP1_SE2 lines remain reserved for TrustZone in both kernels, and the next
-diagnostic is a `tzdbg`-style reader for the TA's existing errors (`gpio
-control tz_open error`, `qsee_tlmm_get_gpio_id: BLSP_CLK Failed` and
-`sec_tzspi_open failed`). Linux must not take over or sample those pins.
+The backing-memory hypothesis is now ruled out too. A clean Linux 7.2-rc3
+variant routes every QTEE object of at least 2 MiB through `qcom_tzmem`, asks
+for DMA32 and passes the physical address—not the qcomtee device's DMA/IOVA—to
+the SHM bridge. A live SCM trace measured the rounded TA at `0xf1a00000` with
+size `0x1302000` and the two BAUTH regions at `0xf2e00000` and `0xf3100000`,
+each with size `0x2a4000`. As on One UI, all three were below 4 GiB and used
+VMID 3 with read/write permission 6. The signed TA loaded and the request
+completed successfully, but `TypeCheck` still returned sensor type zero.
+
+The observed host-side start sequence now matches stock as well: only
+`VDD_BTP_3P3` is enabled, GPIO155 rises 2.856 ms later, no reset pulse is sent,
+and Linux does not claim or clock QUP1_SE2 before the TA call. The unresolved
+boundary is therefore inside secure sensor communication: either a secure
+firmware resource/ownership prerequisite not visible in the Linux trace or an
+unread TA error. The next useful work is a read-only TrustZone/QSEE log path or
+a comparison of secure resource setup. Repeating identities, reset pulses or
+memory layouts is no longer justified, and Linux must not take QUP1_SE2 away
+from TrustZone or sample its secure pins.
 
 After that comes the minimal bridge to `libfprint`/`fprintd`. Templates and
 matching will stay in TrustZone. `fprintd` is neither added nor enabled while
@@ -484,7 +503,7 @@ transaction. It refuses an already-active sensor or `/dev/tee0`, checks the
 nine signed segments, and guarantees through `trap` that GPIO91/GPIO155 return
 to zero and that QCOMTEE is unloaded even if `TypeCheck` fails. It takes a fifth
 argument with the selector passed to the probe and an optional sixth client
-UID. The next invocation uses `--type-check` and UID `1000`; opening the TEE
-device remains privileged, but the probe drops its own privilege before
-creating the credentials object. It does not enable HBM, request a capture or
-record biometric data.
+environment (`kernel` or a numeric UID). Opening the TEE device remains
+privileged; numeric identities are dropped irreversibly before their credential
+object is created. It does not enable HBM, request a capture or record
+biometric data.

@@ -9,7 +9,7 @@ if [ "$(id -u)" -ne 0 ]; then
 	exit 77
 fi
 if [ "$#" -lt 2 ] || [ "$#" -gt 6 ]; then
-	echo "usage: $0 PROBE SPLIT_DIRECTORY [BASENAME [LOAD_NAME [SELECTOR [CLIENT_UID]]]]" >&2
+	echo "usage: $0 PROBE SPLIT_DIRECTORY [BASENAME [LOAD_NAME [SELECTOR [CLIENT_ENV]]]]" >&2
 	exit 64
 fi
 
@@ -19,10 +19,18 @@ basename=${3:-dualfp}
 load_name=${4:-dualfp}
 # Which sensor-name enums to query; a range asks several inside one load.
 selector=${5:---type-check}
-client_uid=${6:-}
+client_env=${6:-}
 fp_sysfs=
 qcomtee_loaded=0
 sensor_powered=0
+qcomtee_module=${QCOMTEE_MODULE:-}
+reset_before_type_check=${EL721_RESET_BEFORE_TYPE_CHECK:-0}
+reset_count_before=
+
+case $reset_before_type_check in
+	0|1) ;;
+	*) echo "EL721_RESET_BEFORE_TYPE_CHECK must be 0 or 1" >&2; exit 64 ;;
+esac
 
 for candidate in /sys/bus/platform/devices/*; do
 	if [ -r "$candidate/vendor" ] &&
@@ -75,16 +83,48 @@ if [ "$(cat "$fp_sysfs/sensor_power")" != 1 ]; then
 	exit 1
 fi
 
-modprobe qcomtee
+# A live One UI 8 service-start trace shows no reset between raising GPIO155
+# and TypeCheck.  Keep the already-negative reset experiment available only as
+# an explicit diagnostic instead of changing the stock-equivalent default.
+if [ "$reset_before_type_check" = 1 ]; then
+	if [ ! -w "$fp_sysfs/reset" ] || [ ! -r "$fp_sysfs/reset_count" ]; then
+		echo "EL721 reset interface not found" >&2
+		exit 1
+	fi
+	reset_count_before=$(cat "$fp_sysfs/reset_count")
+	printf '1\n' > "$fp_sysfs/reset"
+	sleep 0.01
+	if [ "$(cat "$fp_sysfs/reset_count")" -le "$reset_count_before" ]; then
+		echo "EL721 reset pulse was not recorded" >&2
+		exit 1
+	fi
+	echo "EL721 powered and reset (count $reset_count_before -> $(cat "$fp_sysfs/reset_count"))"
+fi
+
+if [ -n "$qcomtee_module" ]; then
+	[ -r "$qcomtee_module" ] || {
+		echo "QCOMTEE_MODULE is not readable: $qcomtee_module" >&2
+		exit 1
+	}
+	insmod "$qcomtee_module"
+else
+	modprobe qcomtee
+fi
 qcomtee_loaded=1
 if [ ! -c /dev/tee0 ]; then
 	echo "QCOMTEE did not publish /dev/tee0" >&2
 	exit 1
 fi
 
-if [ -n "$client_uid" ]; then
+if [ "$client_env" = kernel ]; then
 	"$probe" "$split_dir" "$basename" "$load_name" "$selector" \
-		"--client-uid=$client_uid"
+		--kernel-client-env
+elif [ -n "$client_env" ]; then
+	case $client_env in
+		*[!0-9]*) echo "CLIENT_ENV must be 'kernel' or a numeric UID" >&2; exit 64 ;;
+	esac
+	"$probe" "$split_dir" "$basename" "$load_name" "$selector" \
+		"--client-uid=$client_env"
 else
 	"$probe" "$split_dir" "$basename" "$load_name" "$selector"
 fi

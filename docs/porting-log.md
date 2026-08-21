@@ -6357,3 +6357,143 @@ No live boot partition was written. The active `boot` hash remained
 identical to the stored Android set, and `linuxroot` was cleanly unmounted.
 Selecting Ubuntu in Boot Switcher is therefore the explicit boundary that
 writes the prepared four-image set and starts the physical test.
+
+---
+
+## Session 100 — UID, NULL credentials and `authnr` ruled out
+
+Date: 2026-08-21. The hypothesis at the end of Session 99 was tested and is
+false. The exact numeric Android identity (`--client-uid=1000`) sees no
+preloaded `securefp` object and, after loading the signed `dualfp` image,
+TypeCheck still returns sensor type zero. The process opened `/dev/tee0` while
+privileged, discarded every supplementary group and irreversibly changed its
+real, effective and saved UID/GID before `quic-teec` created the CBOR
+credentials object.
+
+The downstream smcinvoke client path was then reproduced more literally.
+Samsung's in-kernel compatibility code calls root operation 5,
+`registerWithCredentials`, with a NULL credentials object instead of using the
+userspace CBOR callback. A diagnostic-only QCOMTEE patch permits that exact call
+to a `CAP_SYS_ADMIN` process, and the probe's `--kernel-client-env` selector
+uses it. The result is again type zero. The patch is gated behind
+`QCOMTEE_ADMIN_NULL_CREDENTIALS=1`; ordinary and release builds do not apply
+it.
+
+Preloading `authnr.mbn` was negative as well. These three controlled failures
+rule out the client identity, the kernel/client registration operation and the
+extra authenticator as the missing prerequisite. Every one-shot test restored
+GPIO91/GPIO155 to off and unloaded QCOMTEE.
+
+## Session 101 — the live One UI path is explicit `dualfp`, not an alias
+
+Date: 2026-08-21. A rooted Android 16 / One UI 8 reference was captured without
+reading or copying any fingerprint template. The mounted
+`com.samsung.android.biometrics.fingerprint` APEX contains only its manifest,
+and `/data/apex/active` has no biometric or fingerprint update. There is no
+hidden `fpta` payload to import.
+
+A real fingerprint unlock was recorded system-wide with `simpleperf`: 3,839
+samples, none lost. For the fingerprint-service process, every observed BAUTH
+request used controller handle `0x14`, operation 0 and counts `0x0424`; all of
+their result records returned zero. Fifteen such calls were present in that
+unlock. GPIO activity and smcinvoke marshalling were included, but no biometric
+payload or private template directory was recorded.
+
+Restarting only init service `vendor.fingerprint-default` under a second trace
+gave the missing start-up fact. The service logs this sequence literally:
+
+```text
+lookupTA(dualfp) returned 23
+DMA heap qcom,qseecom-ta
+DMA heap qcom,qseecom
+Session is successfully opened
+```
+
+The new service process retained two dma-bufs of exactly 2,768,896 bytes
+(`0x2a4000`), both exported by `qcom,qseecom`, plus its small command buffer.
+The restart trace contained 80 samples with none lost and the service recovered
+automatically. Thus Session 99's interpretation was wrong: One UI does not get
+`securefp` from a UID-dependent preloaded alias. It explicitly loads the same
+signed `dualfp` split Ubuntu already accepts.
+
+This leaves a concrete transport difference. Stock's `qcom,qseecom` and
+`qcom,qseecom-ta` heaps are CMA-backed reserved pools; the first is explicitly
+allocated below 4 GiB. Upstream QCOMTEE's large-image extension already puts
+the 19,927,128-byte image in DMA-coherent TZMEM, but its two `0x2a4000` memory
+objects remained on `tee_dyn_shm_alloc_helper` because they were below the
+previous 4 MiB cutoff. The next bounded kernel variant moves objects of 2 MiB
+or larger to TZMEM while keeping ordinary invocation messages page-backed.
+That reproduces the relevant contiguous-memory property without importing the
+legacy downstream QSEECom driver.
+
+`scripts/capture-oneui-fingerprint-reference.sh` records the build, public APEX
+layout, signed-TA hashes and available tracepoints. It refuses every device
+except `SM-X910`/`gts9u`, requires root, never writes a partition and never
+walks Android's private biometric store.
+
+## Session 102 — One UI power and secure-bus ownership measured
+
+Date: 2026-08-21. The unlocked One UI 8 installation was used for one final
+read-only reference before returning to Ubuntu. A controlled fingerprint
+service restart produced 11,912 trace samples with none lost. On the Linux
+side, startup enables only `VDD_BTP_3P3`, waits 2.856 ms, raises the EL721
+enable GPIO155, loads `dualfp` and invokes TypeCheck. There is no reset pulse,
+Linux QUP1_SE2 clock/interconnect transaction or claim of pins 36–39. The
+service later lowers GPIO155 and disables the regulator normally.
+
+This matches the Ubuntu one-shot sequence after making reset explicitly
+opt-in. Trying another reset or driving the secure SPI controller from Linux
+would diverge from stock rather than improve parity.
+
+## Session 103 — exact One UI SHM bridge geometry
+
+Date: 2026-08-21. Kprobes on stock's `qtee_shmbridge_register` measured the
+addresses sent to secure firmware, not dma-buf metadata or userspace virtual
+addresses:
+
+```text
+TA:      phys=0xf5400000 size=0x1302000
+BAUTH 1: phys=0xfc300000 size=0x002a4000
+BAUTH 2: phys=0xfc600000 size=0x002a4000
+VMID=3, non-secure permission=6, secure permission=6, VM count=1
+```
+
+The reserved `qseecom_region` is 28 MiB and `qseecom_ta_region` is 48 MiB;
+both are 4 MiB aligned and constrained below `0xffffffff`. SELinux was restored
+to Enforcing and the fingerprint service was left healthy. This established a
+specific upstream mistake: an earlier QCOMTEE experiment passed a device
+DMA/IOVA where the Qualcomm TZMEM bridge API requires a physical address.
+
+## Session 104 — physical DMA32 parity still returns type zero
+
+Date: 2026-08-21. A clean Linux v7.2-rc3 build replaced that experiment with a
+smaller QCOMTEE extension. Objects of at least 2 MiB use `qcom_tzmem` with
+`GFP_DMA32`; `qcom_tzmem_to_phys()` supplies the bridge address and rejects any
+range crossing 4 GiB. Ordinary messages retain upstream's page-backed path.
+The build completed with LLVM 22. Its boot image SHA-256 is
+`13d8eac81dfdcfbdcc32e5b22c0221303a61f1909b3748a8a2dfc487c1b866d3`.
+The active partition and stored Ubuntu set were both reread and matched before
+reboot; the preceding boot and complete module tree remain in
+`/var/lib/gts9u-fingerprint-physaddr-backup-20260821`.
+
+After Ubuntu booted, a kprobe on `qcom_scm_shm_bridge_create` proved the real
+SCM arguments:
+
+```text
+TA:      phys=0xf1a00000 size=0x1302000
+BAUTH 1: phys=0xf2e00000 size=0x002a4000
+BAUTH 2: phys=0xf3100000 size=0x002a4000
+VMID=3, permission bits=6
+```
+
+These have the same sizes, address width, VMID and permissions as One UI. The
+TA loaded, controller operation 0 returned success and the BAUTH payload was
+written, but TypeCheck again reported `sensor=0`; stock reports EL721 type 8.
+Cleanup left the sensor powered off and QCOMTEE unloaded.
+
+The host-visible transport, identity variants, TA source, memory geometry,
+power sequence and reset behaviour are now ruled out. Work should resume at
+the secure sensor boundary: obtain existing QSEE/TrustZone diagnostics or
+identify the secure resource/ownership prerequisite that One UI establishes
+outside the traced service path. Building `libfprint` integration before the
+TA can see type 8 would only add an unusable frontend.

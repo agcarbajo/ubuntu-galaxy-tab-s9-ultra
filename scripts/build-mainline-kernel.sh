@@ -21,6 +21,7 @@ enable_fingerprint=${ENABLE_FINGERPRINT_EXPERIMENTAL:-0}
 fingerprint_panel=${FINGERPRINT_PANEL_FOD:-$enable_fingerprint}
 fingerprint_touch=${FINGERPRINT_TOUCH_FOD:-$enable_fingerprint}
 fingerprint_sensor=${FINGERPRINT_EL721:-$enable_fingerprint}
+qtee_admin_null_credentials=${QCOMTEE_ADMIN_NULL_CREDENTIALS:-0}
 
 validate_bool() {
 	case "$2" in
@@ -33,6 +34,7 @@ validate_bool ENABLE_FINGERPRINT_EXPERIMENTAL "$enable_fingerprint"
 validate_bool FINGERPRINT_PANEL_FOD "$fingerprint_panel"
 validate_bool FINGERPRINT_TOUCH_FOD "$fingerprint_touch"
 validate_bool FINGERPRINT_EL721 "$fingerprint_sensor"
+validate_bool QCOMTEE_ADMIN_NULL_CREDENTIALS "$qtee_admin_null_credentials"
 
 # Linux 7.2 requires Clang >= 17.  Prefer the versioned LLVM toolchain when it
 # is installed (the imported baseline was generated with LLVM 22), while still
@@ -183,6 +185,12 @@ if ! grep -q 'QCOMTEE_SHM_POOL_MAX_SIZE' \
 	"$kernel_tree/drivers/tee/qcomtee/shm.c"; then
 	git -C "$kernel_tree" apply --recount \
 		"$pat/qcomtee-use-tzmem-pool.patch"
+fi
+if [ "$qtee_admin_null_credentials" = 1 ]; then
+	# Diagnostic only.  This reproduces Samsung's in-kernel QSEECom client
+	# environment for a CAP_SYS_ADMIN process; it is not part of release builds.
+	apply_unless 'capable(CAP_SYS_ADMIN)' \
+		drivers/tee/qcomtee/call.c qcomtee-allow-admin-null-credentials.patch
 fi
 # TA discovery and loading live in the userspace QTEE bridge.  Keep the kernel
 # transport generic: the old module parameters were diagnostic-only and
