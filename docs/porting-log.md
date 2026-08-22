@@ -6497,3 +6497,66 @@ the secure sensor boundary: obtain existing QSEE/TrustZone diagnostics or
 identify the secure resource/ownership prerequisite that One UI establishes
 outside the traced service path. Building `libfprint` integration before the
 TA can see type 8 would only add an unusable frontend.
+
+---
+
+## Session 105 — One UI separates cached identification from `Prepare`
+
+Date: 2026-08-22. A controlled restart of the One UI 8 fingerprint service and
+a successful lock-screen authentication were captured without reading or
+copying templates. The service starts with public driver type `8`, logs
+`already sensor_type checked`, loads `dualfp` and makes command `1` (`Prepare`)
+its first real TA operation. The gateway maps sensor-name enum `21` to EL721
+type `8`.
+
+Static analysis of stock `fingerprint.ko` completed the picture: a cold
+`el7xx_probe` initialises its cached type to `-1`, while the service restart
+observed a warm value already set to `8`. `FPBAuthService::checkSensorType()`
+only sends command `16` (`TypeCheck`) when the driver value is unknown; a known
+value is accepted and stored without repeating discovery. The X910 has one
+soldered reader, so Ubuntu's platform driver can safely publish its fixed type
+instead of making normal operation depend on a cold-discovery diagnostic.
+
+The successful One UI unlock also records the actual authentication state
+machine. It calls `Identify_Init` (`5`), repeats `Identify_Do` (`6`) while
+servicing command-`12` control opcodes, and always closes with
+`Identify_Final` (`7`). A bad-quality pass returned `39` and was finalised; the
+next pass progressed through finger-down and capture-success to a match. This
+provides the order needed for a future QTEE-backed `libfprint` driver without
+exposing the biometric payload.
+
+Android's generic `/proc/tzdbg/log` was found to be unsafe on this firmware: a
+read rebooted the tablet. It is now explicitly excluded from further tests.
+The specific `qsee_log` node returned no data without causing a reboot.
+
+## Session 106 — Ubuntu securely initialises the physical EL721
+
+Date: 2026-08-22. `scripts/probe-qtee-load-securefp.c` gained a bounded
+`--prepare` operation reconstructed from `BAuth_Prepare`: command `1`, a
+`0x80010` wire size over each `0x2a4000` TEE memory object, mode `2` and zero
+calibration input. The selector is mutually exclusive with `--type-check` and
+prints only status fields and the returned calibration length. It cannot
+enrol, identify, capture an image or access a template.
+
+The physical test ran on the DMA32/physical-address kernel from Session 104.
+Its preflight found the EL721 powered off, QCOMTEE unloaded and no `/dev/tee0`.
+The signed 19,927,128-byte `dualfp` image loaded and the TA returned:
+
+```text
+Prepare: invoke result 0; trustlet=0, payload=0,
+         sensor_type=8, function_status=0, calibration_bytes=0
+```
+
+Cleanup was measured rather than assumed: `sensor_power=0`, `/dev/tee0`
+absent, QCOMTEE unloaded and `reset_count=0`. This closes the secure sensor
+communication boundary and supersedes Session 104's conclusion. Standalone
+`TypeCheck` still returns zero in Ubuntu, but the stock steady-state path does
+not require it once the platform identifies its fixed EL721, and `Prepare`
+itself proves that the trusted SPI path works.
+
+The remaining blocker is now userspace: implement the BAUTH enrolment,
+identification, cancellation and lockout state machine behind `libfprint`, then
+connect its transaction lifetime to the already-tested panel HBM, GNOME target
+and Goodix regional touch suppression. Fingerprint support remains
+experimental until the complete enrol/verify/GDM/reboot/crash matrix is
+physically validated.

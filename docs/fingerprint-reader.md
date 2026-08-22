@@ -77,6 +77,14 @@ unlock settles the important transport details:
 - the real unlock trace recorded 3,839 samples with none lost; every one of the
   fingerprint service's observed controller calls completed with result zero.
 
+A later service restart exposed an important distinction. Samsung's
+`fingerprint.ko` initialises its cached sensor type to `-1` at a cold probe, but
+the running One UI instance had already cached `8` in the driver. The service
+therefore logged `already sensor_type checked`, skipped command `16`
+(`TypeCheck`) and made command `1` (`Prepare`) its first real TA operation.
+`libsfp_sensor` maps the EL721 name enum `21` to type `8`; this mapping is fixed
+for the soldered X910 hardware and is not a user-selected value.
+
 The current `dualfp` image is still 19,927,128 bytes and its code still opens
 QUP1_SE2 at 20 MHz, maps input sensor-name enum `21` (`EL721`) to output type
 `8`, and uses the same TypeCheck command and shared-buffer sizes. There is no
@@ -176,6 +184,7 @@ The platform device exposes these attributes:
 | `name` | read | `EL721` |
 | `model` | read | `X916` |
 | `position` | read | geometric metadata from the stock overlay |
+| `type_check` | read | fixed/cached Samsung sensor type (`8` for EL721) |
 | `sensor_power` | read/write | state and control of GPIO91/GPIO155 |
 | `reset` | write | controlled reset; accepts only `1` |
 | `reset_count` | read | resets performed since boot |
@@ -364,7 +373,9 @@ separately. For `dualfp` it reserves a TEE memory object and uses
 them cleanly. The probe also offers `--type-check[=FIRST[-LAST]]`: the request
 reaches the TA (`invoke result 0`). The stock HAL identifies `EL721` with name
 enum `21` and translates it to sensor type `8`; the probe reproduces that exact
-mapping. No capture, enrolment or match is started.
+mapping. Its mutually exclusive `--prepare` selector sends the stock command
+`1` in no-calibration mode and reports only result fields and returned byte
+counts. Neither selector starts capture, enrolment or matching.
 
 Qualcomm's pinned credential callback serialises `getuid()` and the current
 time into the CBOR object passed to `IClientEnv.registerAsClient`. The probes
@@ -395,12 +406,30 @@ objects at that exact size makes the TA accept the request and run the command:
 `invoke result 0`, `trustlet=0`, response envelope zeroed. `29` simply meant
 the buffers were too small.
 
-With the transport now correct, the blockage moves to the sensor. `TypeCheck`
-returns type `0`, meaning "not identified": the TA performs up to three SPI
-transfers and requires reading `rx[42]==0x07` and `rx[46]==21` to declare
-`ET721` and return type `8`. That the TA does get as far as running that query
-is proven: poisoning the output buffer before the call, it comes back with its
-first eight bytes written and the rest untouched.
+With the transport correct, the standalone `TypeCheck` diagnostic still
+returns type `0`. That command performs up to three SPI transfers and requires
+reading `rx[42]==0x07` and `rx[46]==21` to declare `ET721`. It was initially
+treated as the blocking result. The live service restart showed that it is not
+part of the steady-state path once the platform driver already knows its one
+soldered sensor, so Ubuntu now also publishes the fixed type `8` instead of
+making normal operation depend on this cold-discovery helper.
+
+The decisive follow-up reproduces `BAuth_Prepare` instead. Samsung uses a
+`0x80010`-byte wire view over each persistent `0x2a4000` shared buffer. With no
+Ubuntu calibration file, the input is command `1`, mode `2`, zero calibration
+bytes. On the physical tablet on 22 August 2026, the signed TA answered:
+
+```text
+Prepare: invoke result 0; trustlet=0, payload=0,
+         sensor_type=8, function_status=0, calibration_bytes=0
+```
+
+This is the first successful secure EL721 initialisation from Ubuntu. It also
+proves that QUP1_SE2 ownership and the trusted sensor path work; the earlier
+`TypeCheck=0` result is a limitation of that discovery command in this boot
+context, not evidence that the TA cannot communicate with the sensor. The
+one-shot cleanup then measured `sensor_power=0`, removed `/dev/tee0` and
+unloaded QCOMTEE.
 
 The bus is **QUP1_SE2**, and its pins are worth pinning down properly because
 an earlier measurement was made on the wrong ones. The TA names its pads
@@ -425,13 +454,13 @@ line already carries `clk_ignore_unused`, `pd_ignore_unused` and
 `regulator_ignore_unused`. Holding `gcc_qupv3_wrap1_s2_clk` on from a module
 does not change the result.
 
-TrustZone's log, which is where the TA records the reason, has not been read
-either. The stock tree describes `tz-log@146AA720`, but that window is an area
-of pointers in IMEM: its first quadword is `0x14696000`, and mapping that
-address reboots the tablet, because it is secure memory. The classic SIP call
-(service 6, command 2) answers "not supported" on this firmware, and QTEE's
-Diagnostics service (UID 143) only returns the list of loaded TAs
-(`keymaster64`, `featenabler`, `tz_hdm`, `tz_iccc`).
+TrustZone's generic log is not a usable diagnostic path on this firmware. The
+stock tree describes `tz-log@146AA720`, but that window contains pointers into
+secure memory; reading Android's generic `/proc/tzdbg/log` rebooted the tablet.
+It must not be probed again. The classic SIP call (service 6, command 2)
+answers "not supported", and QTEE's Diagnostics service (UID 143) only returns
+the list of loaded TAs. This no longer blocks the port because `Prepare`
+provides a successful end-to-end sensor result.
 
 It was verified that the tablet's active partitions match the analysed firmware
 byte for byte: `apnhlos` matches `NON-HLOS.bin` (SHA-256 `1aa9de73…`) and `tz`
@@ -442,9 +471,10 @@ The helper tools live in `scripts/` and are not installed in the final image:
 `probe-el721-abi.c` checks that the restricted ABI exposes only the model,
 `probe-qtee-securefp.c` queries a logical name, and `probe-qtee-load-ta.c`
 allows loading and unloading a small, already-assembled TA.
-`probe-stock-qseecom.c` keeps the equivalent experiment for linking against the
-stock Bionic library. None of them enrols templates or is used as an
-authentication backend.
+`probe-qtee-load-securefp.c` contains the bounded EL721 `TypeCheck` and
+`Prepare` calls, while `probe-stock-qseecom.c` keeps the equivalent experiment
+for linking against the stock Bionic library. None of them enrols templates or
+is used as an authentication backend.
 
 Only once a secure backend exists will `fprintd` be installed, and these
 validated, in this order:
@@ -462,48 +492,46 @@ fingerprint authentication is considered unavailable.
 
 ## The current blockage and the next step
 
-`libfprint` has no support for the EL721 and the sensor delivers no images to
-Linux. The QTEE transport, the AppLoader, loading `dualfp`, the optical
-illumination and the Goodix FOD signal/suppression are all checked. So is the
-deferred power: on 14 August 2026 the 3.3 V rail and the enable line were
-switched on and off on the tablet, with a reset and without rebooting it.
+The secure hardware boundary is closed: Ubuntu powers the EL721, loads the
+official signed `dualfp`, creates stock-equivalent physical DMA32 bridges and
+successfully completes `Prepare` with sensor type `8`. Optical illumination,
+the GNOME target and regional Goodix touch suppression are independently
+validated too.
 
-The BAUTH packing is solved: with shared buffers of the size the TA demands it
-accepts and runs the command, and One UI's live IPC trace confirms the same
-parameter counts. Numeric UID 1000, downstream's operation-5/NULL client
-environment and preloading `authnr` have each returned the same sensor type
-zero, so none explains the difference.
+The remaining work is the native authentication backend. `libfprint` has no
+EL721 driver, so it needs a narrow QTEE-backed implementation of Samsung's
+BAUTH state machine rather than an image driver. The One UI unlock trace and
+exported gateway symbols establish the high-level sequence:
 
-The backing-memory hypothesis is now ruled out too. A clean Linux 7.2-rc3
-variant routes every QTEE object of at least 2 MiB through `qcom_tzmem`, asks
-for DMA32 and passes the physical address—not the qcomtee device's DMA/IOVA—to
-the SHM bridge. A live SCM trace measured the rounded TA at `0xf1a00000` with
-size `0x1302000` and the two BAUTH regions at `0xf2e00000` and `0xf3100000`,
-each with size `0x2a4000`. As on One UI, all three were below 4 GiB and used
-VMID 3 with read/write permission 6. The signed TA loaded and the request
-completed successfully, but `TypeCheck` still returned sensor type zero.
+```text
+Prepare (1)
+  → Identify_Init (5), with the current user's protected templates
+  → Identify_Do (6), repeated while the TA requests interrupt/control work
+  → Identify_Final (7)
+  → unconditional Cancel/cleanup on every exit
+```
 
-The observed host-side start sequence now matches stock as well: only
-`VDD_BTP_3P3` is enabled, GPIO155 rises 2.856 ms later, no reset pulse is sent,
-and Linux does not claim or clock QUP1_SE2 before the TA call. The unresolved
-boundary is therefore inside secure sensor communication: either a secure
-firmware resource/ownership prerequisite not visible in the Linux trace or an
-unread TA error. The next useful work is a read-only TrustZone/QSEE log path or
-a comparison of secure resource setup. Repeating identities, reset pulses or
-memory layouts is no longer justified, and Linux must not take QUP1_SE2 away
-from TrustZone or sample its secure pins.
+Control command `12` carries the intermediate opcodes. A successful stock
+sample progresses through capture-ready, finger-down, capture and match; a bad
+sample returns `39` and still runs `Identify_Final`. Templates are files owned
+by the Linux backend but remain opaque TA output: Linux must store them with
+strict permissions and never parse, export or reuse Android's enrolled data.
+The corresponding enrolment path is commands `2`, `3` and `4`.
 
-After that comes the minimal bridge to `libfprint`/`fprintd`. Templates and
-matching will stay in TrustZone. `fprintd` is neither added nor enabled while
-that backend is missing: showing a fingerprint option in GNOME without being
-able to complete it would be a false positive of compatibility.
+Next, the exact `Identify_Init`/`Do`/`Final`, enrolment, cancellation and
+lockout structures must be implemented in a reusable daemon/library and
+fuzzed with synthetic bounds before another physical biometric test. That
+backend must own the full HBM/touch/power transaction and integrate with
+`libfprint`/`fprintd`. `fprintd` remains disabled until enrolment, correct and
+wrong-finger verification, cancellation, reboot persistence, GDM and crash
+cleanup are physically validated.
 
-`scripts/test-el721-type-check.sh` runs that physical test as a single
-transaction. It refuses an already-active sensor or `/dev/tee0`, checks the
-nine signed segments, and guarantees through `trap` that GPIO91/GPIO155 return
-to zero and that QCOMTEE is unloaded even if `TypeCheck` fails. It takes a fifth
-argument with the selector passed to the probe and an optional sixth client
-environment (`kernel` or a numeric UID). Opening the TEE device remains
+`scripts/test-el721-type-check.sh` runs a bounded `TypeCheck` or `Prepare` as a
+single transaction. It refuses an already-active sensor or `/dev/tee0`, checks
+the nine signed segments, and guarantees through `trap` that GPIO91/GPIO155
+return to zero and that QCOMTEE is unloaded even if the TA call fails. It takes
+a fifth argument with the selector passed to the probe and an optional sixth
+client environment (`kernel` or a numeric UID). Opening the TEE device remains
 privileged; numeric identities are dropped irreversibly before their credential
-object is created. It does not enable HBM, request a capture or record
-biometric data.
+object is created. `--prepare` uses mode `2` with no calibration input. Neither
+selector enables HBM, requests a capture or records biometric data.

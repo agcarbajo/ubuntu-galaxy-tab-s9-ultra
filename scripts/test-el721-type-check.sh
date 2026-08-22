@@ -1,6 +1,6 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-only
-# One-shot EL721 power + TrustZone TypeCheck validation for the physical X910.
+# One-shot EL721 power + bounded TrustZone validation for the physical X910.
 
 set -eu
 
@@ -17,7 +17,7 @@ probe=$1
 split_dir=$2
 basename=${3:-dualfp}
 load_name=${4:-dualfp}
-# Which sensor-name enums to query; a range asks several inside one load.
+# Operation selector: TypeCheck range, or the stock-equivalent Prepare command.
 selector=${5:---type-check}
 client_env=${6:-}
 fp_sysfs=

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-3-Clause
-// Load Samsung's signed split fingerprint TA and optionally query its type.
+// Load Samsung's signed split fingerprint TA and run a bounded diagnostic.
 
 #define _GNU_SOURCE
 
@@ -23,6 +23,7 @@
 #define FINGERPRINT_TA_SEGMENTS 9
 #define MAX_DIST_NAME_SIZE 4096U
 #define DUALFP_TYPE_CHECK_COMMAND UINT32_C(16)
+#define DUALFP_PREPARE_COMMAND UINT32_C(1)
 #define DUALFP_MESSAGE_SIZE 64U
 /*
  * Samsung's gateway declares an 8-byte payload, but the TA does not take that
@@ -34,9 +35,14 @@
  */
 #define DUALFP_SHARED_BUFFER_SIZE 0x2a4000U
 #define DUALFP_TYPE_CHECK_PAYLOAD 8U
+#define DUALFP_PREPARE_WIRE_SIZE 0x80010U
+#define DUALFP_PREPARE_DATA_OFFSET 12U
+#define DUALFP_PREPARE_LENGTH_OFFSET 0x8000cU
+#define DUALFP_PREPARE_NO_CALIBRATION UINT32_C(2)
 #define DUALFP_OUTPUT_POISON 0xa5
 #define QCOMTEE_MAX_INBOUND_BUFFER_SIZE (4U * 1024U * 1024U)
 #define EL721_SENSOR_NAME UINT32_C(21)
+#define EL721_SENSOR_TYPE UINT32_C(8)
 
 static void store_u32(unsigned char *buffer, size_t offset, uint32_t value)
 {
@@ -350,6 +356,117 @@ out:
 }
 
 /*
+ * Reproduce the first real trusted-sensor operation from a One UI 8 service
+ * restart.  Once the driver has cached EL721 as sensor type 8, stock skips
+ * TypeCheck; after opening dualfp it sends Prepare (command 1).
+ * With no saved Ubuntu calibration, Samsung's host selects mode 2 and supplies
+ * no input blob.  This operation initializes the sensor but cannot enrol,
+ * identify, capture an image or access a template.
+ */
+static int prepare_ta(struct qcomtee_object *controller,
+		      struct qcomtee_object *root)
+{
+	struct qcomtee_object *input = QCOMTEE_OBJECT_NULL;
+	struct qcomtee_object *output = QCOMTEE_OBJECT_NULL;
+	struct qcomtee_param params[10] = { 0 };
+	unsigned char request[DUALFP_MESSAGE_SIZE] = { 0 };
+	unsigned char response[DUALFP_MESSAGE_SIZE] = { 0 };
+	unsigned char request_out[DUALFP_MESSAGE_SIZE] = { 0 };
+	unsigned char response_out[DUALFP_MESSAGE_SIZE] = { 0 };
+	uint32_t embedded_offsets[] = { 4, 16 };
+	uint32_t is_64_bit = 1;
+	unsigned char *input_data;
+	unsigned char *output_data;
+	uint32_t trustlet_result;
+	uint32_t payload_result;
+	uint32_t sensor_type;
+	uint32_t function_status;
+	uint32_t output_length;
+	qcomtee_result_t result = QCOMTEE_ERROR;
+	int ret = -1;
+
+	if (qcomtee_memory_object_alloc(DUALFP_SHARED_BUFFER_SIZE, root,
+					&input) ||
+	    qcomtee_memory_object_alloc(DUALFP_SHARED_BUFFER_SIZE, root,
+					&output)) {
+		fprintf(stderr, "FAIL: could not allocate Prepare buffers\n");
+		goto out;
+	}
+	input_data = qcomtee_memory_object_addr(input);
+	output_data = qcomtee_memory_object_addr(output);
+	memset(input_data, 0, DUALFP_SHARED_BUFFER_SIZE);
+	memset(output_data, 0, DUALFP_SHARED_BUFFER_SIZE);
+
+	/* Exact BAuth_Prepare wire layout reconstructed from One UI 8. */
+	store_u32(request, 0, DUALFP_PREPARE_COMMAND);
+	store_u32(request, 12, DUALFP_PREPARE_WIRE_SIZE);
+	store_u32(request, 24, DUALFP_PREPARE_WIRE_SIZE);
+	store_u32(input_data, 0, DUALFP_PREPARE_COMMAND);
+	store_u32(input_data, 8, DUALFP_PREPARE_NO_CALIBRATION);
+	store_u32(input_data, DUALFP_PREPARE_LENGTH_OFFSET, 0);
+
+	params[0].attr = QCOMTEE_UBUF_INPUT;
+	params[0].ubuf.addr = request;
+	params[0].ubuf.size = sizeof(request);
+	params[1].attr = QCOMTEE_UBUF_INPUT;
+	params[1].ubuf.addr = response;
+	params[1].ubuf.size = sizeof(response);
+	params[2].attr = QCOMTEE_UBUF_INPUT;
+	params[2].ubuf.addr = embedded_offsets;
+	params[2].ubuf.size = sizeof(embedded_offsets);
+	params[3].attr = QCOMTEE_UBUF_INPUT;
+	params[3].ubuf.addr = &is_64_bit;
+	params[3].ubuf.size = sizeof(is_64_bit);
+	params[4].attr = QCOMTEE_UBUF_OUTPUT;
+	params[4].ubuf.addr = request_out;
+	params[4].ubuf.size = sizeof(request_out);
+	params[5].attr = QCOMTEE_UBUF_OUTPUT;
+	params[5].ubuf.addr = response_out;
+	params[5].ubuf.size = sizeof(response_out);
+	params[6].attr = QCOMTEE_OBJREF_INPUT;
+	params[6].object = input;
+	params[7].attr = QCOMTEE_OBJREF_INPUT;
+	params[7].object = output;
+	params[8].attr = QCOMTEE_OBJREF_INPUT;
+	params[8].object = QCOMTEE_OBJECT_NULL;
+	params[9].attr = QCOMTEE_OBJREF_INPUT;
+	params[9].object = QCOMTEE_OBJECT_NULL;
+
+	if (qcomtee_object_invoke(controller,
+				  QSEECOM_COMPAT_SEND_REQUEST_OP,
+				  params, 10, &result)) {
+		fprintf(stderr, "FAIL: Prepare transport error\n");
+		goto out;
+	}
+
+	trustlet_result = load_u32(response_out, 4);
+	payload_result = load_u32(output_data, 4);
+	sensor_type = load_u32(output_data, 0);
+	function_status = load_u32(output_data, 8);
+	output_length = load_u32(output_data, DUALFP_PREPARE_LENGTH_OFFSET);
+	if (output_length > DUALFP_PREPARE_LENGTH_OFFSET -
+			    DUALFP_PREPARE_DATA_OFFSET) {
+		fprintf(stderr, "FAIL: Prepare returned invalid output length %u\n",
+			output_length);
+		goto out;
+	}
+	printf("Prepare: invoke result %u; trustlet=%u, payload=%u, sensor_type=%u, function_status=%u, calibration_bytes=%u.\n",
+	       result, trustlet_result, payload_result,
+	       sensor_type, function_status,
+	       output_length);
+	ret = result == QCOMTEE_OK && !trustlet_result && !payload_result &&
+	      sensor_type == EL721_SENSOR_TYPE && !function_status ? 0 : -1;
+	if (ret)
+		fprintf(stderr, "FAIL: Prepare did not initialise EL721 type %u\n",
+			EL721_SENSOR_TYPE);
+
+out:
+	qcomtee_memory_object_release(output);
+	qcomtee_memory_object_release(input);
+	return ret;
+}
+
+/*
  * Accepts "--type-check", "--type-check=N" and "--type-check=FIRST-LAST".  The
  * range form asks the same question for a run of sensor-name enums inside one
  * load, because loading the 19 MB image is what costs time, not the query.
@@ -415,6 +532,7 @@ int main(int argc, char **argv)
 	int use_client_uid = 0;
 	int use_kernel_client_env = 0;
 	int run_type_check = 0;
+	int run_prepare = 0;
 	int i;
 	int exit_code = 1;
 
@@ -422,10 +540,14 @@ int main(int argc, char **argv)
 		goto usage;
 	for (i = 4; i < argc; i++) {
 		if (!strncmp(argv[i], "--type-check", 12)) {
-			if (run_type_check ||
+			if (run_type_check || run_prepare ||
 			    parse_type_check(argv[i], &name_first, &name_last))
 				goto usage;
 			run_type_check = 1;
+		} else if (!strcmp(argv[i], "--prepare")) {
+			if (run_prepare || run_type_check)
+				goto usage;
+			run_prepare = 1;
 		} else if (!strncmp(argv[i], "--client-uid=", 13)) {
 			if (use_client_uid || use_kernel_client_env ||
 			    qtee_parse_client_uid(argv[i], &client_uid))
@@ -473,6 +595,8 @@ int main(int argc, char **argv)
 			if (sensor_name == name_last)
 				break;
 		}
+		if (run_prepare && prepare_ta(controller, root))
+			exit_code = 1;
 		goto out;
 	}
 	qcomtee_object_refs_dec(controller);
@@ -537,7 +661,8 @@ int main(int argc, char **argv)
 	}
 	printf("LOADED: QTEE accepted Samsung's signed %s image as %s.\n",
 	       basename, load_name);
-	printf("No biometric operation was requested.\n");
+	if (!run_type_check && !run_prepare)
+		printf("No biometric operation was requested.\n");
 	{
 		static const char *const lookup_names[] = {
 			FINGERPRINT_TA_NAME,
@@ -574,11 +699,13 @@ int main(int argc, char **argv)
 		if (sensor_name == name_last)
 			break;
 	}
+	if (run_prepare && prepare_ta(controller, root))
+		exit_code = 1;
 	goto out;
 
 usage:
 	fprintf(stderr,
-		"usage: %s SPLIT_DIRECTORY BASENAME LOAD_NAME [--type-check[=FIRST[-LAST]]] [--client-uid=UID | --kernel-client-env]\n",
+		"usage: %s SPLIT_DIRECTORY BASENAME LOAD_NAME [--type-check[=FIRST[-LAST]] | --prepare] [--client-uid=UID | --kernel-client-env]\n",
 		argv[0]);
 	return 64;
 
@@ -594,7 +721,7 @@ out:
 				load_name, unload_result);
 			exit_code = 1;
 		} else {
-			printf("UNLOADED: %s; no TA request was invoked.\n",
+			printf("UNLOADED: %s; session closed cleanly.\n",
 			       load_name);
 		}
 	}

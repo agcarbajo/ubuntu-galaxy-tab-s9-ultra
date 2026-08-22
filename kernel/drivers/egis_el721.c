@@ -35,6 +35,7 @@
 #define EL721_DEFAULT_MODEL		"X916"
 #define EL721_DEFAULT_POSITION						\
 	"16.70,0.00,9.10,9.10,14.80,14.80,12.00,12.00,5.00"
+#define EL721_SENSOR_TYPE		8
 
 #define EL721_MODEL_INFO_LEN		10
 #define EL721_NAME_LEN			16
@@ -376,6 +377,20 @@ static ssize_t position_show(struct device *dev,
 }
 static DEVICE_ATTR_RO(position);
 
+static ssize_t type_check_show(struct device *dev,
+			       struct device_attribute *attr, char *buf)
+{
+	struct el721_data *el721 = dev_get_drvdata(dev);
+	int sensor_type;
+
+	mutex_lock(&el721->lock);
+	sensor_type = el721->sensor_type;
+	mutex_unlock(&el721->lock);
+
+	return sysfs_emit(buf, "%d\n", sensor_type);
+}
+static DEVICE_ATTR_RO(type_check);
+
 static ssize_t power_show(struct device *dev,
 			  struct device_attribute *attr, char *buf)
 {
@@ -455,6 +470,7 @@ static struct attribute *el721_attrs[] = {
 	&dev_attr_name.attr,
 	&dev_attr_model.attr,
 	&dev_attr_position.attr,
+	&dev_attr_type_check.attr,
 	&dev_attr_sensor_power.attr,
 	&dev_attr_reset_count.attr,
 	&dev_attr_reset.attr,
@@ -490,6 +506,8 @@ static int el721_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	el721->dev = dev;
+	/* This platform has one soldered sensor; avoid vendor cold-boot discovery. */
+	el721->sensor_type = EL721_SENSOR_TYPE;
 	mutex_init(&el721->lock);
 	kref_init(&el721->refcount);
 	platform_set_drvdata(pdev, el721);
