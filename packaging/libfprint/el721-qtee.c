@@ -27,6 +27,7 @@
 #define QSEECOM_SEND_REQUEST_OP 0U
 #define QSEECOM_UNLOAD_OP 2U
 #define EL721_TA_SEGMENTS 9U
+#define EL721_SHARED_ALLOC 0x2a4000U
 #define EL721_INPUT_SHARED_SIZE 0x2a3110U
 #define EL721_OUTPUT_SHARED_SIZE 0x2a3010U
 #define EL721_MESSAGE_SIZE 64U
@@ -63,6 +64,10 @@
 #define CONTROL_OUTPUT_LENGTH_OFFSET 0x2a300cU
 #define CONTROL_GENERATE_GROUP_KEY 45U
 #define CONTROL_SET_ACTIVE_GROUP 46U
+#define CONTROL_LCD_PANEL_TYPE 401U
+#define CONTROL_LCD_WINDOW_TYPE 402U
+#define CONTROL_GDXOPT_CALIB 94U
+#define EL721_WINDOW_TYPE_SYSFS "/sys/class/lcd/panel/window_type"
 #define CONTROL_BOOTSTRAP 76U
 #define CONTROL_LOAD_BDS 81U
 #define CONTROL_CPU_IDLE 83U
@@ -70,7 +75,7 @@
 #define EL721_BDS_MAX (4U * 1024U * 1024U)
 #define EL721_BDS_CHUNK 0x3000U
 #define ENROLL_INIT_SIZE 0x178U
-#define ENROLL_INIT_OUT_SIZE 0x2a3010U
+#define ENROLL_INIT_OUT_SIZE 0xcU
 #define ENROLL_DO_OUT_SIZE 0x230024U
 #define FINAL_OUT_SIZE 0xa018U
 #define IDENTIFY_INIT_SIZE 0x2265bdU
@@ -529,11 +534,14 @@ el721_qtee_open (const gchar *firmware_directory, GError **error)
       if (!load_ta (session, firmware_directory, error))
         goto fail;
     }
-  /* These are the logical allocation sizes printed by One UI's gateway.
-   * qcom_tzmem still rounds each physical SHM bridge up to 0x2a4000. */
-  if (qcomtee_memory_object_alloc (EL721_INPUT_SHARED_SIZE, session->root,
+  /* The wire views are smaller, but every command handler in the TA validates
+   * the two non-secure pointers as ranges of exactly EL721_SHARED_ALLOC bytes
+   * before it reads them, and answers 29 when that validation fails. */
+  g_debug ("allocating two BAUTH shared buffers of %u bytes",
+           (guint) EL721_SHARED_ALLOC);
+  if (qcomtee_memory_object_alloc (EL721_SHARED_ALLOC, session->root,
                                    &session->input) ||
-      qcomtee_memory_object_alloc (EL721_OUTPUT_SHARED_SIZE, session->root,
+      qcomtee_memory_object_alloc (EL721_SHARED_ALLOC, session->root,
                                    &session->output))
     {
       g_set_error_literal (error, EL721_ERROR, 1,
@@ -579,6 +587,7 @@ el721_reply_clear (El721Reply *reply)
   memset (reply, 0, sizeof (*reply));
 }
 
+static guint32 el721_probe_u32 (const gchar *name, guint32 fallback);
 static gboolean invoke_body (El721Qtee *session, guint32 command,
                              gsize input_size, gsize output_size,
                              const guint8 *body, gsize body_size,
@@ -704,6 +713,36 @@ el721_qtee_control (El721Qtee *session, guint32 operation, guint32 scalar,
                                   require_zero_result, error);
 }
 
+/* Diagnostic: send one bare BAUTH control operation and let the debug log
+ * report the status the TA answers.  Not used by the driver. */
+/* Diagnostic: send one bare command with the wire sizes the caller names,
+ * so the TA's per-command length and buffer checks can be mapped without
+ * building a real request.  Not used by the driver. */
+gboolean
+el721_qtee_raw_command (El721Qtee *session, guint32 command,
+                        gsize input_size, gsize output_size,
+                        guint32 *result, GError **error)
+{
+  g_autofree guint8 *body = g_malloc0 (input_size);
+  guint8 *output;
+
+  put_u32 (body, 0, command);
+  if (!invoke_body (session, command, input_size, output_size, body,
+                    input_size, &output, error))
+    return FALSE;
+  if (result)
+    *result = get_u32 (output, 4);
+  return TRUE;
+}
+
+gboolean
+el721_qtee_control_op (El721Qtee *session, guint32 operation,
+                       const guint8 *data, gsize data_size, GError **error)
+{
+  return el721_qtee_control (session, operation, 0, data, data_size, FALSE,
+                             error);
+}
+
 gboolean
 el721_qtee_set_active_group (El721Qtee *session,
                              const guint8 *user, gsize user_size,
@@ -752,6 +791,29 @@ el721_qtee_set_active_group (El721Qtee *session,
   return el721_qtee_control_full (session, CONTROL_SET_ACTIVE_GROUP, 0,
                                   user, user_size, key_data, key_size,
                                   NULL, 0, NULL, TRUE, error);
+}
+
+static gboolean
+el721_qtee_set_lcd_types (El721Qtee *session, GError **error)
+{
+  g_autofree gchar *window = NULL;
+  guint8 panel_known = 1;
+  gsize window_size = 0;
+
+  if (!el721_qtee_control (session, CONTROL_LCD_PANEL_TYPE, 0,
+                           &panel_known, sizeof (panel_known), FALSE, error))
+    return FALSE;
+  if (!g_file_get_contents (EL721_WINDOW_TYPE_SYSFS, &window, &window_size,
+                            NULL))
+    {
+      g_debug ("no %s: skipping the stock window-type control",
+               EL721_WINDOW_TYPE_SYSFS);
+      return TRUE;
+    }
+  window_size = MIN (window_size, (gsize) 16);
+  return el721_qtee_control (session, CONTROL_LCD_WINDOW_TYPE, 0,
+                             (const guint8 *) window, window_size, FALSE,
+                             error);
 }
 
 static gboolean
@@ -808,7 +870,9 @@ el721_qtee_prepare (El721Qtee *session, GError **error)
   put_u32 (body, PREPARE_LENGTH_OFFSET, calibration_size);
   for (attempt = 0; attempt < 6; attempt++)
     {
-      if (!invoke_body (session, CMD_PREPARE, PREPARE_SIZE, PREPARE_SIZE,
+      if (!invoke_body (session, CMD_PREPARE,
+                        el721_probe_u32 ("EL721_PREPARE_IN", PREPARE_SIZE),
+                        el721_probe_u32 ("EL721_PREPARE_OUT", PREPARE_SIZE),
                         body, PREPARE_SIZE, &output, error))
         return FALSE;
       /* The Prepare envelope is not the BAUTH reply envelope: word 0 carries
@@ -851,10 +915,13 @@ el721_qtee_prepare (El721Qtee *session, GError **error)
                    sensor_type, result, function_status, opcode);
       return FALSE;
     }
-  /* Operations 76 and 88 were guesses and this TA answers 51 to both.  One
-   * UI's own common_prepare() runs set_lcd_pannel_type (401),
-   * set_lcd_window_type (402) and load_gdxopt_calib (94) here, all of which
-   * need blobs Ubuntu does not import yet, followed by load_bds (81). */
+  /* One UI's common_prepare() continues with the optical bring-up before any
+   * enrolment is possible: set_lcd_pannel_type (401, one byte), then
+   * set_lcd_window_type (402, up to sixteen bytes read verbatim from
+   * /sys/class/lcd/panel/window_type), then load_gdxopt_calib (94) and
+   * load_bds (81).  Operations 76 and 88 were guesses; this TA answers 51. */
+  if (!el721_qtee_set_lcd_types (session, error))
+    return FALSE;
   return el721_qtee_load_bds (session, error);
 }
 
@@ -930,6 +997,16 @@ invoke_body (El721Qtee *session, guint32 command, gsize input_size,
   return TRUE;
 }
 
+/* Diagnostic override for a single wire field while the enrolment structure
+ * is still being matched against the stock gateway.  Absent in normal use. */
+static guint32
+el721_probe_u32 (const gchar *name, guint32 fallback)
+{
+  const gchar *value = g_getenv (name);
+
+  return value ? (guint32) g_ascii_strtoull (value, NULL, 0) : fallback;
+}
+
 static void
 decode_common (El721Reply *reply, const guint8 *output)
 {
@@ -997,13 +1074,13 @@ el721_qtee_enroll_init (El721Qtee *session, const guint8 *user, gsize user_size,
   /* Stock EnrollContext starts in opcode/state 1.  These are not the sensor
    * type and an Android group: BAuth_Enroll_Init serialises the available
    * template slot (1..4) and the EL721 capture count (7) at the tail. */
-  put_u32 (body, 8, 1);
+  put_u32 (body, 8, el721_probe_u32 ("EL721_ENROLL_STATE", 1));
   memcpy (body + 0xc, user, user_size);
   put_u32 (body, 0x10c, template_id);
   put_u32 (body, 0x110, 7);
   memcpy (body + 0x114, cell_id, strlen (cell_id));
   if (!invoke_body (session, CMD_ENROLL_INIT, ENROLL_INIT_SIZE,
-                    ENROLL_INIT_OUT_SIZE,
+                    el721_probe_u32 ("EL721_ENROLL_OUT", ENROLL_INIT_OUT_SIZE),
                     body, ENROLL_INIT_SIZE, &output, error))
     return FALSE;
   decode_common (reply, output);

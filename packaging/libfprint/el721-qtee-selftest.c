@@ -50,9 +50,58 @@ main (int argc, char **argv)
   if (!session)
     goto out;
   g_usleep (1000000);
-  if (!el721_qtee_prepare (session, &error))
+  if (!g_getenv ("EL721_SKIP_PREPARE") && !el721_qtee_prepare (session, &error))
     goto out;
   g_print ("EL721 userspace transport: signed TA loaded and Prepare succeeded.\n");
+  if (g_getenv ("EL721_RAW"))
+    {
+      g_auto(GStrv) items = g_strsplit (g_getenv ("EL721_RAW"), ",", -1);
+      guint item;
+
+      for (item = 0; items[item]; item++)
+        {
+          g_auto(GStrv) parts = g_strsplit (items[item], ":", 3);
+          guint32 command = (guint32) g_ascii_strtoull (parts[0], NULL, 0);
+          gsize in_size = (gsize) g_ascii_strtoull (parts[1], NULL, 0);
+          gsize out_size = (gsize) g_ascii_strtoull (parts[2], NULL, 0);
+          guint32 raw = 0;
+
+          if (el721_qtee_raw_command (session, command, in_size, out_size,
+                                      &raw, &error))
+            g_print ("raw %u in=%zu out=%zu -> result=%u\n", command,
+                     in_size, out_size, raw);
+          else
+            {
+              g_print ("raw %u in=%zu out=%zu -> %s\n", command, in_size,
+                       out_size, error->message);
+              g_clear_error (&error);
+            }
+        }
+    }
+  if (g_getenv ("EL721_EXTRA_OPS"))
+    {
+      g_auto(GStrv) ops = g_strsplit (g_getenv ("EL721_EXTRA_OPS"), ",", -1);
+      guint index;
+
+      for (index = 0; ops[index]; index++)
+        {
+          g_auto(GStrv) fields = g_strsplit (ops[index], "=", 2);
+          guint32 operation = (guint32) g_ascii_strtoull (fields[0], NULL, 10);
+          guint8 value = 0;
+          gsize value_size = 0;
+
+          if (fields[1])
+            {
+              value = (guint8) g_ascii_strtoull (fields[1], NULL, 0);
+              value_size = sizeof (value);
+            }
+
+          g_print ("probe control %u\n", operation);
+          if (!el721_qtee_control_op (session, operation, &value, value_size,
+                                      &error))
+            goto out;
+        }
+    }
   if (argc == 3)
     {
       if (g_getenv ("EL721_SKIP_GROUP"))

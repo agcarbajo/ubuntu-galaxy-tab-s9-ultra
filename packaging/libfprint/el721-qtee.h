@@ -24,6 +24,17 @@ El721Qtee *el721_qtee_open          (const gchar  *firmware_directory,
 void        el721_qtee_close         (El721Qtee   *session);
 gboolean    el721_qtee_prepare       (El721Qtee   *session,
                                      GError      **error);
+gboolean    el721_qtee_raw_command   (El721Qtee   *session,
+                                     guint32       command,
+                                     gsize         input_size,
+                                     gsize         output_size,
+                                     guint32      *result,
+                                     GError      **error);
+gboolean    el721_qtee_control_op    (El721Qtee   *session,
+                                     guint32       operation,
+                                     const guint8 *data,
+                                     gsize         data_size,
+                                     GError      **error);
 gboolean    el721_qtee_set_active_group (El721Qtee   *session,
                                          const guint8 *user,
                                          gsize         user_size,
