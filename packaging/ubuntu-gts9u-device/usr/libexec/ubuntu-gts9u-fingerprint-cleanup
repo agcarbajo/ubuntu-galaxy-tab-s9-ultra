@@ -1,0 +1,12 @@
+#!/bin/sh
+# Belt-and-braces cleanup for cancellation, fprintd crashes and package
+# upgrades.  The libfprint driver performs the same transaction normally.
+write_if_present() {
+	[ -e "$1" ] || return 0
+	printf '%s\n' "$2" > "$1" 2>/dev/null || true
+}
+
+write_if_present /sys/class/backlight/ae94000.dsi.0/fod_mode 0
+write_if_present /sys/bus/i2c/devices/13-005d/fod_enable 0
+write_if_present /sys/bus/platform/devices/egis-el721/sensor_power 0
+exit 0

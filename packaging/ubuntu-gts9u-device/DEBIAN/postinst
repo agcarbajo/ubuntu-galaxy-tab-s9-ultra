@@ -46,6 +46,10 @@ case "$1" in
 				ubuntu-gts9u-desktop-user.path \
 				ubuntu-gts9u-camera-relays.service || true
 			systemctl restart ubuntu-gts9u-desktop-user.path || true
+			# fprintd is D-Bus activated and normally inactive.  If a client kept
+			# it alive during this upgrade, restart it so the new QTEE dependency
+			# and device sandbox are effective immediately.
+			systemctl try-restart fprintd.service || true
 		fi
 
 		# The gsettings override that keeps gnome-settings-daemon off the

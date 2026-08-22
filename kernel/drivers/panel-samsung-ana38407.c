@@ -69,6 +69,7 @@ struct ana38407 {
 	bool fod_mode;
 	bool fod_circle;
 	u8 id[3];
+	char cell_id[23];
 };
 
 /*
@@ -266,7 +267,9 @@ static int ana38407_on(struct ana38407 *ctx)
 {
 	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
 	struct drm_dsc_picture_parameter_set pps;
+	u8 module_info[11] = {};
 	u8 id[3] = {};
+	ssize_t module_info_len;
 
 	ctx->dsi->mode_flags |= MIPI_DSI_MODE_LPM;
 
@@ -309,6 +312,29 @@ static int ana38407_on(struct ana38407 *ctx)
 	memcpy(ctx->id, id, sizeof(ctx->id));
 	dev_info(&ctx->dsi->dev, "ana38407 panel id: %02x %02x %02x\n",
 		 id[0], id[1], id[2]);
+
+	/*
+	 * Samsung's fingerprint TA binds optical calibration to the panel cell ID.
+	 * RX_MODULE_INFO is DCS A1, 11 bytes under the level-0 key; Android exposes
+	 * bytes 4..10 followed by 0..3 as 22 lowercase hexadecimal characters.
+	 */
+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x5a, 0x5a);
+	module_info_len = mipi_dsi_dcs_read(ctx->dsi, 0xa1, module_info,
+					    sizeof(module_info));
+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0xa5, 0xa5);
+	if (module_info_len == (ssize_t)sizeof(module_info)) {
+		snprintf(ctx->cell_id, sizeof(ctx->cell_id),
+			 "%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x",
+			 module_info[4], module_info[5], module_info[6],
+			 module_info[7], module_info[8], module_info[9],
+			 module_info[10], module_info[0], module_info[1],
+			 module_info[2], module_info[3]);
+		dev_info(&ctx->dsi->dev, "ana38407 cell id: %s\n", ctx->cell_id);
+	} else {
+		ctx->cell_id[0] = '\0';
+		dev_warn(&ctx->dsi->dev,
+			 "failed to read panel cell id: %zd\n", module_info_len);
+	}
 
 	/* MX_IP_ENABLE */
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x5a, 0x5a);
@@ -728,14 +754,29 @@ static ssize_t fod_ready_show(struct device *dev,
 	return sysfs_emit(buf, "%u\n", ready);
 }
 
+static ssize_t cell_id_show(struct device *dev,
+			    struct device_attribute *attr, char *buf)
+{
+	struct ana38407 *ctx = ana38407_from_bl_dev(dev);
+	ssize_t ret;
+
+	mutex_lock(&ctx->lock);
+	ret = ctx->cell_id[0] ? sysfs_emit(buf, "%s\n", ctx->cell_id) : -ENODATA;
+	mutex_unlock(&ctx->lock);
+
+	return ret;
+}
+
 static DEVICE_ATTR_RW(fod_mode);
 static DEVICE_ATTR_RW(fod_circle);
 static DEVICE_ATTR_RO(fod_ready);
+static DEVICE_ATTR_RO(cell_id);
 
 static struct attribute *ana38407_bl_attrs[] = {
 	&dev_attr_fod_mode.attr,
 	&dev_attr_fod_circle.attr,
 	&dev_attr_fod_ready.attr,
+	&dev_attr_cell_id.attr,
 	NULL,
 };
 

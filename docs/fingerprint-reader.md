@@ -2,9 +2,12 @@
 
 This document describes the experimental infrastructure for the Galaxy Tab S9
 Ultra Wi-Fi's (`SM-X910`) under-display optical reader. **Enrolment,
-verification and fingerprint login do not work yet**: no support will be
-installed or advertised in GNOME until there is a secure backend for
-`libfprint`/`fprintd` and it has been validated on the tablet.
+verification and fingerprint login do not work yet.** The secure transport is
+solved and a complete userspace backend now exists — a QTEE bridge to Samsung's
+signed BAUTH application plus an `EL721` driver for `libfprint` — but no
+fingerprint has yet been enrolled or matched on the tablet, so every claim
+below about capture and matching is about code that has been written and
+partially exercised, not about a working reader.
 
 ## Confirmed identification
 
@@ -204,6 +207,15 @@ The attributes appear next to the ANA38407 backlight:
 | `fod_ready` | read | `1` when the panel is ready and on |
 | `fod_mode` | read/write | optical HBM and the FlatZ sequence |
 | `fod_circle` | read/write | a diagnostic DDIC command; requires `fod_mode=1`, but draws nothing without Self Display |
+| `cell_id` | read | the panel's 22-character module identifier, or `ENODATA` |
+
+`cell_id` exists because Samsung's fingerprint TA binds the optical
+calibration to the panel it was measured on. The driver reads `RX_MODULE_INFO`
+(DCS `0xa1`, eleven bytes under the level-0 key) while the panel is coming up
+and publishes it in Android's byte order: bytes 4..10 followed by 0..3, as
+lowercase hexadecimal. It is read once per power-on, never written, and the
+attribute fails with `ENODATA` rather than inventing a value if the DDIC does
+not answer.
 
 The panel keeps the desktop's requested brightness in parallel. Writing
 `fod_mode=0` restores that value, and also switches the circle off if it was
@@ -476,8 +488,9 @@ allows loading and unloading a small, already-assembled TA.
 for linking against the stock Bionic library. None of them enrols templates or
 is used as an authentication backend.
 
-Only once a secure backend exists will `fprintd` be installed, and these
-validated, in this order:
+`fprintd` is now present in the image, but nothing can be enrolled through it
+yet and the reader is not advertised as working. These have to be validated, in
+this order, before that changes:
 
 - enrolment and cancellation without leaving HBM, the sensor or the touch block
   active;
@@ -490,48 +503,74 @@ validated, in this order:
 Until that whole matrix passes, the public status stays experimental and
 fingerprint authentication is considered unavailable.
 
-## The current blockage and the next step
+## The userspace backend
 
-The secure hardware boundary is closed: Ubuntu powers the EL721, loads the
-official signed `dualfp`, creates stock-equivalent physical DMA32 bridges and
-successfully completes `Prepare` with sensor type `8`. Optical illumination,
-the GNOME target and regional Goodix touch suppression are independently
-validated too.
+With `Prepare` working, the probes stopped being the right shape for the job
+and the backend was written properly. It lives in `packaging/libfprint/` and is
+built into a replacement `libfprint-2-2` package by
+`scripts/build-libfprint-el721.sh`; the Noble package it replaces keeps its ABI
+version, so the device package pins the local build explicitly.
 
-The remaining work is the native authentication backend. `libfprint` has no
-EL721 driver, so it needs a narrow QTEE-backed implementation of Samsung's
-BAUTH state machine rather than an image driver. The One UI unlock trace and
-exported gateway symbols establish the high-level sequence:
+`el721-qtee.c` is the QTEE side. It owns the whole secure transaction: it opens
+`/dev/tee0`, registers as a client, assembles and loads the signed `dualfp`
+image, keeps the two `0x2a4000` shared buffers alive for the session, serves
+the QIS callback listener the TA registers, and exposes Samsung's BAUTH command
+set as ordinary C functions — `Prepare`, the generic control command `12`, the
+active-group key, and the `EnrollInit`/`Do`/`Final`,
+`IdentifyInit`/`Do`/`Final` and `Cancel` pairs. Three details were measured on
+the tablet rather than guessed: the calibrated `Prepare` is retried through the
+same opcode transitions One UI uses, where opcode `8` means reset the sensor
+and opcode `9` is acknowledged with control opcode `83` instead of a power
+cycle; the two bootstrap controls are advisory, and operation `76` answers
+status `51` on this tablet while startup continues; and the optical
+`egoptbds.dat` blob is uploaded in chunks through the control command rather
+than in one message.
 
-```text
-Prepare (1)
-  → Identify_Init (5), with the current user's protected templates
-  → Identify_Do (6), repeated while the TA requests interrupt/control work
-  → Identify_Final (7)
-  → unconditional Cancel/cleanup on every exit
-```
+The calibration inputs are proprietary and stay out of the repository.
+`scripts/import-fingerprint-firmware.sh` packages them from a directory the
+tablet's owner extracts from their own matching firmware, checking each file
+against a pinned hash: the nine `dualfp` segments, `calib.dat` and
+`egoptbds.dat`. The panel's `cell_id` completes that set from the running
+hardware.
 
-Control command `12` carries the intermediate opcodes. A successful stock
-sample progresses through capture-ready, finger-down, capture and match; a bad
-sample returns `39` and still runs `Identify_Final`. Templates are files owned
-by the Linux backend but remain opaque TA output: Linux must store them with
-strict permissions and never parse, export or reuse Android's enrolled data.
-The corresponding enrolment path is commands `2`, `3` and `4`.
+`el721.c` is the `libfprint` driver on top. `libfprint` has no bus that can see
+a platform device, so `patches/0001-el721-platform-driver.patch` adds the
+enumeration path; the driver itself powers the rail, runs `Prepare`, raises the
+panel's HBM for the duration of the operation, follows the finger through the
+Goodix FOD state, drives the enrol and identify loops, converts the TA's opaque
+template blob into an `FpPrint`, and unwinds power, HBM and touch suppression
+on every exit — including cancellation and timeout. Templates are stored by
+`fprintd` as the TA emitted them; Linux never parses them and never touches
+Android's enrolled data.
 
-Next, the exact `Identify_Init`/`Do`/`Final`, enrolment, cancellation and
-lockout structures must be implemented in a reusable daemon/library and
-fuzzed with synthetic bounds before another physical biometric test. That
-backend must own the full HBM/touch/power transaction and integrate with
-`libfprint`/`fprintd`. `fprintd` remains disabled until enrolment, correct and
-wrong-finger verification, cancellation, reboot persistence, GDM and crash
-cleanup are physically validated.
+The lifecycle around it is packaged too. `ubuntu-gts9u-qcomtee.service` loads
+the QCOMTEE module before `fprintd`, a drop-in grants `fprintd` the single
+extra device it needs (`/dev/tee0` read/write, leaving the rest of the stock
+sandbox intact), and `ubuntu-gts9u-fingerprint-cleanup` returns HBM, the touch
+block and the sensor rail to zero if `fprintd` dies or is upgraded mid-read.
 
-`scripts/test-el721-type-check.sh` runs a bounded `TypeCheck` or `Prepare` as a
-single transaction. It refuses an already-active sensor or `/dev/tee0`, checks
-the nine signed segments, and guarantees through `trap` that GPIO91/GPIO155
-return to zero and that QCOMTEE is unloaded even if the TA call fails. It takes
-a fifth argument with the selector passed to the probe and an optional sixth
-client environment (`kernel` or a numeric UID). Opening the TEE device remains
-privileged; numeric identities are dropped irreversibly before their credential
-object is created. `--prepare` uses mode `2` with no calibration input. Neither
-selector enables HBM, requests a capture or records biometric data.
+## The current state and the next step
+
+Everything above the secure boundary is written; nothing above it is proven.
+The last measured milestone is still the calibrated `Prepare`. The enrol chain
+— generating the active-group key, `EnrollInit`, the `EnrollDo` loop with a
+real finger under HBM, and an `EnrollFinal` that returns a template — has been
+exercised repeatedly against the TA but has never been carried through to a
+stored template, and identification has not been attempted at all.
+
+`el721-qtee-selftest.c` is the harness for exactly that step. It powers the
+sensor, opens the session, runs the calibrated `Prepare`, optionally sets the
+active group and issues a single `EnrollInit` followed by `Cancel`, and powers
+the sensor back down whether or not the call succeeded. It records no biometric
+data.
+
+The next milestone is therefore a single successful enrolment, and it is also
+the port's go/no-go point. The known risk is that the TA derives its
+active-group key, or seals templates, through Android services that do not
+exist here — Keymaster, Gatekeeper, or secure storage in RPMB. If the key
+generation or `EnrollFinal` fails for that reason, it is a boundary of the
+platform rather than a defect to fix, and it should be documented as such. If a
+template does come back, what remains is ordinary engineering: the identify
+loop and its control sub-opcodes, replacing the 45 ms Goodix poll with the
+sensor's own interrupt, template persistence across reboots, the GDM and
+session integration, and the validation matrix above.

@@ -109,6 +109,7 @@ pipewire,pipewire-pulse,pipewire-audio,wireplumber,
 pulseaudio-utils,
 libspa-0.2-bluetooth,bluez,alsa-ucm-conf,alsa-utils,
 iio-sensor-proxy,upower,power-profiles-daemon,
+fprintd,libpam-fprintd,
 fonts-ubuntu,language-pack-es,language-pack-gnome-es,
 locales-all,
 gnome-software,gnome-software-plugin-snap
@@ -237,6 +238,36 @@ chmod +x "$hooks/configure.sh"
 bash "$repo/scripts/build-device-package.sh" >/dev/null
 bash "$repo/scripts/build-companion-package.sh" >/dev/null
 
+# libfprint has no upstream EL721 driver.  Build the full runtime with this
+# board's secure QTEE backend; it replaces Noble's ABI-compatible package.
+fingerprint_stamp=$base/out/packages/.gts9u-libfprint-inputs.sha256
+fingerprint_fingerprint=$(
+	{
+		sha256sum "$repo/scripts/build-libfprint-el721.sh"
+		find "$repo/packaging/libfprint" -type f -print0 |
+			sort -z | xargs -0 sha256sum
+	} | sha256sum | awk '{print $1}'
+)
+fingerprint_cached=$(cat "$fingerprint_stamp" 2>/dev/null || true)
+fingerprint_missing=0
+ls "$base"/out/packages/libfprint-2-2_*+gts9u*_arm64.deb \
+	>/dev/null 2>&1 || fingerprint_missing=1
+if [ "$fingerprint_missing" = 1 ] || \
+   [ "$fingerprint_cached" != "$fingerprint_fingerprint" ]; then
+	echo 'EL721 libfprint inputs changed or package is missing; rebuilding it'
+	bash "$repo/scripts/build-libfprint-el721.sh" >/dev/null
+	printf '%s\n' "$fingerprint_fingerprint" > "$fingerprint_stamp"
+fi
+
+# The signed Samsung TA is proprietary.  A builder may opt in with an extracted
+# directory; hashes are checked before a local, non-redistributable .deb exists.
+fingerprint_firmware_package=
+if [ -n "${GTS9U_FINGERPRINT_FIRMWARE_DIR:-}" ]; then
+	bash "$repo/scripts/import-fingerprint-firmware.sh" \
+		"$GTS9U_FINGERPRINT_FIRMWARE_DIR" >/dev/null
+	fingerprint_firmware_package=ubuntu-gts9u-fingerprint-firmware
+fi
+
 # A package filename is not a valid cache key: the locally patched
 # iio-sensor-proxy deliberately keeps its upstream version, so changing one of
 # our patches used to leave an old .deb silently embedded in a fresh rootfs.
@@ -306,6 +337,7 @@ stage_debs=$base/out/local-debs
 rm -rf -- "$stage_debs"
 mkdir -p "$stage_debs"
 for pkg in libssc hexagonrpcd iio-sensor-proxy \
+	libfprint-2-2 $fingerprint_firmware_package \
 	libcamera-gts9u libspa-0.2-libcamera-gts9u \
 	ubuntu-gts9u-device ubuntu-gts9u-companion fastfetch v4l2-relayd-gts9u; do
 	deb=$(ls -t "$base"/out/packages/${pkg}_*.deb 2>/dev/null | head -1 || true)

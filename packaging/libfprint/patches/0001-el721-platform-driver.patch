@@ -1,0 +1,237 @@
+From: Ubuntu Galaxy Tab S9 Ultra port
+Subject: [PATCH] libfprint: add platform-backed EL721 driver plumbing
+
+---
+ libfprint/fp-context.c        | 23 +++++++++++++++++++++--
+ libfprint/fp-device-private.h |  1 +
+ libfprint/fp-device.c         | 16 ++++++++++++++++
+ libfprint/fpi-device.c        |  3 +++
+ libfprint/fpi-device.h        |  2 ++
+ libfprint/meson.build         |  4 ++++
+ meson.build                   | 16 +++++++++++++++-
+ 7 files changed, 62 insertions(+), 3 deletions(-)
+
+diff --git a/libfprint/fp-context.c b/libfprint/fp-context.c
+index 70d4062..ccb4ca9 100644
+--- a/libfprint/fp-context.c
++++ b/libfprint/fp-context.c
+@@ -479,6 +479,7 @@ fp_context_enumerate (FpContext *context)
+ 
+     g_autoptr(GList) spidev_devices = g_udev_client_query_by_subsystem (udev_client, "spidev");
+     g_autoptr(GList) hidraw_devices = g_udev_client_query_by_subsystem (udev_client, "hidraw");
++    g_autoptr(GList) platform_devices = g_udev_client_query_by_subsystem (udev_client, "platform");
+ 
+     /* for each potential driver, try to match all requested resources. */
+     for (i = 0; i < priv->drivers->len; i++)
+@@ -492,7 +493,19 @@ fp_context_enumerate (FpContext *context)
+ 
+         for (entry = cls->id_table; entry->udev_types; entry++)
+           {
+-            GList *matched_spidev = NULL, *matched_hidraw = NULL;
++            GList *matched_spidev = NULL, *matched_hidraw = NULL, *matched_platform = NULL;
++
++            if (entry->udev_types & FPI_DEVICE_UDEV_SUBTYPE_PLATFORM)
++              {
++                for (matched_platform = platform_devices; matched_platform; matched_platform = matched_platform->next)
++                  {
++                    const gchar *sysfs = g_udev_device_get_sysfs_path (matched_platform->data);
++                    if (sysfs && strstr (sysfs, entry->spi_acpi_id))
++                      break;
++                  }
++                if (matched_platform == NULL)
++                  continue;
++              }
+ 
+             if (entry->udev_types & FPI_DEVICE_UDEV_SUBTYPE_SPIDEV)
+               {
+@@ -539,6 +552,7 @@ fp_context_enumerate (FpContext *context)
+                                         "fpi-driver-data", entry->driver_data,
+                                         "fpi-udev-data-spidev", (matched_spidev ? g_udev_device_get_device_file (matched_spidev->data) : NULL),
+                                         "fpi-udev-data-hidraw", (matched_hidraw ? g_udev_device_get_device_file (matched_hidraw->data) : NULL),
++                                        "fpi-udev-data-platform", (matched_platform ? g_udev_device_get_sysfs_path (matched_platform->data) : NULL),
+                                         NULL);
+             /* remove entries from list to avoid conflicts */
+             if (matched_spidev)
+@@ -551,12 +565,18 @@ fp_context_enumerate (FpContext *context)
+                 g_object_unref (matched_hidraw->data);
+                 hidraw_devices = g_list_delete_link (hidraw_devices, matched_hidraw);
+               }
++            if (matched_platform)
++              {
++                g_object_unref (matched_platform->data);
++                platform_devices = g_list_delete_link (platform_devices, matched_platform);
++              }
+           }
+       }
+ 
+     /* free all unused elemnts in both lists */
+     g_list_foreach (spidev_devices, (GFunc) g_object_unref, NULL);
+     g_list_foreach (hidraw_devices, (GFunc) g_object_unref, NULL);
++    g_list_foreach (platform_devices, (GFunc) g_object_unref, NULL);
+   }
+ #endif
+ 
+diff --git a/libfprint/fp-device-private.h b/libfprint/fp-device-private.h
+index 1c3702f..2d8546d 100644
+--- a/libfprint/fp-device-private.h
++++ b/libfprint/fp-device-private.h
+@@ -49,6 +49,7 @@ typedef struct
+   {
+     gchar *spidev_path;
+     gchar *hidraw_path;
++    gchar *platform_path;
+   } udev_data;
+ 
+   gboolean        is_removed;
+diff --git a/libfprint/fp-device.c b/libfprint/fp-device.c
+index c143644..fbd123e 100644
+--- a/libfprint/fp-device.c
++++ b/libfprint/fp-device.c
+@@ -53,6 +53,7 @@ enum {
+   PROP_FPI_USB_DEVICE,
+   PROP_FPI_UDEV_DATA_SPIDEV,
+   PROP_FPI_UDEV_DATA_HIDRAW,
++  PROP_FPI_UDEV_DATA_PLATFORM,
+   PROP_FPI_DRIVER_DATA,
+   N_PROPS
+ };
+@@ -234,6 +235,7 @@ fp_device_finalize (GObject *object)
+   g_clear_pointer (&priv->virtual_env, g_free);
+   g_clear_pointer (&priv->udev_data.spidev_path, g_free);
+   g_clear_pointer (&priv->udev_data.hidraw_path, g_free);
++  g_clear_pointer (&priv->udev_data.platform_path, g_free);
+ 
+   G_OBJECT_CLASS (fp_device_parent_class)->finalize (object);
+ }
+@@ -304,6 +306,13 @@ fp_device_get_property (GObject    *object,
+         g_value_set_string (value, NULL);
+       break;
+ 
++    case PROP_FPI_UDEV_DATA_PLATFORM:
++      if (cls->type == FP_DEVICE_TYPE_UDEV)
++        g_value_set_string (value, priv->udev_data.platform_path);
++      else
++        g_value_set_string (value, NULL);
++      break;
++
+     default:
+       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+     }
+@@ -350,6 +359,13 @@ fp_device_set_property (GObject      *object,
+         g_assert (g_value_get_string (value) == NULL);
+       break;
+ 
++    case PROP_FPI_UDEV_DATA_PLATFORM:
++      if (cls->type == FP_DEVICE_TYPE_UDEV)
++        priv->udev_data.platform_path = g_value_dup_string (value);
++      else
++        g_assert (g_value_get_string (value) == NULL);
++      break;
++
+     case PROP_FPI_DRIVER_DATA:
+       priv->driver_data = g_value_get_uint64 (value);
+       break;
+@@ -578,6 +594,13 @@ fp_device_class_init (FpDeviceClass *klass)
+                          NULL,
+                          G_PARAM_STATIC_STRINGS | G_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY);
+ 
++  properties[PROP_FPI_UDEV_DATA_PLATFORM] =
++    g_param_spec_string ("fpi-udev-data-platform",
++                         "Udev data: platform sysfs path",
++                         "Private: The sysfs path to a platform device",
++                         NULL,
++                         G_PARAM_STATIC_STRINGS | G_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY);
++
+   /**
+    * FpDevice::fpi-driver-data: (skip)
+    *
+diff --git a/libfprint/fpi-device.c b/libfprint/fpi-device.c
+index 1b9fa8f..22d7e46 100644
+--- a/libfprint/fpi-device.c
++++ b/libfprint/fpi-device.c
+@@ -435,6 +435,9 @@ fpi_device_get_udev_data (FpDevice *device, FpiDeviceUdevSubtypeFlags subtype)
+     case FPI_DEVICE_UDEV_SUBTYPE_SPIDEV:
+       return priv->udev_data.spidev_path;
+ 
++    case FPI_DEVICE_UDEV_SUBTYPE_PLATFORM:
++      return priv->udev_data.platform_path;
++
+     default:
+       g_return_val_if_reached (NULL);
+       return NULL;
+diff --git a/libfprint/fpi-device.h b/libfprint/fpi-device.h
+index ab154bc..4318262 100644
+--- a/libfprint/fpi-device.h
++++ b/libfprint/fpi-device.h
+@@ -28,12 +28,14 @@
+  * FpiDeviceUdevSubtypeFlags:
+  * @FPI_DEVICE_UDEV_SUBTYPE_SPIDEV: The device requires an spidev node
+  * @FPI_DEVICE_UDEV_SUBTYPE_HIDRAW: The device requires a hidraw node
++ * @FPI_DEVICE_UDEV_SUBTYPE_PLATFORM: The device requires a platform sysfs node
+  *
+  * Bitfield of required hardware resources for a udev-backed device.
+  */
+ typedef enum {
+   FPI_DEVICE_UDEV_SUBTYPE_SPIDEV = 1 << 0,
+   FPI_DEVICE_UDEV_SUBTYPE_HIDRAW = 1 << 1,
++  FPI_DEVICE_UDEV_SUBTYPE_PLATFORM = 1 << 2,
+ } FpiDeviceUdevSubtypeFlags;
+ 
+ /**
+diff --git a/libfprint/meson.build b/libfprint/meson.build
+index 8eed4dd..d03b513 100644
+--- a/libfprint/meson.build
++++ b/libfprint/meson.build
+@@ -129,6 +129,8 @@ driver_sources = {
+         [ 'drivers/elanmoc/elanmoc.c' ],
+     'elanspi' :
+         [ 'drivers/elanspi.c' ],
++    'el721' :
++        [ 'drivers/el721.c', 'drivers/el721-qtee.c' ],
+     'nb1010' :
+         [ 'drivers/nb1010.c' ],
+     'virtual_image' :
+@@ -168,6 +170,8 @@ helper_sources = {
+         [ ],
+     'udev' :
+         [ ],
++    'el721_qtee' :
++        [ ],
+     'virtual' :
+         [ 'drivers/virtual-device-listener.c' ],
+ }
+diff --git a/meson.build b/meson.build
+index 435827c..2e53760 100644
+--- a/meson.build
++++ b/meson.build
+@@ -137,4 +137,5 @@ default_drivers = [
+ 
+     # SPI
+     'elanspi',
++    'el721',
+ ]
+@@ -185,4 +186,5 @@ driver_helper_mapping = {
+     'aes4000' : [ 'aeslib', 'aes3k' ],
+     'uru4000' : [ 'nss' ],
+     'elanspi' : [ 'udev' ],
++    'el721' : [ 'udev', 'el721_qtee' ],
+     'virtual_image'          : [ 'virtual' ],
+@@ -258,5 +260,16 @@ foreach i : driver_helpers
+         libfprint_conf.set10('HAVE_UDEV', true)
+ 
+         optional_deps += gudev_dep
++    elif i == 'el721_qtee'
++        el721_qtee_root = meson.project_source_root() / 'el721-qtee-deps'
++        el721_qtee_inc = include_directories('el721-qtee-deps/include')
++        el721_qtee_lib = cc.find_library('qcomtee',
++            dirs: el721_qtee_root / 'lib', static: true)
++        el721_qcbor_lib = cc.find_library('qcbor',
++            dirs: el721_qtee_root / 'lib', static: true)
++        optional_deps += declare_dependency(
++            dependencies: [el721_qtee_lib, el721_qcbor_lib, dependency('threads')],
++            include_directories: el721_qtee_inc,
++        )
+     endif
+ endforeach
+-- 
+2.43.0

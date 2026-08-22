@@ -1,0 +1,9 @@
+[Unit]
+Description=Qualcomm trusted execution transport for the EL721
+ConditionPathExists=/sys/bus/platform/devices/egis-el721
+Before=fprintd.service
+
+[Service]
+Type=oneshot
+ExecStart=/sbin/modprobe qcomtee
+RemainAfterExit=yes
