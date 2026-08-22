@@ -55,13 +55,22 @@ main (int argc, char **argv)
   g_print ("EL721 userspace transport: signed TA loaded and Prepare succeeded.\n");
   if (argc == 3)
     {
-      if (!el721_qtee_set_active_group (session,
-                                        (const guint8 *) argv[2],
-                                        strlen (argv[2]), NULL, &group_key,
-                                        &error))
-        goto out;
-      g_print ("Active group user=%s: generated %zu wrapped bytes\n",
-               argv[2], g_bytes_get_size (group_key));
+      if (g_getenv ("EL721_SKIP_GROUP"))
+        {
+          g_print ("Active group skipped by request\n");
+        }
+      else if (!el721_qtee_set_active_group (session,
+                                             (const guint8 *) argv[2],
+                                             strlen (argv[2]), NULL,
+                                             &group_key, &error))
+        {
+          goto out;
+        }
+      else
+        {
+          g_print ("Active group user=%s: generated %zu wrapped bytes\n",
+                   argv[2], g_bytes_get_size (group_key));
+        }
       if (!el721_qtee_enroll_init (session, (const guint8 *) argv[2],
                                    strlen (argv[2]), 1, &reply, &error))
         goto out;

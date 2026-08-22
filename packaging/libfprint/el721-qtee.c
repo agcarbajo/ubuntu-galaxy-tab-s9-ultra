@@ -48,6 +48,7 @@
 #define CMD_CONTROL 12U
 
 #define PREPARE_SIZE 0x80010U
+#define PREPARE_MODE_CALIBRATED 36U
 #define PREPARE_DATA_OFFSET 0xcU
 #define PREPARE_DATA_MAX 0x80000U
 #define PREPARE_LENGTH_OFFSET 0x8000cU
@@ -67,7 +68,9 @@
 #define CONTROL_CPU_IDLE 83U
 #define CONTROL_INITIALIZE_MATCHER 88U
 #define EL721_BDS_MAX (4U * 1024U * 1024U)
+#define EL721_BDS_CHUNK 0x3000U
 #define ENROLL_INIT_SIZE 0x178U
+#define ENROLL_INIT_OUT_SIZE 0x2a3010U
 #define ENROLL_DO_OUT_SIZE 0x230024U
 #define FINAL_OUT_SIZE 0xa018U
 #define IDENTIFY_INIT_SIZE 0x2265bdU
@@ -765,6 +768,9 @@ el721_qtee_load_bds (El721Qtee *session, GError **error)
 
   while (offset < bds_size)
     {
+      /* One UI splits this blob into 0x3000-byte pieces, but its loader also
+       * wraps each piece in a header this code has not decoded yet: chunking
+       * at that size makes the TA answer 42.  A single piece is accepted. */
       gsize chunk_size = MIN ((gsize) CONTROL_DATA_MAX, bds_size - offset);
 
       if (!el721_qtee_control (session, CONTROL_LOAD_BDS, chunk_index,
@@ -786,6 +792,9 @@ el721_qtee_prepare (El721Qtee *session, GError **error)
   gsize calibration_size = 0;
   guint8 *output;
   guint attempt;
+  guint32 sensor_type = 0;
+  guint32 result = 0;
+  guint32 function_status = 0;
   guint32 opcode = 0;
 
   if (!load_runtime_file (session, "calib.dat", PREPARE_DATA_MAX,
@@ -794,7 +803,7 @@ el721_qtee_prepare (El721Qtee *session, GError **error)
 
   memset (body, 0, PREPARE_SIZE);
   put_u32 (body, 0, CMD_PREPARE);
-  put_u32 (body, 8, 36);
+  put_u32 (body, 8, PREPARE_MODE_CALIBRATED);
   memcpy (body + PREPARE_DATA_OFFSET, calibration, calibration_size);
   put_u32 (body, PREPARE_LENGTH_OFFSET, calibration_size);
   for (attempt = 0; attempt < 6; attempt++)
@@ -802,15 +811,21 @@ el721_qtee_prepare (El721Qtee *session, GError **error)
       if (!invoke_body (session, CMD_PREPARE, PREPARE_SIZE, PREPARE_SIZE,
                         body, PREPARE_SIZE, &output, error))
         return FALSE;
-      opcode = get_u32 (output, 0);
-      g_debug ("BAUTH calibrated Prepare attempt %u returned opcode=%u "
-               "result=%u status=%u", attempt + 1, opcode,
-               get_u32 (output, 4), get_u32 (output, 8));
-      if (get_u32 (output, 4) != 0)
+      /* The Prepare envelope is not the BAUTH reply envelope: word 0 carries
+       * the sensor type rather than an opcode, and the opcode - when the TA
+       * asks for host work at all - lives in word 3 like everywhere else. */
+      sensor_type = get_u32 (output, 0);
+      result = get_u32 (output, 4);
+      function_status = get_u32 (output, 8);
+      opcode = get_u32 (output, 12);
+      g_debug ("BAUTH calibrated Prepare attempt %u returned sensor_type=%u "
+               "result=%u function_status=%u opcode=%u", attempt + 1,
+               sensor_type, result, function_status, opcode);
+      if (result || function_status)
         break;
-      if (opcode == 0 && get_u32 (output, 8) == 0)
+      if (opcode == 0)
         break;
-      if (opcode == 8 && get_u32 (output, 8) == 0)
+      if (opcode == 8)
         {
           if (!reset_sensor (error))
             return FALSE;
@@ -828,20 +843,18 @@ el721_qtee_prepare (El721Qtee *session, GError **error)
         }
       break;
     }
-  if (opcode != 0 || get_u32 (output, 4) != 0 || get_u32 (output, 8) != 0)
+  if (result || function_status || opcode || sensor_type != EL721_SENSOR_TYPE)
     {
-      g_set_error (error, EL721_ERROR, get_u32 (output, 4),
-                   "calibrated Prepare returned opcode=%u, result=%u, status=%u",
-                   opcode, get_u32 (output, 4), get_u32 (output, 8));
+      g_set_error (error, EL721_ERROR, result,
+                   "calibrated Prepare returned sensor_type=%u, result=%u, "
+                   "function_status=%u, opcode=%u",
+                   sensor_type, result, function_status, opcode);
       return FALSE;
     }
-  /* One UI treats these two bootstrap controls as advisory.  In particular,
-   * operation 76 returns status 51 on this tablet and startup continues. */
-  if (!el721_qtee_control (session, CONTROL_BOOTSTRAP, 0, NULL, 0, FALSE,
-                           error) ||
-      !el721_qtee_control (session, CONTROL_INITIALIZE_MATCHER, 0, NULL, 0,
-                           FALSE, error))
-    return FALSE;
+  /* Operations 76 and 88 were guesses and this TA answers 51 to both.  One
+   * UI's own common_prepare() runs set_lcd_pannel_type (401),
+   * set_lcd_window_type (402) and load_gdxopt_calib (94) here, all of which
+   * need blobs Ubuntu does not import yet, followed by load_bds (81). */
   return el721_qtee_load_bds (session, error);
 }
 
@@ -989,7 +1002,8 @@ el721_qtee_enroll_init (El721Qtee *session, const guint8 *user, gsize user_size,
   put_u32 (body, 0x10c, template_id);
   put_u32 (body, 0x110, 7);
   memcpy (body + 0x114, cell_id, strlen (cell_id));
-  if (!invoke_body (session, CMD_ENROLL_INIT, ENROLL_INIT_SIZE, 12,
+  if (!invoke_body (session, CMD_ENROLL_INIT, ENROLL_INIT_SIZE,
+                    ENROLL_INIT_OUT_SIZE,
                     body, ENROLL_INIT_SIZE, &output, error))
     return FALSE;
   decode_common (reply, output);
