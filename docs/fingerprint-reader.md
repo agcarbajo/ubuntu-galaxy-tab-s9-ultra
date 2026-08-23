@@ -758,12 +758,34 @@ reaches it. Claiming the rail by name from a test module gets a consumer onto
 `regulator_get_voltage` with `EINVAL` and reports 0 mV, so it is not driving
 anything either.
 
-**The EL721 has never been powered under this port.** Everything above follows
+**The EL721 had never been powered under this port.** Everything above follows
 from that: no sensor answers, so TrustZone's `fpsec_open_sensor` spends a
 second getting nothing, the engine context is never allocated, and every
 biometric command answers 29. The driver now claims `vdd` and sequences it the
-way the stock driver does, which needs a kernel rebuild; the PMIC rail itself
-has to be made real first.
+way the stock driver does.
+
+Getting the rail itself to exist took three tries, and the reasons are worth
+keeping. It cannot be described in the board file: Samsung's ABL bootloops on
+any vendor_boot DTB whose structure moves, measured twice, and repacking that
+image with the tree untouched reproduces the working one to the byte, so the
+packing was never at fault. It cannot be added from `postcore_initcall`
+either — that panics before anything can be logged. What does work is adding
+it later, from a module, with `of_changeset`: a sibling `regulators-el721`
+node under the same RSC, carrying `ldo2`, plus a consumer node that references
+it by phandle. Giving that node its own platform device gets the RPMh driver
+to register the rail without disturbing the rails already up.
+
+The last obstacle there was arithmetic. The stock overlay asks this rail for
+3.3 V exactly, but mainline's PMIC5 p-type LDO steps 8 mV from 1.504 V and
+3.3 V lands half a step off the grid, so registration failed with
+`ENOTRECOVERABLE` until the constraint was widened to the neighbouring points.
+The rail now registers and enables at **3,296,000 µV**.
+
+With it powered, the TA's answer changes for the first time in this whole
+investigation: `Prepare` returns `sensor_type=0` where it had always returned
+the constant 8. It only does so when the rail is up *and* the GPIO lines are
+driven — rail alone, or lines alone, still give 8. So the reader is finally
+being reached, and what the TA now reports is that it cannot identify it.
 
 Two facts point at where to look next. The tablet's own clock tree shows
 `gcc_qupv3_wrap1_s2_clk` disabled with its source parked at 5.12 MHz, while
