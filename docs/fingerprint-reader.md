@@ -721,13 +721,25 @@ With the model selected, control 76 answered, the optical blob uploaded
 through 82 and the enrolment session set, the initialisation now matches the
 stock trace call for call, and `EnrollInit` still answers 29.
 
-**What remains is the matcher's own initialisation**, one call deep inside
-Samsung's algorithm, with every layer under it now behaving like stock. The
-chain is short and fully identified: `enroll_init_v2` fetches the matcher from
-field `0x2f98` of the engine handle and refuses to run when it is absent, and
-the only code that installs it allocates the object from a path that our
-sequence never reaches. Neither ordering the optical blob before `Prepare`,
-nor `Cancel`, nor the clean-up control makes that path run.
+What remains is below all of that, and two measurements say so plainly.
+
+`Prepare` takes **1.06 seconds** here. The same command in the traced One UI
+cold start takes **32 milliseconds**. And it takes the same 1.06 seconds with
+the sensor's rail on as with it off — if the TA were running SPI transfers, an
+unpowered sensor would not cost exactly as much as a powered one. A second
+`Prepare` in the same session returns in 130 ms, which is the short path the
+handler takes once the state is no longer zero.
+
+Put together: the first `Prepare` runs the full path, spends about a second
+inside `fpsec_open_sensor` getting nothing, leaves the engine context
+unallocated and still reports zero in every field the caller can see. Every
+later failure follows from that — `enroll_init_v2` finds no matter at field
+`0x2f98` of a handle that was never built, and answers 29.
+
+So the remaining defect is that **TrustZone gets nothing from the EL721 over
+the secure SPI in this boot**, and the BAUTH command sequence above it is now
+correct. Command 16 is the one-line probe for it: it answers zero whether the
+sensor is powered or not, where stock reads a real type.
 
 Two facts point at where to look next. The tablet's own clock tree shows
 `gcc_qupv3_wrap1_s2_clk` disabled with its source parked at 5.12 MHz, while
