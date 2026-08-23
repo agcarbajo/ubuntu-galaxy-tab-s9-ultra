@@ -186,6 +186,14 @@ if ! grep -q 'QCOMTEE_SHM_POOL_MAX_SIZE' \
 	git -C "$kernel_tree" apply --recount \
 		"$pat/qcomtee-use-tzmem-pool.patch"
 fi
+# The BAUTH application registers the two non-secure buffers with QTEE itself,
+# and that only succeeds when the range is a whole SHM bridge, so large memory
+# objects get their own contiguous DMA32 allocation and their own bridge.
+if ! grep -q 'qcomtee_bridged_alloc' \
+	"$kernel_tree/drivers/tee/qcomtee/shm.c"; then
+	git -C "$kernel_tree" apply --recount \
+		"$pat/qcomtee-bridge-large-objects.patch"
+fi
 if [ "$qtee_admin_null_credentials" = 1 ]; then
 	# Diagnostic only.  This reproduces Samsung's in-kernel QSEECom client
 	# environment for a CAP_SYS_ADMIN process; it is not part of release builds.
