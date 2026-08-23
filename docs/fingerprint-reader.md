@@ -668,8 +668,22 @@ every field the caller can see. So the successful `Prepare` never meant the
 sensor had been opened: it means the command ran, and the sensor type is a
 constant the TA already knows.
 
-**TrustZone cannot open the sensor's SPI in this boot.** That is the single
-remaining defect, and everything above it is now correct.
+That reading was wrong, and the correction matters. `prepare_stub` calls
+`fp_sdk_uninit` first, which is what puts the state global at zero, and
+`fp_prepare_state_handler` propagates any failure back through `Prepare`'s
+result word. Since that word is zero, the sensor does open and the engine
+context is created. The enrolment path returns 29 from the other branch that
+yields the same number: `fp_enroll_init` calls `enroll_init_v2`, the Egis
+matcher's own entry point, and that is what fails.
+
+Two further things were settled by measurement. Holding
+`gcc_qupv3_wrap1_s2_clk` on with its source at 80 MHz changes nothing, so the
+serial engine's clock is not the obstacle. And control 49 is `decode_metadata`,
+which decodes an existing template blob — it answers 51 to anything that is not
+one, so it is not a precondition for a first enrolment at all.
+
+**What remains is the matcher's own initialisation**, one call deep inside
+Samsung's algorithm, with every layer under it now behaving like stock.
 
 Two facts point at where to look next. The tablet's own clock tree shows
 `gcc_qupv3_wrap1_s2_clk` disabled with its source parked at 5.12 MHz, while
