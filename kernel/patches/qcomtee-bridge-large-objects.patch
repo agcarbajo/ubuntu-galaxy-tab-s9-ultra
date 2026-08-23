@@ -11,7 +11,15 @@
  
  #include "qcomtee.h"
  
-@@ -132,6 +135,97 @@
+@@ -106,6 +109,7 @@
+  */
+ #define QCOMTEE_SHM_POOL_MAX_SIZE	SZ_32M
+ #define QCOMTEE_PAGE_SHM_MAX_SIZE	SZ_4M
++#define QCOMTEE_BRIDGED_SHM_MIN_SIZE	SZ_2M
+ 
+ static int qcomtee_shm_register(struct tee_context *ctx, struct tee_shm *shm,
+ 				struct page **pages, size_t num_pages,
+@@ -132,17 +136,118 @@
  	return container_of(pool, struct qcomtee_shm_pool, base);
  }
  
@@ -59,11 +67,14 @@
 +
 +	ret = qcom_tzmem_shm_bridge_create(paddr, size, &bridged->handle);
 +	if (ret) {
++		pr_debug("bridge creation failed: %d\n", ret);
 +		free_pages_exact(vaddr, size);
 +		kfree(bridged);
 +		return ret;
 +	}
 +
++	pr_debug("bridged object: paddr %pa size %zu handle %llu\n",
++		&paddr, size, bridged->handle);
 +	bridged->vaddr = vaddr;
 +	bridged->size = size;
 +	mutex_lock(&qcomtee_bridged_lock);
@@ -109,17 +120,26 @@
  static int pool_op_alloc(struct tee_shm_pool *pool, struct tee_shm *shm,
  			 size_t size, size_t align)
  {
-@@ -143,6 +237,9 @@
+ 	struct qcomtee_shm_pool *qpool = to_qcomtee_shm_pool(pool);
+ 	void *vaddr;
+ 
+-	if (size <= QCOMTEE_PAGE_SHM_MAX_SIZE)
++	if (size <= QCOMTEE_BRIDGED_SHM_MIN_SIZE)
+ 		return tee_dyn_shm_alloc_helper(shm, size, align,
  						qcomtee_shm_register);
  
  	size = PAGE_ALIGN(size);
-+	if (!qcomtee_bridged_alloc(shm, size))
++	/* A page-backed object is enough to be read, but the BAUTH application
++	 * registers its two buffers with QTEE itself, which needs one whole
++	 * contiguous bridge.  Objects in that size range get one of their own;
++	 * the signed TA image is far larger and stays on the TZMEM pool. */
++	if (size <= QCOMTEE_PAGE_SHM_MAX_SIZE && !qcomtee_bridged_alloc(shm, size))
 +		return 0;
 +
  	vaddr = qcom_tzmem_alloc(qpool->tzmem, size, GFP_KERNEL);
  	if (!vaddr)
  		return -ENOMEM;
-@@ -164,6 +261,9 @@
+@@ -164,6 +269,9 @@
  		return;
  	}
  

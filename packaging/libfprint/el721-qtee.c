@@ -133,6 +133,23 @@ el721_qtee_error_quark (void)
 static guint32 el721_probe_u32 (const gchar *name, guint32 fallback);
 
 static void
+put_u64 (guint8 *buffer, gsize offset, guint64 value)
+{
+  guint i;
+
+  for (i = 0; i < 8; i++)
+    buffer[offset + i] = (guint8) (value >> (8 * i));
+}
+
+static guint64
+el721_probe_u64 (const gchar *name)
+{
+  const gchar *value = g_getenv (name);
+
+  return value ? g_ascii_strtoull (value, NULL, 0) : 0;
+}
+
+static void
 put_u32 (guint8 *buffer, gsize offset, guint32 value)
 {
   memcpy (buffer + offset, &value, sizeof (value));
@@ -941,8 +958,12 @@ invoke_body (El721Qtee *session, guint32 command, gsize input_size,
   guint32 is_64_bit = 1;
   struct qcomtee_param params[10] = { 0 };
   qcomtee_result_t result = QCOMTEE_ERROR;
+  gboolean share = g_getenv ("EL721_SHARE_OBJECT") != NULL;
+  guint64 raw_input_paddr = el721_probe_u64 ("EL721_INPUT_PADDR");
+  guint64 raw_output_paddr = el721_probe_u64 ("EL721_OUTPUT_PADDR");
   guint8 *input = qcomtee_memory_object_addr (session->input);
-  guint8 *out = qcomtee_memory_object_addr (session->output);
+  guint8 *out = qcomtee_memory_object_addr (share ? session->input
+                                                  : session->output);
   guint32 trustlet, payload;
 
   if (input_size > EL721_INPUT_SHARED_SIZE ||
@@ -953,7 +974,8 @@ invoke_body (El721Qtee *session, guint32 command, gsize input_size,
       return FALSE;
     }
   memset (input, 0, EL721_INPUT_SHARED_SIZE);
-  memset (out, 0, EL721_OUTPUT_SHARED_SIZE);
+  if (!share)
+    memset (out, 0, EL721_OUTPUT_SHARED_SIZE);
   if (body_size)
     memcpy (input, body, body_size);
   put_u32 (input, 0, command);
@@ -964,8 +986,19 @@ invoke_body (El721Qtee *session, guint32 command, gsize input_size,
                                       .ubuf = { request, sizeof (request) } };
   params[1] = (struct qcomtee_param) { .attr = QCOMTEE_UBUF_INPUT,
                                       .ubuf = { response, sizeof (response) } };
+  /* Diagnostic: hand the TA the physical addresses directly instead of
+   * letting QTEE patch its own mapped memory objects into the request, to
+   * see whether qsee_register_shared_buffer() refuses a range QTEE has
+   * already mapped for this invocation. */
+  if (raw_input_paddr && raw_output_paddr)
+    {
+      put_u64 (request, 4, raw_input_paddr);
+      put_u64 (request, 16, raw_output_paddr);
+    }
   params[2] = (struct qcomtee_param) { .attr = QCOMTEE_UBUF_INPUT,
-                                      .ubuf = { offsets, sizeof (offsets) } };
+                                      .ubuf = { offsets,
+                                                raw_input_paddr ? 0
+                                                                : sizeof (offsets) } };
   params[3] = (struct qcomtee_param) { .attr = QCOMTEE_UBUF_INPUT,
                                       .ubuf = { &is_64_bit, sizeof (is_64_bit) } };
   params[4] = (struct qcomtee_param) { .attr = QCOMTEE_UBUF_OUTPUT,
@@ -973,9 +1006,14 @@ invoke_body (El721Qtee *session, guint32 command, gsize input_size,
   params[5] = (struct qcomtee_param) { .attr = QCOMTEE_UBUF_OUTPUT,
                                       .ubuf = { response_out, sizeof (response_out) } };
   params[6] = (struct qcomtee_param) { .attr = QCOMTEE_OBJREF_INPUT,
-                                      .object = session->input };
+                                      .object = raw_input_paddr
+                                                ? QCOMTEE_OBJECT_NULL
+                                                : session->input };
   params[7] = (struct qcomtee_param) { .attr = QCOMTEE_OBJREF_INPUT,
-                                      .object = session->output };
+                                      .object = raw_output_paddr
+                                                ? QCOMTEE_OBJECT_NULL
+                                                : (share ? session->input
+                                                         : session->output) };
   /* Diagnostic: One UI leaves the last two object slots empty, but the
    * enrolment handlers register the buffers themselves; repeat them here to
    * see whether QTEE then hands the TA a mapping it can register. */

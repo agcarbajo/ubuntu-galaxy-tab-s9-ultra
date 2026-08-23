@@ -49,6 +49,26 @@ main (int argc, char **argv)
   session = el721_qtee_open (argv[1], &error);
   if (!session)
     goto out;
+  if (g_getenv ("EL721_AUTO_PADDR"))
+    {
+      g_autofree gchar *output = NULL;
+      g_auto(GStrv) lines = NULL;
+
+      if (g_spawn_command_line_sync
+            ("sh -c \"dmesg | grep -o 'bridged object: paddr 0x[0-9a-f]*' "
+             "| tail -2 | grep -o '0x[0-9a-f]*'\"",
+             &output, NULL, NULL, &error))
+        {
+          lines = g_strsplit (g_strstrip (output), "\n", -1);
+          if (lines[0] && lines[1])
+            {
+              g_setenv ("EL721_INPUT_PADDR", lines[0], TRUE);
+              g_setenv ("EL721_OUTPUT_PADDR", lines[1], TRUE);
+              g_print ("using raw buffers %s and %s\n", lines[0], lines[1]);
+            }
+        }
+      g_clear_error (&error);
+    }
   g_usleep (1000000);
   if (!g_getenv ("EL721_SKIP_PREPARE") && !el721_qtee_prepare (session, &error))
     goto out;
