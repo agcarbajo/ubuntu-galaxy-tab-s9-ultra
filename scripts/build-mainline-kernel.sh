@@ -99,17 +99,16 @@ board_dts=$kernel_tree/arch/arm64/boot/dts/qcom/sm8550-samsung-gts9uwifi.dts
 # Adding the EL721 GPIO description to vendor_boot makes Samsung ABL reset before
 # Linux can persist a log.  The restricted EL721 compatibility device is
 # therefore created by its driver after boot and does not mutate the DTB.
-# An EL721 build needs two additions the baseline does not carry: the PMIC rail
-# that actually feeds the reader, and a node for it to hang from, because a
-# platform device without one cannot resolve a supply.  Neither describes a
-# GPIO, which is what upsets ABL.
-if [ "$fingerprint_sensor" = 1 ]; then
-	cp "$repo/kernel/dts/sm8550-samsung-gts9uwifi.dts" "$board_dts"
-else
-	git -C "$repo" show \
-		"$fingerprint_baseline:kernel/dts/sm8550-samsung-gts9uwifi.dts" \
-		> "$board_dts"
-fi
+# Measured on the tablet: ABL bootloops on any DTB whose structure moves,
+# whatever the addition is.  Two inert nodes did it, and so did adding them
+# with their phandle pinned so nothing else renumbered.  Repacking
+# vendor_boot with the untouched tree reproduces the working image to the
+# byte -- one cosmetic byte of avbtool version aside -- so the packing is
+# faithful and the tree itself is what ABL rejects.  The baseline stays
+# pinned until there is a route that does not go through the DTB.
+git -C "$repo" show \
+	"$fingerprint_baseline:kernel/dts/sm8550-samsung-gts9uwifi.dts" \
+	> "$board_dts"
 
 if ! grep -q 'sm8550-samsung-gts9uwifi.dtb' \
 	"$kernel_tree/arch/arm64/boot/dts/qcom/Makefile"; then
