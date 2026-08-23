@@ -11,8 +11,11 @@
  * It adds a node and never removes or rewrites one.
  */
 
+#include <linux/delay.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
+#include <linux/gpio/consumer.h>
+#include <linux/gpio/machine.h>
 #include <linux/of.h>
 #include <linux/of_platform.h>
 #include <linux/platform_device.h>
@@ -44,6 +47,34 @@ static bool power = true;
 module_param(power, bool, 0444);
 MODULE_PARM_DESC(power, "enable the rail once it is published (default yes)");
 
+/*
+ * The stock node powers the reader from the PMIC and declares no etspi-ldoPin,
+ * so the only line Linux should drive is the sleep/reset one.  This port drives
+ * a second GPIO as if it enabled an LDO; hold only the stock line here to see
+ * what the TA makes of it.
+ */
+static bool enable_line;
+module_param(enable_line, bool, 0444);
+MODULE_PARM_DESC(enable_line, "drive the stock sleep/reset line high");
+
+static struct gpio_desc *enable_desc;
+
+static int settle_ms = 10;
+module_param(settle_ms, int, 0444);
+MODULE_PARM_DESC(settle_ms, "milliseconds to wait after the reset pulse");
+
+static bool reset_pulse;
+module_param(reset_pulse, bool, 0444);
+MODULE_PARM_DESC(reset_pulse, "pulse the sleep line low before raising it");
+
+static struct gpiod_lookup_table enable_lookup = {
+	.dev_id = "gts9u-el721-supply",
+	.table = {
+		GPIO_LOOKUP("f100000.pinctrl", 155, "enable", GPIO_ACTIVE_HIGH),
+		{ }
+	},
+};
+
 static struct device_node *find_pmic_regulators(void)
 {
 	struct device_node *np = NULL;
@@ -63,6 +94,7 @@ static int __init fprail_init(void)
 {
 	struct device_node *regulators, *holder, *rail, *supply;
 	struct platform_device *pdev;
+	int attempt;
 	int ret;
 
 	regulators = find_pmic_regulators();
@@ -172,12 +204,42 @@ static int __init fprail_init(void)
 		return 0;
 	}
 
-	vdd = regulator_get(&consumer->dev, "vdd");
+	/*
+	 * The rail's own device was created a moment ago, so its driver may not
+	 * have bound yet; the first attempts come back as probe deferrals.
+	 */
+	for (attempt = 0; attempt < 50; attempt++) {
+		vdd = regulator_get(&consumer->dev, "vdd");
+		if (!IS_ERR(vdd) || PTR_ERR(vdd) != -EPROBE_DEFER)
+			break;
+		msleep(20);
+	}
 	if (IS_ERR(vdd)) {
 		pr_err("gts9u-fprail: cannot get the rail (%ld)\n", PTR_ERR(vdd));
 		vdd = NULL;
 		return 0;
 	}
+	if (enable_line) {
+		gpiod_add_lookup_table(&enable_lookup);
+		enable_desc = gpiod_get(&consumer->dev, "enable", GPIOD_OUT_HIGH);
+		if (IS_ERR(enable_desc)) {
+			pr_err("gts9u-fprail: cannot drive the sleep line (%ld)\n",
+			       PTR_ERR(enable_desc));
+			enable_desc = NULL;
+			gpiod_remove_lookup_table(&enable_lookup);
+		} else {
+			if (reset_pulse) {
+				gpiod_set_value_cansleep(enable_desc, 0);
+				usleep_range(1050, 1100);
+				gpiod_set_value_cansleep(enable_desc, 1);
+			}
+			if (settle_ms > 0)
+				msleep(settle_ms);
+			pr_info("gts9u-fprail: sleep line high, settled %d ms\n",
+				settle_ms);
+		}
+	}
+
 	if (regulator_enable(vdd))
 		pr_err("gts9u-fprail: cannot enable the rail\n");
 	else
@@ -196,6 +258,11 @@ fail:
 
 static void __exit fprail_exit(void)
 {
+	if (enable_desc) {
+		gpiod_set_value_cansleep(enable_desc, 0);
+		gpiod_put(enable_desc);
+		gpiod_remove_lookup_table(&enable_lookup);
+	}
 	if (vdd) {
 		regulator_disable(vdd);
 		regulator_put(vdd);

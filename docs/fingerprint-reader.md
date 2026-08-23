@@ -787,6 +787,14 @@ the constant 8. It only does so when the rail is up *and* the GPIO lines are
 driven — rail alone, or lines alone, still give 8. So the reader is finally
 being reached, and what the TA now reports is that it cannot identify it.
 
+Narrowing that further ruled out the obvious suspects. GPIO91, which this port
+drives as if it enabled an LDO although the stock node declares no
+`etspi-ldoPin`, turns out not to matter: with the rail up and only the stock
+sleep line driven, the answer is the same zero. Neither a reset pulse on that
+line nor settling for 200 ms changes it, and `Prepare` still takes its full
+second. The reader has power, its enable line is high and it has been reset,
+and TrustZone still cannot identify it over the secure SPI.
+
 Two facts point at where to look next. The tablet's own clock tree shows
 `gcc_qupv3_wrap1_s2_clk` disabled with its source parked at 5.12 MHz, while
 the TA asks for 20 MHz; and `gcc_qupv3_wrap1_s7_clk` is enabled, so the
