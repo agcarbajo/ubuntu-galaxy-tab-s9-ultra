@@ -127,6 +127,40 @@ main (int argc, char **argv)
                                             &error))
                 goto out;
             }
+          else if (item[0] == 'k')
+            {
+              g_auto(GStrv) fields = g_strsplit (item + 1, "=", 2);
+              g_auto(GStrv) parts = g_strsplit (fields[0], "/", 2);
+              guint32 operation = (guint32) g_ascii_strtoull (parts[0], NULL, 10);
+              gsize capacity = parts[1] ?
+                (gsize) g_ascii_strtoull (parts[1], NULL, 0) : 0;
+              guint32 scalar = fields[1] ?
+                (guint32) g_ascii_strtoull (fields[1], NULL, 0) : 0;
+
+              g_print ("seq control %u scalar %u\n", operation, scalar);
+              if (!el721_qtee_control_scalar (session, operation, scalar,
+                                              capacity, &error))
+                goto out;
+            }
+          else if (item[0] == 'f')
+            {
+              g_auto(GStrv) fields = g_strsplit (item + 1, "=", 2);
+              g_auto(GStrv) parts = g_strsplit (fields[0], "/", 2);
+              guint32 operation = (guint32) g_ascii_strtoull (parts[0], NULL, 10);
+              gsize capacity = parts[1] ?
+                (gsize) g_ascii_strtoull (parts[1], NULL, 0) : 0;
+              g_autofree gchar *blob = NULL;
+              gsize blob_size = 0;
+
+              if (!g_file_get_contents (fields[1], &blob, &blob_size, &error))
+                goto out;
+              g_print ("seq control %u with %" G_GSIZE_FORMAT " bytes from %s\n",
+                       operation, blob_size, fields[1]);
+              if (!el721_qtee_control_op (session, operation,
+                                          (const guint8 *) blob, blob_size,
+                                          capacity, &error))
+                goto out;
+            }
           else if (item[0] == 'p')
             {
               g_auto(GStrv) fields = g_strsplit (item + 1, "=", 2);
@@ -143,7 +177,10 @@ main (int argc, char **argv)
           else if (item[0] == 'c')
             {
               g_auto(GStrv) fields = g_strsplit (item + 1, "=", 2);
-              guint32 operation = (guint32) g_ascii_strtoull (fields[0], NULL, 10);
+              g_auto(GStrv) parts = g_strsplit (fields[0], "/", 2);
+              guint32 operation = (guint32) g_ascii_strtoull (parts[0], NULL, 10);
+              gsize capacity = parts[1] ?
+                (gsize) g_ascii_strtoull (parts[1], NULL, 0) : 0;
               guint8 value = 0;
               gsize value_size = 0;
 
@@ -154,7 +191,7 @@ main (int argc, char **argv)
                 }
               g_print ("seq control %u\n", operation);
               if (!el721_qtee_control_op (session, operation, &value,
-                                          value_size, &error))
+                                          value_size, capacity, &error))
                 goto out;
             }
         }
@@ -220,7 +257,7 @@ main (int argc, char **argv)
 
           g_print ("probe control %u\n", operation);
           if (!el721_qtee_control_op (session, operation, &value, value_size,
-                                      &error))
+                                      0, &error))
             goto out;
         }
     }

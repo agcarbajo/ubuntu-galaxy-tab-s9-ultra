@@ -69,7 +69,10 @@
 #define CONTROL_GDXOPT_CALIB 94U
 #define EL721_WINDOW_TYPE_SYSFS "/sys/class/lcd/panel/window_type"
 #define CONTROL_BOOTSTRAP 76U
-#define CONTROL_LOAD_BDS 81U
+#define CONTROL_BOOTSTRAP_RESPONSE 1024U
+#define CONTROL_RESET_BDS 81U
+#define CONTROL_LOAD_BDS 82U
+#define EL721_BDS_MAX_CHUNK 3U
 #define CONTROL_CPU_IDLE 83U
 #define CONTROL_INITIALIZE_MATCHER 88U
 #define EL721_BDS_MAX (4U * 1024U * 1024U)
@@ -562,6 +565,26 @@ el721_qtee_open (const gchar *firmware_directory, GError **error)
    * before it reads them, and answers 29 when that validation fails. */
   gsize shared_alloc = el721_probe_u32 ("EL721_SHARED_ALLOC", EL721_SHARED_ALLOC);
 
+  /* A traced One UI cold start invokes operation 16 on the freshly loaded
+   * controller before any BAUTH command ("QSApp SB Size is 128", "opta").
+   * Reproduce it on request while its shape is still being matched. */
+  if (g_getenv ("EL721_OPTA"))
+    {
+      guint32 op = (guint32) g_ascii_strtoull (g_getenv ("EL721_OPTA"), NULL, 0);
+      guint32 size = 128;
+      struct qcomtee_param probe[1] = { 0 };
+      qcomtee_result_t probe_result = QCOMTEE_ERROR;
+      int failed;
+
+      probe[0].attr = QCOMTEE_UBUF_INPUT;
+      probe[0].ubuf.addr = &size;
+      probe[0].ubuf.size = sizeof (size);
+      failed = qcomtee_object_invoke (session->controller, op, probe, 1,
+                                      &probe_result);
+      g_debug ("controller operation %u: transport %d, result %u", op, failed,
+               probe_result);
+    }
+
   g_debug ("allocating two BAUTH shared buffers of %zu bytes", shared_alloc);
   if (qcomtee_memory_object_alloc (shared_alloc, session->root,
                                    &session->input) ||
@@ -804,6 +827,23 @@ el721_qtee_control_user (El721Qtee *session, guint32 operation,
 
 /* Diagnostic: BAUTH_OP_CODE_SEND_STOREPATH and friends take their argument
  * in the payload field rather than in the identifier field. */
+/* Diagnostic: the TA reads a small selector from the scalar field for
+ * several operations; drive it directly. */
+gboolean
+el721_qtee_control_scalar (El721Qtee *session, guint32 operation,
+                           guint32 scalar, gsize response_capacity,
+                           GError **error)
+{
+  g_autofree guint8 *response = response_capacity ?
+    g_malloc0 (response_capacity) : NULL;
+  gsize response_size = 0;
+
+  return el721_qtee_control_full (session, operation, scalar, NULL, 0,
+                                  NULL, 0, response, response_capacity,
+                                  response_capacity ? &response_size : NULL,
+                                  FALSE, error);
+}
+
 gboolean
 el721_qtee_control_bytes (El721Qtee *session, guint32 operation,
                           const guint8 *data, gsize data_size,
@@ -815,10 +855,17 @@ el721_qtee_control_bytes (El721Qtee *session, guint32 operation,
 
 gboolean
 el721_qtee_control_op (El721Qtee *session, guint32 operation,
-                       const guint8 *data, gsize data_size, GError **error)
+                       const guint8 *data, gsize data_size,
+                       gsize response_capacity, GError **error)
 {
-  return el721_qtee_control (session, operation, 0, data, data_size, FALSE,
-                             error);
+  g_autofree guint8 *response = response_capacity ?
+    g_malloc0 (response_capacity) : NULL;
+  gsize response_size = 0;
+
+  return el721_qtee_control_full (session, operation, 0, NULL, 0, data,
+                                  data_size, response, response_capacity,
+                                  response_capacity ? &response_size : NULL,
+                                  FALSE, error);
 }
 
 gboolean
@@ -872,38 +919,6 @@ el721_qtee_set_active_group (El721Qtee *session,
 }
 
 static gboolean
-el721_qtee_set_lcd_types (El721Qtee *session, GError **error)
-{
-  g_autofree gchar *window = NULL;
-  guint8 panel_known = 1;
-  gsize window_size = 0;
-
-  if (!el721_qtee_control (session, CONTROL_LCD_PANEL_TYPE, 0,
-                           &panel_known, sizeof (panel_known), FALSE, error))
-    return FALSE;
-  if (!g_file_get_contents (EL721_WINDOW_TYPE_SYSFS, &window, &window_size,
-                            NULL))
-    {
-      /* Until the panel driver publishes the node, the same bytes One UI
-       * reads there can be supplied for a bounded experiment. */
-      const gchar *override = g_getenv ("EL721_WINDOW_TYPE");
-
-      if (!override)
-        {
-          g_debug ("no %s: skipping the stock window-type control",
-                   EL721_WINDOW_TYPE_SYSFS);
-          return TRUE;
-        }
-      window = g_strdup_printf ("%s\n", override);
-      window_size = strlen (window);
-    }
-  window_size = MIN (window_size, (gsize) 16);
-  return el721_qtee_control (session, CONTROL_LCD_WINDOW_TYPE, 0,
-                             (const guint8 *) window, window_size, FALSE,
-                             error);
-}
-
-static gboolean
 el721_qtee_load_bds (El721Qtee *session, GError **error)
 {
   g_autofree gchar *bds = NULL;
@@ -915,18 +930,26 @@ el721_qtee_load_bds (El721Qtee *session, GError **error)
                           &bds, &bds_size, error))
     return FALSE;
 
+  /* The TA keeps one optical blob and splits the upload in two operations:
+   * CONTROL_RESET_BDS frees whatever it holds, and CONTROL_LOAD_BDS appends,
+   * with the chunk index in the scalar field and CONTROL_DATA_MAX bytes per
+   * chunk.  The first chunk also declares the total size, so index and size
+   * have to agree; the TA answers 51 to an index above three. */
+  if (!el721_qtee_control (session, CONTROL_RESET_BDS, 0, NULL, 0, TRUE,
+                           error))
+    return FALSE;
   while (offset < bds_size)
     {
-      /* One UI's load_bds() walks the blob in EL721_BDS_CHUNK pieces and
-       * passes nothing in the scalar field; the gateway fills that in for
-       * this operation.  The mode selector is a temporary probe. */
-      gsize chunk_size = MIN ((gsize) EL721_BDS_CHUNK, bds_size - offset);
-      guint32 mode = el721_probe_u32 ("EL721_BDS_MODE", 0);
-      guint32 scalar = mode == 1 ? chunk_index :
-                       mode == 2 ? (guint32) chunk_size :
-                       mode == 3 ? (guint32) offset : 0;
+      gsize chunk_size = MIN ((gsize) CONTROL_DATA_MAX, bds_size - offset);
 
-      if (!el721_qtee_control (session, CONTROL_LOAD_BDS, scalar,
+      if (chunk_index > EL721_BDS_MAX_CHUNK)
+        {
+          g_set_error_literal (error, EL721_ERROR, 1,
+                               "the optical blob needs more chunks than the "
+                               "TA accepts");
+          return FALSE;
+        }
+      if (!el721_qtee_control (session, CONTROL_LOAD_BDS, chunk_index,
                                (const guint8 *) bds + offset, chunk_size,
                                TRUE, error))
         return FALSE;
@@ -1025,7 +1048,15 @@ el721_qtee_prepare (El721Qtee *session, GError **error)
    * set_lcd_window_type (402, up to sixteen bytes read verbatim from
    * /sys/class/lcd/panel/window_type), then load_gdxopt_calib (94) and
    * load_bds (81).  Operations 76 and 88 were guesses; this TA answers 51. */
-  if (!el721_qtee_set_lcd_types (session, error))
+  /* A traced One UI cold start runs exactly this after the Prepare command:
+   * control 76, control 88 and then the optical blob.  Operation 76 needs a
+   * response capacity or it answers 51; 88 is not implemented in this build
+   * and is advisory, as the stock service skips the calibration update for an
+   * optical sensor anyway. */
+  if (!el721_qtee_control_scalar (session, CONTROL_BOOTSTRAP, 0,
+                                  CONTROL_BOOTSTRAP_RESPONSE, error) ||
+      !el721_qtee_control_scalar (session, CONTROL_INITIALIZE_MATCHER, 0,
+                                  CONTROL_BOOTSTRAP_RESPONSE, error))
     return FALSE;
   return el721_qtee_load_bds (session, error);
 }

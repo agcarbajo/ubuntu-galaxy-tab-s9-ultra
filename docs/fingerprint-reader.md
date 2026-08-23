@@ -682,6 +682,27 @@ serial engine's clock is not the obstacle. And control 49 is `decode_metadata`,
 which decodes an existing template blob — it answers 51 to anything that is not
 one, so it is not a precondition for a first enrolment at all.
 
+A traced One UI **cold start** — restarting the stock service with the log
+running — then gave the init sequence, which had been guesswork until now:
+
+```text
+load the TA, then two shared buffers of 0x2a3110 and 0x2a3010 bytes
+command 1   Prepare
+control 76  with room declared for a response
+control 88  (this build answers 51; the stock service skips the calibration
+            update for an optical sensor anyway)
+control 81  reset the optical blob
+control 82  the blob itself, 1204124 bytes in one piece
+control 22  set_enroll_session
+```
+
+Two of those were wrong here and are now fixed. Operation 76 answers 51 unless
+the caller declares a response capacity, exactly like operation 12. And the
+optical blob does not go through operation 81 at all: 81 only frees whatever
+the TA holds, and 82 appends, with a chunk index of 0 to 3 in the scalar field
+and up to `0x2a3000` bytes per chunk, the first chunk declaring the total. This
+port was sending the bytes to 81, which threw them away.
+
 **What remains is the matcher's own initialisation**, one call deep inside
 Samsung's algorithm, with every layer under it now behaving like stock. The
 chain is short and fully identified: `enroll_init_v2` fetches the matcher from
