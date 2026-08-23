@@ -131,6 +131,7 @@ el721_qtee_error_quark (void)
 }
 
 static guint32 el721_probe_u32 (const gchar *name, guint32 fallback);
+static gboolean el721_qtee_load_bds (El721Qtee *session, GError **error);
 
 static void
 put_u64 (guint8 *buffer, gsize offset, guint64 value)
@@ -953,6 +954,10 @@ el721_qtee_prepare (El721Qtee *session, GError **error)
                           &calibration, &calibration_size, error))
     return FALSE;
 
+  /* Probe: One UI's common_prepare() loads the optical blob around the
+   * Prepare command; try the other order too. */
+  if (g_getenv ("EL721_BDS_FIRST") && !el721_qtee_load_bds (session, error))
+    return FALSE;
   memset (body, 0, PREPARE_SIZE);
   put_u32 (body, 0, CMD_PREPARE);
   put_u32 (body, 8, PREPARE_MODE_CALIBRATED);

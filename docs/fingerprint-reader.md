@@ -683,7 +683,12 @@ which decodes an existing template blob — it answers 51 to anything that is no
 one, so it is not a precondition for a first enrolment at all.
 
 **What remains is the matcher's own initialisation**, one call deep inside
-Samsung's algorithm, with every layer under it now behaving like stock.
+Samsung's algorithm, with every layer under it now behaving like stock. The
+chain is short and fully identified: `enroll_init_v2` fetches the matcher from
+field `0x2f98` of the engine handle and refuses to run when it is absent, and
+the only code that installs it allocates the object from a path that our
+sequence never reaches. Neither ordering the optical blob before `Prepare`,
+nor `Cancel`, nor the clean-up control makes that path run.
 
 Two facts point at where to look next. The tablet's own clock tree shows
 `gcc_qupv3_wrap1_s2_clk` disabled with its source parked at 5.12 MHz, while
