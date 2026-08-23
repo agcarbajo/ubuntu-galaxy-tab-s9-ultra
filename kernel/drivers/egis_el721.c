@@ -137,8 +137,7 @@ static int el721_prepare_hardware_locked(struct el721_data *el721)
 			ret = PTR_ERR(el721->vdd);
 			el721->vdd = NULL;
 			return dev_err_probe(el721->dev, ret,
-						"failed to get the 3.3 V supply
-");
+						"failed to get the 3.3 V supply\n");
 		}
 	}
 

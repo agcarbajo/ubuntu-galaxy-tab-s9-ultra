@@ -77,7 +77,7 @@
 	 * the node is for is the supply, because a platform device with no node
 	 * cannot resolve one, and without it the reader is never powered at all.
 	 */
-	fingerprint: fingerprint {
+	fingerprint {
 		compatible = "egistec,el721";
 		status = "disabled";
 		vdd-supply = <&vreg_l2b_3p3>;
@@ -481,13 +481,16 @@
 
 		/* Dedicated 3.3 V BTP rail for the secure EgisTec EL721. */
 		vreg_l2b_3p3: ldo2 {
+			/*
+			 * Samsung's ABL patches this DTB by phandle, so a node
+			 * inserted here must not renumber the ones that follow.
+			 * Pinning this one well above the tree's own range keeps
+			 * every existing phandle exactly where ABL expects it.
+			 */
+			phandle = <0x7000>;
 			regulator-name = "vreg_l2b_3p3";
 			regulator-min-microvolt = <3300000>;
 			regulator-max-microvolt = <3300000>;
-			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
-			regulator-allow-set-load;
-			regulator-allowed-modes = <RPMH_REGULATOR_MODE_LPM
-						   RPMH_REGULATOR_MODE_HPM>;
 		};
 
 		/* Shared 1.8 V camera I/O rail (Samsung downstream pm_humu_l4). */
