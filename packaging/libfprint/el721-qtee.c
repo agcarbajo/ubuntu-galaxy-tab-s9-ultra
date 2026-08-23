@@ -850,6 +850,14 @@ el721_qtee_raw_command (El721Qtee *session, guint32 command,
     return FALSE;
   if (result)
     *result = get_u32 (output, 4);
+  if (g_getenv ("EL721_DUMP_RAW"))
+    {
+      gsize word;
+
+      for (word = 0; word * 4 + 4 <= MIN (output_size, (gsize) 32); word++)
+        g_debug ("  command %u output word %" G_GSIZE_FORMAT " = %u", command,
+                 word, get_u32 (output, word * 4));
+    }
   return TRUE;
 }
 

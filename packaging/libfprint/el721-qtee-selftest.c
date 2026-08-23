@@ -44,7 +44,8 @@ main (int argc, char **argv)
       g_printerr ("usage: %s FIRMWARE_DIRECTORY [ENROLL_USER]\n", argv[0]);
       return 64;
     }
-  if (!write_value (EL721_POWER, "1\n", &error))
+  if (!g_getenv ("EL721_SKIP_POWER") &&
+      !write_value (EL721_POWER, "1\n", &error))
     goto out;
   session = el721_qtee_open (argv[1], &error);
   if (!session)
