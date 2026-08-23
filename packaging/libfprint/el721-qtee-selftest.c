@@ -85,7 +85,13 @@ main (int argc, char **argv)
         {
           const gchar *item = steps[step];
 
-          if (item[0] == 'r')
+          if (item[0] == 'P')
+            {
+              g_print ("seq prepare\n");
+              if (!el721_qtee_prepare (session, &error))
+                goto out;
+            }
+          else if (item[0] == 'r')
             {
               g_auto(GStrv) parts = g_strsplit (item + 1, ":", 3);
               guint32 command = (guint32) g_ascii_strtoull (parts[0], NULL, 0);

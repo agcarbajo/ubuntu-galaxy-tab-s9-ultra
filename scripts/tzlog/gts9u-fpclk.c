@@ -112,6 +112,15 @@ static struct device_node *fpclk_find_se(void)
 	return NULL;
 }
 
+/*
+ * The TA asks its SPI instance for 20 MHz, and this board's serial engine
+ * source is parked at 5.12 MHz with the clock gated.  Offer the rate as a
+ * parameter so the theory can be tested without reflashing.
+ */
+static unsigned int rate = 20000000;
+module_param(rate, uint, 0444);
+MODULE_PARM_DESC(rate, "serial engine clock rate in Hz, 0 to leave it alone");
+
 static int fpclk_hold(struct device_node *np, const char *what)
 {
 	int count = of_clk_get_parent_count(np);
@@ -129,6 +138,13 @@ static int fpclk_hold(struct device_node *np, const char *what)
 			pr_warn("gts9u-fpclk: %s clock %d unavailable (%ld)\n",
 				what, i, PTR_ERR(clk));
 			continue;
+		}
+		if (rate && !strcmp(what, "serial engine")) {
+			int rc = clk_set_rate(clk, rate);
+
+			if (rc)
+				pr_warn("gts9u-fpclk: cannot set %s clock %d to %u Hz (%d)\n",
+					what, i, rate, rc);
 		}
 		ret = clk_prepare_enable(clk);
 		if (ret) {

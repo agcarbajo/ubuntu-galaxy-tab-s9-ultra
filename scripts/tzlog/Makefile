@@ -7,6 +7,7 @@
 #   make -C scripts/tzlog KDIR=/root/ubuntu-gts9u/build/linux-gts9uwifi
 #
 obj-m += gts9u-tzlog.o
+obj-m += gts9u-fpclk.o
 
 KDIR ?= /root/ubuntu-gts9u/build/linux-gts9uwifi
 PWD := $(shell pwd)

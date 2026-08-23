@@ -975,6 +975,14 @@ el721_qtee_prepare (El721Qtee *session, GError **error)
       g_debug ("BAUTH calibrated Prepare attempt %u returned sensor_type=%u "
                "result=%u function_status=%u opcode=%u", attempt + 1,
                sensor_type, result, function_status, opcode);
+      if (g_getenv ("EL721_DUMP_PREPARE"))
+        {
+          guint word;
+
+          for (word = 0; word < 16; word++)
+            g_debug ("  Prepare response word %2u = %u", word,
+                     get_u32 (output, word * 4));
+        }
       if (result || function_status)
         break;
       if (opcode == 0)
