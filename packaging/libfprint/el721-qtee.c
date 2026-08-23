@@ -543,6 +543,64 @@ el721_qtee_open (const gchar *firmware_directory, GError **error)
   if (g_strcmp0 (g_getenv ("EL721_QIS_DIAGNOSTIC"), "1") == 0 &&
       !register_qis_listener (session, error))
     goto fail;
+  if (g_getenv ("EL721_SCAN_SERVICES"))
+    {
+      guint uid;
+
+      for (uid = 1; uid < 512; uid++)
+        {
+          struct qcomtee_object *service = QCOMTEE_OBJECT_NULL;
+          struct qcomtee_param params[2] = { 0 };
+          qcomtee_result_t result = QCOMTEE_ERROR;
+
+          params[0] = (struct qcomtee_param) {
+            .attr = QCOMTEE_UBUF_INPUT, .ubuf = { &uid, sizeof (uid) } };
+          params[1] = (struct qcomtee_param) { .attr = QCOMTEE_OBJREF_OUTPUT };
+          if (!qcomtee_object_invoke (session->client_env, 0, params, 2,
+                                      &result) && !result)
+            {
+              service = params[1].object;
+              g_print ("service UID %u is available\n", uid);
+              qcomtee_object_refs_dec (service);
+            }
+        }
+    }
+
+  if (g_getenv ("EL721_SERVICE_PROBE"))
+    {
+      g_auto(GStrv) parts = g_strsplit (g_getenv ("EL721_SERVICE_PROBE"), ":", 2);
+      guint32 uid = (guint32) g_ascii_strtoull (parts[0], NULL, 0);
+      guint32 last_op = parts[1] ?
+        (guint32) g_ascii_strtoull (parts[1], NULL, 0) : 8;
+      struct qcomtee_object *service = open_service (session->client_env, uid,
+                                                     NULL);
+      guint32 op;
+
+      if (service == QCOMTEE_OBJECT_NULL)
+        g_print ("service %u did not open\n", uid);
+      for (op = 0; service != QCOMTEE_OBJECT_NULL && op <= last_op; op++)
+        {
+          g_autofree guint8 *sink = g_malloc0 (4096);
+          struct qcomtee_param params[1] = { 0 };
+          qcomtee_result_t result = QCOMTEE_ERROR;
+          gsize seen;
+
+          params[0] = (struct qcomtee_param) {
+            .attr = QCOMTEE_UBUF_OUTPUT, .ubuf = { sink, 4096 } };
+          if (qcomtee_object_invoke (service, op, params, 1, &result))
+            continue;
+          if (result)
+            continue;
+          for (seen = 0; seen < 64 && sink[seen]; seen++)
+            ;
+          g_print ("service %u op %u returned %" G_GSIZE_FORMAT
+                   " printable bytes: %.48s\n", uid, op, seen,
+                   seen ? (const gchar *) sink : "");
+        }
+      if (service != QCOMTEE_OBJECT_NULL)
+        qcomtee_object_refs_dec (service);
+    }
+
   session->app_loader = open_service (session->client_env,
                                       QSEECOM_APP_LOADER_UID, error);
   if (session->app_loader == QCOMTEE_OBJECT_NULL)
