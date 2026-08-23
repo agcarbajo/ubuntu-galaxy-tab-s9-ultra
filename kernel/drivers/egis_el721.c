@@ -23,6 +23,7 @@
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/of.h>
+#include <linux/of_platform.h>
 #include <linux/regulator/consumer.h>
 #include <linux/platform_device.h>
 #include <linux/pm.h>
@@ -689,17 +690,33 @@ static int __init el721_init(void)
 	node = of_find_compatible_node(NULL, NULL, "egistec,el721");
 	if (!node)
 		node = of_find_compatible_node(NULL, NULL, "etspi,el7xx");
-	if (node) {
+	if (node && of_device_is_available(node)) {
 		of_node_put(node);
 		return 0;
 	}
 
 	gpiod_add_lookup_table(&el721_fallback_gpios);
-	el721_fallback_device =
-		platform_device_register_simple("egis-el721",
-						PLATFORM_DEVID_NONE, NULL, 0);
-	if (IS_ERR(el721_fallback_device)) {
-		ret = PTR_ERR(el721_fallback_device);
+	el721_fallback_device = platform_device_alloc("egis-el721",
+						      PLATFORM_DEVID_NONE);
+	if (!el721_fallback_device) {
+		gpiod_remove_lookup_table(&el721_fallback_gpios);
+		platform_driver_unregister(&el721_driver);
+		of_node_put(node);
+		return -ENOMEM;
+	}
+
+	/*
+	 * Borrow the disabled node purely so the supply written next to it can be
+	 * resolved.  The node describes no GPIO, so the two TLMM lines still come
+	 * from the lookup table above, and nothing probes from the node itself.
+	 */
+	if (node)
+		device_set_node(&el721_fallback_device->dev,
+				of_fwnode_handle(node));
+
+	ret = platform_device_add(el721_fallback_device);
+	if (ret) {
+		platform_device_put(el721_fallback_device);
 		el721_fallback_device = NULL;
 		gpiod_remove_lookup_table(&el721_fallback_gpios);
 		platform_driver_unregister(&el721_driver);

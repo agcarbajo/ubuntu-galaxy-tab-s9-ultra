@@ -70,12 +70,17 @@
 	 * The geometry strings are copied from the X910 R03 stock overlay.  They
 	 * are metadata for the future fprintd/gnome-shell bridge; the panel driver
 	 * does not infer a touch region from them.
+	 *
+	 * The node stays disabled and describes no GPIO: Samsung's ABL resets
+	 * before Linux when it finds the EL721 lines here, which is why the driver
+	 * publishes a software device and maps the two TLMM lines itself.  What
+	 * the node is for is the supply, because a platform device with no node
+	 * cannot resolve one, and without it the reader is never powered at all.
 	 */
-	fingerprint {
+	fingerprint: fingerprint {
 		compatible = "egistec,el721";
 		status = "disabled";
 		vdd-supply = <&vreg_l2b_3p3>;
-		enable-gpios = <&tlmm 155 GPIO_ACTIVE_HIGH>;
 		egistec,model = "X916";
 		egistec,position =
 			"16.70,0.00,9.10,9.10,14.80,14.80,12.00,12.00,5.00";
