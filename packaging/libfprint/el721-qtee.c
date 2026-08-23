@@ -825,9 +825,18 @@ el721_qtee_set_lcd_types (El721Qtee *session, GError **error)
   if (!g_file_get_contents (EL721_WINDOW_TYPE_SYSFS, &window, &window_size,
                             NULL))
     {
-      g_debug ("no %s: skipping the stock window-type control",
-               EL721_WINDOW_TYPE_SYSFS);
-      return TRUE;
+      /* Until the panel driver publishes the node, the same bytes One UI
+       * reads there can be supplied for a bounded experiment. */
+      const gchar *override = g_getenv ("EL721_WINDOW_TYPE");
+
+      if (!override)
+        {
+          g_debug ("no %s: skipping the stock window-type control",
+                   EL721_WINDOW_TYPE_SYSFS);
+          return TRUE;
+        }
+      window = g_strdup_printf ("%s\n", override);
+      window_size = strlen (window);
     }
   window_size = MIN (window_size, (gsize) 16);
   return el721_qtee_control (session, CONTROL_LCD_WINDOW_TYPE, 0,

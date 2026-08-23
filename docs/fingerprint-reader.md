@@ -601,14 +601,21 @@ the sensor back down whether or not the call succeeded. It records no biometric
 data.
 
 The next milestone is therefore a single successful enrolment, and it is also
-the port's go/no-go point. What blocks it now is concrete rather than
-mysterious: the optical engine is never initialised because three inputs are
-missing. `set_lcd_window_type` (control 402) reads
-`/sys/class/lcd/panel/window_type`, which the ANA38407 driver does not publish
-yet; `load_gdxopt_calib` (control 94) needs `gdxrtcalib.dat`; and `load_cbge`
-needs `cbge_*.dat`. The last two live in `/data/vendor/biometrics` on the One
-UI side and, like `calib.dat` and `egoptbds.dat` before them, can only be taken
-from a booted One UI with root.
+the port's go/no-go point. Booting One UI settled what of the optical bring-up
+is actually missing, and it is less than it looked. `gdxrtcalib.dat` and
+`cbge_*.dat` do not exist anywhere on this tablet: those are Goodix paths that
+the gateway carries for other models, and the Egis EL721 never uses them.
+`/data/vendor/biometrics/meta` holds exactly the two files already imported.
+The panel's `window_type` reads `80 00 04` under One UI, and its `cell_id`
+matches the value the ported ANA38407 driver publishes byte for byte. With
+those bytes supplied, controls 401 and 402 are both accepted.
+
+`EnrollInit` still answers 29. The remaining gate is inside Samsung's engine
+rather than in the transport: the enrolment worker in `tz_vigis_api.c` reaches
+`fp_enroll_init` in `vigis_controller.c`, and that call returns failure. The
+same TA also validates authentication tokens — a zeroed `BAuth_Hat_OP`
+(command 13, `0x48d`/`0x40c`) is rejected with 62 rather than ignored — so the
+token path is live and may well be the gate.
 
 The older risk has not gone away either: the TA also carries `BAuth_Hat_OP`,
 `BAuth_GetK_From_KM` and `BAuth_Generate_Challenge`, so enrolment may still
