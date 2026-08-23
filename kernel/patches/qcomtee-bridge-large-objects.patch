@@ -1,0 +1,131 @@
+--- a/drivers/tee/qcomtee/shm.c
++++ b/drivers/tee/qcomtee/shm.c
+@@ -6,7 +6,10 @@
+ #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+ 
+ #include <linux/firmware/qcom/qcom_tzmem.h>
++#include <linux/list.h>
+ #include <linux/mm.h>
++#include <linux/mutex.h>
++#include <linux/slab.h>
+ 
+ #include "qcomtee.h"
+ 
+@@ -132,6 +135,97 @@
+ 	return container_of(pool, struct qcomtee_shm_pool, base);
+ }
+ 
++/*
++ * Samsung's BAUTH application does not only read the two non-secure buffers it
++ * is handed: for enrolment and identification it registers them with QTEE
++ * itself, and that registration only succeeds when the range matches one SHM
++ * bridge exactly.  A TZMEM sub-allocation lives inside a larger bridged area,
++ * so give every large object its own contiguous DMA32 allocation and its own
++ * bridge, the way the stock qseecom path does with a dma-buf.
++ */
++struct qcomtee_bridged_shm {
++	struct list_head node;
++	void *vaddr;
++	size_t size;
++	u64 handle;
++};
++
++static LIST_HEAD(qcomtee_bridged_shms);
++static DEFINE_MUTEX(qcomtee_bridged_lock);
++
++static int qcomtee_bridged_alloc(struct tee_shm *shm, size_t size)
++{
++	struct qcomtee_bridged_shm *bridged;
++	phys_addr_t paddr;
++	void *vaddr;
++	int ret;
++
++	bridged = kzalloc(sizeof(*bridged), GFP_KERNEL);
++	if (!bridged)
++		return -ENOMEM;
++
++	vaddr = alloc_pages_exact(size, GFP_KERNEL | GFP_DMA32 | __GFP_ZERO);
++	if (!vaddr) {
++		kfree(bridged);
++		return -ENOMEM;
++	}
++
++	paddr = virt_to_phys(vaddr);
++	if (paddr > U32_MAX || size - 1 > U32_MAX - paddr) {
++		free_pages_exact(vaddr, size);
++		kfree(bridged);
++		return -EOVERFLOW;
++	}
++
++	ret = qcom_tzmem_shm_bridge_create(paddr, size, &bridged->handle);
++	if (ret) {
++		free_pages_exact(vaddr, size);
++		kfree(bridged);
++		return ret;
++	}
++
++	bridged->vaddr = vaddr;
++	bridged->size = size;
++	mutex_lock(&qcomtee_bridged_lock);
++	list_add(&bridged->node, &qcomtee_bridged_shms);
++	mutex_unlock(&qcomtee_bridged_lock);
++
++	shm->kaddr = vaddr;
++	shm->paddr = paddr;
++	shm->size = size;
++	shm->pages = NULL;
++	shm->num_pages = 0;
++
++	return 0;
++}
++
++static bool qcomtee_bridged_free(struct tee_shm *shm)
++{
++	struct qcomtee_bridged_shm *bridged;
++
++	mutex_lock(&qcomtee_bridged_lock);
++	list_for_each_entry(bridged, &qcomtee_bridged_shms, node) {
++		if (bridged->vaddr != shm->kaddr)
++			continue;
++		list_del(&bridged->node);
++		mutex_unlock(&qcomtee_bridged_lock);
++
++		qcom_tzmem_shm_bridge_delete(bridged->handle);
++		memzero_explicit(bridged->vaddr, bridged->size);
++		free_pages_exact(bridged->vaddr, bridged->size);
++		kfree(bridged);
++
++		shm->kaddr = NULL;
++		shm->paddr = 0;
++		shm->size = 0;
++
++		return true;
++	}
++	mutex_unlock(&qcomtee_bridged_lock);
++
++	return false;
++}
++
+ static int pool_op_alloc(struct tee_shm_pool *pool, struct tee_shm *shm,
+ 			 size_t size, size_t align)
+ {
+@@ -143,6 +237,9 @@
+ 						qcomtee_shm_register);
+ 
+ 	size = PAGE_ALIGN(size);
++	if (!qcomtee_bridged_alloc(shm, size))
++		return 0;
++
+ 	vaddr = qcom_tzmem_alloc(qpool->tzmem, size, GFP_KERNEL);
+ 	if (!vaddr)
+ 		return -ENOMEM;
+@@ -164,6 +261,9 @@
+ 		return;
+ 	}
+ 
++	if (qcomtee_bridged_free(shm))
++		return;
++
+ 	memzero_explicit(shm->kaddr, shm->size);
+ 	qcom_tzmem_free(shm->kaddr);
+ 	shm->kaddr = NULL;

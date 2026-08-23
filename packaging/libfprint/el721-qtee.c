@@ -130,6 +130,8 @@ el721_qtee_error_quark (void)
   return g_quark_from_static_string ("el721-qtee-error");
 }
 
+static guint32 el721_probe_u32 (const gchar *name, guint32 fallback);
+
 static void
 put_u32 (guint8 *buffer, gsize offset, guint32 value)
 {
@@ -537,11 +539,12 @@ el721_qtee_open (const gchar *firmware_directory, GError **error)
   /* The wire views are smaller, but every command handler in the TA validates
    * the two non-secure pointers as ranges of exactly EL721_SHARED_ALLOC bytes
    * before it reads them, and answers 29 when that validation fails. */
-  g_debug ("allocating two BAUTH shared buffers of %u bytes",
-           (guint) EL721_SHARED_ALLOC);
-  if (qcomtee_memory_object_alloc (EL721_SHARED_ALLOC, session->root,
+  gsize shared_alloc = el721_probe_u32 ("EL721_SHARED_ALLOC", EL721_SHARED_ALLOC);
+
+  g_debug ("allocating two BAUTH shared buffers of %zu bytes", shared_alloc);
+  if (qcomtee_memory_object_alloc (shared_alloc, session->root,
                                    &session->input) ||
-      qcomtee_memory_object_alloc (EL721_SHARED_ALLOC, session->root,
+      qcomtee_memory_object_alloc (shared_alloc, session->root,
                                    &session->output))
     {
       g_set_error_literal (error, EL721_ERROR, 1,
@@ -587,7 +590,6 @@ el721_reply_clear (El721Reply *reply)
   memset (reply, 0, sizeof (*reply));
 }
 
-static guint32 el721_probe_u32 (const gchar *name, guint32 fallback);
 static gboolean invoke_body (El721Qtee *session, guint32 command,
                              gsize input_size, gsize output_size,
                              const guint8 *body, gsize body_size,
@@ -974,10 +976,23 @@ invoke_body (El721Qtee *session, guint32 command, gsize input_size,
                                       .object = session->input };
   params[7] = (struct qcomtee_param) { .attr = QCOMTEE_OBJREF_INPUT,
                                       .object = session->output };
-  params[8] = (struct qcomtee_param) { .attr = QCOMTEE_OBJREF_INPUT,
-                                      .object = QCOMTEE_OBJECT_NULL };
-  params[9] = (struct qcomtee_param) { .attr = QCOMTEE_OBJREF_INPUT,
-                                      .object = QCOMTEE_OBJECT_NULL };
+  /* Diagnostic: One UI leaves the last two object slots empty, but the
+   * enrolment handlers register the buffers themselves; repeat them here to
+   * see whether QTEE then hands the TA a mapping it can register. */
+  if (g_getenv ("EL721_REPEAT_OBJECTS"))
+    {
+      params[8] = (struct qcomtee_param) { .attr = QCOMTEE_OBJREF_INPUT,
+                                          .object = session->input };
+      params[9] = (struct qcomtee_param) { .attr = QCOMTEE_OBJREF_INPUT,
+                                          .object = session->output };
+    }
+  else
+    {
+      params[8] = (struct qcomtee_param) { .attr = QCOMTEE_OBJREF_INPUT,
+                                          .object = QCOMTEE_OBJECT_NULL };
+      params[9] = (struct qcomtee_param) { .attr = QCOMTEE_OBJREF_INPUT,
+                                          .object = QCOMTEE_OBJECT_NULL };
+    }
   if (qcomtee_object_invoke (session->controller, QSEECOM_SEND_REQUEST_OP,
                              params, 10, &result))
     {
