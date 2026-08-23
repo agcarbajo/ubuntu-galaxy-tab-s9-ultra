@@ -102,14 +102,36 @@ main (int argc, char **argv)
                   g_clear_error (&error);
                 }
             }
-          else if (item[0] == 'u' && argc == 3)
+          else if ((item[0] == 'u' || item[0] == 'b') && argc == 3)
             {
-              guint32 operation = (guint32) g_ascii_strtoull (item + 1, NULL, 10);
+              g_auto(GStrv) fields = g_strsplit (item + 1, "=", 2);
+              g_auto(GStrv) parts = g_strsplit (fields[0], "/", 2);
+              guint32 operation = (guint32) g_ascii_strtoull (parts[0], NULL, 10);
+              gsize capacity = parts[1] ?
+                (gsize) g_ascii_strtoull (parts[1], NULL, 0) : 0;
+              guint32 scalar = fields[1] ?
+                (guint32) g_ascii_strtoull (fields[1], NULL, 0) : 0;
 
-              g_print ("seq control %u with user\n", operation);
+              g_print ("seq control %u with user%s\n", operation,
+                       item[0] == 'b' ? " twice" : "");
               if (!el721_qtee_control_user (session, operation,
                                             (const guint8 *) argv[2],
-                                            strlen (argv[2]), &error))
+                                            strlen (argv[2]),
+                                            item[0] == 'b', scalar, capacity,
+                                            &error))
+                goto out;
+            }
+          else if (item[0] == 'p')
+            {
+              g_auto(GStrv) fields = g_strsplit (item + 1, "=", 2);
+              guint32 operation = (guint32) g_ascii_strtoull (fields[0], NULL, 10);
+
+              g_print ("seq control %u with payload %s\n", operation,
+                       fields[1] ? fields[1] : "");
+              if (!el721_qtee_control_bytes (session, operation,
+                                             (const guint8 *) fields[1],
+                                             fields[1] ? strlen (fields[1]) + 1 : 0,
+                                             &error))
                 goto out;
             }
           else if (item[0] == 'c')
@@ -168,7 +190,7 @@ main (int argc, char **argv)
           g_print ("probe control %u with user %s\n", operation, argv[2]);
           if (!el721_qtee_control_user (session, operation,
                                         (const guint8 *) argv[2],
-                                        strlen (argv[2]), &error))
+                                        strlen (argv[2]), FALSE, 0, 0, &error))
             goto out;
         }
     }

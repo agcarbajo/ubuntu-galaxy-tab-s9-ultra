@@ -629,8 +629,52 @@ enroll     : control 84 (the gateway logs "skip")
              command 4  EnrollFinal, then control 76
 ```
 
-Control 49 is accepted once it carries the user identifier — bare, it answers
-51 — and command 19 returns zero. `EnrollInit` still answers 29. The remaining gate is inside Samsung's engine
+Reproducing that sequence corrected several things in the bridge, all of them
+read out of the TA rather than guessed. Its control command validates a
+response-capacity field the caller writes into the output buffer at
+`0x2a300c`; operation 12 refuses to run with anything under `0x226000` and
+answers 51, which is what that number always means — the declared wire sizes
+are not the ones the handler expects. Operation 48 is
+`BAUTH_OP_CODE_SEND_STOREPATH` and answers 29 until it is given a path.
+Operation 49 needs the user identifier. The optical `egoptbds.dat` goes up in
+`0x3000`-byte pieces with nothing in the scalar field, exactly as One UI's
+`load_bds()` walks it. Operations 401, 402, 84 and 108 land in the TA's
+default case, so 21 simply means this build does not implement them.
+
+The command table itself is now mapped, so no size has to be guessed again:
+
+| Command | Input | Output |
+|---|---|---|
+| 1 Prepare | `0x80010` | `0x80010` |
+| 2 EnrollInit | `0x178` | `0xc` |
+| 3 EnrollDo | `0xc` | `0x230024` |
+| 4 EnrollFinal | `0xc` | `0xa018` |
+| 6 IdentifyDo | `0xc` | `0x230089` |
+| 10 Cancel | `8` | `8` |
+| 13 Hat_OP | `0x48d` | `0x40c` |
+| 19 Challenge | `0xc` | `0x44` |
+
+With every one of those corrections in place, `EnrollInit` still answers 29,
+and so do `EnrollDo` and `IdentifyDo` — with or without a preceding `Prepare`,
+and against a freshly loaded TA. Disassembling that number to its source
+settles what is really wrong, and it is not the transport.
+
+`tz_vigis_api.c` answers 29 when the optical engine's global context is
+missing. That context is created in `fp_prepare_state_handler`, and only after
+`fpsec_open_sensor` succeeds — which first calls `fpsec_spi_open`, which opens
+the secure SPI instance and sets its clock to 20 MHz. When that fails the
+handler logs, skips the allocation and still lets `Prepare` return zero in
+every field the caller can see. So the successful `Prepare` never meant the
+sensor had been opened: it means the command ran, and the sensor type is a
+constant the TA already knows.
+
+**TrustZone cannot open the sensor's SPI in this boot.** That is the single
+remaining defect, and everything above it is now correct.
+
+Two facts point at where to look next. The tablet's own clock tree shows
+`gcc_qupv3_wrap1_s2_clk` disabled with its source parked at 5.12 MHz, while
+the TA asks for 20 MHz; and `gcc_qupv3_wrap1_s7_clk` is enabled, so the
+wrapper itself is powered and its AHB clocks cannot be the whole story. The remaining gate is inside Samsung's engine
 rather than in the transport: the enrolment worker in `tz_vigis_api.c` reaches
 `fp_enroll_init` in `vigis_controller.c`, and that call returns failure. The
 same TA also validates authentication tokens — a zeroed `BAuth_Hat_OP`

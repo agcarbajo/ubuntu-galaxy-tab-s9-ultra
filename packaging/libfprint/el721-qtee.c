@@ -546,6 +546,9 @@ el721_qtee_open (const gchar *firmware_directory, GError **error)
       g_set_error_literal (error, EL721_ERROR, 1, "lookupTA transport failed");
       goto fail;
     }
+  g_debug ("lookupTA(dualfp) returned %u; the TA was %s", lookup_result,
+           lookup_result || session->controller == QCOMTEE_OBJECT_NULL ?
+           "not resident and is being loaded" : "already resident");
   if (lookup_result || session->controller == QCOMTEE_OBJECT_NULL)
     {
       qcomtee_object_refs_dec (session->controller);
@@ -611,6 +614,12 @@ static gboolean invoke_body (El721Qtee *session, guint32 command,
                              gsize input_size, gsize output_size,
                              const guint8 *body, gsize body_size,
                              guint8 **output, GError **error);
+static gboolean invoke_body_full (El721Qtee *session, guint32 command,
+                                  gsize input_size, gsize output_size,
+                                  const guint8 *body, gsize body_size,
+                                  gsize out_capacity_offset,
+                                  guint32 out_capacity,
+                                  guint8 **output, GError **error);
 
 static gboolean
 load_runtime_file (El721Qtee *session, const gchar *name, gsize maximum,
@@ -687,9 +696,14 @@ el721_qtee_control_full (El721Qtee *session, guint32 operation, guint32 scalar,
   if (data_size)
     memcpy (body + CONTROL_DATA_OFFSET, data, data_size);
   put_u32 (body, CONTROL_LENGTH_OFFSET, data_size);
-  if (!invoke_body (session, CMD_CONTROL, CONTROL_INPUT_SIZE,
-                    CONTROL_OUTPUT_SIZE, body, CONTROL_INPUT_SIZE,
-                    &output, error))
+  /* One UI states the room it has for a response in the output buffer, and
+   * zero for the operations that return nothing.  Operations that do return
+   * data answer 51 when that field is smaller than they need. */
+  if (!invoke_body_full (session, CMD_CONTROL, CONTROL_INPUT_SIZE,
+                         CONTROL_OUTPUT_SIZE, body, CONTROL_INPUT_SIZE,
+                         CONTROL_OUTPUT_LENGTH_OFFSET,
+                         (guint32) response_capacity,
+                         &output, error))
     return FALSE;
   result = get_u32 (output, 4);
   if (result != 0 && require_zero_result)
@@ -759,10 +773,43 @@ el721_qtee_raw_command (El721Qtee *session, guint32 command,
 gboolean
 el721_qtee_control_user (El721Qtee *session, guint32 operation,
                          const guint8 *user, gsize user_size,
-                         GError **error)
+                         gboolean repeat_as_payload, guint32 scalar,
+                         gsize response_capacity, GError **error)
 {
-  return el721_qtee_control_full (session, operation, 0, user, user_size,
-                                  NULL, 0, NULL, 0, NULL, FALSE, error);
+  g_autofree guint8 *response = response_capacity ?
+    g_malloc0 (response_capacity) : NULL;
+  gsize response_size = 0;
+
+  /* One UI logs "reqUserID = User_0 | User_0" for operation 12, so that
+   * request carries the identifier twice: once in the string field and once
+   * as the payload. */
+  if (!el721_qtee_control_full (session, operation, scalar, user, user_size,
+                                repeat_as_payload ? user : NULL,
+                                repeat_as_payload ? user_size : 0,
+                                response, response_capacity,
+                                response_capacity ? &response_size : NULL,
+                                FALSE, error))
+    return FALSE;
+  if (response_size)
+    g_debug ("BAUTH control %u returned %" G_GSIZE_FORMAT
+             " bytes: %02x %02x %02x %02x", operation, response_size,
+             response[0], response_size > 1 ? response[1] : 0,
+             response_size > 2 ? response[2] : 0,
+             response_size > 3 ? response[3] : 0);
+  else
+    g_debug ("BAUTH control %u returned no payload", operation);
+  return TRUE;
+}
+
+/* Diagnostic: BAUTH_OP_CODE_SEND_STOREPATH and friends take their argument
+ * in the payload field rather than in the identifier field. */
+gboolean
+el721_qtee_control_bytes (El721Qtee *session, guint32 operation,
+                          const guint8 *data, gsize data_size,
+                          GError **error)
+{
+  return el721_qtee_control (session, operation, 0, data, data_size,
+                             FALSE, error);
 }
 
 gboolean
@@ -869,12 +916,16 @@ el721_qtee_load_bds (El721Qtee *session, GError **error)
 
   while (offset < bds_size)
     {
-      /* One UI splits this blob into 0x3000-byte pieces, but its loader also
-       * wraps each piece in a header this code has not decoded yet: chunking
-       * at that size makes the TA answer 42.  A single piece is accepted. */
-      gsize chunk_size = MIN ((gsize) CONTROL_DATA_MAX, bds_size - offset);
+      /* One UI's load_bds() walks the blob in EL721_BDS_CHUNK pieces and
+       * passes nothing in the scalar field; the gateway fills that in for
+       * this operation.  The mode selector is a temporary probe. */
+      gsize chunk_size = MIN ((gsize) EL721_BDS_CHUNK, bds_size - offset);
+      guint32 mode = el721_probe_u32 ("EL721_BDS_MODE", 0);
+      guint32 scalar = mode == 1 ? chunk_index :
+                       mode == 2 ? (guint32) chunk_size :
+                       mode == 3 ? (guint32) offset : 0;
 
-      if (!el721_qtee_control (session, CONTROL_LOAD_BDS, chunk_index,
+      if (!el721_qtee_control (session, CONTROL_LOAD_BDS, scalar,
                                (const guint8 *) bds + offset, chunk_size,
                                TRUE, error))
         return FALSE;
@@ -970,6 +1021,19 @@ invoke_body (El721Qtee *session, guint32 command, gsize input_size,
              gsize output_size, const guint8 *body, gsize body_size,
              guint8 **output, GError **error)
 {
+  return invoke_body_full (session, command, input_size, output_size, body,
+                           body_size, 0, 0, output, error);
+}
+
+/* Several control operations refuse to run unless the caller states how much
+ * room the response buffer has: the TA reads that capacity from the output
+ * buffer itself and answers 51 when it is too small for the operation. */
+static gboolean
+invoke_body_full (El721Qtee *session, guint32 command, gsize input_size,
+                  gsize output_size, const guint8 *body, gsize body_size,
+                  gsize out_capacity_offset, guint32 out_capacity,
+                  guint8 **output, GError **error)
+{
   guint8 request[EL721_MESSAGE_SIZE] = { 0 };
   guint8 response[EL721_MESSAGE_SIZE] = { 0 };
   guint8 request_out[EL721_MESSAGE_SIZE] = { 0 };
@@ -996,6 +1060,8 @@ invoke_body (El721Qtee *session, guint32 command, gsize input_size,
   memset (input, 0, EL721_INPUT_SHARED_SIZE);
   if (!share)
     memset (out, 0, EL721_OUTPUT_SHARED_SIZE);
+  if (out_capacity)
+    put_u32 (out, out_capacity_offset, out_capacity);
   if (body_size)
     memcpy (input, body, body_size);
   put_u32 (input, 0, command);
