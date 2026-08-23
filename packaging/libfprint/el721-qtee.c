@@ -74,7 +74,9 @@
 #define CONTROL_LOAD_BDS 82U
 #define EL721_BDS_MAX_CHUNK 3U
 #define CONTROL_CPU_IDLE 83U
-#define CONTROL_INITIALIZE_MATCHER 88U
+#define CONTROL_SELECT_MODEL 88U
+#define EL721_MODEL "X916"
+#define EL721_MODEL_FIELD 10U
 #define EL721_BDS_MAX (4U * 1024U * 1024U)
 #define EL721_BDS_CHUNK 0x3000U
 #define ENROLL_INIT_SIZE 0x178U
@@ -1054,10 +1056,26 @@ el721_qtee_prepare (El721Qtee *session, GError **error)
    * and is advisory, as the stock service skips the calibration update for an
    * optical sensor anyway. */
   if (!el721_qtee_control_scalar (session, CONTROL_BOOTSTRAP, 0,
-                                  CONTROL_BOOTSTRAP_RESPONSE, error) ||
-      !el721_qtee_control_scalar (session, CONTROL_INITIALIZE_MATCHER, 0,
                                   CONTROL_BOOTSTRAP_RESPONSE, error))
     return FALSE;
+  /* Operation 88 selects the board from a table of Samsung model codes the TA
+   * carries; this one is "X916", the model the kernel driver reports. */
+  /* Operation 88 picks the board out of a table of twenty-nine Samsung model
+   * codes the TA carries, "X916" among them, and the resulting index feeds the
+   * matcher's configuration.  Handing it the name through the payload field
+   * faults the TA, so the shape it wants is still open and the call stays a
+   * probe rather than part of the sequence. */
+  if (g_getenv ("EL721_SELECT_MODEL"))
+    {
+      guint8 model[EL721_MODEL_FIELD] = { 0 };
+
+      memcpy (model, EL721_MODEL, strlen (EL721_MODEL));
+      if (!el721_qtee_control_bytes (session, CONTROL_SELECT_MODEL, model,
+                                     el721_probe_u32 ("EL721_MODEL_LEN",
+                                                      EL721_MODEL_FIELD),
+                                     error))
+        return FALSE;
+    }
   return el721_qtee_load_bds (session, error);
 }
 
@@ -1174,8 +1192,14 @@ invoke_body_full (El721Qtee *session, guint32 command, gsize input_size,
   if (result || trustlet)
     {
       g_set_error (error, EL721_ERROR, trustlet,
-                   "BAUTH command %u failed (invoke=%u, trustlet=%u, payload=%u)",
-                   command, result, trustlet, payload);
+                   "BAUTH command %u failed (invoke=%u, trustlet=%u, payload=%u,"
+                   " out=%u/%u/%u, response=%u/%u/%u)",
+                   command, result, trustlet, payload,
+                   output_size >= 4 ? get_u32 (out, 0) : 0,
+                   output_size >= 8 ? get_u32 (out, 4) : 0,
+                   output_size >= 12 ? get_u32 (out, 8) : 0,
+                   get_u32 (response_out, 0), get_u32 (response_out, 8),
+                   get_u32 (response_out, 12));
       return FALSE;
     }
   *output = out;

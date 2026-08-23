@@ -703,6 +703,19 @@ the TA holds, and 82 appends, with a chunk index of 0 to 3 in the scalar field
 and up to `0x2a3000` bytes per chunk, the first chunk declaring the total. This
 port was sending the bytes to 81, which threw them away.
 
+Disassembling what the matcher's configuration is built from finally named the
+missing input. The TA carries a table of twenty-nine Samsung model codes —
+`A505`, `T865`, … `X916`, `S711` — and looks the running board up in it by
+name, storing the index in the sensor structure the matcher configuration is
+built from. Index 27 is `X916`, exactly what this tablet's kernel driver
+reports and what the stock service logs as `mi X916` at start-up. Control
+operation 88, the one this port had been sending empty, is that lookup.
+
+Its wire shape is not settled yet: handed the name through the payload field
+the TA faults and QTEE answers -90, and through the identifier field it answers
+51. Operation 90 reaches the same setter and accepts the name, but the enrolment
+still fails, so either the match does not take or something else is missing.
+
 **What remains is the matcher's own initialisation**, one call deep inside
 Samsung's algorithm, with every layer under it now behaving like stock. The
 chain is short and fully identified: `enroll_init_v2` fetches the matcher from
