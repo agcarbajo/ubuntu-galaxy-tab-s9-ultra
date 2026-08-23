@@ -549,6 +549,42 @@ extra device it needs (`/dev/tee0` read/write, leaving the rest of the stock
 sandbox intact), and `ubuntu-gts9u-fingerprint-cleanup` returns HBM, the touch
 block and the sensor rail to zero if `fprintd` dies or is upgraded mid-read.
 
+## What 29 and 51 actually mean
+
+Two status codes drove most of the guesswork, and disassembling the TA's own
+dispatcher settled both. The command table is a jump table of nineteen
+entries, and every handler starts by checking the exact wire sizes of the
+request and the response:
+
+| Command | Input | Output |
+|---|---|---|
+| 1 `Prepare` | `0x80010` | `0x80010` |
+| 2 `EnrollInit` | `0x178` | `0xc` |
+| 8 | `0x510` | `0x40c` |
+| 9 | `0x914` | `8` |
+| 10 `Cancel` | `8` | `8` |
+| 12 `Control` | `0x2a3110` | `0x2a3010` |
+| 13 `HatOp` | `0x48d` | `0x40c` |
+
+**51 is a size mismatch.** A handler that does not recognise the declared
+lengths logs `invalid length` and answers 51; every control operation that
+answered 51 was answering that, not refusing the operation.
+
+**29 has two different sources.** The dispatcher registers both non-secure
+pointers with `qsee_register_shared_buffer` before it dispatches, and writes
+29 if that fails — this is the historical meaning, and it is satisfied. The
+enrolment path returns the same number for an unrelated reason:
+`init_enroll_stub` calls into Samsung's `tz_vigis_api.c`, which returns `0x1d`
+when the optical engine's global context is still NULL. The context is created
+by `prepare_stub`, and Ubuntu's `Prepare` returns all zeros without creating
+it, because it is missing the optical data One UI loads first.
+
+The kernel side of the old theory was still worth fixing and is in tree.
+`qcomtee-bridge-large-objects.patch` gives every memory object in the BAUTH
+size range its own contiguous DMA32 allocation and its own SHM bridge, instead
+of a suballocation inside a larger bridged TZMEM area; the threshold matters,
+because 2.76 MB fell under `SZ_4M` and silently took the page-backed path.
+
 ## The current state and the next step
 
 Everything above the secure boundary is written; nothing above it is proven.
@@ -565,12 +601,20 @@ the sensor back down whether or not the call succeeded. It records no biometric
 data.
 
 The next milestone is therefore a single successful enrolment, and it is also
-the port's go/no-go point. The known risk is that the TA derives its
-active-group key, or seals templates, through Android services that do not
-exist here — Keymaster, Gatekeeper, or secure storage in RPMB. If the key
-generation or `EnrollFinal` fails for that reason, it is a boundary of the
-platform rather than a defect to fix, and it should be documented as such. If a
-template does come back, what remains is ordinary engineering: the identify
-loop and its control sub-opcodes, replacing the 45 ms Goodix poll with the
-sensor's own interrupt, template persistence across reboots, the GDM and
-session integration, and the validation matrix above.
+the port's go/no-go point. What blocks it now is concrete rather than
+mysterious: the optical engine is never initialised because three inputs are
+missing. `set_lcd_window_type` (control 402) reads
+`/sys/class/lcd/panel/window_type`, which the ANA38407 driver does not publish
+yet; `load_gdxopt_calib` (control 94) needs `gdxrtcalib.dat`; and `load_cbge`
+needs `cbge_*.dat`. The last two live in `/data/vendor/biometrics` on the One
+UI side and, like `calib.dat` and `egoptbds.dat` before them, can only be taken
+from a booted One UI with root.
+
+The older risk has not gone away either: the TA also carries `BAuth_Hat_OP`,
+`BAuth_GetK_From_KM` and `BAuth_Generate_Challenge`, so enrolment may still
+require a Gatekeeper-signed authentication token that this platform cannot
+produce. That would be a boundary rather than a defect. If a template does come
+back, what remains is ordinary engineering: the identify loop and its control
+sub-opcodes, replacing the 45 ms Goodix poll with the sensor's own interrupt,
+template persistence across reboots, the GDM and session integration, and the
+validation matrix above.
