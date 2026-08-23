@@ -610,7 +610,27 @@ The panel's `window_type` reads `80 00 04` under One UI, and its `cell_id`
 matches the value the ported ANA38407 driver publishes byte for byte. With
 those bytes supplied, controls 401 and 402 are both accepted.
 
-`EnrollInit` still answers 29. The remaining gate is inside Samsung's engine
+A traced One UI enrolment then gave the exact sequence the service performs,
+which is worth writing down because it is the specification the Ubuntu backend
+has to meet:
+
+```text
+pre_enroll : control 22 (set_enroll_session, gSession_Flag = 1)
+             command 19 (generate challenge)
+enroll     : control 84 (the gateway logs "skip")
+             register the QIS callback
+             control 49, carrying the active user identifier
+             command 13, the authentication token, right before enrolling
+             command 2  EnrollInit  -> CAPTURE_READY
+             command 3  EnrollDo, repeatedly; opcode 4 is
+                        BAUTH_OP_CODE_WAIT_INTERRUPT with timeout -1, and the
+                        host enables the sensor interrupt and waits
+             controls 87 and 80 between captures
+             command 4  EnrollFinal, then control 76
+```
+
+Control 49 is accepted once it carries the user identifier — bare, it answers
+51 — and command 19 returns zero. `EnrollInit` still answers 29. The remaining gate is inside Samsung's engine
 rather than in the transport: the enrolment worker in `tz_vigis_api.c` reaches
 `fp_enroll_init` in `vigis_controller.c`, and that call returns failure. The
 same TA also validates authentication tokens — a zeroed `BAuth_Hat_OP`

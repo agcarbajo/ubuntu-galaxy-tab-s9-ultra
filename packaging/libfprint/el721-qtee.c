@@ -754,6 +754,17 @@ el721_qtee_raw_command (El721Qtee *session, guint32 command,
   return TRUE;
 }
 
+/* Diagnostic: One UI sends several control operations with the active user
+ * identifier and no payload; reproduce exactly that shape. */
+gboolean
+el721_qtee_control_user (El721Qtee *session, guint32 operation,
+                         const guint8 *user, gsize user_size,
+                         GError **error)
+{
+  return el721_qtee_control_full (session, operation, 0, user, user_size,
+                                  NULL, 0, NULL, 0, NULL, FALSE, error);
+}
+
 gboolean
 el721_qtee_control_op (El721Qtee *session, guint32 operation,
                        const guint8 *data, gsize data_size, GError **error)

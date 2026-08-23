@@ -73,6 +73,64 @@ main (int argc, char **argv)
   if (!g_getenv ("EL721_SKIP_PREPARE") && !el721_qtee_prepare (session, &error))
     goto out;
   g_print ("EL721 userspace transport: signed TA loaded and Prepare succeeded.\n");
+  /* One ordered probe list, so a stock sequence can be replayed exactly:
+   * "c84" a bare control, "c22=1" a control with one byte, "u49" a control
+   * carrying the user identifier, "r2:376:12" a raw command. */
+  if (g_getenv ("EL721_SEQ"))
+    {
+      g_auto(GStrv) steps = g_strsplit (g_getenv ("EL721_SEQ"), ",", -1);
+      guint step;
+
+      for (step = 0; steps[step]; step++)
+        {
+          const gchar *item = steps[step];
+
+          if (item[0] == 'r')
+            {
+              g_auto(GStrv) parts = g_strsplit (item + 1, ":", 3);
+              guint32 command = (guint32) g_ascii_strtoull (parts[0], NULL, 0);
+              gsize in_size = (gsize) g_ascii_strtoull (parts[1], NULL, 0);
+              gsize out_size = (gsize) g_ascii_strtoull (parts[2], NULL, 0);
+              guint32 raw = 0;
+
+              if (el721_qtee_raw_command (session, command, in_size, out_size,
+                                          &raw, &error))
+                g_print ("seq raw %u -> result=%u\n", command, raw);
+              else
+                {
+                  g_print ("seq raw %u -> %s\n", command, error->message);
+                  g_clear_error (&error);
+                }
+            }
+          else if (item[0] == 'u' && argc == 3)
+            {
+              guint32 operation = (guint32) g_ascii_strtoull (item + 1, NULL, 10);
+
+              g_print ("seq control %u with user\n", operation);
+              if (!el721_qtee_control_user (session, operation,
+                                            (const guint8 *) argv[2],
+                                            strlen (argv[2]), &error))
+                goto out;
+            }
+          else if (item[0] == 'c')
+            {
+              g_auto(GStrv) fields = g_strsplit (item + 1, "=", 2);
+              guint32 operation = (guint32) g_ascii_strtoull (fields[0], NULL, 10);
+              guint8 value = 0;
+              gsize value_size = 0;
+
+              if (fields[1])
+                {
+                  value = (guint8) g_ascii_strtoull (fields[1], NULL, 0);
+                  value_size = sizeof (value);
+                }
+              g_print ("seq control %u\n", operation);
+              if (!el721_qtee_control_op (session, operation, &value,
+                                          value_size, &error))
+                goto out;
+            }
+        }
+    }
   if (g_getenv ("EL721_RAW"))
     {
       g_auto(GStrv) items = g_strsplit (g_getenv ("EL721_RAW"), ",", -1);
@@ -96,6 +154,22 @@ main (int argc, char **argv)
                        out_size, error->message);
               g_clear_error (&error);
             }
+        }
+    }
+  if (g_getenv ("EL721_USER_OPS") && argc == 3)
+    {
+      g_auto(GStrv) ops = g_strsplit (g_getenv ("EL721_USER_OPS"), ",", -1);
+      guint index;
+
+      for (index = 0; ops[index]; index++)
+        {
+          guint32 operation = (guint32) g_ascii_strtoull (ops[index], NULL, 10);
+
+          g_print ("probe control %u with user %s\n", operation, argv[2]);
+          if (!el721_qtee_control_user (session, operation,
+                                        (const guint8 *) argv[2],
+                                        strlen (argv[2]), &error))
+            goto out;
         }
     }
   if (g_getenv ("EL721_EXTRA_OPS"))
