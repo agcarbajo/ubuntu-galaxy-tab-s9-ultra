@@ -74,7 +74,7 @@
 #define CONTROL_LOAD_BDS 82U
 #define EL721_BDS_MAX_CHUNK 3U
 #define CONTROL_CPU_IDLE 83U
-#define CONTROL_SELECT_MODEL 88U
+#define CONTROL_SELECT_MODEL 90U
 #define EL721_MODEL "X916"
 #define EL721_MODEL_FIELD 10U
 #define EL721_BDS_MAX (4U * 1024U * 1024U)
@@ -721,7 +721,8 @@ el721_qtee_control_full (El721Qtee *session, guint32 operation, guint32 scalar,
     memcpy (body + CONTROL_STRING_OFFSET, user, user_size);
   if (data_size)
     memcpy (body + CONTROL_DATA_OFFSET, data, data_size);
-  put_u32 (body, CONTROL_LENGTH_OFFSET, data_size);
+  put_u32 (body, CONTROL_LENGTH_OFFSET,
+           el721_probe_u32 ("EL721_FORCE_DATA_LEN", (guint32) data_size));
   /* One UI states the room it has for a response in the output buffer, and
    * zero for the operations that return nothing.  Operations that do return
    * data answer 51 when that field is smaller than they need. */
@@ -1060,22 +1061,20 @@ el721_qtee_prepare (El721Qtee *session, GError **error)
     return FALSE;
   /* Operation 88 selects the board from a table of Samsung model codes the TA
    * carries; this one is "X916", the model the kernel driver reports. */
-  /* Operation 88 picks the board out of a table of twenty-nine Samsung model
-   * codes the TA carries, "X916" among them, and the resulting index feeds the
-   * matcher's configuration.  Handing it the name through the payload field
-   * faults the TA, so the shape it wants is still open and the call stays a
-   * probe rather than part of the sequence. */
-  if (g_getenv ("EL721_SELECT_MODEL"))
-    {
-      guint8 model[EL721_MODEL_FIELD] = { 0 };
+  /* The TA resolves the board against a table of twenty-nine Samsung model
+   * codes and keeps the index in the structure the matcher is configured
+   * from; "X916" is what this tablet's driver reports.  Two operations reach
+   * that setter, 88 and 90, and they differ in one detail: 88 also logs the
+   * name, and doing so over the non-secure buffer takes the TA down, so this
+   * uses 90. */
+  {
+    guint8 model[EL721_MODEL_FIELD] = { 0 };
 
-      memcpy (model, EL721_MODEL, strlen (EL721_MODEL));
-      if (!el721_qtee_control_bytes (session, CONTROL_SELECT_MODEL, model,
-                                     el721_probe_u32 ("EL721_MODEL_LEN",
-                                                      EL721_MODEL_FIELD),
-                                     error))
-        return FALSE;
-    }
+    memcpy (model, EL721_MODEL, strlen (EL721_MODEL));
+    if (!el721_qtee_control_bytes (session, CONTROL_SELECT_MODEL, model,
+                                   strlen (EL721_MODEL) + 1, error))
+      return FALSE;
+  }
   return el721_qtee_load_bds (session, error);
 }
 

@@ -711,10 +711,15 @@ built from. Index 27 is `X916`, exactly what this tablet's kernel driver
 reports and what the stock service logs as `mi X916` at start-up. Control
 operation 88, the one this port had been sending empty, is that lookup.
 
-Its wire shape is not settled yet: handed the name through the payload field
-the TA faults and QTEE answers -90, and through the identifier field it answers
-51. Operation 90 reaches the same setter and accepts the name, but the enrolment
-still fails, so either the match does not take or something else is missing.
+Two operations reach that setter, 88 and 90, and the difference between them
+is one log line: the 88 case also prints the name, and doing that over the
+non-secure buffer takes the TA down — QTEE then answers -90 to the invocation,
+and it happens for any declared payload length above zero. Operation 90 does
+the same lookup without the log and is accepted, so the bridge uses 90.
+
+With the model selected, control 76 answered, the optical blob uploaded
+through 82 and the enrolment session set, the initialisation now matches the
+stock trace call for call, and `EnrollInit` still answers 29.
 
 **What remains is the matcher's own initialisation**, one call deep inside
 Samsung's algorithm, with every layer under it now behaving like stock. The
