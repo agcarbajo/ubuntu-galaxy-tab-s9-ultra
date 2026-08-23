@@ -670,6 +670,118 @@ static struct gpiod_lookup_table el721_fallback_gpios = {
 	},
 };
 
+/*
+ * Samsung's ABL bootloops on any vendor_boot DTB whose structure moves, which
+ * was measured twice on the tablet: even two inert nodes added with a pinned
+ * phandle, leaving every existing one untouched, are enough.  So the board
+ * description cannot carry the reader's supply.
+ *
+ * The rail is real all the same - the stock node names it VDD_BTP_3P3 and the
+ * stock fixups map it to the PMIC's second LDO - and without it the sensor is
+ * never powered, TrustZone reads nothing over the secure SPI and every
+ * biometric command fails far downstream.  Add the two nodes from here instead,
+ * before the RPMh regulator driver enumerates its children, so the tree the
+ * bootloader hands us is never modified.
+ */
+#define EL721_RAIL_NAME "vreg_l2b_3p3"
+#define EL721_RAIL_MICROVOLTS 3300000
+/* Well above the phandles the board description itself uses. */
+#define EL721_RAIL_PHANDLE 0x7000
+#define EL721_SUPPLY_NODE "el721-supply"
+
+static struct device_node *el721_supply_node;
+
+static struct device_node *el721_find_pmic_regulators(void)
+{
+	struct device_node *np = NULL;
+
+	for_each_compatible_node(np, NULL, "qcom,pm8550-rpmh-regulators") {
+		const char *id;
+
+		if (!of_property_read_string(np, "qcom,pmic-id", &id) &&
+		    !strcmp(id, "b"))
+			return np;
+	}
+
+	return NULL;
+}
+
+static int __init el721_add_rail(void)
+{
+	struct device_node *regulators, *rail, *supply;
+	struct of_changeset ocs;
+	int ret;
+
+	regulators = el721_find_pmic_regulators();
+	if (!regulators)
+		return 0;
+
+	rail = of_get_child_by_name(regulators, "ldo2");
+	if (rail) {
+		/* A board description that already carries it needs nothing. */
+		of_node_put(rail);
+		of_node_put(regulators);
+		return 0;
+	}
+
+	of_changeset_init(&ocs);
+	rail = of_changeset_create_node(&ocs, regulators, "ldo2");
+	if (!rail) {
+		ret = -ENOMEM;
+		goto out;
+	}
+	ret = of_changeset_add_prop_string(&ocs, rail, "regulator-name",
+					   EL721_RAIL_NAME);
+	if (!ret)
+		ret = of_changeset_add_prop_u32(&ocs, rail,
+						"regulator-min-microvolt",
+						EL721_RAIL_MICROVOLTS);
+	if (!ret)
+		ret = of_changeset_add_prop_u32(&ocs, rail,
+						"regulator-max-microvolt",
+						EL721_RAIL_MICROVOLTS);
+	if (!ret)
+		ret = of_changeset_add_prop_u32(&ocs, rail, "phandle",
+						EL721_RAIL_PHANDLE);
+	if (ret)
+		goto out;
+
+	supply = of_changeset_create_node(&ocs, of_root, EL721_SUPPLY_NODE);
+	if (!supply) {
+		ret = -ENOMEM;
+		goto out;
+	}
+	ret = of_changeset_add_prop_u32(&ocs, supply, "vdd-supply",
+					EL721_RAIL_PHANDLE);
+	if (ret)
+		goto out;
+
+	ret = of_changeset_apply(&ocs);
+	if (ret)
+		goto out;
+
+	/*
+	 * __of_attach_node() reads the phandle property only for nodes that
+	 * already carry it when they are attached, and a changeset adds the
+	 * property afterwards.  Publish it so vdd-supply can be resolved.
+	 */
+	rail->phandle = EL721_RAIL_PHANDLE;
+	el721_supply_node = of_node_get(supply);
+	of_node_put(regulators);
+	pr_info("egis-el721: published the %s rail and its consumer\n",
+		EL721_RAIL_NAME);
+
+	return 0;
+
+out:
+	of_changeset_destroy(&ocs);
+	of_node_put(regulators);
+	pr_warn("egis-el721: cannot publish the sensor rail (%d)\n", ret);
+
+	return 0;
+}
+postcore_initcall(el721_add_rail);
+
 static int __init el721_init(void)
 {
 	struct device_node *node;
@@ -693,6 +805,10 @@ static int __init el721_init(void)
 		of_node_put(node);
 		return 0;
 	}
+	/* No usable board node, so borrow the one published above for its
+	 * supply; the software device below still owns the two TLMM lines. */
+	if (!node)
+		node = of_node_get(el721_supply_node);
 
 	gpiod_add_lookup_table(&el721_fallback_gpios);
 	el721_fallback_device = platform_device_alloc("egis-el721",
