@@ -23,6 +23,7 @@
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/of.h>
+#include <linux/regulator/consumer.h>
 #include <linux/platform_device.h>
 #include <linux/pm.h>
 #include <linux/property.h>
@@ -85,6 +86,7 @@ struct egis_ioc_transfer {
 
 struct el721_data {
 	struct device *dev;
+	struct regulator *vdd;
 	struct gpio_desc *ldo_gpio;
 	struct gpio_desc *enable_gpio;
 	struct miscdevice miscdev;
@@ -121,8 +123,26 @@ static int el721_prepare_hardware_locked(struct el721_data *el721)
 	 * metadata and compatibility node remain available while the hardware is
 	 * acquired lazily on the first explicit power request.
 	 */
+	/*
+	 * On this board the sensor 3.3 V rail comes from the PMIC - the one the
+	 * stock tree names VDD_BTP_3P3 - and not from a GPIO-controlled LDO: the
+	 * stock node carries etspi-regulator and no etspi-ldoPin.  Leaving it off
+	 * means the reader never powers up, TrustZone reads nothing over the
+	 * secure SPI, and every biometric command fails far downstream.
+	 */
+	if (!el721->vdd) {
+		el721->vdd = devm_regulator_get(el721->dev, "vdd");
+		if (IS_ERR(el721->vdd)) {
+			ret = PTR_ERR(el721->vdd);
+			el721->vdd = NULL;
+			return dev_err_probe(el721->dev, ret,
+						"failed to get the 3.3 V supply
+");
+		}
+	}
+
 	if (!el721->ldo_gpio) {
-		el721->ldo_gpio = devm_gpiod_get(el721->dev, "ldo",
+		el721->ldo_gpio = devm_gpiod_get_optional(el721->dev, "ldo",
 						 GPIOD_ASIS);
 		if (IS_ERR(el721->ldo_gpio)) {
 			ret = PTR_ERR(el721->ldo_gpio);
@@ -157,21 +177,32 @@ static int el721_power_on_locked(struct el721_data *el721)
 	if (ret)
 		return ret;
 
-	/* Exact EL721 GPIO sequence from Samsung's shipping X910 driver. */
-	ret = gpiod_direction_output(el721->ldo_gpio, 1);
+	/* Exact EL721 sequence from Samsung's shipping X910 driver. */
+	ret = regulator_enable(el721->vdd);
 	if (ret)
 		return ret;
-	usleep_range(2100, 2150);
+	usleep_range(2300, 2350);
+	if (el721->ldo_gpio) {
+		ret = gpiod_direction_output(el721->ldo_gpio, 1);
+		if (ret)
+			goto disable_vdd;
+		usleep_range(2100, 2150);
+	}
 	ret = gpiod_direction_output(el721->enable_gpio, 1);
 	if (ret) {
-		gpiod_set_value_cansleep(el721->ldo_gpio, 0);
-		return ret;
+		if (el721->ldo_gpio)
+			gpiod_set_value_cansleep(el721->ldo_gpio, 0);
+		goto disable_vdd;
 	}
 	usleep_range(1100, 1150);
 	usleep_range(5000, 5050);
 	el721->powered = true;
 
 	return 0;
+
+disable_vdd:
+	regulator_disable(el721->vdd);
+	return ret;
 }
 
 static int el721_power_off_locked(struct el721_data *el721)
@@ -181,7 +212,9 @@ static int el721_power_off_locked(struct el721_data *el721)
 
 	/* Holding enable low keeps the sensor quiescent even if VDD is shared. */
 	gpiod_set_value_cansleep(el721->enable_gpio, 0);
-	gpiod_set_value_cansleep(el721->ldo_gpio, 0);
+	if (el721->ldo_gpio)
+		gpiod_set_value_cansleep(el721->ldo_gpio, 0);
+	regulator_disable(el721->vdd);
 
 	el721->powered = false;
 	return 0;

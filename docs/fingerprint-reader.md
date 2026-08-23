@@ -741,6 +741,30 @@ the secure SPI in this boot**, and the BAUTH command sequence above it is now
 correct. Command 16 is the one-line probe for it: it answers zero whether the
 sensor is powered or not, where stock reads a real type.
 
+Chasing why led somewhere embarrassing and simple. The reader's 3.3 V does not
+come from a GPIO-controlled LDO on this board: the stock node carries
+`etspi-regulator = "VDD_BTP_3P3"` and no `etspi-ldoPin`, and the fixups map
+that rail to the PMIC's `pm_humu_l2`. This port drives GPIO91 as if it were an
+LDO enable and never claims a supply at all, so the kernel log reads
+
+```text
+egis-el721 egis-el721: supply vdd not found, using dummy regulator
+```
+
+The device the port registers for the reader is synthetic and carries no
+device-tree node, so the `vdd-supply` written next to `egistec,el721` never
+reaches it. Claiming the rail by name from a test module gets a consumer onto
+`vreg_l2b_3p3`, but that regulator refuses both `regulator_set_voltage` and
+`regulator_get_voltage` with `EINVAL` and reports 0 mV, so it is not driving
+anything either.
+
+**The EL721 has never been powered under this port.** Everything above follows
+from that: no sensor answers, so TrustZone's `fpsec_open_sensor` spends a
+second getting nothing, the engine context is never allocated, and every
+biometric command answers 29. The driver now claims `vdd` and sequences it the
+way the stock driver does, which needs a kernel rebuild; the PMIC rail itself
+has to be made real first.
+
 Two facts point at where to look next. The tablet's own clock tree shows
 `gcc_qupv3_wrap1_s2_clk` disabled with its source parked at 5.12 MHz, while
 the TA asks for 20 MHz; and `gcc_qupv3_wrap1_s7_clk` is enabled, so the
