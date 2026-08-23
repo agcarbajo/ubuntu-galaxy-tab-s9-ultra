@@ -960,9 +960,11 @@ el721_qtee_prepare (El721Qtee *session, GError **error)
     return FALSE;
   memset (body, 0, PREPARE_SIZE);
   put_u32 (body, 0, CMD_PREPARE);
-  put_u32 (body, 8, PREPARE_MODE_CALIBRATED);
+  put_u32 (body, 8, el721_probe_u32 ("EL721_PREPARE_MODE",
+                                    PREPARE_MODE_CALIBRATED));
   memcpy (body + PREPARE_DATA_OFFSET, calibration, calibration_size);
-  put_u32 (body, PREPARE_LENGTH_OFFSET, calibration_size);
+  put_u32 (body, PREPARE_LENGTH_OFFSET,
+           el721_probe_u32 ("EL721_CALIB_LEN", (guint32) calibration_size));
   for (attempt = 0; attempt < 6; attempt++)
     {
       if (!invoke_body (session, CMD_PREPARE,
