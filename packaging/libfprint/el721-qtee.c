@@ -1376,7 +1376,8 @@ el721_qtee_enroll_do (El721Qtee *session, El721Reply *reply, GError **error)
   guint8 body[12] = { 0 };
   guint8 *output;
   put_u32 (body, 0, CMD_ENROLL_DO);
-  put_u32 (body, 8, EL721_SENSOR_TYPE);
+  put_u32 (body, 8, el721_probe_u32 ("EL721_SENSOR_TYPE",
+                                     EL721_SENSOR_TYPE));
   if (!invoke_body (session, CMD_ENROLL_DO, sizeof (body), ENROLL_DO_OUT_SIZE,
                     body, sizeof (body), &output, error))
     return FALSE;
@@ -1395,7 +1396,8 @@ final_command (El721Qtee *session, guint32 command, El721Reply *reply,
   guint8 *output;
   guint32 size;
   put_u32 (body, 0, command);
-  put_u32 (body, 8, EL721_SENSOR_TYPE);
+  put_u32 (body, 8, el721_probe_u32 ("EL721_SENSOR_TYPE",
+                                     EL721_SENSOR_TYPE));
   if (!invoke_body (session, command, sizeof (body), FINAL_OUT_SIZE,
                     body, sizeof (body), &output, error))
     return FALSE;
@@ -1438,7 +1440,8 @@ el721_qtee_identify_init (El721Qtee *session, const guint8 *user,
   if (!cell_id)
     return FALSE;
   put_u32 (body, 0, CMD_IDENTIFY_INIT);
-  put_u32 (body, 8, EL721_SENSOR_TYPE);
+  put_u32 (body, 8, el721_probe_u32 ("EL721_SENSOR_TYPE",
+                                     EL721_SENSOR_TYPE));
   memcpy (body + 0xc, user, user_size);
   memcpy (body + 0x10c, templates, templates_size);
   put_u32 (body, 0x22610c, templates_size);
@@ -1466,7 +1469,8 @@ el721_qtee_identify_do (El721Qtee *session, guint32 opcode,
   guint32 update_size;
   put_u32 (body, 0, CMD_IDENTIFY_DO);
   put_u32 (body, 4, opcode);
-  put_u32 (body, 8, EL721_SENSOR_TYPE);
+  put_u32 (body, 8, el721_probe_u32 ("EL721_SENSOR_TYPE",
+                                     EL721_SENSOR_TYPE));
   if (!invoke_body (session, CMD_IDENTIFY_DO, sizeof (body), IDENTIFY_DO_OUT_SIZE,
                     body, sizeof (body), &output, error))
     return FALSE;

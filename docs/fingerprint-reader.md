@@ -960,3 +960,30 @@ So two candidate blockers remain, and they have not yet been told apart:
 TrustZone getting nothing from the sensor, and the missing authentication
 token. The TA's own sensor self-test is control operation 19, and it is accepted
 when no response capacity is declared, which is the thread to pull next.
+
+## The reader answers an all-zero identity, and that is the whole defect
+
+Following the failure inside the first `EnrollDo` reaches the sensor rather than
+the token, which tells the two remaining candidates apart. `fp_enroll_state_handler`
+fails in `[ESTATE_INIT]` on a virtual call into the TA's own sensor driver, so
+the missing Gatekeeper token is not what stops a capture.
+
+The identification path then explains every symptom at once.
+`fpsec_open_sensor` calls `device_identify_type`, which polls
+`device_et7xx_get_fp_type` — a three-byte read of the reader's identity
+register — **twenty-one times**, one millisecond apart, giving up only when the
+type is still zero. That is exactly the second that `Prepare` costs here, where
+the traced One UI cold start costs 32 ms because it identifies on the first
+attempt. With no type, the TA binds no sensor driver, and every later call into
+that driver fails.
+
+So the defect is not in the command sequence, the matcher, the model, the
+protocol or the token: **the EL721 returns an all-zero identity to TrustZone.**
+
+One real fault was found and fixed while confirming this. The rail module drove
+the sleep line *before* enabling the rail, the reverse of the stock driver's
+order, which leaves the part without a clean reset because a signal pin is being
+driven into an unpowered chip. It now enables the rail, settles 2.3 ms, then
+takes the line low and raises it with the stock's 1.1 ms and 5 ms waits. That is
+correct on its own terms and should stay, but it does not change the answer: the
+identity still reads zero and `Prepare` still costs its full second.

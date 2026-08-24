@@ -219,20 +219,31 @@ static int __init fprail_init(void)
 		vdd = NULL;
 		return 0;
 	}
+	/* Order matters, and it is the stock driver's: the rail comes up
+	 * first and settles, and only then is the sleep line driven.
+	 * Driving a signal pin into an unpowered part leaves it without a
+	 * clean reset, and this module used to do exactly that. */
+	if (regulator_enable(vdd))
+		pr_err("gts9u-fprail: cannot enable the rail\n");
+	else
+		pr_info("gts9u-fprail: rail enabled at %d uV\n",
+			regulator_get_voltage(vdd));
+	usleep_range(2300, 2400);
+
 	if (enable_line) {
 		gpiod_add_lookup_table(&enable_lookup);
-		enable_desc = gpiod_get(&consumer->dev, "enable", GPIOD_OUT_HIGH);
+		enable_desc = gpiod_get(&consumer->dev, "enable", GPIOD_OUT_LOW);
 		if (IS_ERR(enable_desc)) {
 			pr_err("gts9u-fprail: cannot drive the sleep line (%ld)\n",
 			       PTR_ERR(enable_desc));
 			enable_desc = NULL;
 			gpiod_remove_lookup_table(&enable_lookup);
 		} else {
-			if (reset_pulse) {
-				gpiod_set_value_cansleep(enable_desc, 0);
+			if (reset_pulse)
 				usleep_range(1050, 1100);
-				gpiod_set_value_cansleep(enable_desc, 1);
-			}
+			gpiod_set_value_cansleep(enable_desc, 1);
+			usleep_range(1100, 1200);
+			usleep_range(5000, 5100);
 			if (settle_ms > 0)
 				msleep(settle_ms);
 			pr_info("gts9u-fprail: sleep line high, settled %d ms\n",
@@ -240,11 +251,6 @@ static int __init fprail_init(void)
 		}
 	}
 
-	if (regulator_enable(vdd))
-		pr_err("gts9u-fprail: cannot enable the rail\n");
-	else
-		pr_info("gts9u-fprail: rail enabled at %d uV\n",
-			regulator_get_voltage(vdd));
 
 	return 0;
 
