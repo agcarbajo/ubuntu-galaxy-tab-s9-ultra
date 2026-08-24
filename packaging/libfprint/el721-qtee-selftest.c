@@ -286,6 +286,40 @@ main (int argc, char **argv)
       g_print ("EnrollInit user=%s: result=%u status=%u opcode=%u\n",
                argv[2], reply.result, reply.status, reply.opcode);
       el721_reply_clear (&reply);
+      /* EL721_ENROLL_DO=<n> runs the capture loop for at most n passes, which
+       * is the only part of enrolment that needs a finger on the reader. */
+      if (g_getenv ("EL721_ENROLL_DO"))
+        {
+          guint passes = (guint) g_ascii_strtoull (g_getenv ("EL721_ENROLL_DO"),
+                                                   NULL, 10);
+          guint pass;
+
+          for (pass = 0; pass < passes; pass++)
+            {
+              el721_reply_clear (&reply);
+              if (!el721_qtee_enroll_do (session, &reply, &error))
+                goto out;
+              g_print ("EnrollDo %u: result=%u status=%u quality=%u "
+                       "progress=%u remaining=%u\n", pass + 1,
+                       reply.result,
+                       reply.status, reply.quality, reply.progress,
+                       reply.remaining);
+              /* Completion is progress having been made and nothing left to
+               * take; a bare status of zero happens with no finger present. */
+              if (reply.result == 0 && reply.progress > 0 &&
+                  reply.remaining == 0)
+                break;
+              g_usleep (150 * 1000);
+            }
+          el721_reply_clear (&reply);
+          if (!el721_qtee_enroll_final (session, &reply, &error))
+            goto out;
+          g_print ("EnrollFinal: result=%u status=%u template=%u bytes\n",
+                   reply.result, reply.status,
+                   reply.data ?
+                   (guint) g_bytes_get_size (reply.data) : 0u);
+          el721_reply_clear (&reply);
+        }
       if (!el721_qtee_cancel (session, &reply, &error))
         goto out;
       g_print ("Cancel: result=%u status=%u opcode=%u\n",
@@ -296,7 +330,8 @@ main (int argc, char **argv)
 out:
   el721_reply_clear (&reply);
   el721_qtee_close (session);
-  if (!write_value (EL721_POWER, "0\n", error ? NULL : &error) && !error)
+  if (!g_getenv ("EL721_SKIP_POWER") &&
+      !write_value (EL721_POWER, "0\n", error ? NULL : &error) && !error)
     g_set_error_literal (&error, G_FILE_ERROR, G_FILE_ERROR_FAILED,
                          "cannot power the EL721 down");
   if (error)
