@@ -8,6 +8,8 @@
 #
 obj-m += gts9u-tzlog.o
 obj-m += gts9u-fpclk.o
+obj-m += gts9u-fpvdd.o
+obj-m += gts9u-fprail.o
 
 KDIR ?= /root/ubuntu-gts9u/build/linux-gts9uwifi
 PWD := $(shell pwd)

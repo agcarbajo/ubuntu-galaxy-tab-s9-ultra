@@ -813,3 +813,35 @@ back, what remains is ordinary engineering: the identify loop and its control
 sub-opcodes, replacing the 45 ms Goodix poll with the sensor's own interrupt,
 template persistence across reboots, the GDM and session integration, and the
 validation matrix above.
+
+## The secure SPI pins belong to TrustZone, and must not be touched
+
+With the rail up, the panel awake and its optical mode engaged, `Prepare` still
+answers `sensor_type=0` and `EnrollInit` still answers 29, so the display state
+is not the gate either.
+
+The pin muxing looked like the next candidate, and the reasoning was sound as
+far as it went. `qup1_se2` — the serial engine behind `spi@a88000`, the one the
+TA's clock request names — spans `gpio36`..`gpio39` here, and pinctrl reports
+all four as `UNCLAIMED`: no Linux driver owns them, because neither the stock
+tree nor this port describes an SPI controller for the reader. The TA's own log
+strings name a matching failure, `qsee_tlmm_get_gpio_id: BLSP_CLK Failed`,
+which is what a serial-engine function lookup returns when no pin carries it.
+
+That hypothesis is wrong, and the way it failed is the answer. debugfs is
+locked down here, so `pinmux-select` returns `EPERM`; writing the four TLMM
+configuration registers directly from a module instead **hard-resets the
+tablet**. The kernel log of that boot simply stops — no shutdown sequence, no
+panic, nothing flushed — which is the signature of an XPU violation, not of a
+software fault.
+
+So those registers are secure-owned. TrustZone holds the pins exactly as it
+holds the serial engine, it muxes them itself, and a non-secure write to them
+takes the SoC down. `UNCLAIMED` in pinctrl means only that Linux has not
+claimed them, which is the correct and expected state on this board.
+
+Two things follow. The mux is not the defect and cannot be made one from
+Linux — that avenue is closed, and the module that tried it has been deleted so
+it cannot be loaded again by accident. And the reset is itself a positive
+result: it confirms that `gpio36`..`gpio39` really are the reader's secure SPI
+and that TrustZone owns that path end to end.

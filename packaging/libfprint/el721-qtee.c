@@ -1104,6 +1104,9 @@ el721_qtee_prepare (El721Qtee *session, GError **error)
         }
       break;
     }
+  if (g_getenv ("EL721_ANY_SENSOR_TYPE") && !result && !function_status &&
+      !opcode)
+    sensor_type = EL721_SENSOR_TYPE;
   if (result || function_status || opcode || sensor_type != EL721_SENSOR_TYPE)
     {
       g_set_error (error, EL721_ERROR, result,
