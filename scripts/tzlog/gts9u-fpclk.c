@@ -26,9 +26,16 @@
 #include <linux/of_clk.h>
 #include <linux/platform_device.h>
 
+/* The QUP wrapper's core clocks have no consumer in the device tree, so
+ * mainline leaves them gated even though the serial engine cannot transfer
+ * without them.  They are reachable only straight from the GCC provider, by
+ * their index in qcom,sm8550-gcc.h. */
+#define GCC_WRAP1_CORE_2X 91
+#define GCC_WRAP1_CORE 92
+
 #define FP_SE_COMPATIBLE "qcom,geni-spi"
 #define FP_SE_NODE "spi@a88000"
-#define FP_MAX_CLOCKS 4
+#define FP_MAX_CLOCKS 8
 
 static struct clk *held[FP_MAX_CLOCKS];
 static unsigned int held_count;
@@ -121,6 +128,40 @@ static unsigned int rate = 20000000;
 module_param(rate, uint, 0444);
 MODULE_PARM_DESC(rate, "serial engine clock rate in Hz, 0 to leave it alone");
 
+static int fpclk_hold_gcc(unsigned int index, const char *what)
+{
+	struct of_phandle_args spec = { };
+	struct device_node *gcc;
+	struct clk *clk;
+	int ret;
+
+	gcc = of_find_compatible_node(NULL, NULL, "qcom,sm8550-gcc");
+	if (!gcc) {
+		pr_warn("gts9u-fpclk: no gcc node\n");
+		return -ENODEV;
+	}
+	spec.np = gcc;
+	spec.args_count = 1;
+	spec.args[0] = index;
+	clk = of_clk_get_from_provider(&spec);
+	of_node_put(gcc);
+	if (IS_ERR(clk)) {
+		pr_warn("gts9u-fpclk: %s unavailable (%ld)\n", what,
+			PTR_ERR(clk));
+		return PTR_ERR(clk);
+	}
+	ret = clk_prepare_enable(clk);
+	if (ret) {
+		pr_warn("gts9u-fpclk: cannot enable %s (%d)\n", what, ret);
+		clk_put(clk);
+		return ret;
+	}
+	pr_info("gts9u-fpclk: holding %s at %lu Hz\n", what, clk_get_rate(clk));
+	if (held_count < FP_MAX_CLOCKS)
+		held[held_count++] = clk;
+	return 0;
+}
+
 static int fpclk_hold(struct device_node *np, const char *what)
 {
 	int count = of_clk_get_parent_count(np);
@@ -178,6 +219,8 @@ static int __init fpclk_init(void)
 		fpclk_hold(qup, "qup wrapper");
 		of_node_put(qup);
 	}
+	fpclk_hold_gcc(GCC_WRAP1_CORE_2X, "qup wrapper core 2x clock");
+	fpclk_hold_gcc(GCC_WRAP1_CORE, "qup wrapper core clock");
 	fpclk_hold(se, "serial engine");
 	fpclk_vote_icc(se);
 	of_node_put(se);

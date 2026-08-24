@@ -987,3 +987,32 @@ driven into an unpowered chip. It now enables the rail, settles 2.3 ms, then
 takes the line low and raises it with the stock's 1.1 ms and 5 ms waits. That is
 correct on its own terms and should stay, but it does not change the answer: the
 identity still reads zero and `Prepare` still costs its full second.
+
+## The QUP serial engine route, tested and excluded
+
+The identity read timing — about 60 ms per attempt, twenty-one attempts — says
+the transfers are timing out rather than returning zeros quickly, which pointed
+at the serial engine itself. That has now been tested from every angle Linux can
+reach, and none of it is the cause.
+
+**Clocks.** The QUP wrapper's core clocks are reachable only straight from the
+GCC provider, having no consumer in the device tree, and mainline leaves them
+gated. Holding `gcc_qupv3_wrap1_core_2x_clk`, `gcc_qupv3_wrap1_core_clk`, the
+`m_ahb`/`s_ahb` pair and the serial engine's own branch all on at once, with the
+interconnect paths voted, changes nothing: the identity still reads zero and
+`Prepare` still costs its full second. The captured stock kernel trace settles
+why that was never promising — Android does not touch `gcc_qupv3_wrap1_s2_clk`
+during fingerprint activity either, so enabling it was never the HLOS's job.
+
+**Callbacks.** Stock registers a "QSEE Interrupt Service Listener" at boot, which
+raised the possibility that TrustZone waits on the non-secure world to forward
+the serial engine's interrupt — a good fit for 60 ms timeouts. It does not
+apply. This port's bridge already runs a supplicant that services secure-world
+callbacks, and instrumenting it shows the TA making exactly two callbacks up
+front and then none at all across the 1.2 seconds of the identification loop.
+TrustZone is not waiting on us; it is driving the bus itself and getting
+nothing back.
+
+What remains unexamined is the serial engine's own state — whether it is
+configured and running at all — and those registers cannot be read from Linux
+without risking the same XPU fault that the pin experiment produced.
