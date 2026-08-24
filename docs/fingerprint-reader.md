@@ -915,3 +915,48 @@ sleep line, the panel state, the pin mux and the whole BAUTH command sequence
 have each been tested and are not the cause. Until that is solved a finger
 cannot be enrolled, and until a finger can be enrolled the libfprint and
 fprintd integration cannot be validated.
+
+## Enrolment is an interactive protocol, and this port was not speaking it
+
+The captured One UI enrolment trace settles how a capture actually works, and
+it is not the loop this port was running. `EnrollDo` does not take an image and
+return it. It returns an **opcode** telling the non-secure side what to do next,
+and expects to be called again once that has been done:
+
+```text
+cmd 0x2  EnrollInit  -> opcode 0,  function_status 0   CAPTURE_READY
+cmd 0x3  EnrollDo    -> opcode 4,  timeout -1          BAUTH_OP_CODE_WAIT_INTERRUPT
+         (host enables the reader's interrupt, waits for it, disables it)
+cmd 0x3  EnrollDo    -> opcode 5                       BAUTH_OP_CODE_NOTIFY_DOWN
+         control 87, then control 80                   CAPTURE_STARTED
+cmd 0x3  EnrollDo    -> opcode 87
+         control 87
+cmd 0x3  EnrollDo    -> opcode 6                       NOTIFY_CAPTURE_SUCCESS
+cmd 0x3  EnrollDo    -> opcode 0,  function_status 1   CAPTURE_COMPLETED
+cmd 0x4  EnrollFinal                                   CAPTURE_SUCCESS
+         control 76, and the whole sequence repeats for the next capture
+```
+
+Two things follow that were not understood before. `EnrollFinal` runs once per
+capture rather than once per enrolment, each pass starting again at
+`EnrollInit`. And the earlier reading of the first live finger test — that the
+reader was returning "no finger" — was wrong: the port was calling `EnrollDo`
+repeatedly without honouring the opcode or issuing controls 87 and 80, which is
+why the TA eventually answered 39. The harness now implements the protocol.
+
+That correction does not make capture work, and it sharpens where it stops. The
+port's first `EnrollDo` answers `opcode 0` with `function_status -1`, where
+stock answers `opcode 4` at exactly the same point — so the failure is inside
+the first call, before any interrupt is ever waited for.
+
+The same trace also shows stock issuing `Challenge` (command 19) and then
+`Hat_OP` (command 13) before `EnrollInit`. `Challenge` succeeds here.
+`Hat_OP` does not: it needs its full 1165-byte envelope — anything else is
+refused with 51 — and refuses a zeroed token with 62. That is a
+Gatekeeper-signed authentication token, and this platform has no Gatekeeper to
+produce one.
+
+So two candidate blockers remain, and they have not yet been told apart:
+TrustZone getting nothing from the sensor, and the missing authentication
+token. The TA's own sensor self-test is control operation 19, and it is accepted
+when no response capacity is declared, which is the thread to pull next.

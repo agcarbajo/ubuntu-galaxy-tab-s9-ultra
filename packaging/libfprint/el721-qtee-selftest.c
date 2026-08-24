@@ -9,6 +9,10 @@
 #include <stdio.h>
 #include <string.h>
 
+#define OP_WAIT_INTERRUPT 4U
+#define OP_NOTIFY_DOWN 5U
+#define OP_CAPTURE_SUCCESS 6U
+#define OP_CAPTURE_STEP 87U
 #define EL721_POWER "/sys/bus/platform/devices/egis-el721/sensor_power"
 
 static gboolean
@@ -299,17 +303,35 @@ main (int argc, char **argv)
               el721_reply_clear (&reply);
               if (!el721_qtee_enroll_do (session, &reply, &error))
                 goto out;
-              g_print ("EnrollDo %u: result=%u status=%u quality=%u "
-                       "progress=%u remaining=%u\n", pass + 1,
-                       reply.result,
-                       reply.status, reply.quality, reply.progress,
-                       reply.remaining);
-              /* Completion is progress having been made and nothing left to
-               * take; a bare status of zero happens with no finger present. */
-              if (reply.result == 0 && reply.progress > 0 &&
-                  reply.remaining == 0)
+              g_print ("EnrollDo %u: result=%u status=%d opcode=%u "
+                       "quality=%u progress=%u remaining=%u\n", pass + 1,
+                       reply.result, (gint) reply.status, reply.opcode,
+                       reply.quality, reply.progress, reply.remaining);
+              /* The TA drives enrolment through the opcode it returns: it asks
+               * to be called back once the reader has raised its interrupt, and
+               * asks for two control operations around the capture itself. */
+              if (reply.opcode == OP_WAIT_INTERRUPT)
+                {
+                  g_usleep (50 * 1000);
+                  continue;
+                }
+              if (reply.opcode == OP_NOTIFY_DOWN)
+                {
+                  if (!el721_qtee_control_op (session, 87, NULL, 0, 0, &error) ||
+                      !el721_qtee_control_op (session, 80, NULL, 0, 0, &error))
+                    goto out;
+                  continue;
+                }
+              if (reply.opcode == OP_CAPTURE_STEP)
+                {
+                  if (!el721_qtee_control_op (session, 87, NULL, 0, 0, &error))
+                    goto out;
+                  continue;
+                }
+              if (reply.opcode == OP_CAPTURE_SUCCESS)
+                continue;
+              if (reply.opcode == 0)
                 break;
-              g_usleep (150 * 1000);
             }
           el721_reply_clear (&reply);
           if (!el721_qtee_enroll_final (session, &reply, &error))
