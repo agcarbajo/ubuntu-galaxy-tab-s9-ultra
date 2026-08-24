@@ -1016,3 +1016,37 @@ nothing back.
 What remains unexamined is the serial engine's own state — whether it is
 configured and running at all — and those registers cannot be read from Linux
 without risking the same XPU fault that the pin experiment produced.
+
+## One UI says the sensor type is 8, and that changes the diagnosis
+
+Booting the stock firmware and asking its own driver, with the reader working,
+settles what a correct reading looks like:
+
+```text
+name         EL721
+vendor       EGISTEC
+type_check   8
+bfs_values   "FP_SPICLK":"20000000"
+```
+
+**Eight is the right answer.** It is exactly what this port reported before any
+of the power work, and what was written off here as a constant the TA already
+knew. The zero it reports now is the broken reading, not the honest one — this
+document had it backwards, and so did every conclusion drawn from it.
+
+The stock driver's periodic state dump says the rest:
+
+```text
+fps_el7xx_work_func_debug: ldo: 0, sleep: 0, tz: 1, spi_value: 0x0, type: EL721
+```
+
+At idle the LDO pin is low and **the sleep line is low**, where this port holds
+it high continuously. So the two defects were masking each other. While the port
+reported the correct 8, enrolment failed for an unrelated reason — the model was
+being selected through operation 90, which never builds the matcher. By the time
+operation 88 fixed that, the reader had been moved into a state that reports 0.
+
+What this predicts is specific and cheap to test: back under Ubuntu, without the
+rail module driving the sleep line, `Prepare` should report 8 again, and with
+the model now selected through 88 the enrolment chain should run against a
+sensor that answers.
