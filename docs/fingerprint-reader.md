@@ -1050,3 +1050,39 @@ What this predicts is specific and cheap to test: back under Ubuntu, without the
 rail module driving the sleep line, `Prepare` should report 8 again, and with
 the model now selected through 88 the enrolment chain should run against a
 sensor that answers.
+
+## The earlier enrolment success was on a degenerate path
+
+Back under Ubuntu with nothing forcing the sleep line, `Prepare` reports
+`sensor_type=8` again, exactly as One UI does. That confirms the reading above
+and forces a correction to the section before it.
+
+Operation 88 was reported here as the fix that made `EnrollInit` succeed. It
+does — **but only while the reader has not been identified.** With the sensor
+answering 8, operation 88 takes the TA down with `-90` every time: before the
+optical blob and after it, with a declared response capacity and without, sent
+from the bridge's own init or from the harness. It never crashed earlier only
+because the rail module had driven the reader into the state that answers 0, so
+the TA had bound no sensor driver and the call stopped short of
+`fp_check_white_spot_and_apply_wsc_to_wk_bk`.
+
+So that `EnrollInit user=User_0: result=0` was a matcher built over an
+unidentified sensor. It could never have enrolled a finger, and the claim that
+enrolment "starts" was wrong.
+
+With the reader answering properly the position is:
+
+| model selection | result |
+| --- | --- |
+| operation 88 | the TA goes down with `-90` |
+| operation 90 | `EnrollInit` answers 29, the matcher is not built |
+| skipped | `EnrollInit` answers 29 |
+
+One suspicion was checked and cleared while narrowing this. The per-device
+factory calibration `fp_check_white_spot_and_apply_wsc_to_wk_bk` needs is not
+missing: `sec_efs/biometrics/meta/egis_calibration_data.bin` is byte-identical
+to the port's `calib.dat`, the optical blob matches the size the stock service
+uploads, and the stored `cell_id` matches the panel's. The inputs are right.
+
+The default therefore goes back to operation 90, which leaves the matcher
+unbuilt but cannot crash the TA; `EL721_MODEL_OP` selects the other.

@@ -80,7 +80,7 @@
  * configuration from the entry it found.  Operation 90 sets the index and
  * stops there, which leaves the matcher unbuilt and every biometric command
  * answering 29. */
-#define CONTROL_SELECT_MODEL 88U
+#define CONTROL_SELECT_MODEL 90U
 #define EL721_MODEL "X916"
 #define EL721_MODEL_FIELD 10U
 #define EL721_BDS_MAX (4U * 1024U * 1024U)
@@ -1131,6 +1131,7 @@ el721_qtee_prepare (El721Qtee *session, GError **error)
    * response capacity or it answers 51; 88 is not implemented in this build
    * and is advisory, as the stock service skips the calibration update for an
    * optical sensor anyway. */
+  g_debug ("init: bootstrap through control %u", CONTROL_BOOTSTRAP);
   if (!el721_qtee_control_scalar (session, CONTROL_BOOTSTRAP, 0,
                                   CONTROL_BOOTSTRAP_RESPONSE, error))
     return FALSE;
@@ -1139,17 +1140,29 @@ el721_qtee_prepare (El721Qtee *session, GError **error)
   /* The TA resolves the board against a table of twenty-nine Samsung model
    * codes and keeps the index in the structure the matcher is configured
    * from; "X916" is what this tablet's driver reports.  Two operations reach
-   * that setter, 88 and 90, and they differ in one detail: 88 also logs the
-   * name, and doing so over the non-secure buffer takes the TA down, so this
-   * uses 90. */
+   * that setter: 88 goes on to build the matcher configuration from the entry
+   * it found, and 90 stops at the index.  Only 88 leaves the matcher usable,
+   * but it takes the TA down whenever the reader has actually been identified,
+   * so the default is the one that cannot crash and EL721_MODEL_OP selects the
+   * other; zero skips the step entirely. */
   {
     guint8 model[EL721_MODEL_FIELD] = { 0 };
+    guint32 op = el721_probe_u32 ("EL721_MODEL_OP", CONTROL_SELECT_MODEL);
 
     memcpy (model, EL721_MODEL, strlen (EL721_MODEL));
-    if (!el721_qtee_control_bytes (session, CONTROL_SELECT_MODEL, model,
+
+    if (!op)
+      {
+        g_debug ("init: model selection skipped by request");
+        goto model_done;
+      }
+    g_debug ("init: selecting model through control %u", op);
+    if (!el721_qtee_control_bytes (session, op, model,
                                    strlen (EL721_MODEL) + 1, error))
       return FALSE;
   }
+model_done:
+  g_debug ("init: uploading the optical blob");
   return el721_qtee_load_bds (session, error);
 }
 
