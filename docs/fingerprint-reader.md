@@ -884,3 +884,34 @@ operation.
 With the bridge switched to operation 88, `EnrollInit` answers
 `result=0 status=0 opcode=0` for the first time in this port's history, and
 `Cancel` — corrected to its measured 8-byte envelope — answers cleanly too.
+
+## Where the port stands after enrolment starts
+
+With operation 88 in place the whole enrolment chain runs, and a first live test
+with a finger on the reader measured exactly where it stops.
+
+```text
+EnrollInit user=User_0: result=0 status=0 opcode=0
+EnrollDo 1: result=0 status=-1 quality=0 progress=0 remaining=0
+EnrollDo 2: result=0 status=0  quality=0 progress=0 remaining=0
+EnrollDo 3: BAUTH command 3 failed (trustlet=39)
+```
+
+The reply is identical with a finger pressed on the reader and with the screen
+untouched, and the same 39 comes back from `EnrollFinal` when nothing was
+captured. So the state machine is correct and the sequence above it is correct;
+what does not happen is the capture itself.
+
+That is consistent with everything else measured. The TA's enrolment worker
+waits in `[ESTATE_FINGER_DOWN]` for `fpsec_start_get_image`, and finger
+presence on this reader is reported over the sensor's own link — the stock node
+declares no interrupt line, only `etspi-sleepPin`. With TrustZone getting
+nothing back over the secure SPI there is no finger-down to wait for, so the
+worker falls through and the capture returns empty.
+
+One open item therefore remains, and it is now stated much more narrowly than
+before: **TrustZone cannot read the EL721 over the secure SPI.** Power, the
+sleep line, the panel state, the pin mux and the whole BAUTH command sequence
+have each been tested and are not the cause. Until that is solved a finger
+cannot be enrolled, and until a finger can be enrolled the libfprint and
+fprintd integration cannot be validated.
