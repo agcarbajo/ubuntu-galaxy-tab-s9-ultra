@@ -1086,3 +1086,33 @@ uploads, and the stored `cell_id` matches the panel's. The inputs are right.
 
 The default therefore goes back to operation 90, which leaves the matcher
 unbuilt but cannot crash the TA; `EL721_MODEL_OP` selects the other.
+
+## What the reader must answer, to the byte
+
+The identification is a three-byte read, and the TA maps it with no room for
+interpretation:
+
+| bytes 4 and 5 | sensor type |
+| --- | --- |
+| `07 0D` | 2 |
+| `07 0F` | 3 |
+| `07 15` | 4 — the ET721, this reader |
+| anything else | 0 |
+
+The driver selector then binds a sensor driver for **2, 3 and 4 only**. Every
+other value, zero included, leaves `[0x4a0310 + 0x150]` null, and that null is
+the crash: `fpsec_get_badpixel_map_EL721` loads its method from that pointer's
+vtable, which is where operation 88 takes the TA down.
+
+This corrects the section above it, which was too quick. One UI's `type_check`
+of 8 is the **kernel driver's** own enum, not the TA's, and the two are not the
+same scale — the TA has no type 8 at all. So the port reporting 8 was never
+evidence that the reader had been identified, and neither 8 nor 0 binds a
+driver. Both mean the same thing: the reader did not answer `07 15`.
+
+That is the defect, stated as precisely as it can be: **the EL721 does not
+return its identity bytes to TrustZone over the secure SPI.** Everything else —
+the transport, the command envelopes, the model table, the matcher, the
+interactive capture protocol, the calibration inputs, the rail and its
+sequencing — is correct and verified. Nothing above this layer can work until
+the reader answers, and the answer it must give is `07 15`.
