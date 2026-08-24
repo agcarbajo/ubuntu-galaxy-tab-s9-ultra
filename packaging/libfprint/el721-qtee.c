@@ -46,6 +46,7 @@
 #define CMD_IDENTIFY_DO 6U
 #define CMD_IDENTIFY_FINAL 7U
 #define CMD_CANCEL 10U
+#define CANCEL_WIRE_SIZE 8U
 #define CMD_CONTROL 12U
 
 #define PREPARE_SIZE 0x80010U
@@ -74,7 +75,12 @@
 #define CONTROL_LOAD_BDS 82U
 #define EL721_BDS_MAX_CHUNK 3U
 #define CONTROL_CPU_IDLE 83U
-#define CONTROL_SELECT_MODEL 90U
+/* Two control operations look the running board up in the TA's table of
+ * Samsung model codes, and only this one goes on to build the matcher's
+ * configuration from the entry it found.  Operation 90 sets the index and
+ * stops there, which leaves the matcher unbuilt and every biometric command
+ * answering 29. */
+#define CONTROL_SELECT_MODEL 88U
 #define EL721_MODEL "X916"
 #define EL721_MODEL_FIELD 10U
 #define EL721_BDS_MAX (4U * 1024U * 1024U)
@@ -1482,11 +1488,10 @@ el721_qtee_identify_final (El721Qtee *session, El721Reply *reply, GError **error
 gboolean
 el721_qtee_cancel (El721Qtee *session, El721Reply *reply, GError **error)
 {
-  guint8 body[12] = { 0 };
+  guint8 body[CANCEL_WIRE_SIZE] = { 0 };
   guint8 *output;
   put_u32 (body, 0, CMD_CANCEL);
-  put_u32 (body, 8, EL721_SENSOR_TYPE);
-  if (!invoke_body (session, CMD_CANCEL, sizeof (body), 12,
+  if (!invoke_body (session, CMD_CANCEL, CANCEL_WIRE_SIZE, CANCEL_WIRE_SIZE,
                     body, sizeof (body), &output, error))
     return FALSE;
   decode_common (reply, output);

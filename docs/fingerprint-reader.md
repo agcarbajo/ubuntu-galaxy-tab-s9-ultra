@@ -845,3 +845,42 @@ Linux — that avenue is closed, and the module that tried it has been deleted s
 it cannot be loaded again by accident. And the reset is itself a positive
 result: it confirms that `gpio36`..`gpio39` really are the reader's secure SPI
 and that TrustZone owns that path end to end.
+
+## What 29 really was: the matcher was never built
+
+Disassembling the number to its source, rather than reasoning about it, ended
+the investigation. The chain is short and every link is checkable.
+
+`EnrollInit` reaches `fp_enroll_init`, which calls `matcher_api_enroll_init`,
+whose very first act is `enroll_init_v2`. That function asks the fingerprint
+context for its matcher object — field `0x2f98` — and fails immediately when it
+is null. Only one function in the whole TA ever writes that field, and it is
+reached only from `matcher_api_init`.
+
+`matcher_api_init` builds the matcher from one of two sources. If the model
+index is set it reads the matcher configuration from the global the model
+lookup fills. Otherwise it falls back to the sensor type and accepts only the
+values 1 to 4 — and on anything else it returns without building anything,
+which is exactly the silent path this port was taking. That also settles an old
+red herring: the `sensor_type` this port used to report, 8, would have failed
+that test just as surely as the 0 it reports now. Sensor identification was
+never the route to enrolment; the model index is.
+
+The model index is set by `fp_set_model_type`, and the dispatcher reaches it
+from two control operations. Reading the jump table at `0x27a0e0` names them
+exactly:
+
+| operation | what it does |
+| --- | --- |
+| 88 | `fp_set_model_type`, **then builds the matcher configuration** |
+| 90 | `fp_set_model_type` and nothing else |
+
+This port had been sending 90, on the belief that 88 crashed the TA. It does
+not: both operations log the model name identically, so the log was never the
+difference, and 88 accepts the same five-byte `"X916"` payload without
+complaint. The earlier failure belonged to how the call was framed, not to the
+operation.
+
+With the bridge switched to operation 88, `EnrollInit` answers
+`result=0 status=0 opcode=0` for the first time in this port's history, and
+`Cancel` — corrected to its measured 8-byte envelope — answers cleanly too.
