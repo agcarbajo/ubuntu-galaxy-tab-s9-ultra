@@ -1146,7 +1146,18 @@ allows the RPMh regulator driver to finish binding before acquisition.
 The redesigned driver and complete experimental kernel compile cleanly;
 `checkpatch.pl` reports no warnings and the linked image has SHA-256
 `1539dd48f6562a39edab3cad6dfe03e1b896d82102a6f1ae14e1453166c9be13`.
-The same late changeset was loaded on the stable tablet with power disabled,
-registered `vreg_l2b_3p3`, and reverted cleanly without a reboot. The linked
-image is deliberately not a boot candidate until its source review and a
-reversible boot/install set are complete.
+The same late changeset was first loaded on the stable tablet with power
+disabled, registered `vreg_l2b_3p3`, and reverted cleanly without a reboot.
+The reviewed image was then packed as Android v4 boot
+`d315e4ffc751a6fb2e96ccb5b49fa623c0dfe760000882bcbd5e552574d7cbb4`
+and booted on the first attempt. At idle `/el721-supply` was absent and the
+companion reported the sensor off. Its first explicit power request created
+the supply, registered the regulator at 3,296 mV and raised its consumer count
+to one; powering off returned that count to zero without a reset or warning.
+
+The current QTEE-backed self-test then loaded the signed `dualfp` application
+and ran calibrated `Prepare`. Transport, invoke result, function status and
+opcode were all zero, but `sensor_type` was still zero. This closes the boot
+and Linux power-integration regression without changing the trusted-SPI
+diagnosis: the next missing prerequisite is whatever secure initialisation
+makes the EL721 answer `07 15` under One UI.

@@ -6585,5 +6585,19 @@ resulting `Image.gz` is
 `1539dd48f6562a39edab3cad6dfe03e1b896d82102a6f1ae14e1453166c9be13`.
 Loading the equivalent changeset as a signed module on the stable tablet with
 power disabled registered the regulator, left the system responsive, and
-reverted the tree cleanly on unload. No new boot image was flashed in this
-session; the stable Ubuntu set remains active.
+reverted the tree cleanly on unload.
+
+After a verified backup, the kernel was packed as boot image
+`d315e4ffc751a6fb2e96ccb5b49fa623c0dfe760000882bcbd5e552574d7cbb4`
+with the unchanged DTB and matching signed modules. It booted on the first
+attempt. The supply node was absent at idle, appeared only on the first
+`sensor_power=1`, registered at 3,296 mV with one consumer, and returned to
+zero consumers on power-off. The active partition and stored Ubuntu boot image
+were reread and matched; the previous set is in
+`/var/lib/gts9u-fingerprint-on-demand-backup-20260825`.
+
+The current QTEE self-test then loaded `dualfp` and issued calibrated
+`Prepare`. Transport and function status succeeded, but the returned internal
+sensor type remained zero. The boot and Linux-side rail regression are fixed;
+the remaining blocker is still the secure initialisation needed for the EL721
+to return identity bytes `07 15` to the TA.
