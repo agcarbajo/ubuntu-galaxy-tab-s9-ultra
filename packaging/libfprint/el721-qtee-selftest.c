@@ -94,6 +94,15 @@ main (int argc, char **argv)
           !el721_qtee_generate_challenge (session, 0, 0, &challenge,
                                           &challenge_result, &error))
         goto out;
+      if (g_getenv ("EL721_DUMP_AUTH"))
+        {
+          guint index;
+
+          g_print ("Challenge record:");
+          for (index = 0; index < sizeof (challenge.bytes); index++)
+            g_print ("%02x", challenge.bytes[index]);
+          g_print ("\n");
+        }
       memcpy (hat + 1, challenge.bytes + 8, sizeof (guint64));
       if (!el721_qtee_hat_op (session, hat, sizeof (hat), 0, NULL, 0,
                               &challenge, &hat_result, &error))
@@ -108,6 +117,16 @@ main (int argc, char **argv)
         }
       g_print ("Auth probe: challenge result=%u, unsigned HAT result=%u\n",
                challenge_result, hat_result);
+    }
+  if (g_getenv ("EL721_GATEKEEPER_AUTH_PROBE"))
+    {
+      if (el721_qtee_authorize_enrollment (session, 0, 0, &error))
+        g_print ("Gatekeeper authorization probe: accepted\n");
+      else if (error)
+        {
+          g_print ("Gatekeeper authorization probe: %s\n", error->message);
+          g_clear_error (&error);
+        }
     }
   /* One ordered probe list, so a stock sequence can be replayed exactly:
    * "c84" a bare control, "c22=1" a control with one byte, "u49" a control
@@ -351,14 +370,14 @@ main (int argc, char **argv)
                 }
               if (reply.opcode == OP_NOTIFY_DOWN)
                 {
-                  if (!el721_qtee_control_op (session, 87, NULL, 0, 0, &error) ||
-                      !el721_qtee_control_op (session, 80, NULL, 0, 0, &error))
+                  if (!el721_qtee_control_op (session, 87, NULL, 0, 1, &error) ||
+                      !el721_qtee_control_op (session, 80, NULL, 0, 4, &error))
                     goto out;
                   continue;
                 }
               if (reply.opcode == OP_CAPTURE_STEP)
                 {
-                  if (!el721_qtee_control_op (session, 87, NULL, 0, 0, &error))
+                  if (!el721_qtee_control_op (session, 87, NULL, 0, 1, &error))
                     goto out;
                   continue;
                 }

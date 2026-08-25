@@ -6696,3 +6696,42 @@ were zero after both probes.
 Progress remains approximately 88%: this removes ambiguity and prepares the
 transport API, but it does not create the legitimate Ubuntu authentication
 token required before the TA will enter opcode 4 and begin capture.
+
+## Session 111 — TrustZone accepts Ubuntu's HAT and capture becomes recoverable
+
+Date: 2026-08-26. Disassembly of dualfp and the stock gateway resolved the HAT
+key path. `skeymast` command `0x203` encapsulates its current HMAC key for the
+target `"dualfp"`; dualfp command 15 decapsulates that envelope, and control 49
+installs the decoded metadata. The production bridge relays only those
+target-bound secure-world objects. The raw key, Android PIN, Android HAT and
+Android biometric data never enter Ubuntu.
+
+Ubuntu maintains its own random, root-only Gatekeeper identity. It enrols the
+same secret into each newly loaded `skeymast` session, verifies BAUTH's current
+challenge and passes the resulting signed HAT to command 13. The ARM64 harness
+then measured `Gatekeeper authorization probe: accepted`, `EnrollInit result=0`
+and a clean cancel. The old code 28 came from the missing HMAC-key provisioning,
+not from the challenge record or QTEE cache coherency.
+
+The first physical run exposed two independent decoder/state-machine errors.
+`BAuth_Enroll_Do` returns its opcode at word zero, not `+12`; with that fixed,
+Ubuntu measures the same `4, 5, 87, 0` sequence as One UI. Result 39 is a normal
+BAD_QUALITY capture result mirrored into the outer QSEECom response. Every
+capture, including 39, must be closed with `EnrollFinal` and followed by a new
+`EnrollInit`; otherwise dualfp remains in its `0x80000000` sentinel. Package
+`gts9u14` implemented that recovery and repeatedly completed
+`Init → Do → Final → Init` without wedging the trustlet.
+
+Finally, One UI's `check_opcode` jump table supplied the missing control shape.
+Opcode 5 sends control 87 with one byte of output capacity and control 80 with
+four bytes; opcode 87 sends control 87 with one. The earlier zero-capacity call
+made control 80 return 51. Package `gts9u16` contains the exact framing and is
+installed for the next physical capture. The negative dedicated-TZMEM kernel
+experiment was removed from the branch because it changed neither HAT nor
+capture behaviour.
+
+Approximate implementation progress is 98.7%. HAT authorization, secure
+sensor access, the desktop target, FOD touch events and a recoverable capture
+protocol are in place. Still unproven are one accepted capture (`opcode 6`), a
+complete stored template, verification, GDM integration and reboot/crash
+recovery.

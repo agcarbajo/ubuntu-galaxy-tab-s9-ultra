@@ -11,6 +11,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/random.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <glib/gstdio.h>
@@ -49,6 +51,7 @@
 #define CANCEL_WIRE_SIZE 8U
 #define CMD_CONTROL 12U
 #define CMD_HAT_OP 13U
+#define CMD_DECAP_KEY 15U
 #define CMD_CHALLENGE 19U
 
 #define PREPARE_SIZE 0x80010U
@@ -104,6 +107,37 @@
 #define HAT_PAYLOAD_LENGTH_OFFSET 0x44dU
 #define HAT_CHALLENGE_OFFSET 0x451U
 
+#define DECAP_KEY_INPUT_SIZE 0x408U
+#define DECAP_KEY_INPUT_DATA_OFFSET 4U
+#define DECAP_KEY_INPUT_DATA_MAX 0x400U
+#define DECAP_KEY_INPUT_LENGTH_OFFSET 0x404U
+#define DECAP_KEY_OUTPUT_SIZE 0x8000cU
+#define DECAP_KEY_OUTPUT_DATA_OFFSET 8U
+#define DECAP_KEY_OUTPUT_DATA_MAX 0x80000U
+#define DECAP_KEY_OUTPUT_LENGTH_OFFSET 0x80008U
+
+#define GATEKEEPER_SHARED_SIZE 0x2080U
+#define GATEKEEPER_UID 0x47545355U
+#define GATEKEEPER_HANDLE_SIZE 58U
+#define GATEKEEPER_SECRET_SIZE 32U
+#define GATEKEEPER_STATE_DIRECTORY "/var/lib/gts9u-fingerprint"
+#define GATEKEEPER_STATE_PATH GATEKEEPER_STATE_DIRECTORY "/gts9u-gatekeeper"
+#define GATEKEEPER_LEGACY_STATE_PATH "/var/lib/fprint/gts9u-gatekeeper"
+#define GATEKEEPER_STATE_SIZE (8U + 1U + GATEKEEPER_SECRET_SIZE + \
+                               GATEKEEPER_HANDLE_SIZE)
+#define GATEKEEPER_ENROLL_COMMAND 0x201U
+#define GATEKEEPER_VERIFY_COMMAND 0x202U
+#define GATEKEEPER_GET_HAT_KEY_COMMAND 0x203U
+#define GATEKEEPER_ENROLL_SCHEMA 0x4d29U
+#define GATEKEEPER_VERIFY_SCHEMA 0x5b3dU
+#define GATEKEEPER_KEY_REQUEST_SIZE 0x14080U
+#define GATEKEEPER_KEY_RESPONSE_SIZE 0x40U
+#define GATEKEEPER_KEY_NAME_OFFSET 0x10U
+#define GATEKEEPER_KEY_DATA_OFFSET 0xa010U
+#define GATEKEEPER_KEY_DATA_MAX 0xa000U
+#define CONTROL_HAT_ENABLE 22U
+#define CONTROL_SEND_HAT_KEY 49U
+
 #define EL721_ERROR el721_qtee_error_quark ()
 
 struct _El721Qtee
@@ -114,10 +148,12 @@ struct _El721Qtee
   struct qcomtee_object *qis_memory;
   struct qcomtee_object *app_loader;
   struct qcomtee_object *controller;
+  struct qcomtee_object *gatekeeper;
   struct qcomtee_object *input;
   struct qcomtee_object *output;
   gchar *firmware_directory;
   gboolean loaded_here;
+  gboolean gatekeeper_loaded_here;
 };
 
 typedef struct
@@ -420,13 +456,14 @@ read_file (const gchar *path, guint8 *buffer, gsize size, GError **error)
 }
 
 static gboolean
-assemble_ta (const gchar *directory, guint8 **image_out, gsize *size_out,
-             GError **error)
+assemble_ta (const gchar *directory, const gchar *basename,
+             guint8 **image_out, gsize *size_out, GError **error)
 {
   Elf64_Ehdr header;
   Elf64_Phdr phdr[EL721_TA_SEGMENTS];
   gsize segment_sizes[EL721_TA_SEGMENTS] = { 0 };
-  g_autofree gchar *first = g_build_filename (directory, "dualfp.b00", NULL);
+  g_autofree gchar *first_name = g_strdup_printf ("%s.b00", basename);
+  g_autofree gchar *first = g_build_filename (directory, first_name, NULL);
   g_autofree gchar *header_data = NULL;
   gsize header_size = 0;
   guint8 *image;
@@ -448,7 +485,7 @@ assemble_ta (const gchar *directory, guint8 **image_out, gsize *size_out,
   segment_sizes[0] = header_size;
   for (i = 1; i < EL721_TA_SEGMENTS; i++)
     {
-      g_autofree gchar *name = g_strdup_printf ("dualfp.b%02u", i);
+      g_autofree gchar *name = g_strdup_printf ("%s.b%02u", basename, i);
       g_autofree gchar *path = g_build_filename (directory, name, NULL);
       GStatBuf stat_buffer;
       if (g_stat (path, &stat_buffer) || stat_buffer.st_size < 0)
@@ -466,7 +503,7 @@ assemble_ta (const gchar *directory, guint8 **image_out, gsize *size_out,
   image = g_malloc0 (image_size);
   for (i = 0; i < EL721_TA_SEGMENTS; i++)
     {
-      g_autofree gchar *name = g_strdup_printf ("dualfp.b%02u", i);
+      g_autofree gchar *name = g_strdup_printf ("%s.b%02u", basename, i);
       g_autofree gchar *path = g_build_filename (directory, name, NULL);
       gsize offset = i ? phdr[i].p_offset : 0;
       if (offset > image_size || segment_sizes[i] > image_size - offset ||
@@ -481,19 +518,16 @@ assemble_ta (const gchar *directory, guint8 **image_out, gsize *size_out,
   return TRUE;
 
 invalid:
-  g_set_error_literal (error, EL721_ERROR, 1,
-                       "dualfp.b00 has an unsupported signed ELF layout");
+  g_set_error (error, EL721_ERROR, 1,
+               "%s.b00 has an unsupported signed ELF layout", basename);
   return FALSE;
 }
 
 static gboolean
-lookup_ta (El721Qtee *session, struct qcomtee_object **controller,
+lookup_ta (El721Qtee *session, const gchar *name,
+           struct qcomtee_object **controller,
            qcomtee_result_t *result)
 {
-  /* EL721 is an optical in-display sensor.  Samsung's gateway selects the
-   * dualfp trustlet for this path; securefp is a different, concurrently
-   * available TA and can therefore be looked up successfully by mistake. */
-  static const gchar name[] = "dualfp";
   struct qcomtee_param params[2] = { 0 };
   params[0].attr = QCOMTEE_UBUF_INPUT;
   params[0].ubuf.addr = (void *) name;
@@ -507,16 +541,16 @@ lookup_ta (El721Qtee *session, struct qcomtee_object **controller,
 }
 
 static gboolean
-load_ta (El721Qtee *session, const gchar *directory, GError **error)
+load_ta (El721Qtee *session, const gchar *directory, const gchar *basename,
+         struct qcomtee_object **controller, GError **error)
 {
-  static const gchar load_name[] = "dualfp";
   g_autofree guint8 *image = NULL;
   gsize image_size = 0;
   struct qcomtee_object *memory = QCOMTEE_OBJECT_NULL;
   struct qcomtee_param params[3] = { 0 };
   qcomtee_result_t result = QCOMTEE_ERROR;
 
-  if (!assemble_ta (directory, &image, &image_size, error))
+  if (!assemble_ta (directory, basename, &image, &image_size, error))
     return FALSE;
   if (qcomtee_memory_object_alloc (image_size, session->root, &memory))
     {
@@ -526,8 +560,8 @@ load_ta (El721Qtee *session, const gchar *directory, GError **error)
     }
   memcpy (qcomtee_memory_object_addr (memory), image, image_size);
   params[0].attr = QCOMTEE_UBUF_INPUT;
-  params[0].ubuf.addr = (void *) load_name;
-  params[0].ubuf.size = strlen (load_name);
+  params[0].ubuf.addr = (void *) basename;
+  params[0].ubuf.size = strlen (basename);
   params[1].attr = QCOMTEE_OBJREF_INPUT;
   params[1].object = memory;
   params[2].attr = QCOMTEE_OBJREF_OUTPUT;
@@ -536,12 +570,12 @@ load_ta (El721Qtee *session, const gchar *directory, GError **error)
       params[2].object == QCOMTEE_OBJECT_NULL)
     {
       g_set_error (error, EL721_ERROR, result,
-                   "TrustZone rejected the signed dualfp image (result %u)", result);
+                   "TrustZone rejected the signed %s image (result %u)",
+                   basename, result);
       qcomtee_memory_object_release (memory);
       return FALSE;
     }
-  session->controller = params[2].object;
-  session->loaded_here = TRUE;
+  *controller = params[2].object;
   qcomtee_memory_object_release (memory);
   return TRUE;
 }
@@ -625,7 +659,10 @@ el721_qtee_open (const gchar *firmware_directory, GError **error)
                                       QSEECOM_APP_LOADER_UID, error);
   if (session->app_loader == QCOMTEE_OBJECT_NULL)
     goto fail;
-  if (!lookup_ta (session, &session->controller, &lookup_result))
+  /* EL721 is an optical in-display sensor.  Samsung's gateway selects the
+   * dualfp trustlet for this path; securefp is a different, concurrently
+   * available TA and can therefore be looked up successfully by mistake. */
+  if (!lookup_ta (session, "dualfp", &session->controller, &lookup_result))
     {
       g_set_error_literal (error, EL721_ERROR, 1, "lookupTA transport failed");
       goto fail;
@@ -637,8 +674,10 @@ el721_qtee_open (const gchar *firmware_directory, GError **error)
     {
       qcomtee_object_refs_dec (session->controller);
       session->controller = QCOMTEE_OBJECT_NULL;
-      if (!load_ta (session, firmware_directory, error))
+      if (!load_ta (session, firmware_directory, "dualfp",
+                    &session->controller, error))
         goto fail;
+      session->loaded_here = TRUE;
     }
   /* The wire views are smaller, but every command handler in the TA validates
    * the two non-secure pointers as ranges of exactly EL721_SHARED_ALLOC bytes
@@ -689,6 +728,14 @@ el721_qtee_close (El721Qtee *session)
     return;
   qcomtee_memory_object_release (session->output);
   qcomtee_memory_object_release (session->input);
+  if (session->gatekeeper_loaded_here &&
+      session->gatekeeper != QCOMTEE_OBJECT_NULL)
+    {
+      qcomtee_result_t result = QCOMTEE_ERROR;
+      qcomtee_object_invoke (session->gatekeeper, QSEECOM_UNLOAD_OP,
+                             NULL, 0, &result);
+    }
+  qcomtee_object_refs_dec (session->gatekeeper);
   if (session->loaded_here && session->controller != QCOMTEE_OBJECT_NULL)
     {
       qcomtee_result_t result = QCOMTEE_ERROR;
@@ -703,6 +750,614 @@ el721_qtee_close (El721Qtee *session)
   qcomtee_object_refs_dec (session->root);
   g_free (session->firmware_directory);
   g_free (session);
+}
+
+static void
+secure_clear (gpointer data, gsize size)
+{
+  volatile guint8 *bytes = data;
+
+  while (size--)
+    *bytes++ = 0;
+}
+
+static gboolean
+ensure_gatekeeper (El721Qtee *session, GError **error)
+{
+  qcomtee_result_t lookup_result = QCOMTEE_ERROR;
+
+  if (session->gatekeeper != QCOMTEE_OBJECT_NULL)
+    return TRUE;
+  if (!lookup_ta (session, "skeymast", &session->gatekeeper,
+                  &lookup_result))
+    {
+      g_set_error_literal (error, EL721_ERROR, 1,
+                           "Gatekeeper lookupTA transport failed");
+      return FALSE;
+    }
+  if (!lookup_result && session->gatekeeper != QCOMTEE_OBJECT_NULL)
+    return TRUE;
+
+  qcomtee_object_refs_dec (session->gatekeeper);
+  session->gatekeeper = QCOMTEE_OBJECT_NULL;
+  if (!load_ta (session, session->firmware_directory, "skeymast",
+                &session->gatekeeper, error))
+    return FALSE;
+  session->gatekeeper_loaded_here = TRUE;
+  return TRUE;
+}
+
+typedef struct
+{
+  guint8 bytes[256];
+  gsize size;
+} El721DerBuilder;
+
+static gboolean
+der_append_length (El721DerBuilder *builder, gsize length)
+{
+  if (length < 0x80)
+    {
+      if (builder->size == sizeof (builder->bytes))
+        return FALSE;
+      builder->bytes[builder->size++] = (guint8) length;
+      return TRUE;
+    }
+  if (length > 0xff || builder->size > sizeof (builder->bytes) - 2)
+    return FALSE;
+  builder->bytes[builder->size++] = 0x81;
+  builder->bytes[builder->size++] = (guint8) length;
+  return TRUE;
+}
+
+static gboolean
+der_append_tlv (El721DerBuilder *builder, guint8 tag,
+                const guint8 *value, gsize value_size)
+{
+  if (builder->size == sizeof (builder->bytes))
+    return FALSE;
+  builder->bytes[builder->size++] = tag;
+  if (!der_append_length (builder, value_size) ||
+      value_size > sizeof (builder->bytes) - builder->size)
+    return FALSE;
+  if (value_size)
+    memcpy (builder->bytes + builder->size, value, value_size);
+  builder->size += value_size;
+  return TRUE;
+}
+
+static gboolean
+der_append_integer (El721DerBuilder *builder, guint64 value)
+{
+  guint8 integer[9];
+  gsize first = sizeof (integer) - 1;
+
+  integer[first] = (guint8) value;
+  while ((value >>= 8) != 0)
+    integer[--first] = (guint8) value;
+  if (integer[first] & 0x80)
+    integer[--first] = 0;
+  return der_append_tlv (builder, 0x02, integer + first,
+                         sizeof (integer) - first);
+}
+
+static gboolean
+der_append_explicit_integer (El721DerBuilder *builder, guint8 tag,
+                             guint64 value)
+{
+  El721DerBuilder inner = { 0 };
+
+  return der_append_integer (&inner, value) &&
+         der_append_tlv (builder, tag, inner.bytes, inner.size);
+}
+
+static gboolean
+der_append_explicit_octet (El721DerBuilder *builder, guint8 tag,
+                           const guint8 *value, gsize value_size)
+{
+  El721DerBuilder inner = { 0 };
+
+  return der_append_tlv (&inner, 0x04, value, value_size) &&
+         der_append_tlv (builder, tag, inner.bytes, inner.size);
+}
+
+static gboolean
+gatekeeper_build_frame (guint32 command, guint64 challenge,
+                        const guint8 secret[GATEKEEPER_SECRET_SIZE],
+                        const guint8 *handle, gsize handle_size,
+                        guint8 frame[256], gsize *frame_size, GError **error)
+{
+  El721DerBuilder content = { 0 };
+  El721DerBuilder sequence = { 0 };
+  gboolean enrolling = command == GATEKEEPER_ENROLL_COMMAND;
+  guint32 schema = enrolling ? GATEKEEPER_ENROLL_SCHEMA :
+                               GATEKEEPER_VERIFY_SCHEMA;
+
+  if ((!enrolling && (!handle || handle_size != GATEKEEPER_HANDLE_SIZE)) ||
+      (enrolling && handle_size))
+    goto invalid;
+  if (!der_append_integer (&content, 3) ||
+      !der_append_integer (&content, 100) ||
+      !der_append_integer (&content, command) ||
+      !der_append_integer (&content, schema) ||
+      !der_append_explicit_integer (&content, 0xa0, GATEKEEPER_UID) ||
+      (!enrolling &&
+       !der_append_explicit_integer (&content, 0xa1, challenge)) ||
+      !der_append_explicit_octet (&content, 0xa3,
+                                  enrolling ? NULL : secret,
+                                  enrolling ? 0 : GATEKEEPER_SECRET_SIZE) ||
+      (enrolling &&
+       !der_append_explicit_octet (&content, 0xa4, secret,
+                                   GATEKEEPER_SECRET_SIZE)) ||
+      !der_append_explicit_octet (&content, 0xa6, handle, handle_size) ||
+      !der_append_tlv (&sequence, 0x30, content.bytes, content.size) ||
+      sequence.size > 256 - 8)
+    goto invalid;
+  memset (frame, 0, 256);
+  put_u64 (frame, 0, sequence.size);
+  memcpy (frame + 8, sequence.bytes, sequence.size);
+  *frame_size = 8 + sequence.size;
+  secure_clear (&content, sizeof (content));
+  secure_clear (&sequence, sizeof (sequence));
+  return TRUE;
+
+invalid:
+  secure_clear (&content, sizeof (content));
+  secure_clear (&sequence, sizeof (sequence));
+  g_set_error_literal (error, EL721_ERROR, 1,
+                       "cannot encode the Gatekeeper request");
+  return FALSE;
+}
+
+static gboolean
+gatekeeper_send (El721Qtee *session, const guint8 *frame, gsize frame_size,
+                 guint8 response_out[GATEKEEPER_SHARED_SIZE], GError **error)
+{
+  guint8 request[GATEKEEPER_SHARED_SIZE] = { 0 };
+  guint8 response[GATEKEEPER_SHARED_SIZE] = { 0 };
+  guint8 request_out[GATEKEEPER_SHARED_SIZE] = { 0 };
+  guint32 is_64_bit = 1;
+  struct qcomtee_param params[10] = { 0 };
+  qcomtee_result_t result = QCOMTEE_ERROR;
+  gboolean ok = FALSE;
+  guint i;
+
+  if (frame_size > sizeof (request))
+    {
+      g_set_error_literal (error, EL721_ERROR, 1,
+                           "Gatekeeper request is too large");
+      return FALSE;
+    }
+  memcpy (request, frame, frame_size);
+  memset (response_out, 0, GATEKEEPER_SHARED_SIZE);
+  params[0] = (struct qcomtee_param) {
+    .attr = QCOMTEE_UBUF_INPUT,
+    .ubuf = { request, sizeof (request) }
+  };
+  params[1] = (struct qcomtee_param) {
+    .attr = QCOMTEE_UBUF_INPUT,
+    .ubuf = { response, sizeof (response) }
+  };
+  params[2] = (struct qcomtee_param) {
+    .attr = QCOMTEE_UBUF_INPUT,
+    .ubuf = { NULL, 0 }
+  };
+  params[3] = (struct qcomtee_param) {
+    .attr = QCOMTEE_UBUF_INPUT,
+    .ubuf = { &is_64_bit, sizeof (is_64_bit) }
+  };
+  params[4] = (struct qcomtee_param) {
+    .attr = QCOMTEE_UBUF_OUTPUT,
+    .ubuf = { request_out, sizeof (request_out) }
+  };
+  params[5] = (struct qcomtee_param) {
+    .attr = QCOMTEE_UBUF_OUTPUT,
+    .ubuf = { response_out, GATEKEEPER_SHARED_SIZE }
+  };
+  for (i = 6; i < G_N_ELEMENTS (params); i++)
+    params[i] = (struct qcomtee_param) {
+      .attr = QCOMTEE_OBJREF_INPUT,
+      .object = QCOMTEE_OBJECT_NULL
+    };
+  if (qcomtee_object_invoke (session->gatekeeper, QSEECOM_SEND_REQUEST_OP,
+                             params, G_N_ELEMENTS (params), &result))
+    g_set_error_literal (error, EL721_ERROR, 1,
+                         "Gatekeeper transport failed");
+  else if (result)
+    g_set_error (error, EL721_ERROR, result,
+                 "Gatekeeper rejected the request (result %u)", result);
+  else
+    ok = TRUE;
+  secure_clear (request, sizeof (request));
+  secure_clear (response, sizeof (response));
+  secure_clear (request_out, sizeof (request_out));
+  return ok;
+}
+
+/* Samsung's KeyMint bridge asks skeymast to encapsulate the current Hardware
+ * Auth Token HMAC key for the named biometric TA.  The key itself never
+ * crosses the secure boundary: userspace only relays this target-bound
+ * envelope to dualfp's DECAP_KEY command. */
+static gboolean
+gatekeeper_get_hat_key_envelope (El721Qtee *session, guint8 **envelope,
+                                 gsize *envelope_size, GError **error)
+{
+  static const guint8 target[] = "dualfp";
+  g_autofree guint8 *request = g_malloc0 (GATEKEEPER_KEY_REQUEST_SIZE);
+  g_autofree guint8 *request_out = g_malloc0 (GATEKEEPER_KEY_REQUEST_SIZE);
+  guint8 response[GATEKEEPER_KEY_RESPONSE_SIZE] = { 0 };
+  guint8 response_out[GATEKEEPER_KEY_RESPONSE_SIZE] = { 0 };
+  guint32 is_64_bit = 1;
+  struct qcomtee_param params[10] = { 0 };
+  qcomtee_result_t result = QCOMTEE_ERROR;
+  guint32 returned_size;
+  guint32 status;
+  gboolean ok = FALSE;
+  guint i;
+
+  *envelope = NULL;
+  *envelope_size = 0;
+  put_u32 (request, 0, GATEKEEPER_GET_HAT_KEY_COMMAND);
+  put_u32 (request, 4, sizeof (target) - 1);
+  put_u32 (request, 8, GATEKEEPER_KEY_DATA_MAX);
+  memcpy (request + GATEKEEPER_KEY_NAME_OFFSET, target, sizeof (target) - 1);
+  params[0] = (struct qcomtee_param) {
+    .attr = QCOMTEE_UBUF_INPUT,
+    .ubuf = { request, GATEKEEPER_KEY_REQUEST_SIZE }
+  };
+  params[1] = (struct qcomtee_param) {
+    .attr = QCOMTEE_UBUF_INPUT,
+    .ubuf = { response, sizeof (response) }
+  };
+  params[2] = (struct qcomtee_param) {
+    .attr = QCOMTEE_UBUF_INPUT,
+    .ubuf = { NULL, 0 }
+  };
+  params[3] = (struct qcomtee_param) {
+    .attr = QCOMTEE_UBUF_INPUT,
+    .ubuf = { &is_64_bit, sizeof (is_64_bit) }
+  };
+  params[4] = (struct qcomtee_param) {
+    .attr = QCOMTEE_UBUF_OUTPUT,
+    .ubuf = { request_out, GATEKEEPER_KEY_REQUEST_SIZE }
+  };
+  params[5] = (struct qcomtee_param) {
+    .attr = QCOMTEE_UBUF_OUTPUT,
+    .ubuf = { response_out, sizeof (response_out) }
+  };
+  for (i = 6; i < G_N_ELEMENTS (params); i++)
+    params[i] = (struct qcomtee_param) {
+      .attr = QCOMTEE_OBJREF_INPUT,
+      .object = QCOMTEE_OBJECT_NULL
+    };
+  if (qcomtee_object_invoke (session->gatekeeper, QSEECOM_SEND_REQUEST_OP,
+                             params, G_N_ELEMENTS (params), &result))
+    g_set_error_literal (error, EL721_ERROR, 1,
+                         "skeymast HAT-key transport failed");
+  else
+    {
+      returned_size = get_u32 (request_out, 8);
+      status = get_u32 (request_out, 12);
+      if (result || status || returned_size == 0 ||
+          returned_size > GATEKEEPER_KEY_DATA_MAX)
+        g_set_error (error, EL721_ERROR, status ? status : result,
+                     "skeymast HAT-key request failed (invoke=%u, status=%u, "
+                     "size=%u)", result, status, returned_size);
+      else
+        {
+          *envelope = g_memdup2 (request_out + GATEKEEPER_KEY_DATA_OFFSET,
+                                 returned_size);
+          *envelope_size = returned_size;
+          ok = TRUE;
+        }
+    }
+  secure_clear (request, GATEKEEPER_KEY_REQUEST_SIZE);
+  secure_clear (request_out, GATEKEEPER_KEY_REQUEST_SIZE);
+  secure_clear (response, sizeof (response));
+  secure_clear (response_out, sizeof (response_out));
+  return ok;
+}
+
+static gboolean
+der_read_length (const guint8 *buffer, gsize size,
+                 gsize *header_size, gsize *value_size)
+{
+  gsize bytes;
+  gsize value = 0;
+  gsize i;
+
+  if (size < 2)
+    return FALSE;
+  if (!(buffer[1] & 0x80))
+    {
+      *header_size = 2;
+      *value_size = buffer[1];
+      return *value_size <= size - 2;
+    }
+  bytes = buffer[1] & 0x7f;
+  if (!bytes || bytes > sizeof (gsize) || bytes > size - 2)
+    return FALSE;
+  for (i = 0; i < bytes; i++)
+    value = (value << 8) | buffer[2 + i];
+  *header_size = 2 + bytes;
+  *value_size = value;
+  return value <= size - *header_size;
+}
+
+static gboolean
+gatekeeper_extract_octet (const guint8 frame[GATEKEEPER_SHARED_SIZE],
+                          gsize expected_size, const guint8 **octet)
+{
+  guint64 declared = 0;
+  gsize sequence_header;
+  gsize sequence_size;
+  gsize offset;
+  guint i;
+
+  for (i = 0; i < 8; i++)
+    declared |= (guint64) frame[i] << (8 * i);
+  if (declared > GATEKEEPER_SHARED_SIZE - 8 || frame[8] != 0x30 ||
+      !der_read_length (frame + 8, (gsize) declared, &sequence_header,
+                        &sequence_size))
+    return FALSE;
+  offset = 8 + sequence_header;
+  while (offset < 8 + sequence_header + sequence_size)
+    {
+      const guint8 *outer = frame + offset;
+      gsize remaining = 8 + sequence_header + sequence_size - offset;
+      gsize outer_header;
+      gsize outer_size;
+      gsize inner_header;
+      gsize inner_size;
+
+      if (!der_read_length (outer, remaining, &outer_header, &outer_size))
+        return FALSE;
+      if ((outer[0] & 0xe0) == 0xa0 && outer_size >= 2 &&
+          outer[outer_header] == 0x04 &&
+          der_read_length (outer + outer_header, outer_size,
+                           &inner_header, &inner_size) &&
+          inner_header + inner_size == outer_size &&
+          inner_size == expected_size)
+        {
+          *octet = outer + outer_header + inner_header;
+          return TRUE;
+        }
+      offset += outer_header + outer_size;
+    }
+  return FALSE;
+}
+
+static gboolean
+random_secret (guint8 secret[GATEKEEPER_SECRET_SIZE], GError **error)
+{
+  gsize offset = 0;
+
+  while (offset < GATEKEEPER_SECRET_SIZE)
+    {
+      ssize_t got = getrandom (secret + offset,
+                               GATEKEEPER_SECRET_SIZE - offset, 0);
+
+      if (got > 0)
+        offset += got;
+      else if (got < 0 && errno == EINTR)
+        continue;
+      else
+        {
+          g_set_error (error, G_FILE_ERROR, g_file_error_from_errno (errno),
+                       "cannot obtain Gatekeeper randomness: %s",
+                       g_strerror (errno));
+          secure_clear (secret, GATEKEEPER_SECRET_SIZE);
+          return FALSE;
+        }
+    }
+  return TRUE;
+}
+
+static gboolean
+read_full (int fd, guint8 *buffer, gsize size)
+{
+  gsize offset = 0;
+
+  while (offset < size)
+    {
+      ssize_t got = read (fd, buffer + offset, size - offset);
+
+      if (got > 0)
+        offset += got;
+      else if (got < 0 && errno == EINTR)
+        continue;
+      else
+        return FALSE;
+    }
+  return TRUE;
+}
+
+static gboolean
+write_full (int fd, const guint8 *buffer, gsize size)
+{
+  gsize offset = 0;
+
+  while (offset < size)
+    {
+      ssize_t wrote = write (fd, buffer + offset, size - offset);
+
+      if (wrote > 0)
+        offset += wrote;
+      else if (wrote < 0 && errno == EINTR)
+        continue;
+      else
+        return FALSE;
+    }
+  return TRUE;
+}
+
+static gboolean
+gatekeeper_read_state (guint8 secret[GATEKEEPER_SECRET_SIZE],
+                       guint8 handle[GATEKEEPER_HANDLE_SIZE],
+                       gboolean *found, GError **error)
+{
+  static const guint8 magic[8] = { 'G', 'T', 'S', '9', 'U', 'G', 'K', '1' };
+  guint8 state[GATEKEEPER_STATE_SIZE];
+  struct stat stat_buffer;
+  int fd;
+  int saved_errno;
+
+  *found = FALSE;
+  fd = open (GATEKEEPER_STATE_PATH, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+  if (fd < 0 && errno == ENOENT)
+    fd = open (GATEKEEPER_LEGACY_STATE_PATH,
+               O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+  if (fd < 0 && errno == ENOENT)
+    return TRUE;
+  if (fd < 0)
+    goto fail;
+  if (fstat (fd, &stat_buffer))
+    {
+      saved_errno = errno;
+      close (fd);
+      secure_clear (state, sizeof (state));
+      errno = saved_errno;
+      goto fail;
+    }
+  if (!S_ISREG (stat_buffer.st_mode) || stat_buffer.st_uid != 0 ||
+      (stat_buffer.st_mode & 077) ||
+      stat_buffer.st_size != GATEKEEPER_STATE_SIZE ||
+      !read_full (fd, state, sizeof (state)) ||
+      memcmp (state, magic, sizeof (magic)) || state[8] != 1)
+    {
+      close (fd);
+      secure_clear (state, sizeof (state));
+      errno = EINVAL;
+      goto fail;
+    }
+  close (fd);
+  memcpy (secret, state + 9, GATEKEEPER_SECRET_SIZE);
+  memcpy (handle, state + 9 + GATEKEEPER_SECRET_SIZE,
+          GATEKEEPER_HANDLE_SIZE);
+  secure_clear (state, sizeof (state));
+  *found = TRUE;
+  return TRUE;
+
+fail:
+  saved_errno = errno;
+  g_set_error (error, G_FILE_ERROR, g_file_error_from_errno (saved_errno),
+               "cannot read secure Gatekeeper state: %s",
+               g_strerror (saved_errno));
+  return FALSE;
+}
+
+static gboolean
+gatekeeper_write_state (const guint8 secret[GATEKEEPER_SECRET_SIZE],
+                        const guint8 handle[GATEKEEPER_HANDLE_SIZE],
+                        GError **error)
+{
+  static const guint8 magic[8] = { 'G', 'T', 'S', '9', 'U', 'G', 'K', '1' };
+  guint8 state[GATEKEEPER_STATE_SIZE] = { 0 };
+  g_autofree gchar *temporary = NULL;
+  int fd = -1;
+  int saved_errno = 0;
+
+  if (g_mkdir_with_parents (GATEKEEPER_STATE_DIRECTORY, 0700))
+    goto fail;
+  memcpy (state, magic, sizeof (magic));
+  state[8] = 1;
+  memcpy (state + 9, secret, GATEKEEPER_SECRET_SIZE);
+  memcpy (state + 9 + GATEKEEPER_SECRET_SIZE, handle,
+          GATEKEEPER_HANDLE_SIZE);
+  temporary = g_strdup (GATEKEEPER_STATE_PATH ".XXXXXX");
+  fd = g_mkstemp_full (temporary, O_WRONLY | O_CLOEXEC, 0600);
+  if (fd < 0)
+    goto fail;
+  if (!write_full (fd, state, sizeof (state)) || fsync (fd))
+    {
+      saved_errno = errno;
+      close (fd);
+      fd = -1;
+      goto fail;
+    }
+  if (close (fd))
+    {
+      saved_errno = errno;
+      fd = -1;
+      goto fail;
+    }
+  fd = -1;
+  if (g_rename (temporary, GATEKEEPER_STATE_PATH))
+    goto fail;
+  secure_clear (state, sizeof (state));
+  return TRUE;
+
+fail:
+  saved_errno = saved_errno ? saved_errno : errno;
+  if (fd >= 0)
+    close (fd);
+  if (temporary)
+    g_unlink (temporary);
+  secure_clear (state, sizeof (state));
+  g_set_error (error, G_FILE_ERROR, g_file_error_from_errno (saved_errno),
+               "cannot save secure Gatekeeper state: %s",
+               g_strerror (saved_errno));
+  return FALSE;
+}
+
+static gboolean
+gatekeeper_enroll_secret (El721Qtee *session,
+                          const guint8 secret[GATEKEEPER_SECRET_SIZE],
+                          guint8 handle[GATEKEEPER_HANDLE_SIZE],
+                          GError **error)
+{
+  guint8 frame[256] = { 0 };
+  guint8 response[GATEKEEPER_SHARED_SIZE] = { 0 };
+  const guint8 *returned_handle = NULL;
+  gsize frame_size = 0;
+  gboolean ok = FALSE;
+
+  if (gatekeeper_build_frame (GATEKEEPER_ENROLL_COMMAND, 0, secret,
+                              NULL, 0, frame, &frame_size, error) &&
+      gatekeeper_send (session, frame, frame_size, response, error) &&
+      gatekeeper_extract_octet (response, GATEKEEPER_HANDLE_SIZE,
+                                &returned_handle))
+    {
+      memcpy (handle, returned_handle, GATEKEEPER_HANDLE_SIZE);
+      ok = TRUE;
+    }
+  else if (!error || !*error)
+    g_set_error_literal (error, EL721_ERROR, 1,
+                         "Gatekeeper enrolment returned no password handle");
+  secure_clear (frame, sizeof (frame));
+  secure_clear (response, sizeof (response));
+  return ok;
+}
+
+static gboolean
+gatekeeper_verify_secret (El721Qtee *session, guint64 challenge,
+                          const guint8 secret[GATEKEEPER_SECRET_SIZE],
+                          const guint8 handle[GATEKEEPER_HANDLE_SIZE],
+                          guint8 hat[EL721_HARDWARE_AUTH_TOKEN_SIZE],
+                          GError **error)
+{
+  guint8 frame[256] = { 0 };
+  guint8 response[GATEKEEPER_SHARED_SIZE] = { 0 };
+  const guint8 *returned_hat = NULL;
+  gsize frame_size = 0;
+  gboolean ok = FALSE;
+
+  if (gatekeeper_build_frame (GATEKEEPER_VERIFY_COMMAND, challenge, secret,
+                              handle, GATEKEEPER_HANDLE_SIZE, frame,
+                              &frame_size, error) &&
+      gatekeeper_send (session, frame, frame_size, response, error) &&
+      gatekeeper_extract_octet (response, EL721_HARDWARE_AUTH_TOKEN_SIZE,
+                                &returned_hat))
+    {
+      memcpy (hat, returned_hat, EL721_HARDWARE_AUTH_TOKEN_SIZE);
+      ok = TRUE;
+    }
+  else if (!error || !*error)
+    g_set_error_literal (error, EL721_ERROR, 1,
+                         "Gatekeeper verification returned no auth token");
+  secure_clear (frame, sizeof (frame));
+  secure_clear (response, sizeof (response));
+  return ok;
 }
 
 void
@@ -724,6 +1379,86 @@ static gboolean invoke_body_full (El721Qtee *session, guint32 command,
                                   gsize out_capacity_offset,
                                   guint32 out_capacity,
                                   guint8 **output, GError **error);
+static gboolean el721_qtee_control_full (El721Qtee *session,
+                                         guint32 operation, guint32 scalar,
+                                         const guint8 *user, gsize user_size,
+                                         const guint8 *data, gsize data_size,
+                                         guint8 *response_data,
+                                         gsize response_capacity,
+                                         gsize *response_size,
+                                         gboolean require_zero_result,
+                                         GError **error);
+
+static gboolean
+dualfp_decap_hat_key (El721Qtee *session, const guint8 *envelope,
+                      gsize envelope_size, guint8 **metadata,
+                      gsize *metadata_size, GError **error)
+{
+  guint8 body[DECAP_KEY_INPUT_SIZE] = { 0 };
+  guint8 *output;
+  guint32 result;
+  guint32 returned_size;
+
+  *metadata = NULL;
+  *metadata_size = 0;
+  if (!envelope || envelope_size == 0 ||
+      envelope_size > DECAP_KEY_INPUT_DATA_MAX)
+    {
+      g_set_error (error, EL721_ERROR, 1,
+                   "invalid skeymast HAT-key envelope size %"
+                   G_GSIZE_FORMAT, envelope_size);
+      return FALSE;
+    }
+  put_u32 (body, 0, CMD_DECAP_KEY);
+  memcpy (body + DECAP_KEY_INPUT_DATA_OFFSET, envelope, envelope_size);
+  put_u32 (body, DECAP_KEY_INPUT_LENGTH_OFFSET, (guint32) envelope_size);
+  if (!invoke_body (session, CMD_DECAP_KEY, sizeof (body),
+                    DECAP_KEY_OUTPUT_SIZE, body, sizeof (body), &output,
+                    error))
+    return FALSE;
+  result = get_u32 (output, 4);
+  returned_size = get_u32 (output, DECAP_KEY_OUTPUT_LENGTH_OFFSET);
+  if (result || returned_size == 0 ||
+      returned_size > DECAP_KEY_OUTPUT_DATA_MAX)
+    {
+      g_set_error (error, EL721_ERROR, result,
+                   "dualfp HAT-key decapsulation failed (result=%u, size=%u)",
+                   result, returned_size);
+      return FALSE;
+    }
+  *metadata = g_memdup2 (output + DECAP_KEY_OUTPUT_DATA_OFFSET,
+                         returned_size);
+  *metadata_size = returned_size;
+  return TRUE;
+}
+
+static gboolean
+el721_qtee_provision_hat_key (El721Qtee *session, GError **error)
+{
+  g_autofree guint8 *envelope = NULL;
+  g_autofree guint8 *metadata = NULL;
+  gsize envelope_size = 0;
+  gsize metadata_size = 0;
+  gboolean ok;
+
+  if (!gatekeeper_get_hat_key_envelope (session, &envelope, &envelope_size,
+                                        error) ||
+      !dualfp_decap_hat_key (session, envelope, envelope_size,
+                            &metadata, &metadata_size, error))
+    {
+      if (envelope)
+        secure_clear (envelope, envelope_size);
+      if (metadata)
+        secure_clear (metadata, metadata_size);
+      return FALSE;
+    }
+  ok = el721_qtee_control_full (session, CONTROL_SEND_HAT_KEY, 0,
+                                NULL, 0, metadata, metadata_size,
+                                NULL, 0, NULL, TRUE, error);
+  secure_clear (envelope, envelope_size);
+  secure_clear (metadata, metadata_size);
+  return ok;
+}
 
 static gboolean
 load_runtime_file (El721Qtee *session, const gchar *name, gsize maximum,
@@ -936,6 +1671,82 @@ el721_qtee_hat_op (El721Qtee *session, const guint8 *hat, gsize hat_size,
   if (result)
     *result = get_u32 (output, 4);
   return TRUE;
+}
+
+gboolean
+el721_qtee_authorize_enrollment (El721Qtee *session, guint32 user_id,
+                                 guint32 authenticator_id, GError **error)
+{
+  guint8 secret[GATEKEEPER_SECRET_SIZE] = { 0 };
+  guint8 handle[GATEKEEPER_HANDLE_SIZE] = { 0 };
+  guint8 hat[EL721_HARDWARE_AUTH_TOKEN_SIZE] = { 0 };
+  guint8 enabled = 1;
+  El721Challenge challenge = { 0 };
+  gboolean found = FALSE;
+  gboolean ok = FALSE;
+  guint64 challenge_value = 0;
+  guint32 result = 0;
+
+  if (!el721_qtee_control_op (session, CONTROL_HAT_ENABLE, &enabled,
+                              sizeof (enabled), 0, error) ||
+      !el721_qtee_generate_challenge (session, user_id, authenticator_id,
+                                      &challenge, &result, error))
+    goto out;
+  if (result)
+    {
+      g_set_error (error, EL721_ERROR, result,
+                   "BAUTH challenge generation returned %u", result);
+      goto out;
+    }
+  /* Samsung's challenge record and raw HAT carry the uint64 in host order;
+   * MDFPP then represents that value as a positive ASN.1 INTEGER. */
+  memcpy (&challenge_value, challenge.bytes + 8, sizeof (challenge_value));
+  if (!ensure_gatekeeper (session, error) ||
+      !gatekeeper_read_state (secret, handle, &found, error))
+    goto out;
+  if (!found)
+    {
+      if (!random_secret (secret, error))
+        goto out;
+      g_debug ("created a device-local Gatekeeper identity for Ubuntu");
+    }
+  /* Samsung's skeymast instance accepts the handle it creates for the life
+   * of that loaded TA, but this firmware rejects it after an unload/reload.
+   * Re-enrol the same root-only random credential in each QTEE session and
+   * persist the newest handle; no user password or Android credential is
+   * involved. */
+  if (!gatekeeper_enroll_secret (session, secret, handle, error) ||
+      !gatekeeper_write_state (secret, handle, error) ||
+      !el721_qtee_provision_hat_key (session, error))
+    goto out;
+  if (!gatekeeper_verify_secret (session, challenge_value, secret, handle,
+                                 hat, error))
+    goto out;
+  /* BAUTH checks both the signed token and its challenge.  Do not duplicate
+   * that check by assuming an endian convention for Samsung's raw HAT blob. */
+  if (hat[0] != 0)
+    {
+      g_set_error_literal (error, EL721_ERROR, 1,
+                           "Gatekeeper returned an unsupported token version");
+      goto out;
+    }
+  if (!el721_qtee_hat_op (session, hat, sizeof (hat), 0, NULL, 0,
+                          &challenge, &result, error))
+    goto out;
+  if (result)
+    {
+      g_set_error (error, EL721_ERROR, result,
+                   "BAUTH rejected the Gatekeeper token (result %u)", result);
+      goto out;
+    }
+  ok = TRUE;
+
+out:
+  secure_clear (secret, sizeof (secret));
+  secure_clear (handle, sizeof (handle));
+  secure_clear (hat, sizeof (hat));
+  secure_clear (&challenge, sizeof (challenge));
+  return ok;
 }
 
 /* Diagnostic: One UI sends several control operations with the active user
@@ -1342,7 +2153,11 @@ invoke_body_full (El721Qtee *session, guint32 command, gsize input_size,
     }
   trustlet = get_u32 (response_out, 4);
   payload = output_size >= 8 ? get_u32 (out, 4) : 0;
-  if (result || trustlet)
+  /* QSEEComCompat mirrors a command-level BAUTH result into both the outer
+   * response and the command's own result word.  Such replies (notably 39,
+   * the normal capture-retry result) reached the TA successfully and must be
+   * decoded by the caller instead of being promoted to a transport error. */
+  if (result || (trustlet && trustlet != payload))
     {
       g_set_error (error, EL721_ERROR, trustlet,
                    "BAUTH command %u failed (invoke=%u, trustlet=%u, payload=%u,"
@@ -1455,15 +2270,23 @@ el721_qtee_enroll_do (El721Qtee *session, El721Reply *reply, GError **error)
   guint8 body[12] = { 0 };
   guint8 *output;
   put_u32 (body, 0, CMD_ENROLL_DO);
-  put_u32 (body, 8, el721_probe_u32 ("EL721_SENSOR_TYPE",
-                                     EL721_SENSOR_TYPE));
+  /* BAuthService resets EnrollContext::state to one before every stock call.
+   * This field is not the sensor type; sending EL721's type (8) leaves the TA
+   * in its high-bit sentinel state without ever starting a capture. */
+  put_u32 (body, 8, el721_probe_u32 ("EL721_ENROLL_DO_STATE", 1));
   if (!invoke_body (session, CMD_ENROLL_DO, sizeof (body), ENROLL_DO_OUT_SIZE,
                     body, sizeof (body), &output, error))
     return FALSE;
   decode_common (reply, output);
+  /* BAuth_Enroll_Do's response is not a common command reply.  The gateway
+   * copies its first word back to EnrollContext::state (the opcode), the
+   * timeout from +8, and the function status from +12.  Its three capture
+   * metrics are reordered again while copying them to _enroll_status_t. */
+  reply->opcode = get_u32 (output, 0);
+  reply->status = get_u32 (output, 12);
   reply->quality = get_u32 (output, 16);
-  reply->progress = get_u32 (output, 20);
-  reply->remaining = get_u32 (output, 24);
+  reply->progress = get_u32 (output, 24);
+  reply->remaining = get_u32 (output, 20);
   return TRUE;
 }
 
@@ -1475,8 +2298,9 @@ final_command (El721Qtee *session, guint32 command, El721Reply *reply,
   guint8 *output;
   guint32 size;
   put_u32 (body, 0, command);
-  put_u32 (body, 8, el721_probe_u32 ("EL721_SENSOR_TYPE",
-                                     EL721_SENSOR_TYPE));
+  /* Both stock EnrollFinal and IdentifyFinal reset their context opcode to
+   * one immediately before entering the gateway. */
+  put_u32 (body, 8, el721_probe_u32 ("EL721_FINAL_STATE", 1));
   if (!invoke_body (session, command, sizeof (body), FINAL_OUT_SIZE,
                     body, sizeof (body), &output, error))
     return FALSE;

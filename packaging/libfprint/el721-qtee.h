@@ -53,6 +53,10 @@ gboolean    el721_qtee_hat_op        (El721Qtee           *session,
                                      const El721Challenge *challenge,
                                      guint32              *result,
                                      GError              **error);
+gboolean    el721_qtee_authorize_enrollment (El721Qtee   *session,
+                                             guint32       user_id,
+                                             guint32       authenticator_id,
+                                             GError      **error);
 gboolean    el721_qtee_control_user  (El721Qtee   *session,
                                      guint32       operation,
                                      const guint8 *user,

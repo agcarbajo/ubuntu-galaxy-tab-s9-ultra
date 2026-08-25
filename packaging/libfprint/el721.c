@@ -19,6 +19,11 @@
 #define EL721_ACTION_TIMEOUT_US (90 * G_USEC_PER_SEC)
 #define EL721_UDFPS_REFRESH_US (5 * G_USEC_PER_SEC)
 #define EL721_ENROLL_STAGES 10
+#define EL721_OP_WAIT_INTERRUPT 4U
+#define EL721_OP_NOTIFY_DOWN 5U
+#define EL721_OP_CAPTURE_SUCCESS 6U
+#define EL721_OP_CAPTURE_STEP 87U
+#define EL721_CAPTURE_STEPS_MAX 12U
 
 G_DEFINE_TYPE (FpiDeviceEl721, fpi_device_el721, FP_TYPE_DEVICE)
 
@@ -327,77 +332,160 @@ static gboolean
 handle_enroll_do (FpiDeviceEl721 *self, GError **error)
 {
   El721Reply reply = { 0 };
+  El721Reply final = { 0 };
+  FpPrint *enroll_print = NULL;
+  g_autofree gchar *user = NULL;
+  guint32 capture_result = 0;
   guint progress = 0;
+  guint step;
+  gboolean terminal = FALSE;
 
-  if (!el721_qtee_enroll_do (self->qtee, &reply, error))
-    return FALSE;
-  fp_dbg ("EnrollDo result=%u status=%u opcode=%u fields=%u/%u/%u data=%zu",
-          reply.result, reply.status, reply.opcode, reply.quality, reply.progress,
-          reply.remaining, reply.data ? g_bytes_get_size (reply.data) : 0);
-  if (reply.result)
+  /* The touch poll is the interrupt wait used by Samsung's service.  Once a
+   * contact is latched, drive the remaining TA opcodes synchronously; one
+   * capture normally needs WAIT_INTERRUPT, NOTIFY_DOWN, 87, 6 and then 0. */
+  for (step = 0; step < EL721_CAPTURE_STEPS_MAX; step++)
     {
-      GError *retry = fpi_device_retry_new (FP_DEVICE_RETRY_GENERAL);
-      fpi_device_enroll_progress (FP_DEVICE (self), self->enroll_stage, NULL, retry);
-      el721_reply_clear (&reply);
-      return TRUE;
+      if (!el721_qtee_enroll_do (self->qtee, &reply, error))
+        goto fail;
+      fp_dbg ("EnrollDo result=%u status=%u opcode=%u fields=%u/%u/%u data=%zu",
+              reply.result, reply.status, reply.opcode, reply.quality,
+              reply.progress, reply.remaining,
+              reply.data ? g_bytes_get_size (reply.data) : 0);
+      capture_result = reply.result;
+      if (capture_result || reply.opcode == 0)
+        {
+          terminal = TRUE;
+          break;
+        }
+      if (reply.opcode == EL721_OP_WAIT_INTERRUPT ||
+          reply.opcode == EL721_OP_CAPTURE_SUCCESS)
+        {
+          el721_reply_clear (&reply);
+          continue;
+        }
+      if (reply.opcode == EL721_OP_NOTIFY_DOWN)
+        {
+          /* Samsung frames these as output-only controls: 87 reserves one
+           * response byte and 80 reserves one u32.  A zero response capacity
+           * makes operation 80 fail its shape check with status 51. */
+          if (!el721_qtee_control_op (self->qtee, EL721_OP_CAPTURE_STEP,
+                                      NULL, 0, 1, error) ||
+              !el721_qtee_control_op (self->qtee, 80, NULL, 0, 4, error))
+            goto fail;
+          el721_reply_clear (&reply);
+          continue;
+        }
+      if (reply.opcode == EL721_OP_CAPTURE_STEP)
+        {
+          if (!el721_qtee_control_op (self->qtee, EL721_OP_CAPTURE_STEP,
+                                      NULL, 0, 1, error))
+            goto fail;
+          el721_reply_clear (&reply);
+          continue;
+        }
+      g_set_error (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_GENERAL,
+                   "EL721 EnrollDo returned unknown opcode %u", reply.opcode);
+      goto fail;
+    }
+  if (!terminal)
+    {
+      g_set_error_literal (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_GENERAL,
+                           "EL721 capture protocol did not terminate");
+      goto fail;
     }
 
-  if (reply.progress <= 100)
-    progress = reply.progress;
+  /* EnrollFinal closes every capture, including BAD_QUALITY (39).  Omitting
+   * it leaves the trustlet in its 0x80000000 sentinel and all later touches
+   * become no-ops. */
+  progress = reply.progress;
   if (reply.remaining <= EL721_ENROLL_STAGES && reply.remaining > 0)
     progress = MAX (progress, (EL721_ENROLL_STAGES - reply.remaining) * 100 /
                               EL721_ENROLL_STAGES);
   progress = MIN (progress, 100);
-  if (progress)
+  el721_reply_clear (&reply);
+  if (!el721_qtee_enroll_final (self->qtee, &final, error))
+    goto fail;
+  fp_dbg ("EnrollFinal result=%u status=%u opcode=%u template=%zu progress=%u",
+          final.result, final.status, final.opcode,
+          final.data ? g_bytes_get_size (final.data) : 0, progress);
+
+  if (capture_result == 39 || final.result == 39)
     {
-      guint stage = MIN (EL721_ENROLL_STAGES - 1,
-                         (progress * EL721_ENROLL_STAGES + 99) / 100);
-      while (self->enroll_stage < stage)
+      GError *retry = fpi_device_retry_new (FP_DEVICE_RETRY_GENERAL);
+      fpi_device_enroll_progress (FP_DEVICE (self), self->enroll_stage,
+                                  NULL, retry);
+    }
+  else if (capture_result || final.result)
+    {
+      g_set_error (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_GENERAL,
+                   "EL721 capture/final returned %u/%u", capture_result,
+                   final.result);
+      goto fail;
+    }
+
+  if (!capture_result && !final.result)
+    {
+      if (progress)
         {
-          self->enroll_stage++;
-          fpi_device_enroll_progress (FP_DEVICE (self), self->enroll_stage,
-                                      NULL, NULL);
+          guint stage = MIN (EL721_ENROLL_STAGES - 1,
+                             (progress * EL721_ENROLL_STAGES + 99) / 100);
+          while (self->enroll_stage < stage)
+            {
+              self->enroll_stage++;
+              fpi_device_enroll_progress (FP_DEVICE (self), self->enroll_stage,
+                                          NULL, NULL);
+            }
+        }
+      if (progress >= 100 && final.data)
+        {
+          FpPrint *print = NULL;
+          gsize size;
+          const guint8 *bytes;
+          GVariant *array;
+          GVariant *data;
+
+          bytes = g_bytes_get_data (final.data, &size);
+          fpi_device_get_enroll_data (FP_DEVICE (self), &print);
+          array = g_variant_new_fixed_array (G_VARIANT_TYPE_BYTE, bytes, size, 1);
+          data = g_variant_new ("(u@ay)", self->template_id, array);
+          fpi_print_set_type (print, FPI_PRINT_RAW);
+          fpi_print_set_device_stored (print, FALSE);
+          g_object_set (print, "fpi-data", data, NULL);
+          action_cleanup (self);
+          fpi_device_enroll_progress (FP_DEVICE (self), EL721_ENROLL_STAGES,
+                                      print, NULL);
+          fpi_device_enroll_complete (FP_DEVICE (self), g_object_ref (print),
+                                      NULL);
+          el721_reply_clear (&final);
+          return TRUE;
         }
     }
-  if (progress >= 100 || (reply.progress > 0 && reply.remaining == 0))
-    {
-      FpPrint *print = NULL;
-      El721Reply final = { 0 };
-      gsize size;
-      const guint8 *bytes;
-      GVariant *array;
-      GVariant *data;
 
+  /* A capture is one Init/Do/Final transaction.  The trustlet retains the
+   * partial template in this QTEE session; start the next transaction using
+   * the same libfprint identity and secure slot. */
+  fpi_device_get_enroll_data (FP_DEVICE (self), &enroll_print);
+  user = fpi_print_generate_user_id (enroll_print);
+  el721_reply_clear (&final);
+  if (!el721_qtee_enroll_init (self->qtee, (guint8 *) user, strlen (user),
+                               self->template_id, &reply, error))
+    goto fail;
+  fp_dbg ("EnrollInit(next) result=%u status=%u opcode=%u",
+          reply.result, reply.status, reply.opcode);
+  if (reply.result)
+    {
+      g_set_error (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_GENERAL,
+                   "EL721 next EnrollInit returned %u", reply.result);
       el721_reply_clear (&reply);
-      if (!el721_qtee_enroll_final (self->qtee, &final, error))
-        {
-          el721_reply_clear (&final);
-          return FALSE;
-        }
-      if (final.result || !final.data)
-        {
-          g_set_error (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_GENERAL,
-                       "EL721 EnrollFinal returned %u without a template",
-                       final.result);
-          el721_reply_clear (&final);
-          return FALSE;
-        }
-      bytes = g_bytes_get_data (final.data, &size);
-      fpi_device_get_enroll_data (FP_DEVICE (self), &print);
-      array = g_variant_new_fixed_array (G_VARIANT_TYPE_BYTE, bytes, size, 1);
-      data = g_variant_new ("(u@ay)", self->template_id, array);
-      fpi_print_set_type (print, FPI_PRINT_RAW);
-      fpi_print_set_device_stored (print, FALSE);
-      g_object_set (print, "fpi-data", data, NULL);
-      action_cleanup (self);
-      fpi_device_enroll_progress (FP_DEVICE (self), EL721_ENROLL_STAGES,
-                                  print, NULL);
-      fpi_device_enroll_complete (FP_DEVICE (self), g_object_ref (print), NULL);
-      el721_reply_clear (&final);
-      return TRUE;
+      return FALSE;
     }
   el721_reply_clear (&reply);
   return TRUE;
+
+fail:
+  el721_reply_clear (&reply);
+  el721_reply_clear (&final);
+  return FALSE;
 }
 
 static gboolean
@@ -540,6 +628,7 @@ el721_enroll (FpDevice *device)
   user = fpi_print_generate_user_id (print);
   self->template_id = template_slot_for_finger (fp_print_get_finger (print));
   if (!operation_prepare (self, &error) ||
+      !el721_qtee_authorize_enrollment (self->qtee, 0, 0, &error) ||
       !el721_qtee_enroll_init (self->qtee, (guint8 *) user, strlen (user),
                                self->template_id, &reply, &error))
     {

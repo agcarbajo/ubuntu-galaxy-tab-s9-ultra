@@ -10,7 +10,7 @@ source_dir=${1:-${GTS9U_FINGERPRINT_FIRMWARE_DIR:-}}
 version=${GTS9U_FINGERPRINT_FIRMWARE_VERSION:-1.0}
 
 [ -n "$source_dir" ] || {
-	echo "usage: $0 DIRECTORY-CONTAINING-dualfp.b00...b08" >&2
+	echo "usage: $0 DIRECTORY-CONTAINING-dualfp-and-skeymast-segments" >&2
 	exit 2
 }
 if [ -d "$source_dir/ta" ]; then
@@ -28,6 +28,16 @@ dde4dcc44d91830bad1a045a31762ac26ce575736b78d65dd2aae1bbd26c6128 dualfp.b01
 6694555ab48fea7b2644d120ae50854dda22aced96a74c169747f66473aef404 dualfp.b07
 67a2d8095b70e1c02918ecac0161efeb8a6b2531d90e708d7127561c6056637d dualfp.b08'
 
+expected_gatekeeper='7c77cc69e68aed5fb71ebf3af5c39caed9c16a2a2f449c2f1c355804b9b8904c skeymast.b00
+5a73f4985171b6f24e4e3c22fe0a5bf6383295c66e1661490b4397a98a84c110 skeymast.b01
+0c240673c9e33f1792d66d62275d52ea459fb8d04a2469e8608991698f7c4338 skeymast.b02
+7d8d4a597f0101a80c615018837e1fb7da39fcc6f92519927a227f45e254cdc6 skeymast.b03
+0fd5e6a3b728d5f6484ab63e3999d5c2eb6cf0d5d3664bf8438a5ec3b206a595 skeymast.b04
+f98489f6b1a4075f244696b945c9adb6255f5a24de8f0c83d8dc7aa1b00f4b7c skeymast.b05
+b34d6a209d270c877f717d0fe384ce3a1735e516de81f06922645107b5d2914c skeymast.b06
+7d8d4a597f0101a80c615018837e1fb7da39fcc6f92519927a227f45e254cdc6 skeymast.b07
+aa0f67b43f42e5d97c6ba37d8bbcc982f62dad4c582a2cf405d57be399e65b1d skeymast.b08'
+
 expected_runtime='471221d8a6743f580d94e45510d44143e9b0e2069d3783dff486306718fb449b calib.dat
 c5beb1351a5d603b578fe79a80aa2a7c1f68aa0322445048690077e39b1292a4 egoptbds.dat'
 
@@ -41,6 +51,18 @@ while read -r hash name; do
 	}
 done <<EOF
 $expected
+EOF
+
+while read -r hash name; do
+	file=$source_dir/$name
+	test -f "$file" || { echo "missing $file" >&2; exit 1; }
+	actual=$(sha256sum "$file" | awk '{print $1}')
+	[ "$actual" = "$hash" ] || {
+		echo "$name does not match the validated One UI 8 firmware" >&2
+		exit 1
+	}
+done <<EOF
+$expected_gatekeeper
 EOF
 
 while read -r hash name; do
@@ -65,6 +87,12 @@ while read -r _ name; do
 		"$staging/usr/lib/firmware/gts9u/fingerprint/$name"
 done <<EOF
 $expected
+EOF
+while read -r _ name; do
+	install -m0644 "$source_dir/$name" \
+		"$staging/usr/lib/firmware/gts9u/fingerprint/$name"
+done <<EOF
+$expected_gatekeeper
 EOF
 while read -r _ name; do
 	install -m0600 "$source_dir/$name" \
@@ -94,12 +122,14 @@ Section: non-free-firmware
 Priority: optional
 Architecture: all
 Maintainer: Local builder <noreply@example.invalid>
-Description: locally imported Samsung EL721 secure app for the SM-X910
- User-supplied, hash-validated signed dualfp image required by the EL721.
+Description: locally imported Samsung secure apps for the SM-X910 EL721
+ User-supplied, hash-validated signed dualfp and skeymast images required by
+ the EL721 and its enrolment authorization path.
 EOF
 cat > "$staging/usr/share/doc/ubuntu-gts9u-fingerprint-firmware/copyright" <<'EOF'
-The files dualfp.b00 through dualfp.b08 and the device-specific EL721
-calibration data are proprietary Samsung/Qualcomm firmware and configuration.
+The files dualfp.b00 through dualfp.b08, skeymast.b00 through skeymast.b08 and
+the device-specific EL721 calibration data are proprietary Samsung/Qualcomm
+firmware and configuration.
 This package was built locally from files supplied by the device owner.
 Redistribution is not granted by this project.
 EOF

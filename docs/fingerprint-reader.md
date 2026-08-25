@@ -621,14 +621,17 @@ pre_enroll : control 22 (set_enroll_session, gSession_Flag = 1)
              command 19 (generate challenge)
 enroll     : control 84 (the gateway logs "skip")
              register the QIS callback
-             control 49, carrying the active user identifier
+             skeymast command 0x203, dualfp command 15, then control 49
+             to install dualfp's HAT HMAC key without exposing it to Linux
              command 13, the authentication token, right before enrolling
              command 2  EnrollInit  -> CAPTURE_READY
              command 3  EnrollDo, repeatedly; opcode 4 is
                         BAUTH_OP_CODE_WAIT_INTERRUPT with timeout -1, and the
                         host enables the sensor interrupt and waits
-             controls 87 and 80 between captures
-             command 4  EnrollFinal, then control 76
+             on opcode 5: control 87 with one response byte, then control 80
+                          with four response bytes
+             on opcode 87: control 87 with one response byte
+             command 4  EnrollFinal after every capture, then repeat Init
 ```
 
 Reproducing that sequence corrected several things in the bridge, all of them
@@ -638,7 +641,11 @@ response-capacity field the caller writes into the output buffer at
 answers 51, which is what that number always means — the declared wire sizes
 are not the ones the handler expects. Operation 48 is
 `BAUTH_OP_CODE_SEND_STOREPATH` and answers 29 until it is given a path.
-Operation 49 needs the user identifier. The optical `egoptbds.dat` goes up in
+Operation 49 is `SEND_KEY`: it consumes the metadata returned by dualfp's
+command 15 after skeymast encapsulates the current HAT key for target
+`"dualfp"` with command `0x203`. Linux relays only the secure-world envelope
+and decoded metadata; the raw HMAC key never enters normal-world memory. The
+optical `egoptbds.dat` goes up in
 `0x3000`-byte pieces with nothing in the scalar field, exactly as One UI's
 `load_bds()` walks it. Operations 401, 402, 84 and 108 land in the TA's
 default case, so 21 simply means this build does not implement them.
@@ -680,9 +687,10 @@ matcher's own entry point, and that is what fails.
 
 Two further things were settled by measurement. Holding
 `gcc_qupv3_wrap1_s2_clk` on with its source at 80 MHz changes nothing, so the
-serial engine's clock is not the obstacle. And control 49 is `decode_metadata`,
-which decodes an existing template blob — it answers 51 to anything that is not
-one, so it is not a precondition for a first enrolment at all.
+serial engine's clock is not the obstacle. The earlier conclusion that control
+49 decoded a template was wrong: its internal `decode_metadata` call decodes
+the key metadata produced by command 15, then copies the resulting 32-byte key
+into dualfp's HAT verifier. It is a prerequisite for authenticated enrolment.
 
 A traced One UI **cold start** — restarting the stock service with the log
 running — then gave the init sequence, which had been guesswork until now:
@@ -1258,3 +1266,29 @@ not proof of a parsed but unsigned HAT. Code 28 is the first direct evidence
 that the remaining pre-capture boundary is a legitimately signed hardware
 authentication token. The test generated no credential and deliberately did
 not import one from Android.
+
+## Gatekeeper authorization and the complete capture transaction
+
+The remaining HAT boundary is now implemented without Android credentials.
+Ubuntu creates a random, root-only Gatekeeper identity, re-enrols that same
+secret into Samsung's `skeymast` instance for each QTEE session, verifies the
+current BAUTH challenge and receives a signed 69-byte HAT. Before verification,
+`skeymast` command `0x203`, dualfp command 15 and control 49 provision the
+target-bound HMAC key entirely inside TrustZone. `Hat_OP` now returns zero and
+`EnrollInit` returns zero; neither a user password nor an Android PIN, HAT or
+template is read.
+
+The response layout of command 3 was also corrected from the stock gateway.
+Its real opcode is output word zero; timeout is at `+8`, function status at
+`+12`, and the three enrolment metrics at `+16/+20/+24` with progress and
+remaining reordered by the gateway. A physical capture now follows the
+measured sequence `4 → 5 → 87 → 6/0`, closes with `EnrollFinal` even on
+BAD_QUALITY 39, and starts the next transaction with `EnrollInit`. This avoids
+the old permanent `0x80000000` sentinel after one rejected image.
+
+The exact control framing matters: opcode 5 uses control 87 with one byte of
+response capacity and control 80 with four; opcode 87 uses control 87 with one.
+Declaring zero for control 80 returns status 51 and guarantees a rejected
+capture. Package `gts9u16` contains the corrected capacities and awaits one
+physical capture to confirm opcode 6. Approximate total implementation is
+98.7%; a complete template, verify, GDM and reboot/crash validation remain.
