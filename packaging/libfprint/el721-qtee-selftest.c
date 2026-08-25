@@ -268,9 +268,12 @@ main (int argc, char **argv)
     }
   if (argc == 3)
     {
-      if (g_getenv ("EL721_SKIP_GROUP"))
+      if (!g_getenv ("EL721_SET_ACTIVE_GROUP"))
         {
-          g_print ("Active group skipped by request\n");
+          /* The Android set_active_group path sends storage operation 48.
+           * Controls 45/46 are secure-authenticator-ID operations, not a
+           * wrapped group-key pair; keep that older experiment opt-in. */
+          g_print ("Active-group experiment skipped\n");
         }
       else if (!el721_qtee_set_active_group (session,
                                              (const guint8 *) argv[2],

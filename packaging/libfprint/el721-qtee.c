@@ -75,12 +75,10 @@
 #define CONTROL_LOAD_BDS 82U
 #define EL721_BDS_MAX_CHUNK 3U
 #define CONTROL_CPU_IDLE 83U
-/* Two control operations look the running board up in the TA's table of
- * Samsung model codes, and only this one goes on to build the matcher's
- * configuration from the entry it found.  Operation 90 sets the index and
- * stops there, which leaves the matcher unbuilt and every biometric command
- * answering 29. */
-#define CONTROL_SELECT_MODEL 90U
+/* Operation 88 looks the running board up in the TA's model table and builds
+ * the matcher configuration.  Operation 90 only stores the table index, so
+ * EnrollInit subsequently answers 29 because the matcher is still absent. */
+#define CONTROL_SELECT_MODEL 88U
 #define EL721_MODEL "X916"
 #define EL721_MODEL_FIELD 10U
 #define EL721_BDS_MAX (4U * 1024U * 1024U)
@@ -299,7 +297,10 @@ open_service (struct qcomtee_object *client_env, guint32 uid, GError **error)
 static void
 qis_callback_release (struct qcomtee_object *object)
 {
-  g_free (container_of (object, El721QisCallback, object));
+  /* object is deliberately the first member; avoid quic-teec's container_of
+   * macro here because it performs GNU void-pointer arithmetic and makes the
+   * otherwise clean libfprint build warn under -Wpointer-arith. */
+  g_free ((El721QisCallback *) object);
 }
 
 static qcomtee_result_t
@@ -1043,7 +1044,7 @@ el721_qtee_prepare (El721Qtee *session, GError **error)
   gsize calibration_size = 0;
   guint8 *output;
   guint attempt;
-  guint32 sensor_type = 0;
+  guint32 status = 0;
   guint32 result = 0;
   guint32 function_status = 0;
   guint32 opcode = 0;
@@ -1070,16 +1071,17 @@ el721_qtee_prepare (El721Qtee *session, GError **error)
                         el721_probe_u32 ("EL721_PREPARE_OUT", PREPARE_SIZE),
                         body, PREPARE_SIZE, &output, error))
         return FALSE;
-      /* The Prepare envelope is not the BAUTH reply envelope: word 0 carries
-       * the sensor type rather than an opcode, and the opcode - when the TA
-       * asks for host work at all - lives in word 3 like everywhere else. */
-      sensor_type = get_u32 (output, 0);
+      /* One UI's check_opcode() treats a zeroed Prepare reply as success.  A
+       * value of 8 or 9 in word 0 is a request for host work, not the kernel's
+       * public sensor-type enum; accepting 8 as EL721 used to skip that work
+       * and made a correctly powered sensor look broken when it returned 0. */
+      status = get_u32 (output, 0);
       result = get_u32 (output, 4);
       function_status = get_u32 (output, 8);
       opcode = get_u32 (output, 12);
-      g_debug ("BAUTH calibrated Prepare attempt %u returned sensor_type=%u "
+      g_debug ("BAUTH calibrated Prepare attempt %u returned status=%u "
                "result=%u function_status=%u opcode=%u", attempt + 1,
-               sensor_type, result, function_status, opcode);
+               status, result, function_status, opcode);
       if (g_getenv ("EL721_DUMP_PREPARE"))
         {
           guint word;
@@ -1090,15 +1092,15 @@ el721_qtee_prepare (El721Qtee *session, GError **error)
         }
       if (result || function_status)
         break;
-      if (opcode == 0)
+      if (status == 0 && opcode == 0)
         break;
-      if (opcode == 8)
+      if (status == 8 || opcode == 8)
         {
           if (!reset_sensor (error))
             return FALSE;
           continue;
         }
-      if (opcode == 9)
+      if (status == 9 || opcode == 9)
         {
           /* Samsung's check_opcode() does not power-cycle the reader here.
            * It drops the optional CPU boost (irrelevant under Linux) and
@@ -1110,15 +1112,12 @@ el721_qtee_prepare (El721Qtee *session, GError **error)
         }
       break;
     }
-  if (g_getenv ("EL721_ANY_SENSOR_TYPE") && !result && !function_status &&
-      !opcode)
-    sensor_type = EL721_SENSOR_TYPE;
-  if (result || function_status || opcode || sensor_type != EL721_SENSOR_TYPE)
+  if (result || function_status || status || opcode)
     {
       g_set_error (error, EL721_ERROR, result,
-                   "calibrated Prepare returned sensor_type=%u, result=%u, "
+                   "calibrated Prepare returned status=%u, result=%u, "
                    "function_status=%u, opcode=%u",
-                   sensor_type, result, function_status, opcode);
+                   status, result, function_status, opcode);
       return FALSE;
     }
   /* One UI's common_prepare() continues with the optical bring-up before any
@@ -1139,12 +1138,9 @@ el721_qtee_prepare (El721Qtee *session, GError **error)
    * carries; this one is "X916", the model the kernel driver reports. */
   /* The TA resolves the board against a table of twenty-nine Samsung model
    * codes and keeps the index in the structure the matcher is configured
-   * from; "X916" is what this tablet's driver reports.  Two operations reach
-   * that setter: 88 goes on to build the matcher configuration from the entry
-   * it found, and 90 stops at the index.  Only 88 leaves the matcher usable,
-   * but it takes the TA down whenever the reader has actually been identified,
-   * so the default is the one that cannot crash and EL721_MODEL_OP selects the
-   * other; zero skips the step entirely. */
+   * from; "X916" is what this tablet's driver reports.  Operation 88 both
+   * selects that entry and constructs the matcher.  Operation 90 stops after
+   * the lookup and is retained only as a diagnostic override. */
   {
     guint8 model[EL721_MODEL_FIELD] = { 0 };
     guint32 op = el721_probe_u32 ("EL721_MODEL_OP", CONTROL_SELECT_MODEL);

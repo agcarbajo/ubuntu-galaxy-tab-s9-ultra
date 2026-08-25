@@ -1157,7 +1157,54 @@ to one; powering off returned that count to zero without a reset or warning.
 
 The current QTEE-backed self-test then loaded the signed `dualfp` application
 and ran calibrated `Prepare`. Transport, invoke result, function status and
-opcode were all zero, but `sensor_type` was still zero. This closes the boot
-and Linux power-integration regression without changing the trusted-SPI
-diagnosis: the next missing prerequisite is whatever secure initialisation
-makes the EL721 answer `07 15` under One UI.
+opcode were all zero. That reply was initially rejected because word zero was
+still being interpreted as an internal sensor type.
+
+## A zeroed `Prepare` is success, and `EnrollInit` now works
+
+The stock cold-start log resolves the ambiguity in that response. Its public
+type `8` comes from command 16, the separate `TypeCheck`; after command 1 it
+logs a successful `check_opcode` with every status field zero. The `8` once
+seen in word zero of Ubuntu's unpowered `Prepare` was a host-work/reset status,
+not an EL721 identity. Treating it as the sensor type both skipped that work
+and made the properly powered all-zero reply look like failure.
+
+A signed diagnostic module then reproduced the complete stock sequence from a
+cold Ubuntu boot: GPIO155 was acquired low, the regulator load was set to
+100 mA, `vreg_l2b_3p3` was enabled at 3,296 mV, the stock 2.3 ms delay elapsed,
+and only then was GPIO155 raised. Calibrated `Prepare` returned `0/0/0/0` and
+continued successfully through control 76 and the optical blob upload. The
+module always lowered GPIO155, disabled the rail, removed the temporary
+regulator node and unloaded QCOMTEE on exit.
+
+The remaining matcher failure was the model selector. Operation 90 only stores
+the `X916` table index and leaves the matcher absent, so `EnrollInit` answers
+29. Operation 88 performs the same lookup and constructs the matcher. With 88
+as the default, the physical tablet now reports:
+
+```text
+Prepare:       status=0 result=0 function_status=0 opcode=0
+EnrollInit:    result=0 status=0 opcode=0
+Cancel:        result=0 status=0 opcode=0
+```
+
+This supersedes the earlier secure-SPI diagnosis and the claim that operation
+88 succeeds only on a degenerate path. The sensor and trusted path initialise
+well enough to create the real matcher and enter enrolment. A single
+non-interactive `EnrollDo` without HBM, a finger or the Android pre-enrol token
+sequence returns status `-1` and no template, as expected; physical capture is
+the next unproven boundary.
+
+Controls 45 and 46 were also mislabelled in the early bridge as a wrapped
+active-group-key pair. Static names and the stock trace identify them as secure
+authenticator-ID operations, while Android's active-user path uses storage
+operation 48. The self-test no longer sends 45/46 by default.
+
+The corrected complete libfprint driver builds in the pinned ARM64 environment
+without an EL721 warning. Package `gts9u4` was installed over `gts9u3` after
+backing up the previous library. Through the system library — not an injected
+test copy — the tablet enumerated the EL721, loaded `dualfp`, completed the
+all-zero `Prepare`, selected `X916`, uploaded the optical blob, opened the
+device and closed it with the rail off. The two owner-derived calibration files
+were also installed in the firmware directory the production driver uses; no
+template or fingerprint image was read or written.

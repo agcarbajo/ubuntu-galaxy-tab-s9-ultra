@@ -41,7 +41,10 @@ static const u32 allowed_modes[] = { RPMH_MODE_LPM, RPMH_MODE_HPM };
 static struct of_changeset ocs;
 static bool applied;
 static struct platform_device *consumer;
+static struct platform_device *rail_device;
 static struct regulator *vdd;
+static bool rail_enabled;
+static bool load_set;
 
 static bool power = true;
 module_param(power, bool, 0444);
@@ -58,6 +61,7 @@ module_param(enable_line, bool, 0444);
 MODULE_PARM_DESC(enable_line, "drive the stock sleep/reset line high");
 
 static struct gpio_desc *enable_desc;
+static bool enable_lookup_added;
 
 static int settle_ms = 10;
 module_param(settle_ms, int, 0444);
@@ -185,7 +189,8 @@ static int __init fprail_init(void)
 	rail->phandle = RAIL_PHANDLE;
 
 	pdev = of_platform_device_create(holder, NULL, NULL);
-	if (!pdev)
+	rail_device = pdev;
+	if (!rail_device)
 		pr_warn("gts9u-fprail: the rail node has no device yet\n");
 	of_node_put(regulators);
 	pr_info("gts9u-fprail: published %s and its consumer node\n", RAIL_NAME);
@@ -219,36 +224,49 @@ static int __init fprail_init(void)
 		vdd = NULL;
 		return 0;
 	}
-	/* Order matters, and it is the stock driver's: the rail comes up
-	 * first and settles, and only then is the sleep line driven.
-	 * Driving a signal pin into an unpowered part leaves it without a
-	 * clean reset, and this module used to do exactly that. */
-	if (regulator_enable(vdd))
-		pr_err("gts9u-fprail: cannot enable the rail\n");
-	else
-		pr_info("gts9u-fprail: rail enabled at %d uV\n",
-			regulator_get_voltage(vdd));
-	usleep_range(2300, 2400);
-
+	/*
+	 * Match the stock probe/power sequence exactly: pinctrl holds the sleep
+	 * line low before power is applied, the regulator is given its 100 mA
+	 * operating load, and the line rises only after the 2.3 ms rail delay.
+	 */
 	if (enable_line) {
 		gpiod_add_lookup_table(&enable_lookup);
+		enable_lookup_added = true;
 		enable_desc = gpiod_get(&consumer->dev, "enable", GPIOD_OUT_LOW);
 		if (IS_ERR(enable_desc)) {
-			pr_err("gts9u-fprail: cannot drive the sleep line (%ld)\n",
+			pr_err("gts9u-fprail: cannot hold the sleep line low (%ld)\n",
 			       PTR_ERR(enable_desc));
 			enable_desc = NULL;
-			gpiod_remove_lookup_table(&enable_lookup);
-		} else {
-			if (reset_pulse)
-				usleep_range(1050, 1100);
-			gpiod_set_value_cansleep(enable_desc, 1);
-			usleep_range(1100, 1200);
-			usleep_range(5000, 5100);
-			if (settle_ms > 0)
-				msleep(settle_ms);
-			pr_info("gts9u-fprail: sleep line high, settled %d ms\n",
-				settle_ms);
+			return 0;
 		}
+		pr_info("gts9u-fprail: sleep line held low before rail enable\n");
+	}
+
+	ret = regulator_set_load(vdd, 100000);
+	if (ret < 0)
+		pr_warn("gts9u-fprail: cannot set the 100 mA load (%d)\n", ret);
+	else
+		load_set = true;
+
+	if (regulator_enable(vdd))
+		pr_err("gts9u-fprail: cannot enable the rail\n");
+	else {
+		rail_enabled = true;
+		pr_info("gts9u-fprail: rail enabled at %d uV\n",
+			regulator_get_voltage(vdd));
+	}
+	usleep_range(2300, 2400);
+
+	if (enable_desc && rail_enabled) {
+		if (reset_pulse)
+			usleep_range(1050, 1100);
+		gpiod_set_value_cansleep(enable_desc, 1);
+		usleep_range(1100, 1200);
+		usleep_range(5000, 5100);
+		if (settle_ms > 0)
+			msleep(settle_ms);
+		pr_info("gts9u-fprail: sleep line high, settled %d ms\n",
+			settle_ms);
 	}
 
 
@@ -267,14 +285,24 @@ static void __exit fprail_exit(void)
 	if (enable_desc) {
 		gpiod_set_value_cansleep(enable_desc, 0);
 		gpiod_put(enable_desc);
+		enable_desc = NULL;
+	}
+	if (enable_lookup_added) {
 		gpiod_remove_lookup_table(&enable_lookup);
+		enable_lookup_added = false;
 	}
 	if (vdd) {
-		regulator_disable(vdd);
+		if (rail_enabled)
+			regulator_disable(vdd);
+		if (load_set)
+			regulator_set_load(vdd, 0);
 		regulator_put(vdd);
+		vdd = NULL;
 	}
 	if (consumer)
 		platform_device_unregister(consumer);
+	if (rail_device)
+		platform_device_unregister(rail_device);
 	if (applied) {
 		of_changeset_revert(&ocs);
 		of_changeset_destroy(&ocs);

@@ -6601,3 +6601,44 @@ The current QTEE self-test then loaded `dualfp` and issued calibrated
 sensor type remained zero. The boot and Linux-side rail regression are fixed;
 the remaining blocker is still the secure initialisation needed for the EL721
 to return identity bytes `07 15` to the TA.
+
+## Session 108 — `Prepare` zero is success; matcher and `EnrollInit` work
+
+Date: 2026-08-25. The last blocker was a response-decoding error, not secure
+SPI. One UI obtains public sensor type `8` through command 16; its command-1
+`Prepare` log reports zero for status, opcode, function result and function
+status. Ubuntu's old unpowered word-zero value `8` was a reset/host-work status,
+but the bridge had reinterpreted it as an EL721 type and consequently rejected
+the correctly powered all-zero reply.
+
+The final Linux-side parity test started from a reboot before the built-in
+driver had acquired its GPIOs. A signed module held GPIO155 low, applied the
+stock 100 mA regulator load, enabled `vreg_l2b_3p3` at 3,296 mV, waited 2.3 ms
+and raised GPIO155. With QCOMTEE loaded afterwards, the signed TA returned an
+all-zero `Prepare`, accepted control 76 and accepted the complete optical blob.
+Every test unloaded QCOMTEE, lowered the line, disabled the rail and removed
+the temporary live-tree node; `RAIL_AFTER=absent` was measured each time.
+
+Operation 90 was then confirmed to leave the matcher absent: `EnrollInit`
+returned 29. Selecting model `X916` with operation 88 constructs the matcher,
+after which the same physical invocation returned zero from `EnrollInit` and
+zero from `Cancel`. The corrected backend was rebuilt and repeated that result
+with no parser or model override. Controls 45/46 are not an active-group key
+exchange and the diagnostic no longer sends them by default.
+
+One bounded `EnrollDo` without HBM or a finger returned status `-1`, opcode 0
+and no template, then `EnrollFinal` and `Cancel` cleaned up normally. The next
+boundary is therefore the real optical capture path — panel HBM, regional
+touch handling, the interrupt loop and a user-present finger — rather than
+sensor discovery or matcher construction.
+
+The full pinned libfprint build then completed and produced package `gts9u4`.
+After saving the `gts9u3` system library under
+`/var/lib/gts9u-fingerprint-libfprint-backup-gts9u3-20260825`, the package was
+installed on the tablet. The production library enumerated, prepared, opened
+and closed the EL721 successfully; this was not an `LD_LIBRARY_PATH` test.
+The imported `calib.dat` and `egoptbds.dat` had been missing from the production
+firmware directory and were installed from the existing private test bundle.
+Approximate implementation progress is now 80%: the real libfprint open path
+works and enrolment can initialise/cancel, but no template has yet been
+captured, persisted or verified through fprintd/GDM.
