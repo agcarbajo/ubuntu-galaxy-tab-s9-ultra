@@ -45,3 +45,6 @@ __pycache__/
 *_Opensource.zip
 Kernel.tar.gz
 Platform.tar.gz
+
+# Local investigation and device-deployment scratch files.
+/.tmp-*
