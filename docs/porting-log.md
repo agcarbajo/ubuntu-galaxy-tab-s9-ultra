@@ -6642,3 +6642,36 @@ firmware directory and were installed from the existing private test bundle.
 Approximate implementation progress is now 80%: the real libfprint open path
 works and enrolment can initialise/cancel, but no template has yet been
 captured, persisted or verified through fprintd/GDM.
+
+## Session 109 — physical FOD events reach production enrolment
+
+The first end-to-end `fprintd-enroll` run found two API mismatches: fprintd
+opens the device before claiming an operation, so repeating `Prepare` was
+invalid in the same QTEE session; and its anatomical finger enum cannot be
+used directly as BAUTH's four-slot template index. Operation setup now only
+restores sensor power and uses a stable 1..4 slot mapping.
+
+Long enrolment attempts revealed the panel's 15-second optical watchdog.
+Package `gts9u9` rearms `fod_mode` every five seconds and leaves the desktop
+visual to the unprivileged GNOME Shell extension. Extension version 7 polls
+that panel state instead of depending on a root-to-session D-Bus call. This
+also orders the shade after HBM: the temporary watcher sometimes darkened the
+whole display before the panel brightened, an effect that must disappear when
+the new version is loaded at the next GNOME session.
+
+Finally, the Goodix sponge's monotonically increasing `fod_state` sequence is
+used to recover press/release pairs shorter than the 45 ms libfprint poll.
+Physical contacts at the stock coordinates now invoke BAUTH `EnrollDo` through
+the installed system library. The measured replies were status/opcode
+`-1/0`, `0/0`, `0/0`, exactly matching the older tokenless harness; no progress
+or template was returned, and all rail, touch and panel states cleaned up to
+zero afterwards.
+
+The next boundary is secure capture rather than desktop plumbing. Stock issues
+`Challenge` and a Gatekeeper-signed `Hat_OP` before enrolment and then services
+the interactive opcode 4/5/87/6 sequence with controls 87 and 80. Ubuntu has
+no Gatekeeper token source and the production driver has not yet implemented
+that opcode loop. Approximate implementation progress is now 88%: fprintd,
+power, panel HBM, overlay triggering, regional touch and BAUTH initialisation
+are end-to-end, while template capture, persistence, verification and GDM
+remain unproven.

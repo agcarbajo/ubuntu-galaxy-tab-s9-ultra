@@ -1208,3 +1208,37 @@ all-zero `Prepare`, selected `X916`, uploaded the optical blob, opened the
 device and closed it with the rail off. The two owner-derived calibration files
 were also installed in the firmware directory the production driver uses; no
 template or fingerprint image was read or written.
+
+## The production enrol path now consumes physical FOD events
+
+Running the driver through `fprintd-enroll` exposed integration faults which
+the standalone harness could not show. A second `Prepare` in the already-open
+QTEE session was rejected with BAUTH status 29, so operation setup now only
+restores sensor power. The ten libfprint finger identifiers are mapped
+deterministically onto BAUTH's four secure template slots; the four-print limit
+and collision policy still need a user-facing decision.
+
+Optical mode has also been made suitable for a real enrol operation. Libfprint
+refreshes `fod_mode` every five seconds so the panel's 15-second safety
+watchdog cannot terminate HBM in the middle of enrolment. It no longer tries
+to call a user's D-Bus session from root. Overlay version 7 instead polls the
+panel's `fod_mode` and follows that kernel state. This ordering is important:
+the temporary test watcher could show its compensating black shade before HBM
+was active, briefly making the entire desktop and target darker before the
+panel brightened. Version 7 should remove that race, but it remains a visual
+acceptance test after GNOME Shell loads the new extension version.
+
+The Goodix touch sponge can publish a press and release between two 45 ms
+polls. The driver therefore records the sequence number in `fod_state` and
+treats a newly latched release as one contact when the press was missed. With
+package `gts9u9`, physical contacts at the stock FOD coordinates reached the
+real `EnrollDo` command through the system fprintd service. Cleanup returned
+`sensor_power`, `fod_enable` and `fod_mode` to zero.
+
+Those calls returned the same `-1, 0, 0` sequence as the earlier tokenless
+harness and produced no template. This proves the complete desktop-to-touch-
+to-BAUTH path, but not secure capture. Stock sends `Challenge` and a
+Gatekeeper-signed `Hat_OP` before `EnrollInit`, then follows the interactive
+opcode 4/5/87/6 loop with controls 87 and 80. The production driver does not
+yet supply such a token or implement that complete loop. No fingerprint image,
+template or Android authentication token has been copied from the device.

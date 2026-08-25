@@ -79,10 +79,12 @@ export default class Gts9uFingerprintOverlay extends Extension {
             null
         );
         this._position();
+        this._startPanelPoll();
     }
 
     disable() {
         this._active = false;
+        this._stopPanelPoll();
         this._stopHidePoll();
         this._stopBrightnessPoll();
         this._stopSafetyTimeout();
@@ -148,6 +150,32 @@ export default class Gts9uFingerprintOverlay extends Extension {
     _panelFodActive() {
         const mode = this._readBacklight('fod_mode');
         return Number.isFinite(mode) && mode !== 0;
+    }
+
+    _startPanelPoll() {
+        if (this._panelPollId)
+            return;
+
+        // fprintd runs as root and cannot authenticate to a user's session
+        // bus.  The panel state is the cross-privilege source of truth: show
+        // the target whenever libfprint enters optical HBM and remove it once
+        // the kernel has completed its cleanup.
+        this._panelPollId = GLib.timeout_add(
+            GLib.PRIORITY_DEFAULT, 100, () => {
+                const active = this._panelFodActive();
+                if (active && !this._active)
+                    this.Show();
+                else if (!active && this._active)
+                    this._finishHide();
+                return GLib.SOURCE_CONTINUE;
+            });
+    }
+
+    _stopPanelPoll() {
+        if (this._panelPollId) {
+            GLib.source_remove(this._panelPollId);
+            this._panelPollId = 0;
+        }
     }
 
     _startHidePoll() {

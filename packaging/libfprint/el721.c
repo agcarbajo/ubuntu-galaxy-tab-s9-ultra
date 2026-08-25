@@ -17,6 +17,7 @@
 #define EL721_PANEL "/sys/class/backlight/ae94000.dsi.0"
 #define EL721_POLL_MS 45
 #define EL721_ACTION_TIMEOUT_US (90 * G_USEC_PER_SEC)
+#define EL721_UDFPS_REFRESH_US (5 * G_USEC_PER_SEC)
 #define EL721_ENROLL_STAGES 10
 
 G_DEFINE_TYPE (FpiDeviceEl721, fpi_device_el721, FP_TYPE_DEVICE)
@@ -56,41 +57,28 @@ write_child (const gchar *directory, const gchar *name, const gchar *value,
   return write_sysfs (path, value, error);
 }
 
-static void
-call_overlay (const gchar *method)
+static gboolean
+read_fod_state (gboolean *pressed, gboolean *released, guint64 *sequence,
+                GError **error)
 {
-  g_autoptr(GDir) run_user = g_dir_open ("/run/user", 0, NULL);
-  const gchar *entry;
+  g_autofree gchar *path = g_build_filename (EL721_TOUCH, "fod_state", NULL);
+  g_autofree gchar *state = NULL;
+  gchar name[16] = { 0 };
+  guint x;
+  guint y;
 
-  if (!run_user)
-    return;
-  while ((entry = g_dir_read_name (run_user)))
+  if (!g_file_get_contents (path, &state, NULL, error))
+    return FALSE;
+  if (sscanf (state, "%15s %u %u %" G_GUINT64_FORMAT,
+              name, &x, &y, sequence) != 4)
     {
-      g_autofree gchar *bus_path = g_build_filename ("/run/user", entry, "bus", NULL);
-      g_autofree gchar *address = NULL;
-      g_autoptr(GDBusConnection) connection = NULL;
-      g_autoptr(GVariant) response = NULL;
-      g_autoptr(GError) error = NULL;
-
-      if (!g_file_test (bus_path, G_FILE_TEST_EXISTS))
-        continue;
-      address = g_strdup_printf ("unix:path=%s", bus_path);
-      connection = g_dbus_connection_new_for_address_sync (
-        address,
-        G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_CLIENT |
-        G_DBUS_CONNECTION_FLAGS_MESSAGE_BUS_CONNECTION,
-        NULL, NULL, &error);
-      if (!connection)
-        continue;
-      response = g_dbus_connection_call_sync (
-        connection,
-        "io.github.agcarbajo.Gts9uFingerprintOverlay",
-        "/io/github/agcarbajo/Gts9uFingerprintOverlay",
-        "io.github.agcarbajo.Gts9uFingerprintOverlay",
-        method, NULL, NULL, G_DBUS_CALL_FLAGS_NONE, 500, NULL, &error);
-      if (response)
-        return;
+      g_set_error (error, G_FILE_ERROR, G_FILE_ERROR_INVAL,
+                   "invalid FOD state: %s", state);
+      return FALSE;
     }
+  *pressed = g_str_equal (name, "pressed") || g_str_equal (name, "vi");
+  *released = g_str_equal (name, "released");
+  return TRUE;
 }
 
 static gboolean
@@ -103,20 +91,47 @@ set_sensor_power (FpiDeviceEl721 *self, gboolean enabled, GError **error)
 static gboolean
 udfps_begin (FpiDeviceEl721 *self, GError **error)
 {
+  gboolean pressed;
+  gboolean released;
+
   if (self->udfps_active)
     return TRUE;
 
   if (!write_child (EL721_TOUCH, "fod_rect", "854 2732 994 2872\n", error) ||
       !write_child (EL721_TOUCH, "fod_enable", "1\n", error))
     return FALSE;
-  call_overlay ("Show");
+  if (!read_fod_state (&pressed, &released, &self->fod_sequence, error))
+    {
+      write_child (EL721_TOUCH, "fod_enable", "0\n", NULL);
+      return FALSE;
+    }
   if (!write_child (EL721_PANEL, "fod_mode", "1\n", error))
     {
       write_child (EL721_TOUCH, "fod_enable", "0\n", NULL);
-      call_overlay ("Hide");
       return FALSE;
     }
   self->udfps_active = TRUE;
+  self->udfps_refreshed = g_get_monotonic_time ();
+  return TRUE;
+}
+
+static gboolean
+udfps_refresh (FpiDeviceEl721 *self, GError **error)
+{
+  gint64 now;
+
+  if (!self->udfps_active)
+    return TRUE;
+  now = g_get_monotonic_time ();
+  if (now - self->udfps_refreshed < EL721_UDFPS_REFRESH_US)
+    return TRUE;
+
+  /* Rewriting an already enabled mode rearms the panel's safety watchdog.
+   * The unprivileged desktop integration owns its own visual lifetime; a
+   * root fprintd process cannot authenticate to the user's session bus. */
+  if (!write_child (EL721_PANEL, "fod_mode", "1\n", error))
+    return FALSE;
+  self->udfps_refreshed = now;
   return TRUE;
 }
 
@@ -127,8 +142,9 @@ udfps_end (FpiDeviceEl721 *self)
     return;
   write_child (EL721_PANEL, "fod_mode", "0\n", NULL);
   write_child (EL721_TOUCH, "fod_enable", "0\n", NULL);
-  call_overlay ("Hide");
   self->udfps_active = FALSE;
+  self->udfps_refreshed = 0;
+  self->fod_sequence = 0;
 }
 
 static void
@@ -173,18 +189,6 @@ action_fail (FpiDeviceEl721 *self, GError *error)
       fpi_device_identify_complete (device, error);
       break;
     }
-}
-
-static gboolean
-read_fod_pressed (gboolean *pressed, GError **error)
-{
-  g_autofree gchar *path = g_build_filename (EL721_TOUCH, "fod_state", NULL);
-  g_autofree gchar *state = NULL;
-  if (!g_file_get_contents (path, &state, NULL, error))
-    return FALSE;
-  *pressed = g_str_has_prefix (state, "pressed") ||
-             g_str_has_prefix (state, "vi ");
-  return TRUE;
 }
 
 static gboolean
@@ -438,7 +442,11 @@ poll_action (FpDevice *device, gpointer user_data)
   FpiDeviceEl721 *self = FPI_DEVICE_EL721 (device);
   g_autoptr(GError) error = NULL;
   gboolean pressed = FALSE;
+  gboolean released = FALSE;
+  gboolean event;
+  gboolean capture;
   gboolean process;
+  guint64 sequence;
 
   g_clear_pointer (&self->poll_source, g_source_unref);
   if (self->action == EL721_ACTION_NONE)
@@ -455,11 +463,22 @@ poll_action (FpDevice *device, gpointer user_data)
                                                    "EL721 operation timed out"));
       return;
     }
-  if (!read_fod_pressed (&pressed, &error))
+  if (!udfps_refresh (self, &error))
     {
       action_fail (self, g_steal_pointer (&error));
       return;
     }
+  if (!read_fod_state (&pressed, &released, &sequence, &error))
+    {
+      action_fail (self, g_steal_pointer (&error));
+      return;
+    }
+  event = sequence != self->fod_sequence;
+  self->fod_sequence = sequence;
+  /* Samsung's sponge may publish PRESS and RELEASE faster than the 45 ms
+   * userspace poll.  A newly latched RELEASE with no observed pressed state
+   * still proves that one contact occurred inside the configured rectangle. */
+  capture = event && !self->finger_present && (pressed || released);
   if (pressed != self->finger_present)
     {
       self->finger_present = pressed;
@@ -468,7 +487,8 @@ poll_action (FpDevice *device, gpointer user_data)
         pressed ? FP_FINGER_STATUS_PRESENT : FP_FINGER_STATUS_NEEDED,
         pressed ? FP_FINGER_STATUS_NEEDED : FP_FINGER_STATUS_PRESENT);
     }
-  process = pressed || (self->action != EL721_ACTION_ENROLL && self->opcode != 4);
+  process = capture ||
+            (self->action != EL721_ACTION_ENROLL && self->opcode != 4);
   if (process)
     {
       gboolean ok = self->action == EL721_ACTION_ENROLL ?
@@ -488,14 +508,23 @@ poll_action (FpDevice *device, gpointer user_data)
 static gboolean
 operation_prepare (FpiDeviceEl721 *self, GError **error)
 {
-  if (!set_sensor_power (self, TRUE, error))
-    return FALSE;
-  if (!el721_qtee_prepare (self->qtee, error))
-    {
-      set_sensor_power (self, FALSE, NULL);
-      return FALSE;
-    }
-  return TRUE;
+  /* The QTEE session is prepared and its matcher is configured by open().
+   * A second CMD_PREPARE in the same session is rejected by BAUTH with 29.
+   * fprintd opens the device before each claimed operation, so only restore
+   * the sensor power that open() deliberately dropped while it was idle. */
+  return set_sensor_power (self, TRUE, error);
+}
+
+static guint32
+template_slot_for_finger (FpFinger finger)
+{
+  /* BAUTH exposes four template slots, whereas FpFinger numbers the ten
+   * anatomical fingers from 1 to 10.  Keep the mapping stable so a template
+   * stored by fprintd carries the same secure-world identifier when reloaded.
+   * The four-print limit and collision handling remain integration work. */
+  if (finger == FP_FINGER_UNKNOWN)
+    return 1;
+  return ((guint32) finger - 1) % 4 + 1;
 }
 
 static void
@@ -509,9 +538,7 @@ el721_enroll (FpDevice *device)
 
   fpi_device_get_enroll_data (device, &print);
   user = fpi_print_generate_user_id (print);
-  self->template_id = fp_print_get_finger (print);
-  if (!self->template_id)
-    self->template_id = 1;
+  self->template_id = template_slot_for_finger (fp_print_get_finger (print));
   if (!operation_prepare (self, &error) ||
       !el721_qtee_enroll_init (self->qtee, (guint8 *) user, strlen (user),
                                self->template_id, &reply, &error))
