@@ -14,7 +14,9 @@ partially exercised, not about a working reader.
 - Sensor: EgisTec EL721, identified by the R03 overlay and Samsung's official
   GPL driver for the `el7xx` family.
 - Type: optical reader under the AMOLED panel.
-- 3.3 V supply: TLMM GPIO91 (`etspi-ldoPin`).
+- 3.3 V supply: PMIC-B LDO2 (`VDD_BTP_3P3` / `vreg_l2b_3p3`). The stock
+  X910 node has no `etspi-ldoPin`; GPIO91 is a legacy port assumption, not the
+  reader's supply.
 - Enable/reset: TLMM GPIO155 (`etspi-sleepPin`).
 - Model reported by Samsung: `X916`.
 - Stock position:
@@ -1116,3 +1118,35 @@ the transport, the command envelopes, the model table, the matcher, the
 interactive capture protocol, the calibration inputs, the rail and its
 sequencing — is correct and verified. Nothing above this layer can work until
 the reader answers, and the answer it must give is `07 15`.
+
+## Cold-boot parity and the early-rail boot regression
+
+A cold One UI trace removes the last ambiguity in the non-secure power path.
+At uptime 8.707239 it enables `VDD_BTP_3P3`, at 8.719568 it raises GPIO155,
+and only then enters `smcinvoke`. It neither claims nor drives GPIO91, and it
+does not ask HLOS to claim or clock the secure QUP engine. This is the sequence
+the port must reproduce: PMIC rail first, GPIO155 second, trusted call last.
+
+Three Ubuntu A/B images then reset between ABL decompression and the first
+persisted Linux message: an incremental build without GPIO91, a clean build
+without it, and a same-tree rebuild with GPIO91 restored. All kept the known
+DTB hash `613b3bb7...`; all failed before a panic or kernel log existed. The
+known-good `boot.img` (`9d4ace88...`) boots with either module set and its
+kernel contains no `vreg_l2b_3p3` publication code. GPIO91 is therefore not the
+cause of this bootloop.
+
+The common delta was `postcore_initcall(el721_add_rail)`, which changed the
+live OF tree while core providers were still starting. That path has been
+removed. The companion now probes with no supply mutation and publishes the
+already-validated `regulators-el721` sibling only on the first explicit
+fingerprint power request. It uses the PMIC5-valid 3,296,000–3,304,000 µV
+window, attaches the synthetic consumer after the changeset is live, and
+allows the RPMh regulator driver to finish binding before acquisition.
+
+The redesigned driver and complete experimental kernel compile cleanly;
+`checkpatch.pl` reports no warnings and the linked image has SHA-256
+`1539dd48f6562a39edab3cad6dfe03e1b896d82102a6f1ae14e1453166c9be13`.
+The same late changeset was loaded on the stable tablet with power disabled,
+registered `vreg_l2b_3p3`, and reverted cleanly without a reboot. The linked
+image is deliberately not a boot candidate until its source review and a
+reversible boot/install set are complete.

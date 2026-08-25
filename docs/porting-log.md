@@ -6560,3 +6560,30 @@ connect its transaction lifetime to the already-tested panel HBM, GNOME target
 and Goodix regional touch suppression. Fingerprint support remains
 experimental until the complete enrol/verify/GDM/reboot/crash matrix is
 physically validated.
+
+## Session 107 — isolate the EL721 early-rail bootloop
+
+Date: 2026-08-25. A One UI cold trace measured the actual ordering as PMIC
+`VDD_BTP_3P3`, GPIO155, then `smcinvoke`; stock neither claims GPIO91 nor asks
+HLOS to touch the secure QUP engine. Three Ubuntu A/B kernels nevertheless
+reset after ABL decompression and before the first persisted Linux message:
+clean and incremental builds without GPIO91, followed by a rebuild with the
+line restored. The identical failure with both variants rules GPIO91 out as
+the boot regression.
+
+The restored image
+`9d4ace88d2d5e8c49f34945b8816bd468165d4562cf59282a9f64802b32bb899`
+boots normally and predates the string `vreg_l2b_3p3`. The common failing
+delta was the EL721 driver's `postcore_initcall`, which published a regulator
+by modifying the live OF tree during core-provider initialisation. It has been
+replaced with an on-demand path: the fallback EL721 device probes without any
+rail node and the already-tested `regulators-el721` sibling is published only
+when userspace explicitly requests sensor power.
+
+The complete experimental kernel builds with no driver warnings and the
+resulting `Image.gz` is
+`1539dd48f6562a39edab3cad6dfe03e1b896d82102a6f1ae14e1453166c9be13`.
+Loading the equivalent changeset as a signed module on the stable tablet with
+power disabled registered the regulator, left the system responsive, and
+reverted the tree cleanly on unload. No new boot image was flashed in this
+session; the stable Ubuntu set remains active.
