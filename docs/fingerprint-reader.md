@@ -2,12 +2,13 @@
 
 This document describes the experimental infrastructure for the Galaxy Tab S9
 Ultra Wi-Fi's (`SM-X910`) under-display optical reader. **Enrolment,
-verification and fingerprint login do not work yet.** The secure transport is
-solved and a complete userspace backend now exists — a QTEE bridge to Samsung's
-signed BAUTH application plus an `EL721` driver for `libfprint` — but no
-fingerprint has yet been enrolled or matched on the tablet, so every claim
-below about capture and matching is about code that has been written and
-partially exercised, not about a working reader.
+verification and fingerprint login do not work yet.** The experimental QTEE
+bridge and libfprint driver now capture real samples: one Ubuntu session reached
+17 accepted samples and 100% secure-world coverage. Template encryption then
+failed with BAUTH result 71, so no fingerprint has yet been stored or matched.
+The [latest checkpoint](#full-coverage-capture-and-the-hwvault-boundary) below
+supersedes the historical investigation notes. Capture coverage is not the
+percentage of the complete implementation.
 
 ## Confirmed identification
 
@@ -1286,9 +1287,88 @@ measured sequence `4 → 5 → 87 → 6/0`, closes with `EnrollFinal` even on
 BAD_QUALITY 39, and starts the next transaction with `EnrollInit`. This avoids
 the old permanent `0x80000000` sentinel after one rejected image.
 
-The exact control framing matters: opcode 5 uses control 87 with one byte of
-response capacity and control 80 with four; opcode 87 uses control 87 with one.
-Declaring zero for control 80 returns status 51 and guarantees a rejected
-capture. Package `gts9u16` contains the corrected capacities and awaits one
-physical capture to confirm opcode 6. Approximate total implementation is
-98.7%; a complete template, verify, GDM and reboot/crash validation remain.
+Opcode 5 uses control 87 with one byte of response capacity and control 80
+with four; opcode 87 uses control 87 with one. Subsequent physical testing
+disproved the earlier claim that reserving four bytes fixes control 80: it
+still answers 51 while captures can succeed. Its temperature-related input
+framing needs further work. The earlier 98.7% estimate is superseded below.
+
+## Full-coverage capture and the HwVault boundary
+
+The 2026-08-26 Ubuntu tests establish the following:
+
+- fprintd's `ProtectSystem=strict` originally prevented saving the new local
+  Gatekeeper state. Adding `StateDirectory=gts9u-fingerprint` permits just its
+  private state directory, alongside the stock `fprint` directory. The new
+  directory is root-only (0700); the 99-byte state file is 0600. The obsolete
+  copy in fprintd's per-user print directory was removed after the replacement
+  was present; no Android credential was involved.
+- Real captures complete `4 → 5 → 87 → 6 → 0`. Opcode 63 is an acquired/progress
+  callback, not a missing control request. The bounded loop now handles it.
+- The first metric is increasing coverage; the third is accepted-sample count,
+  not samples remaining. A run reached 17 accepted samples and coverage 100.
+  The timeout now measures 90 seconds of inactivity between transactions, not
+  the total duration of enrolment. Rejected samples still close with Final
+  before starting the next Init.
+- Result 70 was temporarily treated as a retry in the deployed `gts9u20`
+  experiment. Stock `enrollDo` treats it as an error, so `gts9u21` restores that
+  behaviour. Only the stock recoverable results 39/41 are retried; a fatal
+  result must not be hidden by a simultaneous retry code from Final.
+- At full coverage, EnrollDo returned result 71 with zero template bytes.
+  EnrollFinal returned zero but no template. Static analysis follows this to
+  `encode_each_templ_ver3 → getTemplateEncryptionKey → HwVaultHal_deriveKey`.
+  Result 71 is a key-derivation failure, never a successful enrolment.
+
+The stock gateway extracts the **encrypted template from EnrollDo** at
+`+0x1c`, using length `+0x22601c`, maximum `0x226000`, in an output of
+`0x230024` bytes. EnrollFinal's optional `0xa000`-byte payload is bitmap/debug
+output and must not become an `FpPrint`. Package `gts9u21` validates and copies
+only a successful terminal EnrollDo template, preserves it across Final's
+shared-buffer overwrite, and publishes it only if Final also succeeds.
+It does not copy Final bitmap data or log any template bytes.
+
+`scripts/test-el721-enroll-wire.sh` provides 11 offline synthetic tests:
+successful copying, empty/max/oversized/overflow lengths, short/long/null
+responses, key failure, intermediate opcodes and partial coverage. These pass
+in the ARM64 build environment; they do not substitute for real enrol/verify.
+They also pass with UndefinedBehaviorSanitizer. AddressSanitizer under the
+emulated build environment exited without a diagnostic, so no ASan pass is
+claimed. The ARM64 package built successfully and was installed on the tablet;
+libfprint enumeration, Prepare and close passed without a capture or reboot.
+Package SHA-256:
+`55d5b1209455dd4796b116ce84c0a24814928bbf80e2bb16ae08b1e0fddde501`.
+
+### HwVault investigation (no Android state imported)
+
+Samsung's signed `hwvault.b00`–`b08` were read from the tablet's APNHLOS firmware
+partition, mounted read-only. The assembled 1,101,912-byte TA loads and unloads
+successfully via QTEE. The firmware remains a local, ignored artifact and is
+not distributed by this repository. Loading it alone is not sufficient:
+its `get_derived_key` explicitly reads cached credential index 11, then derives
+the requested key for the caller. Android's live reference logs show that same
+index. No cached credential or Android vault file was read.
+
+Static analysis identifies commands `0x271b` (generate a new wrapped HwVault
+root) and `0x271c` (load that wrapped root into this TA's in-memory cache).
+A bounded diagnostic refused to touch an already-resident HwVault instance,
+loaded a fresh instance, and requested generation only. QTEE transport and
+invocation succeeded, but the response status was **9936**, with **zero wrapped
+bytes**. Consequently it did not send SetRoot or save any file. Loading
+`skeymast` first produced the same result. HwVault unloaded cleanly after both
+tests. The generator calls `strongbox_wrap` / `send_km_cmd`; the underlying
+Keymaster/StrongBox dependency and its initialisation remain unresolved.
+The exact cause of 9936 is not yet experimentally proven.
+
+Next work must establish a Ubuntu-owned, persistent wrapped root that is
+loaded only into Ubuntu's vault session, without reading or changing Android's
+credential store, resetting secure hardware, or bypassing template encryption.
+Then validate a stored template, same/different-finger verification, stable
+user/slot identity, GDM/PAM, cancellation, crash cleanup and a cold reboot.
+The negative TZMEM kernel experiment still running on the test tablet must
+also be replaced with the known-good kernel/module pair before boot validation;
+no reboot or boot-partition write was needed for these userspace tests.
+
+Approximate overall implementation is now **90%**, with substantial uncertainty
+in the remaining secure dependencies. The previous 98–99% estimates were too
+optimistic. This is not a ready-to-use fingerprint reader and the capture's
+100% does not establish storage, verification or login.

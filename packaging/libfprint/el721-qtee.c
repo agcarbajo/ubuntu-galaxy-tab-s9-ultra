@@ -2,6 +2,7 @@
 /* Minimal Samsung BAUTH transport over Qualcomm's upstream QTEE object API. */
 
 #include "el721-qtee.h"
+#include "el721-enroll-wire.h"
 
 #include <elf.h>
 #include <errno.h>
@@ -90,7 +91,7 @@
 #define EL721_BDS_CHUNK 0x3000U
 #define ENROLL_INIT_SIZE 0x178U
 #define ENROLL_INIT_OUT_SIZE 0xcU
-#define ENROLL_DO_OUT_SIZE 0x230024U
+#define ENROLL_DO_OUT_SIZE EL721_ENROLL_OUTPUT_SIZE
 #define FINAL_OUT_SIZE 0xa018U
 #define IDENTIFY_INIT_SIZE 0x2265bdU
 #define IDENTIFY_INIT_OUT_SIZE 0x1a0U
@@ -2277,17 +2278,11 @@ el721_qtee_enroll_do (El721Qtee *session, El721Reply *reply, GError **error)
   if (!invoke_body (session, CMD_ENROLL_DO, sizeof (body), ENROLL_DO_OUT_SIZE,
                     body, sizeof (body), &output, error))
     return FALSE;
-  decode_common (reply, output);
   /* BAuth_Enroll_Do's response is not a common command reply.  The gateway
    * copies its first word back to EnrollContext::state (the opcode), the
    * timeout from +8, and the function status from +12.  Its three capture
    * metrics are reordered again while copying them to _enroll_status_t. */
-  reply->opcode = get_u32 (output, 0);
-  reply->status = get_u32 (output, 12);
-  reply->quality = get_u32 (output, 16);
-  reply->progress = get_u32 (output, 24);
-  reply->remaining = get_u32 (output, 20);
-  return TRUE;
+  return el721_decode_enroll_output (output, ENROLL_DO_OUT_SIZE, reply, error);
 }
 
 static gboolean
@@ -2309,11 +2304,11 @@ final_command (El721Qtee *session, guint32 command, El721Reply *reply,
   if (size > 0xa000)
     {
       g_set_error (error, EL721_ERROR, 1,
-                   "BAUTH returned an invalid template size %u", size);
+                   "BAUTH returned an invalid final bitmap size %u", size);
       return FALSE;
     }
-  if (size)
-    reply->data = g_bytes_new (output + 0x14, size);
+  /* This is optional bitmap/debug output, not an encrypted template.  Do not
+   * copy image material out of the shared buffer or offer it to libfprint. */
   return TRUE;
 }
 

@@ -22,8 +22,9 @@
 #define EL721_OP_WAIT_INTERRUPT 4U
 #define EL721_OP_NOTIFY_DOWN 5U
 #define EL721_OP_CAPTURE_SUCCESS 6U
+#define EL721_OP_ACQUIRED_EVENT 63U
 #define EL721_OP_CAPTURE_STEP 87U
-#define EL721_CAPTURE_STEPS_MAX 12U
+#define EL721_CAPTURE_STEPS_MAX 16U
 
 G_DEFINE_TYPE (FpiDeviceEl721, fpi_device_el721, FP_TYPE_DEVICE)
 
@@ -334,6 +335,7 @@ handle_enroll_do (FpiDeviceEl721 *self, GError **error)
   El721Reply reply = { 0 };
   El721Reply final = { 0 };
   FpPrint *enroll_print = NULL;
+  g_autoptr(GBytes) template = NULL;
   g_autofree gchar *user = NULL;
   guint32 capture_result = 0;
   guint progress = 0;
@@ -358,16 +360,20 @@ handle_enroll_do (FpiDeviceEl721 *self, GError **error)
           break;
         }
       if (reply.opcode == EL721_OP_WAIT_INTERRUPT ||
-          reply.opcode == EL721_OP_CAPTURE_SUCCESS)
+          reply.opcode == EL721_OP_CAPTURE_SUCCESS ||
+          reply.opcode == EL721_OP_ACQUIRED_EVENT)
         {
+          /* Opcode 63 is an acquired/progress callback in Samsung's
+           * check_opcode() jump table.  It performs no control transaction;
+           * the stock service reports the event and calls EnrollDo again. */
           el721_reply_clear (&reply);
           continue;
         }
       if (reply.opcode == EL721_OP_NOTIFY_DOWN)
         {
-          /* Samsung frames these as output-only controls: 87 reserves one
-           * response byte and 80 reserves one u32.  A zero response capacity
-           * makes operation 80 fail its shape check with status 51. */
+          /* Stock reserves one response byte for 87 and four for 80.
+           * Control 80's additional temperature framing is not yet matched:
+           * it still returns 51, but successful captures have been observed. */
           if (!el721_qtee_control_op (self->qtee, EL721_OP_CAPTURE_STEP,
                                       NULL, 0, 1, error) ||
               !el721_qtee_control_op (self->qtee, 80, NULL, 0, 4, error))
@@ -397,19 +403,27 @@ handle_enroll_do (FpiDeviceEl721 *self, GError **error)
   /* EnrollFinal closes every capture, including BAD_QUALITY (39).  Omitting
    * it leaves the trustlet in its 0x80000000 sentinel and all later touches
    * become no-ops. */
-  progress = reply.progress;
-  if (reply.remaining <= EL721_ENROLL_STAGES && reply.remaining > 0)
-    progress = MAX (progress, (EL721_ENROLL_STAGES - reply.remaining) * 100 /
-                              EL721_ENROLL_STAGES);
-  progress = MIN (progress, 100);
+  /* The first capture metric is coverage and the third is the accepted-sample
+   * counter.  Keep fprintd below its terminal stage until EnrollDo returns an
+   * encrypted template AND EnrollFinal succeeds. */
+  progress = MIN (reply.quality, 99);
+  if (reply.remaining > 0)
+    progress = MAX (progress,
+                    MIN (reply.remaining, EL721_ENROLL_STAGES - 1) * 100 /
+                    EL721_ENROLL_STAGES);
+  template = g_steal_pointer (&reply.data);
   el721_reply_clear (&reply);
   if (!el721_qtee_enroll_final (self->qtee, &final, error))
     goto fail;
+  if (template && !final.result)
+    progress = 100;
   fp_dbg ("EnrollFinal result=%u status=%u opcode=%u template=%zu progress=%u",
           final.result, final.status, final.opcode,
-          final.data ? g_bytes_get_size (final.data) : 0, progress);
+          template ? g_bytes_get_size (template) : 0, progress);
 
-  if (capture_result == 39 || final.result == 39)
+  if ((!capture_result || capture_result == 39 || capture_result == 41) &&
+      (!final.result || final.result == 39 || final.result == 41) &&
+      (capture_result || final.result))
     {
       GError *retry = fpi_device_retry_new (FP_DEVICE_RETRY_GENERAL);
       fpi_device_enroll_progress (FP_DEVICE (self), self->enroll_stage,
@@ -417,7 +431,12 @@ handle_enroll_do (FpiDeviceEl721 *self, GError **error)
     }
   else if (capture_result || final.result)
     {
-      g_set_error (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_GENERAL,
+      if (capture_result == 71 || capture_result == 72)
+        g_set_error (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_GENERAL,
+                     "EL721 cannot encrypt the template: HwVault key "
+                     "derivation failed (secure result %u)", capture_result);
+      else
+        g_set_error (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_GENERAL,
                    "EL721 capture/final returned %u/%u", capture_result,
                    final.result);
       goto fail;
@@ -436,7 +455,7 @@ handle_enroll_do (FpiDeviceEl721 *self, GError **error)
                                           NULL, NULL);
             }
         }
-      if (progress >= 100 && final.data)
+      if (progress >= 100 && template)
         {
           FpPrint *print = NULL;
           gsize size;
@@ -444,7 +463,7 @@ handle_enroll_do (FpiDeviceEl721 *self, GError **error)
           GVariant *array;
           GVariant *data;
 
-          bytes = g_bytes_get_data (final.data, &size);
+          bytes = g_bytes_get_data (template, &size);
           fpi_device_get_enroll_data (FP_DEVICE (self), &print);
           array = g_variant_new_fixed_array (G_VARIANT_TYPE_BYTE, bytes, size, 1);
           data = g_variant_new ("(u@ay)", self->template_id, array);
@@ -480,6 +499,9 @@ handle_enroll_do (FpiDeviceEl721 *self, GError **error)
       return FALSE;
     }
   el721_reply_clear (&reply);
+  /* The timeout protects against an abandoned operation, not the total time
+   * needed to collect a variable number of coverage samples. */
+  self->action_started = g_get_monotonic_time ();
   return TRUE;
 
 fail:
