@@ -78,6 +78,37 @@ main (int argc, char **argv)
   if (!g_getenv ("EL721_SKIP_PREPARE") && !el721_qtee_prepare (session, &error))
     goto out;
   g_print ("EL721 userspace transport: signed TA loaded and Prepare succeeded.\n");
+  if (g_getenv ("EL721_AUTH_PROBE"))
+    {
+      El721Challenge challenge = { 0 };
+      guint8 hat[EL721_HARDWARE_AUTH_TOKEN_SIZE] = { 0 };
+      guint8 enabled = 1;
+      guint32 challenge_result = 0;
+      guint32 hat_result = 0;
+
+      /* Reproduce the measured pre-enrol boundary without importing an
+       * Android credential.  The challenge ID occupies bytes 8..15 of the
+       * opaque challenge record and the packed HAT stores it after version. */
+      if (!el721_qtee_control_op (session, 22, &enabled, sizeof (enabled),
+                                  0, &error) ||
+          !el721_qtee_generate_challenge (session, 0, 0, &challenge,
+                                          &challenge_result, &error))
+        goto out;
+      memcpy (hat + 1, challenge.bytes + 8, sizeof (guint64));
+      if (!el721_qtee_hat_op (session, hat, sizeof (hat), 0, NULL, 0,
+                              &challenge, &hat_result, &error))
+        {
+          /* Rejection is expected for this deliberately unsigned token.
+           * Preserve the secure-world code while keeping this a bounded
+           * diagnostic rather than a failing enrolment attempt. */
+          if (!error)
+            goto out;
+          hat_result = (guint32) error->code;
+          g_clear_error (&error);
+        }
+      g_print ("Auth probe: challenge result=%u, unsigned HAT result=%u\n",
+               challenge_result, hat_result);
+    }
   /* One ordered probe list, so a stock sequence can be replayed exactly:
    * "c84" a bare control, "c22=1" a control with one byte, "u49" a control
    * carrying the user identifier, "r2:376:12" a raw command. */

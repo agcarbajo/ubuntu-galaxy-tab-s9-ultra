@@ -48,6 +48,8 @@
 #define CMD_CANCEL 10U
 #define CANCEL_WIRE_SIZE 8U
 #define CMD_CONTROL 12U
+#define CMD_HAT_OP 13U
+#define CMD_CHALLENGE 19U
 
 #define PREPARE_SIZE 0x80010U
 #define PREPARE_MODE_CALIBRATED 36U
@@ -90,6 +92,17 @@
 #define IDENTIFY_INIT_SIZE 0x2265bdU
 #define IDENTIFY_INIT_OUT_SIZE 0x1a0U
 #define IDENTIFY_DO_OUT_SIZE 0x230089U
+#define CHALLENGE_INPUT_SIZE 0xcU
+#define CHALLENGE_OUTPUT_SIZE 0x44U
+#define CHALLENGE_OUTPUT_INFO_OFFSET 0x8U
+#define HAT_INPUT_SIZE 0x48dU
+#define HAT_OUTPUT_SIZE 0x40cU
+#define HAT_TOKEN_OFFSET 0x4U
+#define HAT_SELECTOR_OFFSET 0x49U
+#define HAT_PAYLOAD_OFFSET 0x4dU
+#define HAT_PAYLOAD_MAX 0x400U
+#define HAT_PAYLOAD_LENGTH_OFFSET 0x44dU
+#define HAT_CHALLENGE_OFFSET 0x451U
 
 #define EL721_ERROR el721_qtee_error_quark ()
 
@@ -865,6 +878,63 @@ el721_qtee_raw_command (El721Qtee *session, guint32 command,
         g_debug ("  command %u output word %" G_GSIZE_FORMAT " = %u", command,
                  word, get_u32 (output, word * 4));
     }
+  return TRUE;
+}
+
+gboolean
+el721_qtee_generate_challenge (El721Qtee *session, guint32 user_id,
+                               guint32 authenticator_id,
+                               El721Challenge *challenge, guint32 *result,
+                               GError **error)
+{
+  guint8 body[CHALLENGE_INPUT_SIZE] = { 0 };
+  guint8 *output;
+
+  g_return_val_if_fail (challenge != NULL, FALSE);
+  put_u32 (body, 0, CMD_CHALLENGE);
+  put_u32 (body, 4, user_id);
+  put_u32 (body, 8, authenticator_id);
+  if (!invoke_body (session, CMD_CHALLENGE, sizeof (body),
+                    CHALLENGE_OUTPUT_SIZE, body, sizeof (body), &output,
+                    error))
+    return FALSE;
+  if (result)
+    *result = get_u32 (output, 4);
+  memcpy (challenge->bytes, output + CHALLENGE_OUTPUT_INFO_OFFSET,
+          sizeof (challenge->bytes));
+  return TRUE;
+}
+
+gboolean
+el721_qtee_hat_op (El721Qtee *session, const guint8 *hat, gsize hat_size,
+                   guint32 selector, const guint8 *payload,
+                   gsize payload_size, const El721Challenge *challenge,
+                   guint32 *result, GError **error)
+{
+  guint8 body[HAT_INPUT_SIZE] = { 0 };
+  guint8 *output;
+
+  if (!hat || hat_size != EL721_HARDWARE_AUTH_TOKEN_SIZE ||
+      payload_size > HAT_PAYLOAD_MAX || (payload_size && !payload) ||
+      !challenge)
+    {
+      g_set_error_literal (error, EL721_ERROR, 1,
+                           "invalid BAUTH authentication envelope");
+      return FALSE;
+    }
+  put_u32 (body, 0, CMD_HAT_OP);
+  memcpy (body + HAT_TOKEN_OFFSET, hat, hat_size);
+  put_u32 (body, HAT_SELECTOR_OFFSET, selector);
+  if (payload_size)
+    memcpy (body + HAT_PAYLOAD_OFFSET, payload, payload_size);
+  put_u32 (body, HAT_PAYLOAD_LENGTH_OFFSET, (guint32) payload_size);
+  memcpy (body + HAT_CHALLENGE_OFFSET, challenge->bytes,
+          sizeof (challenge->bytes));
+  if (!invoke_body (session, CMD_HAT_OP, sizeof (body), HAT_OUTPUT_SIZE,
+                    body, sizeof (body), &output, error))
+    return FALSE;
+  if (result)
+    *result = get_u32 (output, 4);
   return TRUE;
 }
 

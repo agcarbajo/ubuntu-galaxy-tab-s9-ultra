@@ -6675,3 +6675,24 @@ that opcode loop. Approximate implementation progress is now 88%: fprintd,
 power, panel HBM, overlay triggering, regional touch and BAUTH initialisation
 are end-to-end, while template capture, persistence, verification and GDM
 remain unproven.
+
+## Session 110 — the HAT boundary is reproduced exactly
+
+The old token probe only sent a zero-filled command-13 body and attributed its
+code 62 to a bad signature. Disassembly of the stock gateway fixed the exact
+wire layout: a packed 69-byte `hw_auth_token_t`, a selector, an optional
+1024-byte payload and the 60-byte record returned by command 19 fill the
+1165-byte input; the output is 1036 bytes. Typed `Challenge` and `Hat_OP` calls
+now implement those measured offsets.
+
+The bounded ARM64 harness generated a fresh BAUTH challenge, copied its ID into
+an otherwise empty HAT and sent the matching challenge record. TrustZone then
+returned 28, whereas the completely zeroed envelope still returns 62. The old
+62 therefore meant that the challenge envelope itself was invalid. Reaching 28
+with the correct envelope isolates the missing Gatekeeper/KeyMint HMAC without
+copying an Android HAT, PIN, template or fingerprint image. Power and FOD state
+were zero after both probes.
+
+Progress remains approximately 88%: this removes ambiguity and prepares the
+transport API, but it does not create the legitimate Ubuntu authentication
+token required before the TA will enter opcode 4 and begin capture.

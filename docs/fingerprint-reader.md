@@ -803,9 +803,9 @@ the TA asks for 20 MHz; and `gcc_qupv3_wrap1_s7_clk` is enabled, so the
 wrapper itself is powered and its AHB clocks cannot be the whole story. The remaining gate is inside Samsung's engine
 rather than in the transport: the enrolment worker in `tz_vigis_api.c` reaches
 `fp_enroll_init` in `vigis_controller.c`, and that call returns failure. The
-same TA also validates authentication tokens — a zeroed `BAuth_Hat_OP`
-(command 13, `0x48d`/`0x40c`) is rejected with 62 rather than ignored — so the
-token path is live and may well be the gate.
+same TA also validates authentication tokens — an all-zero `BAuth_Hat_OP`
+envelope (command 13, `0x48d`/`0x40c`) is rejected with 62 rather than ignored
+— so the token path is live and may well be the gate.
 
 The older risk has not gone away either: the TA also carries `BAuth_Hat_OP`,
 `BAuth_GetK_From_KM` and `BAuth_Generate_Challenge`, so enrolment may still
@@ -954,7 +954,7 @@ the first call, before any interrupt is ever waited for.
 The same trace also shows stock issuing `Challenge` (command 19) and then
 `Hat_OP` (command 13) before `EnrollInit`. `Challenge` succeeds here.
 `Hat_OP` does not: it needs its full 1165-byte envelope — anything else is
-refused with 51 — and refuses a zeroed token with 62. That is a
+refused with 51 — and refuses an all-zero envelope with 62. That is a
 Gatekeeper-signed authentication token, and this platform has no Gatekeeper to
 produce one.
 
@@ -1242,3 +1242,19 @@ Gatekeeper-signed `Hat_OP` before `EnrollInit`, then follows the interactive
 opcode 4/5/87/6 loop with controls 87 and 80. The production driver does not
 yet supply such a token or implement that complete loop. No fingerprint image,
 template or Android authentication token has been copied from the device.
+
+The command-13 envelope has since been reproduced field for field from the
+stock gateway rather than as a zero-filled raw command. It contains the packed
+69-byte Android hardware-auth token at offset 4, a selector at 73, up to 1024
+bytes of optional payload at 77, its length at 1101 and the 60-byte challenge
+record at 1105. Command 19 returns that challenge record at output offset 8.
+The bridge now has typed calls for both commands.
+
+The distinction changes the diagnostic result. A completely empty command-13
+body still returns 62, but a freshly generated challenge plus a HAT carrying
+the correct challenge ID and no HMAC reaches the authentication check and is
+rejected with secure-world code 28. Thus 62 was an invalid challenge envelope,
+not proof of a parsed but unsigned HAT. Code 28 is the first direct evidence
+that the remaining pre-capture boundary is a legitimately signed hardware
+authentication token. The test generated no credential and deliberately did
+not import one from Android.
