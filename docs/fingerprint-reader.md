@@ -10,6 +10,33 @@ The [latest checkpoint](#full-coverage-capture-and-the-hwvault-boundary) below
 supersedes the historical investigation notes. Capture coverage is not the
 percentage of the complete implementation.
 
+### Requested desktop follow-up (after functional enrol/verify)
+
+GNOME Settings 46.7 already handles `EnrollStatus`: progress, accepted-stage
+animation, retry instructions and errors. The current console-driven probes
+do not open that dialog, and the target overlay is not an enrolment wizard.
+Reuse and validate the native dialog rather than duplicate it. GNOME Shell's
+authentication prompt also supports feedback from GDM; placement near this
+physical under-display sensor still requires device-specific integration.
+
+After encrypted storage and real matching are working:
+
+1. Show a dim fingerprint icon while waiting; illuminate the optical target
+   only during actual contact/capture, then restore brightness on release,
+   completion, cancellation or failure.
+2. Anchor the target to the physical sensor using the monitor's **applied
+   transform**, not raw accelerometer orientation. Turning a rotation-locked
+   tablet must not move the target away from the sensor.
+3. Validate both screen unlock and GDM login. Keep the physical target fixed
+   but orient any nearby failure text with the displayed UI.
+4. Avoid overlap with the on-screen password keyboard, especially in portrait.
+   If the keyboard covers the sensor, suppress the target rather than move it
+   to a non-sensing location or consume password keystrokes. Password entry
+   must remain usable throughout.
+
+References: [GNOME 46.7 enrol dialog](https://github.com/GNOME/gnome-control-center/blob/46.7/panels/system/users/cc-fingerprint-dialog.c#L639),
+[GNOME 46 authentication prompt](https://github.com/GNOME/gnome-shell/blob/46.0/js/gdm/authPrompt.js).
+
 ## Confirmed identification
 
 - Sensor: EgisTec EL721, identified by the R03 overlay and Samsung's official
@@ -1368,7 +1395,38 @@ The negative TZMEM kernel experiment still running on the test tablet must
 also be replaced with the known-good kernel/module pair before boot validation;
 no reboot or boot-partition write was needed for these userspace tests.
 
-Approximate overall implementation is now **90%**, with substantial uncertainty
-in the remaining secure dependencies. The previous 98–99% estimates were too
-optimistic. This is not a ready-to-use fingerprint reader and the capture's
-100% does not establish storage, verification or login.
+### K250A transport and authenticated credential exchange
+
+Samsung's GPL K250A driver has now been ported to the mainline 7.2 kernel. The
+shipping board connects the secure element to QUP SE10 I2C at address `0x23`
+and powers it from PM8550VS-G LDO2 at 1.8 V. The boot-compatible DTB already
+contains that controller but marks it disabled. To avoid another ABL bootloop,
+the module applies a reversible live-device-tree changeset, instantiates the
+controller and client only while loaded, and restores `status = "disabled"`
+on removal. It drives the dedicated LDO through the public RPMh interface.
+No replacement DTB or persistent firmware state is involved.
+
+The signed module was exercised on the tablet under kernel lockdown. Load,
+open/power, unload and live-DT rollback all succeeded. `CORE_OPEN` returned
+`9000`, establishing end-to-end RPMh, GENI I2C and ISO7816 T=1 transport. The
+module deliberately returns `ENODEV` for the absent reset GPIO, matching the
+stock X910 DT and driver behaviour instead of simulating a reset by cycling
+power.
+
+The Android credential flow has also been reproduced through its read-only
+path. It selects the `SECURE_NVM` applet, obtains the K250A nonce, asks HwVault
+command `0x2714` to sign a GET for index 11, sends the resulting 77-byte request
+and 32-byte authenticator to the element, and receives the expected 185-byte
+encrypted credential plus a 32-byte response authenticator. HwVault command
+`0x2715` accepts the transport but currently returns status 6 because a fresh
+Ubuntu HwVault session has no wrapped root loaded. No Android root, credential
+file or PIN was read, imported or changed.
+
+The remaining encryption work is therefore narrower than before: initialise
+and persist an Ubuntu-owned wrapped HwVault root, load it before the authenticated
+K250A exchange, then keep that verified credential cached for `deriveKey`.
+After that, rerun terminal enrolment, stored-template verification, PAM/GDM and
+cold-boot tests. Approximate overall implementation is now **76%**. The lower
+figure deliberately accounts for the secure root lifecycle and the still
+pending lock-screen/FOD interaction work; capture coverage alone is not a
+measure of an operational fingerprint reader.

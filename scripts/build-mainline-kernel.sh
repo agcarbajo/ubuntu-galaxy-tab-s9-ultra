@@ -453,6 +453,25 @@ grep -q 'egis_el721.o' "$fingerprint_dir/Makefile" || \
 	printf 'obj-$(CONFIG_FINGERPRINT_EGIS_EL721) += egis_el721.o\n' \
 		>> "$fingerprint_dir/Makefile"
 
+# The encrypted fingerprint templates are tied to a credential kept by the
+# Samsung K250A secure element.  The shipping DT describes its I2C controller
+# as disabled because Samsung ABL rejects enlarged replacement DTBs.  This
+# port therefore instantiates the already-present controller at module load
+# time and reverts that live-DT change when the module is removed.
+snvm_source=$repo/kernel/drivers/snvm
+snvm_dir=$fingerprint_dir/snvm
+case "$snvm_dir" in
+	"$kernel_tree"/drivers/misc/snvm) rm -rf -- "$snvm_dir" ;;
+	*) echo "unsafe SNVM driver path: $snvm_dir" >&2; exit 1 ;;
+esac
+cp -a "$snvm_source" "$snvm_dir"
+if ! grep -q 'drivers/misc/snvm/Kconfig' "$fingerprint_dir/Kconfig"; then
+	printf '\nsource "drivers/misc/snvm/Kconfig"\n' >> "$fingerprint_dir/Kconfig"
+fi
+grep -q 'CONFIG_STAR_K250A_LEGO).*snvm/' "$fingerprint_dir/Makefile" || \
+	printf 'obj-$(CONFIG_STAR_K250A_LEGO) += snvm/\n' \
+		>> "$fingerprint_dir/Makefile"
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -502,10 +521,12 @@ done
 
 if [ "$fingerprint_sensor" = 1 ]; then
 	"$kernel_tree/scripts/config" --file "$build_dir/.config" \
-		--module QCOMTEE --enable FINGERPRINT_EGIS_EL721
+		--module QCOMTEE --enable FINGERPRINT_EGIS_EL721 \
+		--module STAR_K250A_LEGO
 else
 	"$kernel_tree/scripts/config" --file "$build_dir/.config" \
-		--module QCOMTEE --disable FINGERPRINT_EGIS_EL721
+		--module QCOMTEE --disable FINGERPRINT_EGIS_EL721 \
+		--disable STAR_K250A_LEGO
 fi
 
 make -C "$kernel_tree" O="$build_dir" ARCH=arm64 LLVM=1 olddefconfig
@@ -596,6 +617,13 @@ if [ "${BUILD_WIFI_MODULES:-1}" = 1 ]; then
 			-j"$(nproc)" M="$qcomtee_tree" modules
 		make -C "$kernel_tree" O="$build_dir" ARCH=arm64 LLVM=1 \
 			M="$qcomtee_tree" INSTALL_MOD_PATH="$modules_root" \
+			INSTALL_MOD_STRIP=1 DEPMOD=true modules_install
+	fi
+	if grep -qx 'CONFIG_STAR_K250A_LEGO=m' "$build_dir/.config"; then
+		make -C "$kernel_tree" O="$build_dir" ARCH=arm64 LLVM=1 \
+			-j"$(nproc)" M="$snvm_dir" modules
+		make -C "$kernel_tree" O="$build_dir" ARCH=arm64 LLVM=1 \
+			M="$snvm_dir" INSTALL_MOD_PATH="$modules_root" \
 			INSTALL_MOD_STRIP=1 DEPMOD=true modules_install
 	fi
 
