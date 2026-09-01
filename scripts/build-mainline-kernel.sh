@@ -86,8 +86,10 @@ test -f "$drv/egis_el721.c"
 test -f "$drv/qcom_spss.c"
 test -f "$drv/qcom_glink_spss.c"
 test -f "$drv/spcom.c"
+test -f "$drv/spss_utils.c"
 test -f "$repo/kernel/include/linux/remoteproc/qcom_spss.h"
 test -f "$repo/kernel/include/uapi/linux/spcom.h"
+test -f "$repo/kernel/include/uapi/linux/spss_utils.h"
 
 mkdir -p "$(dirname "$kernel_tree")" "$build_dir" "$out_dir"
 
@@ -532,7 +534,10 @@ grep -q 'qcom_glink_spss.o' "$spss_glink_dir/Makefile" || \
 spcom_dir=$kernel_tree/drivers/soc/qcom
 install -m 0644 "$repo/kernel/include/uapi/linux/spcom.h" \
 	"$kernel_tree/include/uapi/linux/spcom.h"
+install -m 0644 "$repo/kernel/include/uapi/linux/spss_utils.h" \
+	"$kernel_tree/include/uapi/linux/spss_utils.h"
 install -m 0644 "$drv/spcom.c" "$spcom_dir/spcom.c"
+install -m 0644 "$drv/spss_utils.c" "$spcom_dir/spss_utils.c"
 if ! grep -q '^config QCOM_SPCOM$' "$spcom_dir/Kconfig"; then
 	cat >> "$spcom_dir/Kconfig" <<'EOF'
 
@@ -546,6 +551,20 @@ EOF
 fi
 grep -q 'CONFIG_QCOM_SPCOM).*spcom.o' "$spcom_dir/Makefile" || \
 	printf 'obj-$(CONFIG_QCOM_SPCOM) += spcom.o\n' >> "$spcom_dir/Makefile"
+if ! grep -q '^config QCOM_SPSS_UTILS$' "$spcom_dir/Kconfig"; then
+	cat >> "$spcom_dir/Kconfig" <<'EOF'
+
+config QCOM_SPSS_UTILS
+	tristate "Qualcomm Secure Processor userspace utilities"
+	depends on ARCH_QCOM && QCOM_SPSS
+	help
+	  Exposes the SPSS boot-event ABI used to coordinate Qualcomm's sec_nvm
+	  service and SP daemon across userspace processes.
+EOF
+fi
+grep -q 'CONFIG_QCOM_SPSS_UTILS).*spss_utils.o' "$spcom_dir/Makefile" || \
+	printf 'obj-$(CONFIG_QCOM_SPSS_UTILS) += spss_utils.o\n' \
+		>> "$spcom_dir/Makefile"
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -599,11 +618,12 @@ if [ "$fingerprint_sensor" = 1 ]; then
 		--module QCOMTEE --enable FINGERPRINT_EGIS_EL721 \
 		--module STAR_K250A_LEGO \
 		--module RPMSG_QCOM_GLINK_SPSS --module QCOM_SPSS \
-		--module QCOM_SPCOM
+		--module QCOM_SPSS_UTILS --module QCOM_SPCOM
 else
 	"$kernel_tree/scripts/config" --file "$build_dir/.config" \
 		--module QCOMTEE --disable FINGERPRINT_EGIS_EL721 \
-		--disable STAR_K250A_LEGO --disable QCOM_SPSS --disable QCOM_SPCOM \
+		--disable STAR_K250A_LEGO --disable QCOM_SPSS \
+		--disable QCOM_SPSS_UTILS --disable QCOM_SPCOM \
 		--disable RPMSG_QCOM_GLINK_SPSS
 fi
 
@@ -734,6 +754,15 @@ if [ "${BUILD_WIFI_MODULES:-1}" = 1 ]; then
 				"$build_dir/certs/signing_key.x509" "$installed"
 			modinfo -F signer "$installed" | grep -q .
 		done
+
+		make -C "$kernel_tree" O="$build_dir" ARCH=arm64 LLVM=1 \
+			-j"$(nproc)" M="$spcom_dir" spss_utils.ko
+		installed=$release_dir/updates/spss_utils.ko
+		install -m 0644 "$spcom_dir/spss_utils.ko" "$installed"
+		"$build_dir/scripts/sign-file" sha256 \
+			"$build_dir/certs/signing_key.pem" \
+			"$build_dir/certs/signing_key.x509" "$installed"
+		modinfo -F signer "$installed" | grep -q .
 
 		make -C "$kernel_tree" O="$build_dir" ARCH=arm64 LLVM=1 \
 			-j"$(nproc)" M="$spcom_dir" \

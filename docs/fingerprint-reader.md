@@ -1363,7 +1363,7 @@ emulated build environment exited without a diagnostic, so no ASan pass is
 claimed. The ARM64 package built successfully and was installed on the tablet;
 libfprint enumeration, Prepare and close passed without a capture or reboot.
 Package SHA-256:
-`55d5b1209455dd4796b116ce84c0a24814928bbf80e2bb16ae08b1e0fddde501`.
+`392ca6dc31b1be3b9be4b06a2fbc168e9731926b0ee11b5b93790ae28387e1e0`.
 
 ### HwVault investigation (no Android state imported)
 
@@ -1426,7 +1426,36 @@ The remaining encryption work is therefore narrower than before: initialise
 and persist an Ubuntu-owned wrapped HwVault root, load it before the authenticated
 K250A exchange, then keep that verified credential cached for `deriveKey`.
 After that, rerun terminal enrolment, stored-template verification, PAM/GDM and
-cold-boot tests. Approximate overall implementation is now **76%**. The lower
-figure deliberately accounts for the secure root lifecycle and the still
-pending lock-screen/FOD interaction work; capture coverage alone is not a
-measure of an operational fingerprint reader.
+cold-boot tests.
+
+### SPSS userspace boot coordination
+
+The clean SPSS transport test proved that `qcom_spss`, GLINK, SPCOM and all six
+`sec_nvm` service channels work, but HwVault root generation still returned
+status 9936. One UI's successful sequence has an additional process,
+`spdaemon`, between SPSS boot and Keymaster use. Static analysis of Samsung's
+`libspcom.so` found that this is not coordinated through `/dev/spcom`: the
+library opens `/dev/spss_utils` and uses the exact legacy event ABI
+`WAIT_FOR_EVENT`, `SIGNAL_EVENT` and `IS_EVENT_SIGNALED`. The event IDs are 0
+(`pil_called`), 1 (`nvm_ready`) and 2 (`spu_ready`). The previously ported
+SPCOM source even declared `spss_utils` as a soft dependency, but that second
+driver had not been included.
+
+The experimental kernel now packages a mainline adaptation of Samsung's GPL
+`spss_utils` driver. It preserves the stock IOCTL numbers, structures, status
+values and duplicate-signal behaviour, creates `/dev/spss_utils`, and ties
+power-up/power-down event reset to the actual SPSS `remoteproc` lifecycle. The
+bootloader-sensitive DTB remains untouched: `qcom_spss` publishes both
+userspace bridge devices below its dynamically created remote processor.
+Samsung's downstream IAR/CMAC handoff is not emulated because it requires a
+hypervisor memory-assignment API absent from this mainline platform; attempts
+to use it fail explicitly instead of reporting a false secure handoff.
+
+The module compiles cleanly against Linux 7.2, passes `checkpatch` with no
+errors or warnings and is signed by the same kernel build key. Hardware proof
+still requires running `sec_nvm` followed by `spdaemon`, observing
+`SP Apps were loaded successfully`, and then repeating the bounded HwVault
+generator. Until that succeeds, approximate overall implementation remains
+**91%**. Capture coverage alone is not a measure of an operational fingerprint
+reader; the secure root lifecycle and final lock-screen/FOD interaction tests
+remain part of the missing work.

@@ -93,6 +93,7 @@ struct qcom_spss {
 	struct qcom_spss_glink glink_subdev;
 	struct qcom_rproc_ssr ssr_subdev;
 	struct qcom_sysmon *sysmon_subdev;
+	struct platform_device *utils_pdev;
 	struct platform_device *spcom_pdev;
 	void __iomem *irq_status;
 	void __iomem *irq_clr;
@@ -727,6 +728,22 @@ static int qcom_spss_probe(struct platform_device *pdev)
 	if (ret)
 		goto remove_subdev;
 
+	/*
+	 * Samsung's libspcom coordinates sec_nvm and spdaemon through the
+	 * separate /dev/spss_utils interface.  Parent both userspace bridges to
+	 * the rproc so they can discover this instance without modifying the
+	 * bootloader-sensitive board DTB.
+	 */
+	spss->utils_pdev = platform_device_register_data(&rproc->dev,
+							 "spss_utils",
+							 PLATFORM_DEVID_NONE,
+							 NULL, 0);
+	if (IS_ERR(spss->utils_pdev)) {
+		ret = PTR_ERR(spss->utils_pdev);
+		spss->utils_pdev = NULL;
+		goto del_rproc;
+	}
+
 	/* Parent SPCOM to the rproc device so it can use rproc_get_by_child(). */
 	spss->spcom_pdev = platform_device_register_data(&rproc->dev, "spcom",
 							 PLATFORM_DEVID_NONE,
@@ -734,11 +751,14 @@ static int qcom_spss_probe(struct platform_device *pdev)
 	if (IS_ERR(spss->spcom_pdev)) {
 		ret = PTR_ERR(spss->spcom_pdev);
 		spss->spcom_pdev = NULL;
-		goto del_rproc;
+		goto unregister_utils;
 	}
 
 	return 0;
 
+unregister_utils:
+	platform_device_unregister(spss->utils_pdev);
+	spss->utils_pdev = NULL;
 del_rproc:
 	rproc_del(rproc);
 remove_subdev:
@@ -759,6 +779,8 @@ static void qcom_spss_remove(struct platform_device *pdev)
 
 	if (spss->spcom_pdev)
 		platform_device_unregister(spss->spcom_pdev);
+	if (spss->utils_pdev)
+		platform_device_unregister(spss->utils_pdev);
 	rproc_del(spss->rproc);
 	qcom_remove_glink_spss_subdev(spss->rproc, &spss->glink_subdev);
 	qcom_remove_ssr_subdev(spss->rproc, &spss->ssr_subdev);
