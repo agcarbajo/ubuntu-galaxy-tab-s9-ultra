@@ -1451,9 +1451,19 @@ Samsung's downstream IAR/CMAC handoff is not emulated because it requires a
 hypervisor memory-assignment API absent from this mainline platform; attempts
 to use it fail explicitly instead of reporting a false secure handoff.
 
+A delayed manual launch also exposed an ordering constraint. SPSS advertises
+`cryptoapp`, `sp_keymaster` and `sp_nvm` shortly after GLINK comes up, and its
+production firmware no longer completed a symmetric OPEN requested much later
+by `spdaemon`. Predefining those application channels in SPCOM was tested and
+then rejected: the stock SM-X910 DT defines only `sp_kernel` and `sp_ssr`.
+Android instead starts `sec_nvm` and `spdaemon` as part of the same boot
+sequence. Ubuntu must preserve that split and coordinate userspace with SPSS
+startup, rather than changing the kernel's channel ownership model.
+
 The module compiles cleanly against Linux 7.2, passes `checkpatch` with no
 errors or warnings and is signed by the same kernel build key. Hardware proof
-still requires running `sec_nvm` followed by `spdaemon`, observing
+still requires starting `sec_nvm` and `spdaemon` before SPCOM boots SPSS,
+observing
 `SP Apps were loaded successfully`, and then repeating the bounded HwVault
 generator. Until that succeeds, approximate overall implementation remains
 **91%**. Capture coverage alone is not a measure of an operational fingerprint
