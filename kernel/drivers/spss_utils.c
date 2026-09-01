@@ -267,6 +267,7 @@ static int spss_utils_probe(struct platform_device *pdev)
 	if (!spss->rproc)
 		return dev_err_probe(&pdev->dev, -EPROBE_DEFER,
 				     "SPSS remoteproc is not ready\n");
+	/* rproc_get_by_child() returns a borrowed parent-owned reference. */
 
 	spss->subdev.prepare = spss_utils_subdev_prepare;
 	spss->subdev.start = spss_utils_subdev_start;
@@ -281,7 +282,6 @@ static int spss_utils_probe(struct platform_device *pdev)
 	ret = misc_register(&spss->miscdev);
 	if (ret) {
 		rproc_remove_subdev(spss->rproc, &spss->subdev);
-		rproc_put(spss->rproc);
 		return ret;
 	}
 
@@ -297,7 +297,6 @@ static void spss_utils_remove(struct platform_device *pdev)
 
 	misc_deregister(&spss->miscdev);
 	rproc_remove_subdev(spss->rproc, &spss->subdev);
-	rproc_put(spss->rproc);
 }
 
 static struct platform_driver spss_utils_driver = {

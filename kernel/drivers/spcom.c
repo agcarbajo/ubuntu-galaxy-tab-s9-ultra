@@ -3975,6 +3975,18 @@ static int spcom_probe(struct platform_device *pdev)
 			sizeof(dev->predefined_ch_name[0]));
 		strscpy(dev->predefined_ch_name[1], "sp_ssr",
 			sizeof(dev->predefined_ch_name[1]));
+		/*
+		 * SPSS advertises these services as soon as its GLINK edge comes
+		 * up.  Register their rpmsg drivers before booting the remote so
+		 * that the symmetric OPEN handshake is answered immediately.  A
+		 * late dynamic registration times out on the production firmware.
+		 */
+		strscpy(dev->predefined_ch_name[2], "cryptoapp",
+			sizeof(dev->predefined_ch_name[2]));
+		strscpy(dev->predefined_ch_name[3], "sp_keymaster",
+			sizeof(dev->predefined_ch_name[3]));
+		strscpy(dev->predefined_ch_name[4], "sp_nvm",
+			sizeof(dev->predefined_ch_name[4]));
 	}
 
 	if (!np || of_property_read_bool(np, "qcom,boot-enabled"))
