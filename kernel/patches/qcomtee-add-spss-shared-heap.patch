@@ -1,0 +1,142 @@
+From: Galaxy Tab S9 Ultra Ubuntu port
+Subject: [PATCH] qcomtee: expose the SPSS TrustZone shared carveout
+
+Samsung's keymaster bootstrap does not use ordinary QTEE shared memory.  It
+allocates its 20 KiB control area from qcom,secure-sp-tz, a carveout shared by
+TrustZone and the Secure Processing SubSystem.  Publish the same range through
+the TEE protected-memory heap framework and assign it to the stock
+CP_SPSS_SP_SHARED VMID before making allocations available.
+
+The reserved-memory node is already part of the upstream SM8550 description.
+Platforms without that node keep the normal QCOMTEE behaviour.
+
+---
+ drivers/tee/qcomtee/call.c | 67 ++++++++++++++++++++++++++++++++++++++++
+ drivers/tee/qcomtee/qcomtee.h | 3 ++
+ drivers/tee/tee_heap.c | 2 ++
+ include/linux/tee_core.h | 1 +
+ 4 files changed, 73 insertions(+)
+
+diff --git a/include/linux/tee_core.h b/include/linux/tee_core.h
+--- a/include/linux/tee_core.h
++++ b/include/linux/tee_core.h
+@@ -39,6 +39,7 @@ enum tee_dma_heap_id {
+ 	TEE_DMA_HEAP_SECURE_VIDEO_PLAY = 1,
+ 	TEE_DMA_HEAP_TRUSTED_UI,
+ 	TEE_DMA_HEAP_SECURE_VIDEO_RECORD,
++	TEE_DMA_HEAP_SPSS_SHARED,
+ };
+ 
+ /**
+diff --git a/drivers/tee/tee_heap.c b/drivers/tee/tee_heap.c
+--- a/drivers/tee/tee_heap.c
++++ b/drivers/tee/tee_heap.c
+@@ -236,6 +236,8 @@ static const char *heap_id_2_name(enum tee_dma_heap_id id)
+ 		return "protected,trusted-ui";
+ 	case TEE_DMA_HEAP_SECURE_VIDEO_RECORD:
+ 		return "protected,secure-video-record";
++	case TEE_DMA_HEAP_SPSS_SHARED:
++		return "qcom,secure-sp-tz";
+ 	default:
+ 		return NULL;
+ 	}
+diff --git a/drivers/tee/qcomtee/qcomtee.h b/drivers/tee/qcomtee/qcomtee.h
+--- a/drivers/tee/qcomtee/qcomtee.h
++++ b/drivers/tee/qcomtee/qcomtee.h
+@@ -37,6 +37,9 @@ struct qcomtee {
+ 	struct xarray xa_local_objects;
+ 	u32 xa_last_id;
+ 	u32 qtee_version;
++	phys_addr_t spu_tz_base;
++	size_t spu_tz_size;
++	bool spu_tz_assigned;
+ };
+ 
+ void qcomtee_fetch_async_reqs(struct qcomtee_object_invoke_ctx *oic);
+diff --git a/drivers/tee/qcomtee/call.c b/drivers/tee/qcomtee/call.c
+--- a/drivers/tee/qcomtee/call.c
++++ b/drivers/tee/qcomtee/call.c
+@@ -7,2 +7,6 @@
++#include <linux/firmware/qcom/qcom_scm.h>
++#include <linux/of.h>
++#include <linux/of_address.h>
+ #include <linux/slab.h>
++#include <linux/tee_core.h>
+ #include <linux/tee.h>
+@@ -698,6 +702,64 @@ static const struct tee_desc qcomtee_desc = {
+ 	.owner = THIS_MODULE,
+ };
+ 
++static int qcomtee_register_spu_heap(struct qcomtee *qcomtee)
++{
++	struct qcom_scm_vmperm dst = {
++		.vmid = QCOM_SCM_VMID_CP_SPSS_SP_SHARED,
++		.perm = QCOM_SCM_PERM_RW,
++	};
++	struct tee_protmem_pool *pool;
++	struct device_node *np;
++	struct resource res;
++	u64 src = BIT_ULL(QCOM_SCM_VMID_HLOS);
++	int err;
++
++	/* This node names the first, TrustZone-facing half of the stock
++	 * "SPU secure shared memory" reservation on SM8450 and SM8550. */
++	np = of_find_node_by_name(NULL, "spu-tz-shared-region");
++	if (!np)
++		return -ENODEV;
++	err = of_address_to_resource(np, 0, &res);
++	of_node_put(np);
++	if (err)
++		return err;
++
++	qcomtee->spu_tz_base = res.start;
++	qcomtee->spu_tz_size = resource_size(&res);
++	err = qcom_scm_assign_mem(qcomtee->spu_tz_base,
++				  qcomtee->spu_tz_size, &src, &dst, 1);
++	if (err)
++		return err;
++	qcomtee->spu_tz_assigned = true;
++
++	pool = tee_protmem_static_pool_alloc(qcomtee->spu_tz_base,
++					     qcomtee->spu_tz_size);
++	if (IS_ERR(pool)) {
++		err = PTR_ERR(pool);
++		goto err_assigned;
++	}
++	err = tee_device_register_dma_heap(qcomtee->teedev,
++					   TEE_DMA_HEAP_SPSS_SHARED, pool);
++	if (err) {
++		pool->ops->destroy_pool(pool);
++		goto err_assigned;
++	}
++
++	dev_info(&qcomtee->teedev->dev,
++		 "SPSS shared heap at %pa, size %zu\n",
++		 &qcomtee->spu_tz_base, qcomtee->spu_tz_size);
++	return 0;
++
++err_assigned:
++	/* A failed heap cannot expose the range.  Leave it assigned rather than
++	 * risk returning memory to HLOS after secure world observed it.  A reset
++	 * restores the firmware's initial ownership. */
++	dev_err(&qcomtee->teedev->dev,
++		"SPSS shared memory assigned but heap registration failed: %d\n",
++		err);
++	return err;
++}
++
+ static int qcomtee_probe(struct platform_device *pdev)
+ {
+ 	struct workqueue_struct *async_wq;
+@@ -777,6 +839,11 @@ static int qcomtee_probe(struct platform_device *pdev)
+ 		QTEE_VERSION_GET_MINOR(qcomtee->qtee_version),
+ 		QTEE_VERSION_GET_PATCH(qcomtee->qtee_version));
+ 
++	err = qcomtee_register_spu_heap(qcomtee);
++	if (err && err != -ENODEV)
++		dev_warn(&pdev->dev,
++			 "SPSS protected heap is unavailable: %d\n", err);
++
+ 	return 0;
+ 
+ err_dest_wq:

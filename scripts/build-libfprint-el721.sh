@@ -103,6 +103,9 @@ fetch_source qcbor \
 	https://github.com/laurencelundblade/QCBOR.git "$qcbor_commit"
 
 git -C "$src/libfprint" apply "$input/patches/0001-el721-platform-driver.patch"
+git -C "$src/quic-teec" apply --recount \
+	"$input/patches/0002-qcomtee-expose-memory-fd.patch" \
+	"$input/patches/0003-qcomtee-register-dmabuf.patch"
 install -m0644 "$input/el721.c" "$input/el721.h" \
 	"$input/el721-qtee.c" "$input/el721-qtee.h" "$input/el721-enroll-wire.h" \
 	"$src/libfprint/libfprint/drivers/"

@@ -1,0 +1,46 @@
+From: Galaxy Tab S9 Ultra Ubuntu port
+Subject: [PATCH] libqcomtee: expose the memory-object descriptor
+
+Samsung's SPU bootstrap locks the same shared buffer in SPCOM before passing
+its QTEE memory object to skeymast. Expose the borrowed TEE shared-memory file
+descriptor so the integration can retain that allocation in SPCOM.
+
+---
+ libqcomtee/include/qcomtee_object_types.h | 9 +++++++++
+ libqcomtee/src/objects/mem_obj.c          | 5 +++++
+ 2 files changed, 14 insertions(+)
+
+diff --git a/libqcomtee/include/qcomtee_object_types.h b/libqcomtee/include/qcomtee_object_types.h
+--- a/libqcomtee/include/qcomtee_object_types.h
++++ b/libqcomtee/include/qcomtee_object_types.h
+@@ -61,6 +61,15 @@ int qcomtee_memory_object_alloc(size_t size, struct qcomtee_object *root,
+ 
+ void *qcomtee_memory_object_addr(struct qcomtee_object *object);
+ size_t qcomtee_memory_object_size(struct qcomtee_object *object);
++/**
++ * @brief Return the borrowed TEE shared-memory descriptor for an object.
++ *
++ * The descriptor remains owned by the memory object and must not be closed by
++ * the caller. It is valid until qcomtee_memory_object_release() is called.
++ *
++ * @return A non-negative descriptor, or -1 for an invalid object.
++ */
++int qcomtee_memory_object_fd(struct qcomtee_object *object);
+ 
+ /**
+  * @brief Release a memory object.
+diff --git a/libqcomtee/src/objects/mem_obj.c b/libqcomtee/src/objects/mem_obj.c
+--- a/libqcomtee/src/objects/mem_obj.c
++++ b/libqcomtee/src/objects/mem_obj.c
+@@ -111,6 +111,11 @@ size_t qcomtee_memory_object_size(struct qcomtee_object *object)
+ 	return MEMORY(object)->mem_info.size;
+ }
+ 
++int qcomtee_memory_object_fd(struct qcomtee_object *object)
++{
++	return object ? MEMORY(object)->fd : -1;
++}
++
+ void qcomtee_memory_object_release(struct qcomtee_object *object)
+ {
+ 	qcomtee_object_refs_dec(object);
