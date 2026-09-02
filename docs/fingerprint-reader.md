@@ -9,7 +9,7 @@ non-matches. Native GNOME screen unlock also succeeded, and after the v9
 cancellation fix the user reports repeated successful tests across rotations.
 System startup, greeter login and the remaining optical UX still need integration
 and physical validation. The
-[latest checkpoint](#touch-to-light-icon-and-repeated-unlock-validation-2026-09-03)
+[latest checkpoint](#keyboard-inhibition-and-gdm-integration-2026-09-03)
 supersedes historical investigation notes below, including older encryption
 failures and estimates.
 
@@ -2146,3 +2146,95 @@ coordinate the on-screen keyboard with touch suppression, add near-sensor
 error text, or replace the diagnostic SPU owner with production boot handling.
 Use the password for the initial login; then test the icon in Companion and
 the session lock screen. No reboot or SPU-owner restart is needed or performed.
+
+## Keyboard inhibition and GDM integration (2026-09-03)
+
+The user confirmed that the resting-icon/touch-to-light change works; the
+running **v10 ACTIVE** was verified before proceeding. **gts9u46 + device 2.42 /
+overlay 11** now implement the next integration checkpoint. The package requires
+at least driver gts9u46: an older driver would hide the icon but still suppress
+keyboard touches, which is not a valid partial upgrade.
+
+### Availability and keyboard safety
+
+Shell reserves the keyboard's final rectangle as soon as it starts showing,
+and throughout its hide animation. Geometry uses the same applied monitor
+transform as the target; it never moves the target away from the physical
+sensor. When the keyboard overlaps, the target and nearby feedback are hidden.
+
+A small root system-bus service, `ubuntu-gts9u-fingerprint-ui`, publishes a
+two-second availability lease under `/run/gts9u-fingerprint-ui/ready`. It accepts
+`Pulse(sessionId, available)` only when the sender UID belongs to the requested
+active local graphical session on seat0, including GDM's greeter. It checks
+logind again while the lease is live and drops it on expiry, session change,
+or the publishing bus connection closing. NameOwnerChanged is accepted only
+from the bus daemon. Inactive Shell sessions do not send pulses. The service
+cannot access hardware, templates, PAM or authentication results; its only
+effect is allowing/pausing optical capture. Root is not an implicit exception
+to the active-session check. Active-user applications could also pause capture;
+this channel is an availability aid, never an authentication authority.
+
+The driver publishes its operation status independently so the UI can resume
+a paused operation. Without a valid ready lease it turns **both panel HBM and
+Goodix FOD off**, preserving the normal touchscreen. When the UI becomes ready,
+it re-enables contact detection and seeds the contact sequence/latch before
+waiting again. Missing/unloaded Shell integration deliberately leaves capture
+paused; password authentication is untouched. Cancellation and the existing
+action timeout remain in force. A secure capture already executing synchronously
+must return before the driver can process another pause; this update does not
+make the TA call itself asynchronous.
+
+### GDM and error feedback
+
+The extension declares the `gdm` session mode. A separate vendor keyfile in
+`/usr/share/gdm/dconf/91-gts9u-fingerprint` enables just this system extension
+for the greeter. Ubuntu's existing `generate-config` recompiles the existing
+profile/defaults; no GDM restart, logout, replacement profile or PAM edits are
+performed by the package. Reading the effective GDM settings confirmed the
+fingerprint extension enabled and `disable-user-extensions=false`. This follows
+the installed Ubuntu GDM layout, together with GNOME's documented
+[extension defaults](https://help.gnome.org/system-admin-guide/extensions-enable.html)
+and [greeter dconf configuration](https://help.gnome.org/system-admin-guide/login-logo.html).
+
+The overlay also mirrors native, localized `gdm-fingerprint` error messages
+above the physical target for four seconds. It observes the native verifier's
+`show-message` signal; it never answers or completes authentication, and ignores
+password messages. Text follows the displayed UI orientation and disappears
+when the keyboard covers the sensor or the native prompt is destroyed.
+
+### Validation and next physical checkpoint
+
+- **136 C cases** pass with UBSan, plus 75 keyboard geometry, 12 mocked overlay
+  transition, five native-feedback observation, eight broker policy, 36 sensor
+  geometry, 13 visual lease, seven auth recovery and 16 Companion tests.
+- ARM64 compilation passed without warnings. Both packages were installed,
+  with unchanged saved-print/PAM checks and the same live SPU and GDM processes.
+- A bounded no-contact hardware test exercised missing UI, blocked UI, ready UI,
+  keyboard appearing/dismissed, heartbeat expiry/restoration and client
+  disconnection. Every paused state was sensor/panel-FOD/touch-FOD **1/0/0**;
+  every ready state **1/0/1**. No verification result or HBM was produced.
+  Cancellation restored **0/0/0** and removed the operation lease. A root caller
+  could not impersonate the active user; a user caller supplying a different
+  session was rejected. The root-owned lease was readable by the ordinary user.
+- The first probe was interrupted by a contact release/new press at the sensor,
+  which correctly enabled HBM. After coordination with the user, the complete
+  no-contact sequence above passed. This is distinct from an actual keyboard
+  or greeter rendering test.
+
+Installed SHA-256:
+
+- libfprint gts9u46: `11051657db1ece983e8aafd7ba66928636b6960d8ca81610470f6657d76ecdcc`.
+- Device 2.42: `3a2879ce06ecfef95087a14aec8ec049034f32f0e1081281d1bdf7bd2f5fbf80`.
+
+The running user Shell still caches v10 until a **logout/login**, not just a
+screen lock. Physical validation must check the new GDM icon/recognition,
+portrait keyboard typing at the former overlap, return of the icon after
+dismissing the keyboard, and wrong-finger feedback. Password remains the
+fallback. Do not call those paths proven based only on the broker probe.
+
+After that checkpoint: back up the existing print and validate registration,
+retry feedback, cancellation, removal/re-registration and recognition using
+GNOME Settings from scratch. The final separate task is production SPU startup
+and a controlled Ubuntu reboot; the diagnostic DMA/listener owner is still
+required and must not be restarted independently. The overall estimate remains
+approximately **94%**, pending real UI and cold-start validation.

@@ -8,6 +8,7 @@ const source = readFileSync(new URL('../packaging/ubuntu-gts9u-device/usr/share/
 const timers = new Map();
 let nextTimer = 1;
 const GLib = {
+    get_monotonic_time() { return 1000; },
     PRIORITY_DEFAULT: 0, SOURCE_CONTINUE: true, SOURCE_REMOVE: false,
     timeout_add(_priority, _interval, callback) {
         timers.set(nextTimer, callback);
@@ -28,6 +29,10 @@ overlay._actor = actor();
 overlay._shade = actor();
 overlay._icon = actor();
 overlay._panel = {};
+overlay._uiAllowed = true;
+overlay._uiReadyUntil = 1500000;
+overlay._pulseAvailability = () => {};
+overlay._updateFeedback = () => {};
 overlay._position = () => {};
 overlay._updateShade = () => {};
 let state = {active: true, illuminated: false};
@@ -54,6 +59,21 @@ state = {active: true, illuminated: false};
 poll();
 assert(overlay.Visible && overlay._icon.visible && !overlay._shade.visible);
 assert(!overlay._brightnessPollId);
+overlay._uiAllowed = false;
+poll();
+assert(!overlay.Visible && !overlay._shade.visible);
+overlay._actor.show();
+overlay._enforceInactive();
+assert(!overlay.Visible); // Layout remapping must not steal an OSK key.
+overlay._uiAllowed = true;
+poll();
+assert(overlay.Visible && overlay._icon.visible);
+overlay._uiReadyUntil = 999;
+poll();
+assert(!overlay.Visible); // Lost broker/expired acknowledgement.
+overlay._uiReadyUntil = 1500000;
+poll();
+assert(overlay.Visible);
 state = {active: false, illuminated: false};
 poll();
 assert(!overlay.Visible && !overlay._shade.visible);
@@ -64,4 +84,35 @@ overlay._enforceInactive();
 assert(!overlay.Visible && !overlay._shade.visible);
 overlay._stopPanelPoll();
 assert.equal(timers.size, 0);
-console.log('PASS: 7 overlay waiting/capture/cleanup transitions (mock actors, not rendering)');
+console.log('PASS: 12 overlay waiting/capture/keyboard/lease/cleanup transitions (mock actors, not rendering)');
+
+const feedback = new Type();
+feedback._feedback = actor();
+let callback;
+let disconnects = 0;
+const verifier = {
+    connect(signal, handler) { assert.equal(signal, 'show-message'); callback = handler; return 1; },
+    disconnect(id) { assert.equal(id, 1); disconnects++; },
+};
+Main.screenShield = {_dialog: {_authPrompt: {_userVerifier: verifier}}};
+let targetVisible = true;
+feedback._canShowTarget = () => targetVisible;
+feedback._updateFeedback();
+callback(verifier, 'gdm-password', 'Private password message', 3);
+feedback._updateFeedback();
+assert(!feedback._feedback.visible);
+callback(verifier, 'gdm-fingerprint', 'Place finger', 2);
+feedback._updateFeedback();
+assert(!feedback._feedback.visible);
+callback(verifier, 'gdm-fingerprint', 'Huella no reconocida', 3);
+feedback._updateFeedback();
+assert(feedback._feedback.visible);
+assert.equal(feedback._feedback.text, 'Huella no reconocida');
+targetVisible = false;
+feedback._updateFeedback();
+assert(!feedback._feedback.visible);
+Main.screenShield._dialog = null;
+feedback._updateFeedback();
+assert.equal(disconnects, 1);
+assert(!feedback._feedback.visible);
+console.log('PASS: 5 native feedback filtering/lifetime cases (no auth methods invoked)');

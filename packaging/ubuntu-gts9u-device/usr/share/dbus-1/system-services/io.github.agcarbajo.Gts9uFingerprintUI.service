@@ -1,0 +1,5 @@
+[D-BUS Service]
+Name=io.github.agcarbajo.Gts9uFingerprintUI
+Exec=/usr/libexec/ubuntu-gts9u-fingerprint-ui
+User=root
+SystemdService=ubuntu-gts9u-fingerprint-ui.service

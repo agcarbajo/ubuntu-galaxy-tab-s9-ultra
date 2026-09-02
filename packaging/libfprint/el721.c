@@ -9,6 +9,7 @@
 #include "el721-identify-wire.h"
 #include "el721-match-retry.h"
 #include "el721-touch-light.h"
+#include "el721-ui-lease.h"
 
 #include <errno.h>
 #include <stdio.h>
@@ -20,6 +21,7 @@
 #define EL721_TOUCH "/sys/bus/i2c/devices/13-005d"
 #define EL721_PANEL "/sys/class/backlight/ae94000.dsi.0"
 #define EL721_VISUAL_STATE "/run/gts9u-fingerprint/active"
+#define EL721_UI_LEASE "/run/gts9u-fingerprint-ui/ready"
 #define EL721_BATTERY_TEMP "/sys/class/power_supply/battery/temp"
 #define EL721_BATTERY_TEMP_FALLBACK "/sys/class/power_supply/sm5714-battery/temp"
 #define EL721_POLL_MS 45
@@ -169,7 +171,7 @@ udfps_begin (FpiDeviceEl721 *self, GError **error)
     return TRUE;
 
   if (!write_child (EL721_TOUCH, "fod_rect", "854 2732 994 2872\n", error) ||
-      !write_child (EL721_TOUCH, "fod_enable", "1\n", error))
+      !write_child (EL721_TOUCH, "fod_enable", "0\n", error))
     return FALSE;
   if (!read_fod_state (&pressed, &released, &x, &y, &self->fod_sequence,
                        error))
@@ -188,7 +190,8 @@ udfps_begin (FpiDeviceEl721 *self, GError **error)
       return FALSE;
     }
   self->udfps_active = TRUE;
-  g_message ("EL721 touch-to-light armed; waiting without HBM");
+  self->touch_inhibited = TRUE;
+  g_message ("EL721 touch-to-light armed; waiting for visible target without HBM");
   return TRUE;
 }
 
@@ -221,6 +224,7 @@ udfps_end (FpiDeviceEl721 *self)
   write_child (EL721_TOUCH, "fod_enable", "0\n", NULL);
   self->udfps_active = FALSE;
   self->udfps_lit = FALSE;
+  self->touch_inhibited = TRUE;
   self->capture_deadline = 0;
   self->visual_refreshed = 0;
   g_unlink (EL721_VISUAL_STATE);
@@ -774,6 +778,7 @@ poll_action (FpDevice *device, gpointer user_data)
   gboolean capture;
   El721LightStep light_step;
   g_autofree gchar *touch_enabled = NULL;
+  g_autofree gchar *ui_lease = NULL;
   guint x;
   guint y;
   guint64 sequence;
@@ -794,6 +799,45 @@ poll_action (FpDevice *device, gpointer user_data)
                                                    "EL721 operation timed out"));
       return;
     }
+  if (!udfps_publish (self, &error))
+    {
+      action_fail (self, g_steal_pointer (&error));
+      return;
+    }
+  g_file_get_contents (EL721_UI_LEASE, &ui_lease, NULL, NULL);
+  if (!el721_ui_lease_ready (ui_lease, g_get_monotonic_time ()))
+    {
+      if (!self->touch_inhibited)
+        {
+          if (!udfps_light (self, FALSE, &error) ||
+              !write_child (EL721_TOUCH, "fod_enable", "0\n", &error))
+            {
+              action_fail (self, g_steal_pointer (&error));
+              return;
+            }
+          self->touch_inhibited = TRUE;
+          self->capture_deadline = 0;
+          self->finger_present = FALSE;
+          fpi_device_report_finger_status (device, FP_FINGER_STATUS_NEEDED);
+          g_message ("EL721 target unavailable; touch suppression and HBM disabled");
+        }
+      schedule_poll (self);
+      return;
+    }
+  if (self->touch_inhibited)
+    {
+      if (!write_child (EL721_TOUCH, "fod_enable", "1\n", &error) ||
+          !read_fod_state (&pressed, &released, &x, &y, &self->fod_sequence, &error))
+        {
+          action_fail (self, g_steal_pointer (&error));
+          return;
+        }
+      /* Seed both sequence and latch: a keyboard finger already held down
+       * must not become a capture when the keyboard is dismissed. */
+      self->finger_present = pressed;
+      self->touch_inhibited = FALSE;
+      g_message ("EL721 target available; waiting for a fresh contact");
+    }
   /* Suspend disables the touch controller's FOD mode. Do not leave a stale
    * prompt armed after resume or silently re-enable it behind the lock UI. */
   if (!g_file_get_contents (EL721_TOUCH "/fod_enable", &touch_enabled, NULL, &error) ||
@@ -805,7 +849,7 @@ poll_action (FpDevice *device, gpointer user_data)
       action_fail (self, g_steal_pointer (&error));
       return;
     }
-  if (!udfps_publish (self, &error) || !udfps_refresh (self, &error))
+  if (!udfps_refresh (self, &error))
     {
       action_fail (self, g_steal_pointer (&error));
       return;

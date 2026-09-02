@@ -3,6 +3,6 @@
   "name": "Galaxy Tab S9 Ultra fingerprint overlay",
   "description": "Optical fingerprint target and regional touch guard for the Galaxy Tab S9 Ultra",
   "shell-version": ["46"],
-  "session-modes": ["user", "unlock-dialog"],
-  "version": 10
+  "session-modes": ["user", "unlock-dialog", "gdm"],
+  "version": 11
 }

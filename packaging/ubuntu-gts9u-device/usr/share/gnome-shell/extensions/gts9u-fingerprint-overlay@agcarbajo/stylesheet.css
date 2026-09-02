@@ -17,3 +17,12 @@
   color: rgba(255, 255, 255, 0.85);
   icon-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
 }
+
+.gts9u-fingerprint-feedback {
+  color: white;
+  background-color: rgba(25, 25, 25, 0.88);
+  border-radius: 8px;
+  padding: 6px;
+  font-size: 14px;
+  text-align: center;
+}

@@ -10,11 +10,15 @@ import {sensorGeometry, panelMonitor} from './geometry.js';
 import {ShellUserVerifier} from 'resource:///org/gnome/shell/gdm/util.js';
 import {recoverClosedCancellation} from './authRecovery.js';
 import {visualState} from './visualState.js';
+import {keyboardCovers} from './keyboardGuard.js';
+import {getLoginManager} from 'resource:///org/gnome/shell/misc/loginManager.js';
 
 const BUS_NAME = 'io.github.agcarbajo.Gts9uFingerprintOverlay';
 const OBJECT_PATH = '/io/github/agcarbajo/Gts9uFingerprintOverlay';
 const BACKLIGHT = '/sys/class/backlight/ae94000.dsi.0';
 const ACTIVE_LEASE = '/run/gts9u-fingerprint/active';
+const UI_BUS_NAME = 'io.github.agcarbajo.Gts9uFingerprintUI';
+const UI_PATH = '/io/github/agcarbajo/Gts9uFingerprintUI';
 const INTERFACE = `
 <node>
   <interface name="io.github.agcarbajo.Gts9uFingerprintOverlay">
@@ -32,6 +36,18 @@ export default class Gts9uFingerprintOverlay extends Extension {
             () => console.log('GTS9U auth: cleared closed GDM verification connection'));
         ShellUserVerifier.prototype.cancel = this._recoveryCancel;
         this._displayCancellable = new Gio.Cancellable();
+        this._session = null;
+        this._uiAllowed = false;
+        this._uiReadyUntil = 0;
+        this._uiLastPulse = 0;
+        this._uiPending = false;
+        this._uiLastSent = null;
+        this._feedbackUntil = 0;
+        const lifetime = this._displayCancellable;
+        getLoginManager().getCurrentSessionProxy().then(session => {
+            if (this._displayCancellable === lifetime)
+                this._session = session;
+        }).catch(error => console.error(`GTS9U fingerprint session: ${error.message}`));
         this._panel = null;
         this._active = false;
         this._illuminated = false;
@@ -53,6 +69,11 @@ export default class Gts9uFingerprintOverlay extends Extension {
             reactive: true,
             visible: false,
         });
+        this._feedback = new St.Label({
+            text: '', style_class: 'gts9u-fingerprint-feedback',
+            reactive: false, visible: false,
+        });
+        this._feedback.clutter_text.line_wrap = true;
         this._actor.connect('button-press-event', () => Clutter.EVENT_STOP);
         this._actor.connect('button-release-event', () => Clutter.EVENT_STOP);
         this._actor.connect('touch-event', () => Clutter.EVENT_STOP);
@@ -63,11 +84,18 @@ export default class Gts9uFingerprintOverlay extends Extension {
         Main.layoutManager.addTopChrome(this._shade,
             {trackFullscreen: true, affectsInputRegion: false});
         Main.layoutManager.addTopChrome(this._actor, {trackFullscreen: true});
+        Main.layoutManager.addTopChrome(this._feedback,
+            {trackFullscreen: true, affectsInputRegion: false});
         // addTopChrome() maps a newly-added actor regardless of its constructor
         // flag. Authentication must be the only thing that makes either actor
         // visible.
         this._shade.hide();
         this._actor.hide();
+        this._feedback.hide();
+        this._feedback.connect('notify::visible', () => {
+            if (!this._canShowTarget() || GLib.get_monotonic_time() >= this._feedbackUntil)
+                this._feedback.hide();
+        });
         this._initialHideId = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
             this._initialHideId = 0;
             this._enforceInactive();
@@ -104,6 +132,9 @@ export default class Gts9uFingerprintOverlay extends Extension {
         this._recoveryCancel = null;
         this._displayCancellable.cancel();
         this._displayCancellable = null;
+        this._session = null;
+        this._uiAllowed = false;
+        this._uiReadyUntil = 0;
         this._panel = null;
         if (this._initialHideId) {
             GLib.source_remove(this._initialHideId);
@@ -133,6 +164,9 @@ export default class Gts9uFingerprintOverlay extends Extension {
         this._icon = null;
         this._shade?.destroy();
         this._shade = null;
+        this._disconnectFeedback();
+        this._feedback?.destroy();
+        this._feedback = null;
     }
 
     get Visible() {
@@ -143,10 +177,10 @@ export default class Gts9uFingerprintOverlay extends Extension {
         this._stopHidePoll();
         this._active = true;
         Main.panel.statusArea.quickSettings?.menu?.close();
-        Main.overview.hide();
+        Main.overview?.hide();
         this._position();
         this._setIllumination(this._panelFodActive());
-        if (this._panel)
+        if (this._canShowTarget())
             this._actor.show();
         this._startSafetyTimeout();
         this._dbus?.emit_property_changed(
@@ -205,6 +239,95 @@ export default class Gts9uFingerprintOverlay extends Extension {
         }
     }
 
+    _canShowTarget() {
+        return this._panel && this._uiAllowed &&
+            GLib.get_monotonic_time() < this._uiReadyUntil;
+    }
+
+    _disconnectFeedback() {
+        if (this._feedbackVerifier && this._feedbackSignal) {
+            try {
+                this._feedbackVerifier.disconnect(this._feedbackSignal);
+            } catch (_) {
+                // Native prompt may already have destroyed its signal handlers.
+            }
+        }
+        this._feedbackVerifier = null;
+        this._feedbackSignal = 0;
+    }
+
+    _updateFeedback() {
+        const verifier = Main.screenShield?._dialog?._authPrompt?._userVerifier;
+        if (verifier !== this._feedbackVerifier) {
+            this._disconnectFeedback();
+            this._feedbackUntil = 0;
+            if (verifier) {
+                this._feedbackVerifier = verifier;
+                // Mirror only the existing localized fingerprint error; never
+                // intercept, answer, cancel or complete an authentication.
+                this._feedbackSignal = verifier.connect('show-message',
+                    (_source, service, message, type) => {
+                        if (service === 'gdm-fingerprint' && type === 3 && message) {
+                            this._feedback.text = String(message).slice(0, 180);
+                            this._feedbackUntil = GLib.get_monotonic_time() + 4_000_000;
+                        }
+                    });
+            }
+        }
+        if (this._canShowTarget() && GLib.get_monotonic_time() < this._feedbackUntil)
+            this._feedback.show();
+        else
+            this._feedback.hide();
+    }
+
+    _keyboardCoversTarget() {
+        if (!this._panel)
+            return true;
+        const box = Main.layoutManager.keyboardBox;
+        if (!box?.visible)
+            return false;
+        const children = box.get_children();
+        const showing = Main.keyboard.visible || children.some(child =>
+            child.visible && child.opacity > 0);
+        const [x, y] = box.get_transformed_position();
+        const [width, height] = box.get_transformed_size();
+        const {monitor, transform} = this._panel;
+        return keyboardCovers(sensorGeometry(monitor, transform),
+            {x, y, width, height}, showing);
+    }
+
+    _pulseAvailability() {
+        const now = GLib.get_monotonic_time();
+        this._uiAllowed = Boolean(this._panel && this._session?.Active &&
+            !this._keyboardCoversTarget());
+        if (!this._session?.Active) {
+            this._uiReadyUntil = 0;
+            return; // An inactive session must not overwrite the active one's lease.
+        }
+        if (this._uiPending || (this._uiLastSent === this._uiAllowed &&
+            now - this._uiLastPulse < 500_000))
+            return;
+        const available = this._uiAllowed;
+        const lifetime = this._displayCancellable;
+        this._uiPending = true;
+        this._uiLastPulse = now;
+        this._uiLastSent = available;
+        Gio.DBus.system.call(UI_BUS_NAME, UI_PATH, UI_BUS_NAME, 'Pulse',
+            new GLib.Variant('(sb)', [this._session.Id, available]), null,
+            Gio.DBusCallFlags.NONE, 1000, lifetime, (connection, result) => {
+                if (this._displayCancellable !== lifetime)
+                    return;
+                this._uiPending = false;
+                try {
+                    connection.call_finish(result);
+                    this._uiReadyUntil = available ? GLib.get_monotonic_time() + 1_500_000 : 0;
+                } catch (_) {
+                    this._uiReadyUntil = 0;
+                    // Retry at the normal heartbeat rate, without flooding the journal.
+                }
+            });
+    }
+
     _startPanelPoll() {
         if (this._panelPollId)
             return;
@@ -215,6 +338,7 @@ export default class Gts9uFingerprintOverlay extends Extension {
         // touch events in the sensor region: no Shell click is required.
         this._panelPollId = GLib.timeout_add(
             GLib.PRIORITY_DEFAULT, 50, () => {
+                this._pulseAvailability();
                 const {active, illuminated} = this._visualState();
                 if (active && !this._active)
                     this.Show();
@@ -222,6 +346,11 @@ export default class Gts9uFingerprintOverlay extends Extension {
                     this._finishHide();
                 if (active && illuminated !== this._illuminated)
                     this._setIllumination(illuminated);
+                if (active && this._canShowTarget())
+                    this._actor.show();
+                else
+                    this._actor.hide();
+                this._updateFeedback();
                 return GLib.SOURCE_CONTINUE;
             });
     }
@@ -276,7 +405,7 @@ export default class Gts9uFingerprintOverlay extends Extension {
                         return;
                     this._panel = panelMonitor(state[2], Main.layoutManager.monitors);
                     this._position();
-                    if (this._active && this._panel)
+                    if (this._active && this._canShowTarget())
                         this._actor.show();
                 } catch (error) {
                     if (!cancellable.is_cancelled())
@@ -302,6 +431,12 @@ export default class Gts9uFingerprintOverlay extends Extension {
         this._actor.set_size(target.width, target.height);
         this._actor.set_position(target.x, target.y);
         this._icon.icon_size = Math.round(Math.min(target.width, target.height) * 0.68);
+        const labelWidth = Math.min(280, monitor.width - 16);
+        this._feedback.set_width(labelWidth);
+        this._feedback.set_position(
+            Math.max(monitor.x + 8, Math.min(monitor.x + monitor.width - labelWidth - 8,
+                target.x + target.width / 2 - labelWidth / 2)),
+            Math.max(monitor.y + 8, target.y - 64));
     }
 
     _readBacklight(name) {
@@ -360,6 +495,8 @@ export default class Gts9uFingerprintOverlay extends Extension {
     }
 
     _enforceInactive() {
+        if (!this._canShowTarget())
+            this._actor?.hide();
         if (!this._illuminated || !this._active)
             this._shade?.hide();
         if (!this._active) {

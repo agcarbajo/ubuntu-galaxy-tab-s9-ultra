@@ -1,0 +1,108 @@
+#!/usr/bin/python3
+"""Availability lease for the optical target. Never authenticates or touches hardware.
+
+Only the active local seat's UID can publish for that session. A client can
+allow/pause optical capture, but cannot claim a fingerprint match or unlock.
+The short lease also fails closed if Shell, this service or logind disappears.
+"""
+import os
+from pathlib import Path
+import time
+
+NAME = 'io.github.agcarbajo.Gts9uFingerprintUI'
+PATH = '/io/github/agcarbajo/Gts9uFingerprintUI'
+LEASE = Path('/run/gts9u-fingerprint-ui/ready')
+TTL_US = 2_000_000
+
+
+def authorized(uid, requested, active_id, properties):
+    return (bool(requested) and requested == active_id and
+            properties.get('Active') is True and
+            not properties.get('Remote', True) and
+            properties.get('Type') in ('wayland', 'x11') and
+            properties.get('Class') in ('user', 'greeter') and
+            properties.get('Seat', ('',))[0] == 'seat0' and
+            properties.get('User', (-1,))[0] == uid)
+
+
+def lease_text(available, expires):
+    return f'{"ready" if available else "blocked"} {expires}\n'
+
+
+def main():
+    import dbus
+    import dbus.service
+    from dbus.mainloop.glib import DBusGMainLoop
+    from gi.repository import GLib
+
+    DBusGMainLoop(set_as_default=True)
+    bus = dbus.SystemBus()
+    name = dbus.service.BusName(NAME, bus, do_not_queue=True)
+    daemon = dbus.Interface(bus.get_object('org.freedesktop.DBus',
+                            '/org/freedesktop/DBus'), 'org.freedesktop.DBus')
+
+    class Broker(dbus.service.Object):
+        def __init__(self):
+            super().__init__(name, PATH)
+            self.client = None
+            self.clear()
+            GLib.timeout_add(250, self.tick)
+            bus.add_signal_receiver(self.disconnected, signal_name='NameOwnerChanged',
+                                    dbus_interface='org.freedesktop.DBus',
+                                    bus_name='org.freedesktop.DBus')
+
+        def clear(self):
+            self.client = None
+            LEASE.unlink(missing_ok=True)
+
+        def active(self):
+            seat = dbus.Interface(bus.get_object('org.freedesktop.login1',
+                                  '/org/freedesktop/login1/seat/seat0'),
+                                  'org.freedesktop.DBus.Properties')
+            session, path = seat.Get('org.freedesktop.login1.Seat', 'ActiveSession', timeout=1)
+            if not session:
+                return '', {}
+            proxy = dbus.Interface(bus.get_object('org.freedesktop.login1', path),
+                                   'org.freedesktop.DBus.Properties')
+            props = dict(proxy.GetAll('org.freedesktop.login1.Session', timeout=1))
+            props['Active'] = bool(props.get('Active'))
+            return str(session), props
+
+        @dbus.service.method(NAME, in_signature='sb', out_signature='', sender_keyword='sender')
+        def Pulse(self, session, available, sender=None):
+            uid = int(daemon.GetConnectionUnixUser(sender, timeout=1))
+            active_id, props = self.active()
+            if not authorized(uid, str(session), active_id, props):
+                raise dbus.exceptions.DBusException('Not the active local session',
+                    name=NAME + '.NotActiveSession')
+            expires = time.monotonic_ns() // 1000 + TTL_US
+            temporary = LEASE.with_suffix('.new')
+            # RuntimeDirectory is root-owned and not writable by callers.
+            with temporary.open('w', encoding='ascii') as stream:
+                os.fchmod(stream.fileno(), 0o644)
+                stream.write(lease_text(bool(available), expires))
+            temporary.replace(LEASE)
+            self.client = (str(sender), uid, str(session), expires)
+
+        def disconnected(self, sender, old_owner, new_owner):
+            if self.client and sender == self.client[0] and old_owner and not new_owner:
+                self.clear()
+
+        def tick(self):
+            if self.client:
+                _, uid, session, expires = self.client
+                try:
+                    active_id, props = self.active()
+                    if time.monotonic_ns() // 1000 >= expires or not authorized(uid, session, active_id, props):
+                        self.clear()
+                except dbus.DBusException:
+                    self.clear()
+            return GLib.SOURCE_CONTINUE
+
+    broker = Broker()
+    GLib.MainLoop().run()
+    return broker
+
+
+if __name__ == '__main__':
+    main()
