@@ -1325,6 +1325,14 @@ same tenths-of-a-degree value through `sm5714-battery/temp`. The reversed
 framing made control 80 return 51 and is corrected in `gts9u26`. The earlier
 98.7% estimate is superseded below.
 
+The first physical `gts9u26` run then exposed the remaining value mismatch.
+One UI's live optical-capture trace prints `tfd 2 0 1` at NOTIFY_DOWN and the
+following capture step. With its override field clear, control 87 receives the
+first byte: **2 (finger pressed)**. Ubuntu had sent zero. That still allowed a
+few images through, but after repeated quality retries the trustlet terminated
+the partially populated enrolment with result 70. The production path and the
+self-test now send the measured pressed state 2.
+
 ## Full-coverage capture and the HwVault boundary
 
 The 2026-08-26 Ubuntu tests establish the following:
@@ -1498,3 +1506,32 @@ reached 96% coverage and 16 accepted samples before the incorrectly framed
 control path returned EnrollDo result 70. Samsung maps 70 to its system-failure
 state, so the temporary retry was removed rather than hiding or looping the
 failure. The corrected `gts9u26` package is the next physical enrolment test.
+
+## Press-capable Goodix path and persistent test reports
+
+The current kernel no longer waits for the firmware's late dedicated FOD
+release gesture. Its first ordinary coordinate press inside
+`854 2732 994 2872` publishes `pressed`, suppresses that contact from the
+desktop, and publishes `released` when the slot ends. This starts secure
+capture while the finger is still covering the optical reader.
+
+Once userspace observes that press-capable protocol it permanently disables
+the older release-only fallback for the current operation. The firmware can
+publish a second dedicated release after the synthetic coordinate release;
+treating it as another contact caused one no-finger capture per real touch,
+many result-39 quality retries and eventually fatal result 70. Package
+`gts9u29` contains this fix, uses the trustlet's measured 17 enrolment stages
+and emits one compact aggregate sample record for diagnostics.
+
+Tab Companion 1.1.0 exposes the bounded test under Info. A completed run is a
+normal right-index enrolment; timeout, Stop and Escape cancel without saving a
+partial template. Live coverage, accepted samples, retries and the secure
+result are shown in the window. The latest report is always:
+
+```text
+~/.local/state/tab-companion/fingerprint-tests/latest.jsonl
+```
+
+Timestamped siblings retain earlier runs. Records contain timing and aggregate
+result fields only; raw images, template contents, HATs and vault credentials
+never leave their existing secure boundaries.

@@ -21,6 +21,24 @@ the window is closed.
   port's base utility to the special keys that have no native function in
   GNOME.
 
+## Fingerprint test
+
+The Info page contains a user-started, time-bounded fingerprint test. It shows
+the remaining time, TrustZone coverage, accepted samples, quality retries and
+the final secure result while the capture is running. Escape and the Stop
+button cancel the fprintd client; fprintd then closes the partial transaction
+and the panel, touch and sensor-power states return to idle. A run that reaches
+100% is a normal right-index enrolment and is saved; a timeout or cancellation
+saves no partial print.
+
+Each run writes JSON Lines under
+`~/.local/state/tab-companion/fingerprint-tests/`. `latest.jsonl` always holds
+the most recent run, while timestamped files preserve older comparisons. The
+log contains only aggregate protocol results and UI events; no fingerprint
+image, template bytes or credential is exposed. The EL721 driver emits one
+compact record per physical sample so diagnosis does not require globally
+enabling GLib debug output.
+
 ## S Pen
 
 The page shows the orientation and state graphically, with a bar holding the

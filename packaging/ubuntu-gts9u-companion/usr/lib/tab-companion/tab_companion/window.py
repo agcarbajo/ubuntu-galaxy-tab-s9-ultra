@@ -7,6 +7,7 @@ from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 from . import VERSION
 from . import boot_sets
 from .actions import action_for, action_label, actions_for
+from .fingerprint_test import FingerprintTest
 from .hardware import HardwareClient
 from .i18n import _, N_
 from .key_selector import KeyChooser, chord_label
@@ -165,6 +166,10 @@ class CompanionWindow(Adw.ApplicationWindow):
         self.hardware = HardwareClient()
         self.action_buttons = {}
         self.key_rows = {}
+        self.fingerprint_test = FingerprintTest(
+            self._fingerprint_updated, self._fingerprint_finished
+        )
+        self._fingerprint_last_message = None
         self._updating_remote_switch = False
         self.hardware.connect("state-changed", self._update_hardware)
         self.settings.connect("changed::known-keyboard-model", self._known_keyboard_changed)
@@ -172,6 +177,11 @@ class CompanionWindow(Adw.ApplicationWindow):
         self.settings.connect("changed::spen-remote-enabled", self._remote_settings_changed)
         self.settings.connect("changed::spen-remote-mode", self._remote_settings_changed)
         self._build()
+        key_controller = Gtk.EventControllerKey()
+        key_controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        key_controller.connect("key-pressed", self._key_pressed)
+        self.add_controller(key_controller)
+        self.connect("close-request", self._close_requested)
         self._update_hardware()
 
     def _build(self):
@@ -195,6 +205,9 @@ class CompanionWindow(Adw.ApplicationWindow):
             self.view_stack.add_titled_with_icon(
                 self._system_page(), "dualboot", _("Dualboot"), "drive-multidisk-symbolic"
             )
+        self.view_stack.add_titled_with_icon(
+            self._info_page(), "info", _("Info"), "dialog-information-symbolic"
+        )
         switcher = Adw.ViewSwitcherBar(stack=self.view_stack, reveal=True)
         toolbar.set_content(self.view_stack)
         toolbar.add_bottom_bar(switcher)
@@ -212,6 +225,173 @@ class CompanionWindow(Adw.ApplicationWindow):
         page.set_margin_top(18)
         page.set_margin_bottom(18)
         return page
+
+    # -- information and fingerprint diagnostics ----------------------------
+
+    def _info_page(self):
+        page = self._page()
+
+        fingerprint = Adw.PreferencesGroup(
+            title=_("Fingerprint test"),
+            description=_(
+                "Starts a bounded real capture and records safe aggregate results. "
+                "Hold the finger until feedback changes, then lift it completely."
+            ),
+        )
+
+        self.fp_duration = Adw.SpinRow(
+            title=_("Test duration"),
+            subtitle=_("The test also stops immediately when you press Esc."),
+            adjustment=Gtk.Adjustment(
+                value=180,
+                lower=30,
+                upper=600,
+                step_increment=30,
+                page_increment=60,
+            ),
+        )
+        fingerprint.add(self.fp_duration)
+
+        controls = Adw.ActionRow(
+            title=_("Ready to test"),
+            subtitle=_(
+                "A completed run saves the print as the right index finger; "
+                "a timeout or cancellation saves nothing."
+            ),
+        )
+        self.fp_start = Gtk.Button(
+            label=_("Start test"),
+            valign=Gtk.Align.CENTER,
+            css_classes=["suggested-action"],
+        )
+        self.fp_start.connect("clicked", self._fingerprint_start)
+        self.fp_cancel = Gtk.Button(
+            label=_("Stop"),
+            valign=Gtk.Align.CENTER,
+            sensitive=False,
+        )
+        self.fp_cancel.connect("clicked", self._fingerprint_cancel)
+        controls.add_suffix(self.fp_cancel)
+        controls.add_suffix(self.fp_start)
+        fingerprint.add(controls)
+
+        progress_box = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=8,
+            margin_top=12,
+            margin_bottom=12,
+            margin_start=12,
+            margin_end=12,
+        )
+        labels = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        self.fp_status = Gtk.Label(label=_("Not running"), xalign=0, hexpand=True)
+        self.fp_remaining = Gtk.Label(label="03:00", xalign=1, css_classes=["dim-label"])
+        labels.append(self.fp_status)
+        labels.append(self.fp_remaining)
+        progress_box.append(labels)
+        self.fp_progress = Gtk.ProgressBar(show_text=True, text="0% · 0/17")
+        progress_box.append(self.fp_progress)
+        self.fp_feedback = Gtk.Label(
+            label=_("No samples yet"),
+            xalign=0,
+            wrap=True,
+            css_classes=["dim-label"],
+        )
+        progress_box.append(self.fp_feedback)
+        fingerprint.add(progress_box)
+
+        log_row = Adw.ExpanderRow(
+            title=_("Live test log"),
+            subtitle=_("Progress, quality retries and the final secure result."),
+        )
+        self.fp_log = Gtk.TextView(
+            editable=False,
+            cursor_visible=False,
+            monospace=True,
+            wrap_mode=Gtk.WrapMode.WORD_CHAR,
+            top_margin=8,
+            bottom_margin=8,
+            left_margin=8,
+            right_margin=8,
+        )
+        log_scroll = Gtk.ScrolledWindow(
+            min_content_height=170,
+            hscrollbar_policy=Gtk.PolicyType.NEVER,
+        )
+        log_scroll.set_child(self.fp_log)
+        log_row.add_row(log_scroll)
+        fingerprint.add(log_row)
+        page.add(fingerprint)
+
+        details = Adw.PreferencesGroup(title=_("Information"))
+        details.add(Adw.ActionRow(title=_("Application version"), subtitle=VERSION))
+        details.add(Adw.ActionRow(title=_("Kernel"), subtitle=os.uname().release))
+        page.add(details)
+        return page
+
+    def _fingerprint_start(self, _button):
+        self.fp_log.get_buffer().set_text("")
+        self._fingerprint_last_message = None
+        if not self.fingerprint_test.start(self.fp_duration.get_value_as_int()):
+            return
+        self.fp_start.set_sensitive(False)
+        self.fp_cancel.set_sensitive(True)
+        self.fp_duration.set_sensitive(False)
+
+    def _fingerprint_cancel(self, _button=None):
+        self.fingerprint_test.stop("cancelled")
+
+    def _fingerprint_updated(self, state):
+        accepted = state.get("accepted", 0)
+        stage = state.get("stage", 0)
+        coverage = state.get("coverage", 0)
+        shown_accepted = max(accepted, stage)
+        fraction = max(coverage / 100, shown_accepted / 17)
+        self.fp_progress.set_fraction(min(1.0, fraction))
+        self.fp_progress.set_text(f"{coverage}% · {shown_accepted}/17")
+        remaining = state.get("remaining", 0)
+        self.fp_remaining.set_label(f"{remaining // 60:02d}:{remaining % 60:02d}")
+        status = {
+            "starting": _("Starting…"),
+            "running": _("Touch and hold the fingerprint target"),
+            "stopping": _("Stopping safely…"),
+            "completed": _("Test completed"),
+            "timeout": _("Time expired"),
+            "cancelled": _("Test cancelled"),
+            "failed": _("Test failed"),
+        }.get(state.get("status"), _("Not running"))
+        self.fp_status.set_label(status)
+        retries = state.get("retries", 0)
+        result = state.get("result")
+        feedback = _("{accepted} accepted · {retries} quality retries").format(
+            accepted=accepted,
+            retries=retries,
+        )
+        if result is not None:
+            feedback += _(" · secure result {result}").format(result=result)
+        self.fp_feedback.set_label(feedback)
+
+        message = state.get("last_message")
+        if message and message != self._fingerprint_last_message:
+            self._fingerprint_last_message = message
+            buffer = self.fp_log.get_buffer()
+            buffer.insert(buffer.get_end_iter(), message + "\n")
+
+    def _fingerprint_finished(self, _state):
+        self.fp_start.set_sensitive(True)
+        self.fp_cancel.set_sensitive(False)
+        self.fp_duration.set_sensitive(True)
+
+    def _key_pressed(self, _controller, keyval, _keycode, _state):
+        if keyval == Gdk.KEY_Escape and self.fingerprint_test.running:
+            self._fingerprint_cancel()
+            return True
+        return False
+
+    def _close_requested(self, _window):
+        if self.fingerprint_test.running:
+            self._fingerprint_cancel()
+        return False
 
     # -- dual boot -----------------------------------------------------------
 

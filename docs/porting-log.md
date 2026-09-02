@@ -6751,10 +6751,67 @@ not a recoverable sample result. Only results 39 and 41 remain retries.
 The underlying divergence was in the two controls issued for opcode 5.
 `TeeProxy::ControlOp` forwards its third pointer and length to
 `BAuth_Control_OP`, which copies them into the command-12 input payload.
-Samsung supplies a zero touch-status byte to control 87, then the signed
+Samsung supplies the active touch-status byte to control 87, then the signed
 32-bit battery temperature in tenths of a degree to control 80. Ubuntu had
 instead supplied empty inputs and advertised one/four output bytes, explaining
 control 80's persistent result 51. Package `gts9u26` sends the stock input
 shape, reads the temperature from `sm5714-battery/temp`, and removes the
-result-70 retry. It awaits one physical enrolment run; implementation remains
-approximately 99% until a template is saved and verified.
+result-70 retry.
+
+That physical run reached 40% before result 70, proving that input length alone
+was not the complete fix. Rechecking the captured One UI log showed
+`tfd 2 0 1` at NOTIFY_DOWN and CAPTURE_STEP. Samsung therefore supplies the
+pressed-state byte 2 to control 87, not zero. Ubuntu's zero-valued byte
+described no active optical contact; it could accept some samples but poisoned
+the session after enough quality retries. The driver and QTEE self-test now use
+the measured value 2 for the next package and physical run. Implementation
+remains approximately 99% until a template is saved and verified.
+
+## Session 113 — press-time capture and repeatable Tab Companion diagnostics
+
+Date: 2026-09-02. Package `gts9u27` supplied One UI's measured pressed-state
+byte 2 to control 87. Physical enrolment reached 84% coverage and 13 accepted
+samples in one run, but later runs could stall after several quality failures.
+The missing timing boundary was in the touchscreen protocol: this Goodix
+firmware publishes the dedicated Samsung FOD gesture on release, so userspace
+was starting some captures after the finger had already left the glass.
+
+The Goodix driver now synthesises `pressed` from the first ordinary coordinate
+contact inside the fixed FOD rectangle and publishes its matching `released`
+state when that suppressed slot ends. Kernel payload
+`0469d300a33593bad813c6352620b380510590ed83d1a07f2789c49091f8c74b`
+was packed as boot image
+`55875b3c3dbd17cccd6ebc1e6caebb2701f976fcbc8009475edb4df06cf540d5`,
+written to both the active Ubuntu boot partition and saved Ubuntu set, read
+back identically and booted successfully. The preceding boot image and module
+tree are retained in
+`/var/lib/gts9u-fingerprint-goodix-press-backup-20260902`. Android was never
+selected.
+
+The first press-capable physical run proved that capture starts while the
+finger is present and reached 26% coverage with four accepted samples. Its
+precise log then exposed a second bug: after each real press capture, the old
+release-only compatibility path could interpret a second firmware release as
+a new contact and capture with no finger. Those phantom captures returned 39
+until the TA exhausted its quality budget with result 70. Package `gts9u29`
+disables release-only capture for the rest of an operation as soon as a real
+press (or a complete press/release sequence delta) is observed. It also reports
+17 enrolment stages, matching the accepted-sample count seen at 100% instead of
+capping GNOME at 9/10, and emits one non-biometric aggregate log record per
+sample. All 11 encrypted-template protocol tests and the complete ARM64 build
+pass.
+
+Tab Companion 1.1.0 adds a bounded test to its Info page. The user chooses the
+duration and starts it locally; the view shows time remaining, coverage,
+accepted samples, quality retries and secure result in real time. Escape or
+Stop cancels the fprintd client and its partial transaction. Structured JSONL
+is written below `~/.local/state/tab-companion/fingerprint-tests/`, with
+`latest.jsonl` reserved for the most recent run, so a later diagnostic does not
+depend on a simultaneous SSH window. The log contains no image, encrypted
+template or credential bytes.
+
+Approximate implementation remains **99%**. The duplicate-capture fix is
+installed but still needs one user-started full run through Tab Companion,
+followed by same-finger and wrong-finger verification. Lock-screen integration
+and the requested icon-on-touch/rotation/keyboard-overlap polish remain after
+that backend proof.
