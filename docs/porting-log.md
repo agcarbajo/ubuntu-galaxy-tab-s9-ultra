@@ -6801,7 +6801,7 @@ capping GNOME at 9/10, and emits one non-biometric aggregate log record per
 sample. All 11 encrypted-template protocol tests and the complete ARM64 build
 pass.
 
-Tab Companion 1.1.1 adds a bounded test to its Info page. The user chooses the
+Tab Companion 1.1.2 adds a bounded test to its Info page. The user chooses the
 duration and starts it locally; the view shows time remaining, coverage,
 accepted samples, quality retries and secure result in real time. Escape or
 Stop cancels the fprintd client and its partial transaction. Structured JSONL
@@ -6815,3 +6815,15 @@ installed but still needs one user-started full run through Tab Companion,
 followed by same-finger and wrong-finger verification. Lock-screen integration
 and the requested icon-on-touch/rotation/keyboard-overlap polish remain after
 that backend proof.
+
+The first saved Tab Companion report lasted 73.7 seconds and retained all 15
+quality retries even though the user cancelled it. It also exposed two
+diagnostic defects: fprintd reported one stage before any physical contact,
+while the secure aggregate remained at zero, and libfprint's INFO-level sample
+records were filtered by the default daemon environment. Package `gts9u30`
+now requires the paired press-capable kernel and never converts isolated legacy
+RELEASE events into captures. Contact and sample aggregate records use MESSAGE
+level so they reach the journal without globally enabling debug output. Tab
+Companion 1.1.2 displays only the trustlet's accepted/coverage counters; the
+generic fprintd callback remains in the raw report for correlation but can no
+longer create a false `1/17` in the UI.

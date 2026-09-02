@@ -343,10 +343,11 @@ class CompanionWindow(Adw.ApplicationWindow):
 
     def _fingerprint_updated(self, state):
         accepted = state.get("accepted", 0)
-        stage = state.get("stage", 0)
         coverage = state.get("coverage", 0)
-        shown_accepted = max(accepted, stage)
-        fraction = max(coverage / 100, shown_accepted / 17)
+        # fprintd can emit an initial stage callback for a rejected/stale
+        # capture.  The trustlet's aggregate counters are authoritative.
+        shown_accepted = accepted
+        fraction = max(coverage / 100, accepted / 17)
         self.fp_progress.set_fraction(min(1.0, fraction))
         self.fp_progress.set_text(f"{coverage}% · {shown_accepted}/17")
         remaining = state.get("remaining", 0)

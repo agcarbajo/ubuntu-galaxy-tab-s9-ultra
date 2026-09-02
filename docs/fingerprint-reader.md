@@ -1523,7 +1523,7 @@ many result-39 quality retries and eventually fatal result 70. Package
 `gts9u29` contains this fix, uses the trustlet's measured 17 enrolment stages
 and emits one compact aggregate sample record for diagnostics.
 
-Tab Companion 1.1.1 exposes the bounded test under Info. A completed run is a
+Tab Companion 1.1.2 exposes the bounded test under Info. A completed run is a
 normal right-index enrolment; timeout, Stop and Escape cancel without saving a
 partial template. Live coverage, accepted samples, retries and the secure
 result are shown in the window. The latest report is always:
@@ -1535,3 +1535,10 @@ result are shown in the window. The latest report is always:
 Timestamped siblings retain earlier runs. Records contain timing and aggregate
 result fields only; raw images, template contents, HATs and vault credentials
 never leave their existing secure boundaries.
+
+The press-capable kernel is now a required part of this feature branch, so
+userspace no longer treats isolated legacy RELEASE events as captures. The
+firmware can emit those events while FOD mode is starting; accepting them
+caused a false first stage before any touch. Per-contact and per-sample
+aggregate records use journal level MESSAGE so the persistent test report sees
+them without enabling global libfprint debug output.

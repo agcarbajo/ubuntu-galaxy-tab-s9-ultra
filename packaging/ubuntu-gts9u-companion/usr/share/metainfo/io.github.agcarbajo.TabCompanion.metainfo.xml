@@ -18,6 +18,9 @@
   <launchable type="desktop-id">io.github.agcarbajo.TabCompanion.desktop</launchable>
   <url type="homepage">https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra</url>
   <releases>
+    <release version="1.1.2" date="2026-09-02">
+      <description><p>Uses secure aggregate counters for progress and retains per-contact EL721 diagnostics.</p></description>
+    </release>
     <release version="1.1.1" date="2026-09-02">
       <description><p>Fixes the fingerprint test duration control on Ubuntu 24.04.</p></description>
     </release>

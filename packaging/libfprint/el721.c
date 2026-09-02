@@ -138,8 +138,6 @@ udfps_begin (FpiDeviceEl721 *self, GError **error)
       write_child (EL721_TOUCH, "fod_enable", "0\n", NULL);
       return FALSE;
     }
-  self->fod_release_primed = FALSE;
-  self->fod_press_seen = FALSE;
   if (!write_child (EL721_PANEL, "fod_mode", "1\n", error))
     {
       write_child (EL721_TOUCH, "fod_enable", "0\n", NULL);
@@ -180,8 +178,6 @@ udfps_end (FpiDeviceEl721 *self)
   self->udfps_active = FALSE;
   self->udfps_refreshed = 0;
   self->fod_sequence = 0;
-  self->fod_release_primed = FALSE;
-  self->fod_press_seen = FALSE;
 }
 
 static void
@@ -472,9 +468,12 @@ handle_enroll_do (FpiDeviceEl721 *self, GError **error)
           template ? g_bytes_get_size (template) : 0, progress);
   /* One compact, non-biometric record per physical sample.  Tab Companion's
    * bounded test consumes this without enabling global GLib debug logging. */
-  fp_info ("EL721 sample result=%u final=%u coverage=%u accepted=%u template=%zu",
-           capture_result, final.result, coverage, accepted,
-           template ? g_bytes_get_size (template) : 0);
+  /* MESSAGE is retained by fprintd's default systemd journal policy.  INFO is
+   * filtered unless G_MESSAGES_DEBUG is set, which made field diagnostics
+   * lose the secure aggregate result while still showing fprintd retries. */
+  g_message ("EL721 sample result=%u final=%u coverage=%u accepted=%u template=%zu",
+             capture_result, final.result, coverage, accepted,
+             template ? g_bytes_get_size (template) : 0);
 
   if ((!capture_result || capture_result == 39 || capture_result == 41) &&
       (!final.result || final.result == 39 || final.result == 41) &&
@@ -611,7 +610,6 @@ poll_action (FpDevice *device, gpointer user_data)
   gboolean event;
   gboolean capture;
   gboolean process;
-  gboolean release_contact;
   guint64 sequence;
   guint64 sequence_delta;
 
@@ -643,26 +641,16 @@ poll_action (FpDevice *device, gpointer user_data)
   sequence_delta = sequence - self->fod_sequence;
   event = sequence_delta != 0;
   self->fod_sequence = sequence;
-  /* Older kernels normally published only RELEASE for an optical contact.
-   * Keep that compatibility path until this operation sees a real PRESS.
-   * Once PRESS exists, a later dedicated sponge RELEASE may follow the
-   * synthetic coordinate RELEASE; treating that second release as another
-   * contact would capture with no finger and rapidly exhaust the TA's quality
-   * retry budget.  A delta of two is one press/release pair missed between
-   * polls: accept it once and remember that the press-capable protocol exists. */
-  release_contact = released && !self->fod_press_seen &&
-                    (sequence_delta >= 2 || self->fod_release_primed);
-  if (event && released && sequence_delta == 1)
-    self->fod_release_primed = TRUE;
-  if (event && pressed)
-    {
-      self->fod_release_primed = TRUE;
-      self->fod_press_seen = TRUE;
-    }
-  if (event && released && sequence_delta >= 2)
-    self->fod_press_seen = TRUE;
-  capture = event && !self->finger_present &&
-            (pressed || release_contact);
+  /* The paired kernel now publishes the ordinary in-rectangle coordinate
+   * contact as PRESS.  Never turn an isolated firmware RELEASE into a sample:
+   * this firmware emits stale releases when FOD mode starts, which produced a
+   * false 1/17 before the user touched the glass and could capture no-finger
+   * images. */
+  capture = event && !self->finger_present && pressed;
+  if (event)
+    g_message ("EL721 contact pressed=%u released=%u sequence=%" G_GUINT64_FORMAT
+               " delta=%" G_GUINT64_FORMAT " capture=%u",
+               pressed, released, sequence, sequence_delta, capture);
   if (pressed != self->finger_present)
     {
       self->finger_present = pressed;
