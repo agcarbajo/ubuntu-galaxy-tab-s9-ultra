@@ -1820,7 +1820,7 @@ pass UndefinedBehaviorSanitizer; kernel checkpatch reports zero errors/warnings.
 The integrated dispatcher was also exercised on the tablet without enabling the
 sensor or illumination. It receives two genuine IRQs and returns both to QTEE.
 
-**Remaining failure:** with this listener, HwVault reports
+**Failure in that already-partially-initialized boot:** with this listener, HwVault reports
 `strongbox_unwrap err -40` and cache status **9960**, despite successful outer GET
 verification. Configuring Samsung `skeymast` as well does not change it. The
 signed Qualcomm TA's command table does contain legacy `SB_UNWRAP` (`0x51b`),
@@ -1841,3 +1841,48 @@ available for rollback. No new physical enrollment is claimed.
 The standalone module's final source builds and signs successfully; its
 SHA-256 is `803c3b504be4ab151ed011ab77ec66da561e55cd4fd05d90231b04a28e919653`.
 Only comment formatting differs from the module exercised on the tablet.
+
+## Clean, listener-first startup restores the encryption credential (2026-09-02)
+
+A subsequent controlled Ubuntu-to-Ubuntu reboot removed the incomplete SPU
+session. With the SPL listener registered **before the first SPU-backed crypto
+request**, all three authenticated HwVault restores now report an explicit
+successful `set_cached_cred` acknowledgement, including ordinary credential
+**11** (`persistent=0`, `ret=0`). The previous 9960 failure is absent. The final
+signed IRQ module described above is the one exercised in this boot.
+
+The working diagnostic order is:
+
+1. Start Ubuntu's `sec_nvm` and `spdaemon` together and wait for SP applications.
+2. Load the IRQ bridge and register the real SPL listener, retaining its owner.
+3. Look up resident `keymaster64`; query `0x200`, negotiate with the stock
+   24-byte `0x207`, and bind/retain the 20 KiB DMA buffer with `0x20d`.
+4. Send the stock date-support query and optional SetVersion, then modern
+   Configure with the existing conservative zero OS/patch tags.
+5. Restore HwVault credentials 0/1/11 and require positive cache acknowledgements.
+
+The IRQ bridge may be loaded before starting the SPU daemons; the important
+ordering is that the listener must be ready before deferred crypto initialization.
+The successful first restore generated multiple genuine SPL interrupts, unlike
+the two-interrupt failure in the incomplete session. Static analysis shows that
+normal-world `0x20d` only binds the buffer; the first SPU-backed operation performs
+additional initialization. A partially completed exchange explains the observed
+order dependence, but the precise remote failure state has not been proven.
+
+Two actual systemd/fprintd `Claim` calls succeeded with `gts9u40`, including one
+after restarting fprintd. The independent listener/DMA owner remained running;
+the driver could borrow HwVault and restore its cache across service lifetimes.
+After release, sensor power, panel FOD mode and touch FOD enable were all zero.
+No enrollment was started and the previous physical-test JSONL was unchanged.
+
+**A new physical enrollment test is now useful.** Success still requires an
+encrypted template and `enroll-completed`, not just 17 accepted samples or a
+successful Claim. Same/different-finger verification, production startup/reset
+handling and lock-screen integration remain outstanding. The overall estimate
+is approximately **85%**, with substantial uncertainty until those tests pass.
+
+This is a prepared diagnostic session, not persistent boot integration. The
+transient listener/DMA owner must remain alive until a controlled Ubuntu reboot;
+do not kill it, unload SPSS or start a second initializer. After a reboot the
+ordered setup must be repeated before asking the user to enroll. No Android boot,
+new HwVault root, secure credential PUT or Android-private-state import was used.
