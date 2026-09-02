@@ -4,6 +4,7 @@
 #include "el721-qtee.h"
 #include "el721-enroll-wire.h"
 #include "el721-hwvault-wire.h"
+#include "el721-qtee-lookup.h"
 
 #include <elf.h>
 #include <errno.h>
@@ -26,7 +27,6 @@
 #define QSEE_INTERRUPT_LISTENER_ID 0xb000U
 #define QSEE_INTERRUPT_BUFFER_SIZE 1024U
 #define QSEE_REGISTER_LISTENER_OP 0U
-#define QSEECOM_LOOKUP_TA_OP 2U
 #define QSEECOM_LOAD_REGION_OP 0U
 #define QSEECOM_SEND_REQUEST_OP 0U
 #define QSEECOM_UNLOAD_OP 2U
@@ -541,16 +541,8 @@ lookup_ta (El721Qtee *session, const gchar *name,
            struct qcomtee_object **controller,
            qcomtee_result_t *result)
 {
-  struct qcomtee_param params[2] = { 0 };
-  params[0].attr = QCOMTEE_UBUF_INPUT;
-  params[0].ubuf.addr = (void *) name;
-  params[0].ubuf.size = strlen (name);
-  params[1].attr = QCOMTEE_OBJREF_OUTPUT;
-  if (qcomtee_object_invoke (session->app_loader, QSEECOM_LOOKUP_TA_OP,
-                             params, 2, result))
-    return FALSE;
-  *controller = params[1].object;
-  return TRUE;
+  return el721_qtee_lookup_controller (session->app_loader, name, controller,
+                                       result);
 }
 
 static gboolean

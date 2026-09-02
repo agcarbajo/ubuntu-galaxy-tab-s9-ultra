@@ -4,10 +4,11 @@ This document describes the experimental infrastructure for the Galaxy Tab S9
 Ultra Wi-Fi's (`SM-X910`) under-display optical reader. Real capture has reached
 17 accepted samples and 100% secure-world coverage, with only two quality
 retries in the latest run. Template encryption is **not resolved**: authenticated
-K250A reads succeed, but HwVault cannot unwrap/cache the encryption root because
-its StrongBox Keymaster context is not configured. Encrypted enrollment,
+K250A reads succeed, but HwVault cannot unwrap/cache the encryption root. The
+missing Keymaster configuration and interrupt listener have been isolated;
+the subsequent secure operation still fails. Encrypted enrollment,
 same/different-finger verification and GDM/PAM testing remain outstanding. The
-[latest checkpoint](#full-coverage-and-hidden-strongbox-failure-2026-09-02)
+[latest checkpoint](#resident-keymaster-lookup-abi-2026-09-02)
 supersedes the historical investigation notes. Capture coverage is not the
 percentage of the complete implementation.
 
@@ -1733,3 +1734,31 @@ The overall estimate remains approximately **80%**, highly uncertain: physical
 capture improved materially, but encryption was previously overestimated and
 matching/lock-screen use remain untested. No Android boot is needed for this
 diagnosis; the reference logs and signed firmware are already available locally.
+
+## Resident Keymaster lookup ABI (2026-09-02)
+
+`gts9u39` fixes QSEECom `lookupTA` (loader UID 122, operation 2). Its ABI is
+one input buffer, **one 32-bit architecture output and one object output**
+(counts `0x1011`). Omitting the scalar output sent `0x1001`, rejected with
+INVALID before looking up the name. This was incorrectly treated as a missing
+TA, causing unnecessary load attempts and hiding the resident Qualcomm
+`keymaster64` controller. The loader/unloader still unloads only TAs it actually
+loaded; borrowing a resident controller must not unload another client's TA.
+
+The corrected lookup finds `keymaster64`, architecture 2. Its read-only
+`0x200` response is API **4.1**, TA **4.1012**, matching the saved One UI boot
+trace. Normal-world access to services 150/296 is restricted and is not a
+substitute for the app-loader controller. Samsung `skeymast` is a different TA;
+configuring it alone does not configure Qualcomm StrongBox.
+
+Six mocked invocation tests cover the ABI for four TA names, a missing TA and
+transport failure. The full ARM64 build passes all **38 offline tests**.
+Installed package SHA-256:
+`2f99d9066b81a7e44348e6852e3c9fe7c081016be7738c2107621be47ef99dfa`.
+The previous `gts9u38` package is retained and hash-verified on the tablet.
+
+A real systemd/fprintd `Claim` still fails early at the encryption preflight
+(cache status 9998 in the diagnostic SPU session), without starting enrollment.
+This package is an ABI correction, **not an enrollment fix**. The user should
+not repeat a 17-touch enrollment until credential 11 has a positive cache
+acknowledgement. The capture/HBM settings and the user's test logs are unchanged.
