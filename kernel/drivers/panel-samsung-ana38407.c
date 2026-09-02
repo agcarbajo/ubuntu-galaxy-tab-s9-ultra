@@ -34,6 +34,11 @@
  * desktop's slider sweep the panel from dark to bright twice.
  */
 #define ANA38407_MAX_BRIGHTNESS		0x07ff
+/* One UI enrollment reports HBM platform level 385. Samsung's HBM table
+ * maps that to WRDISBV 1623 (634 cd/m2), not 2047 (900 cd/m2). Normal mode
+ * also uses 2047, but with a different luminance table (420 cd/m2).
+ */
+#define ANA38407_FOD_BRIGHTNESS		1623
 #define ANA38407_FOD_WATCHDOG_MS	15000
 #define ANA38407_FOD_SETTLE_MS		35
 
@@ -162,7 +167,9 @@ static int ana38407_write_fod_locked(struct ana38407 *ctx, bool enable)
 	if (enable) {
 		/* Revision-D optical FOD + FlatZ sequence from Samsung's panel data. */
 		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x53, 0xe0);
-		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x51, 0x07, 0xff);
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x51,
+					     ANA38407_FOD_BRIGHTNESS >> 8,
+					     ANA38407_FOD_BRIGHTNESS & 0xff);
 		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb0, 0x0a, 0xe0);
 		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xe0, 0x3c, 0xfd, 0xff,
 					     0x15, 0x00, 0x00, 0x66, 0xcc,
@@ -754,6 +761,13 @@ static ssize_t fod_ready_show(struct device *dev,
 	return sysfs_emit(buf, "%u\n", ready);
 }
 
+static ssize_t fod_brightness_show(struct device *dev,
+				   struct device_attribute *attr, char *buf)
+{
+	/* Raw WRDISBV programmed by fod_mode, not the desktop's saved value. */
+	return sysfs_emit(buf, "%u\n", ANA38407_FOD_BRIGHTNESS);
+}
+
 static ssize_t cell_id_show(struct device *dev,
 			    struct device_attribute *attr, char *buf)
 {
@@ -770,12 +784,14 @@ static ssize_t cell_id_show(struct device *dev,
 static DEVICE_ATTR_RW(fod_mode);
 static DEVICE_ATTR_RW(fod_circle);
 static DEVICE_ATTR_RO(fod_ready);
+static DEVICE_ATTR_RO(fod_brightness);
 static DEVICE_ATTR_RO(cell_id);
 
 static struct attribute *ana38407_bl_attrs[] = {
 	&dev_attr_fod_mode.attr,
 	&dev_attr_fod_circle.attr,
 	&dev_attr_fod_ready.attr,
+	&dev_attr_fod_brightness.attr,
 	&dev_attr_cell_id.attr,
 	NULL,
 };

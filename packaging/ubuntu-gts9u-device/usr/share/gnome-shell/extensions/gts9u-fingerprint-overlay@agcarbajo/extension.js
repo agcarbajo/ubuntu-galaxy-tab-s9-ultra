@@ -261,14 +261,15 @@ export default class Gts9uFingerprintOverlay extends Extension {
             return 160;
 
         // Samsung's official ANA38407 tables map normal mode to 420 cd/m2 at
-        // WRDISBV 2047. The fingerprint FlatZ path is capped around 650 cd/m2;
-        // 900 cd/m2 belongs to the separate outdoor-HBM range. Convert the
+        // WRDISBV 2047. Fingerprint HBM uses platform level 385, WRDISBV 1623,
+        // approximately 634 cd/m2; 2047 in HBM would instead be 900 cd/m2.
+        // Convert the
         // desired luminance ratio back to an sRGB component before expressing
         // it as a black overlay opacity. Applying the linear ratio directly to
         // encoded pixels makes the desktop far darker than its pre-FOD level.
         // The white target is stacked above the shade and keeps full FOD HBM.
         const normalNits = brightness / maximum * 420;
-        const ratio = Math.max(0, Math.min(1, normalNits / 650));
+        const ratio = Math.max(0, Math.min(1, normalNits / 634));
         const encodedRatio = ratio <= 0.0031308
             ? 12.92 * ratio
             : 1.055 * Math.pow(ratio, 1 / 2.4) - 0.055;

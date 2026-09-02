@@ -7,9 +7,15 @@ blocker is now resolved: Ubuntu reconstructs HwVault's volatile context from
 the tablet's K250A secure element and `dualfp` can derive its key. The remaining
 functional proof is a new physical enrolment followed by same/different-finger
 verification and GDM/PAM testing. The
-[latest checkpoint](#authenticated-hwvault-restore-and-integrated-fprintd)
+[latest checkpoint](#optical-exposure-investigation-2026-09-02)
 supersedes the historical investigation notes. Capture coverage is not the
 percentage of the complete implementation.
+
+Current assessment: approximately **80% of the end-to-end feature**, with high
+uncertainty. This is an engineering estimate, not a test pass rate. The older
+99% estimate was premature: reliable capture, encrypted enrollment, matching
+and lock-screen behavior are still not demonstrated together. Historical
+sample counts do not prove that a usable fingerprint template was produced.
 
 ### Requested desktop follow-up (after functional enrol/verify)
 
@@ -237,6 +243,7 @@ The attributes appear next to the ANA38407 backlight:
 |---|---|---|
 | `fod_ready` | read | `1` when the panel is ready and on |
 | `fod_mode` | read/write | optical HBM and the FlatZ sequence |
+| `fod_brightness` | read | raw optical WRDISBV setting, 1623; not measured luminance |
 | `fod_circle` | read/write | a diagnostic DDIC command; requires `fod_mode=1`, but draws nothing without Self Display |
 | `cell_id` | read | the panel's 22-character module identifier, or `ENODATA` |
 
@@ -264,8 +271,10 @@ FlatZ/HBM and GNOME darkens the pixels outside the target. Being OLED, those
 pixels physically emit less light even though the region is selected in the
 compositor. The opacity is computed from the current brightness with the
 official table: normal mode reaches 420 cd/m² at `WRDISBV=2047`, and
-fingerprint FlatZ 650 cd/m². The target is left out of the compensation and
-receives the optical maximum; the rest keeps roughly its previous luminance.
+fingerprint HBM uses level 385 / WRDISBV 1623, approximately 634 cd/m². The
+previous driver erroneously used 2047, which maps to 900 cd/m² in HBM. The
+target is left out of the compensation; the rest keeps roughly its previous
+luminance. These are Samsung table values, not photometer measurements.
 The extension recalculates every 100 ms in case a key changes the brightness
 during the read.
 
@@ -1489,13 +1498,12 @@ hash-validated local firmware and are not distributed by this repository. The
 restore uses only authenticated GET operations against the tablet's secure
 element; it does not import Android files, a PIN or a fingerprint template.
 
-The implementation is approximately **99%** complete. The remaining one per
-cent is deliberately not claimed from synthetic testing: physically enrol a
-fresh finger into an encrypted template, verify the same and a different
-finger, then validate cancellation, lockout, PAM/GDM and the lock-screen FOD
-overlay. Only after those functional tests should the requested icon-on-touch,
-rotation anchoring, on-screen-keyboard collision avoidance and failure text be
-polished.
+The 99% estimate recorded at this checkpoint was premature and is withdrawn.
+Physically enrolling a fresh finger into an encrypted template, verifying the
+same and a different finger, and validating cancellation, lockout, PAM/GDM and
+the lock-screen FOD overlay are substantial outstanding acceptance tests. See
+the current assessment at the top; protocol infrastructure is not proof of a
+working biometric feature.
 
 The latest physical run also established that the Goodix firmware normally
 publishes one `released` record rather than separate press/release records.
@@ -1612,3 +1620,57 @@ reconstructs all three pre-release opcodes across the asynchronous boundary.
 The ARM64 build and all 11 wire tests pass; package SHA-256 is
 `0f107c9585221cf7b42ef98a34e88f4ea86d00e2a64ea1d6990df7af47443881`.
 It was installed live while fprintd and both FOD endpoints were idle.
+
+## Optical exposure investigation (2026-09-02)
+
+The `gts9u36` physical run returned 30 quality retries, three accepted samples,
+6% coverage and fatal result 70 after about 60 seconds. This falsifies the
+previous claim that waiting after opcode 87 would fix the image. The user
+confirmed that there is no screen protector and enrollment works in One UI.
+
+Read-only analysis of the locally supplied signed `dualfp` image established
+the following (addresses are virtual addresses in this particular build):
+
+- `fp_enroll_state_handler` calls `fpsec_do_get_image_only` at `0x1c954`,
+  before returning opcode 87 from `ESTATE_GET_TSP_STATUS` at `0x1e21c`.
+  Delaying after 87 does not delay acquisition.
+- `do_enroll_stub` at `0x17198` converts an already-fatal internal result 70
+  into opcode 63, latches a flag, and returns 70 on the next call via
+  `0x16fc0`. The host's callback handling does not cause that abort.
+- Internal abort paths include repeated quality failures and
+  `check_phone_case` (`0x27504`), which aggregates an optical metric over
+  eight observations. This does not establish that the tablet has a case or
+  protector; it rules out treating every 63/70 as a coverage milestone.
+- Control 87 (`do_extra_control`, `0x186a0`) only calls
+  `fp_set_finger_off` for input byte **1**. Both 0 and 2 are no-ops, so the
+  earlier claim that changing 0 to 2 repaired the secure state was unfounded.
+
+The successful One UI reference consistently reports `HBM=385` before each
+contact. Samsung's `GTS9U_ANA38407_AMSA46AS02.dat` maps platform level 385 to
+WRDISBV **1623 / 634 cd/m2** and HBM WRDISBV 2047 to **900 cd/m2**. The port
+was using 2047 and incorrectly documenting it as fingerprint 650 cd/m2. The
+panel correction uses 1623, exposes it read-only as `fod_brightness`, and
+adjusts GNOME's shade estimate to 634. Actual overexposure is a hypothesis to
+test, not a result established by these tables.
+
+`gts9u37` removes the disproven split-at-87 wait, restores the stock press-time
+transaction, records monotonic capture duration, and removes enrollment-only
+gating from verification contacts. No TA, calibration or matcher threshold is
+modified. The kernel change leaves the DTB and kernel configuration identical
+to the previous booted build. Only the Ubuntu boot image needs replacement;
+Android, vendor_boot, init_boot, dtbo, vbmeta and the module tree stay untouched.
+
+The ARM64 package build and all 11 encrypted-wire tests pass. Kernel
+checkpatch reports no errors or warnings. The corrected kernel booted Ubuntu
+successfully, `fod_brightness` reports 1623, the overlay is active, and HBM
+returns to zero while idle. No systemd units failed after this reboot.
+
+- Ubuntu `boot.img` SHA-256:
+  `5269f2fd1bf98b81f92559ae4502dfd2d6b3fd8334efa63203d1736573c7544b`.
+- `gts9u37` package SHA-256:
+  `982ca2de7537566c0c05d4a51f8e6e6db19fc629a782d39abe9a32a1d3c4afec`.
+- Verified previous boot and overlay are retained on the tablet in
+  `/var/lib/gts9u-kernel-backups/pre-el721-fod385`.
+
+Physical enrollment and same/different-finger verification remain outstanding;
+the boot and build checks do not establish improved capture quality.
