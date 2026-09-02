@@ -1575,3 +1575,23 @@ produces the already-known non-fatal shape status 51 and cannot repair result
 step as `opcode:result:status` in the compact per-sample journal line. This
 will show whether the 62% failure occurs before sensor capture, during an
 intermediate opcode, or in the enrolment algorithm's terminal reply.
+
+The resulting trace isolated the boundary to
+`4 -> 5 -> 87 -> 63 -> result 70`. Static analysis of Samsung's current
+`libsfp_sensor.so` shows that opcode 63 emits the ordinary enrolment-progress
+callback and returns zero, after which stock `enrollDo` immediately calls the
+TA again. The missing distinction was earlier: stock obtains opcode 4, arms
+the sensor interrupt and waits for a physical finger-down before the next
+EnrollDo. Ubuntu instead entered the whole loop after RELEASE, so the TA's
+milestone continuation ran without a finger and aborted.
+
+Package `gts9u35` preserves that asynchronous boundary. Each EnrollInit is
+followed immediately by exactly one EnrollDo that must return opcode 4. The
+driver then waits for the kernel's paired PRESS, completes `5 -> 87 -> 6/0`
+while the finger is present, closes with EnrollFinal, starts the next Init and
+arms its opcode 4 before returning to the poller. RELEASE now only clears the
+contact latch. This matches the order in the successful One UI trace without
+requiring Android state or a reboot. The ARM64 build and all 11 protocol tests
+pass; package SHA-256 is
+`edf390dd414e83ab2d0159e91eaa0fdf8d1a893f476b176cf69fbe9957f61c23`.
+It was installed live over `gts9u34` while fprintd was inactive.

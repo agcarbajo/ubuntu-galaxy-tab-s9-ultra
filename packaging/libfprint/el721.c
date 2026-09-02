@@ -143,6 +143,8 @@ udfps_begin (FpiDeviceEl721 *self, GError **error)
       write_child (EL721_TOUCH, "fod_enable", "0\n", NULL);
       return FALSE;
     }
+  self->enroll_armed = FALSE;
+  self->enroll_arm_status = 0;
   if (!write_child (EL721_PANEL, "fod_mode", "1\n", error))
     {
       write_child (EL721_TOUCH, "fod_enable", "0\n", NULL);
@@ -183,6 +185,8 @@ udfps_end (FpiDeviceEl721 *self)
   self->udfps_active = FALSE;
   self->udfps_refreshed = 0;
   self->fod_sequence = 0;
+  self->enroll_armed = FALSE;
+  self->enroll_arm_status = 0;
 }
 
 static void
@@ -202,6 +206,8 @@ action_cleanup (FpiDeviceEl721 *self)
   set_sensor_power (self, FALSE, NULL);
   self->action = EL721_ACTION_NONE;
   self->finger_present = FALSE;
+  self->enroll_armed = FALSE;
+  self->enroll_arm_status = 0;
   self->opcode = 0;
   fpi_device_report_finger_status (FP_DEVICE (self), FP_FINGER_STATUS_NONE);
 }
@@ -362,6 +368,37 @@ finish_identify (FpiDeviceEl721 *self, guint32 template_id)
 }
 
 static gboolean
+arm_enroll_capture (FpiDeviceEl721 *self, GError **error)
+{
+  El721Reply reply = { 0 };
+  gboolean ok = FALSE;
+
+  /* One UI enters EnrollDo once before the contact.  Opcode 4 makes the
+   * sensor service arm its interrupt and wait for the next finger-down edge;
+   * it is not an instruction to call EnrollDo again immediately.  Keeping
+   * this boundary is especially important when the TA emits opcode 63 at a
+   * coverage milestone: the following EnrollDo must still run while the
+   * finger is physically present. */
+  if (!el721_qtee_enroll_do (self->qtee, &reply, error))
+    goto out;
+  if (reply.result || reply.opcode != EL721_OP_WAIT_INTERRUPT)
+    {
+      g_set_error (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_GENERAL,
+                   "EL721 arm returned result/opcode %u/%u",
+                   reply.result, reply.opcode);
+      goto out;
+    }
+  self->enroll_armed = TRUE;
+  self->enroll_arm_status = reply.status;
+  fp_dbg ("Enroll armed status=%u", reply.status);
+  ok = TRUE;
+
+out:
+  el721_reply_clear (&reply);
+  return ok;
+}
+
+static gboolean
 handle_enroll_do (FpiDeviceEl721 *self, GError **error)
 {
   El721Reply reply = { 0 };
@@ -384,9 +421,19 @@ handle_enroll_do (FpiDeviceEl721 *self, GError **error)
   guint8 touch_flags = 2;
   gint32 battery_temperature;
 
-  /* The touch poll is the interrupt wait used by Samsung's service.  Once a
-   * contact is latched, drive the remaining TA opcodes synchronously; one
-   * capture normally needs WAIT_INTERRUPT, NOTIFY_DOWN, 87, 6 and then 0. */
+  if (!self->enroll_armed)
+    {
+      g_set_error_literal (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_GENERAL,
+                           "EL721 contact arrived before capture was armed");
+      return FALSE;
+    }
+  g_string_append_printf (protocol, "%u:0:%u", EL721_OP_WAIT_INTERRUPT,
+                          self->enroll_arm_status);
+  self->enroll_armed = FALSE;
+
+  /* Opcode 4 was consumed before the contact.  Once finger-down wakes the
+   * poller, drive Samsung's remaining synchronous 5 -> 87 -> 6/0 sequence
+   * while the finger still covers the optical sensor. */
   for (step = 0; step < EL721_CAPTURE_STEPS_MAX; step++)
     {
       if (!el721_qtee_enroll_do (self->qtee, &reply, error))
@@ -405,8 +452,7 @@ handle_enroll_do (FpiDeviceEl721 *self, GError **error)
           terminal = TRUE;
           break;
         }
-      if (reply.opcode == EL721_OP_WAIT_INTERRUPT ||
-          reply.opcode == EL721_OP_CAPTURE_SUCCESS ||
+      if (reply.opcode == EL721_OP_CAPTURE_SUCCESS ||
           reply.opcode == EL721_OP_ACQUIRED_EVENT)
         {
           /* Opcode 63 is an acquired/progress callback in Samsung's
@@ -564,6 +610,8 @@ handle_enroll_do (FpiDeviceEl721 *self, GError **error)
       return FALSE;
     }
   el721_reply_clear (&reply);
+  if (!arm_enroll_capture (self, error))
+    goto fail;
   /* The timeout protects against an abandoned operation, not the total time
    * needed to collect a variable number of coverage samples. */
   self->action_started = g_get_monotonic_time ();
@@ -654,12 +702,12 @@ poll_action (FpDevice *device, gpointer user_data)
   sequence_delta = sequence - self->fod_sequence;
   event = sequence_delta != 0;
   self->fod_sequence = sequence;
-  /* The optical sensor acquires while the finger is present, but the Samsung
-   * touch protocol's matching RELEASE is the reliable indication that its
-   * image buffer is ready.  Process exactly the first RELEASE paired with a
-   * real PRESS.  Isolated startup releases and the later duplicate firmware
-   * release both arrive while finger_present is false and are ignored. */
-  capture = event && self->finger_present && released;
+  /* Samsung asks EnrollDo for opcode 4 before the contact, waits for the
+   * sensor interrupt, then completes capture while the finger is still down.
+   * The kernel's synthetic in-rectangle PRESS is that interrupt boundary.
+   * RELEASE only re-arms the contact latch; startup/duplicate releases never
+   * consume a secure sample. */
+  capture = event && !self->finger_present && pressed;
   if (event)
     g_message ("EL721 contact pressed=%u released=%u sequence=%" G_GUINT64_FORMAT
                " delta=%" G_GUINT64_FORMAT " x=%u y=%u capture=%u",
@@ -746,6 +794,13 @@ el721_enroll (FpDevice *device)
     }
   fp_dbg ("EnrollInit status=%u opcode=%u", reply.status, reply.opcode);
   el721_reply_clear (&reply);
+  if (!arm_enroll_capture (self, &error))
+    {
+      udfps_end (self);
+      set_sensor_power (self, FALSE, NULL);
+      fpi_device_enroll_complete (device, NULL, g_steal_pointer (&error));
+      return;
+    }
   self->action = EL721_ACTION_ENROLL;
   self->enroll_stage = 0;
   self->action_started = g_get_monotonic_time ();

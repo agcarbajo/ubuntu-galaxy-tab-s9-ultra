@@ -6877,3 +6877,21 @@ reply without enabling noisy global GLib debugging. All 11 protocol tests and
 the ARM64 build pass; package SHA-256 is
 `b4c0dd699c9761793d7ef63e0a827807a86e39f5bb48077de98f4bce4547c239`.
 It was installed live without restarting the tablet or selecting Android.
+
+The `gts9u34` run failed deterministically after 10 accepted samples at 64%
+coverage, with `4:0:0,5:0:0,87:0:0,63:0:0x80000000,0:70:0x80000000`.
+Samsung's `check_opcode` jump-table case 63 constructs a legacy
+`FINGERPRINT_TEMPLATE_ENROLLING` message from the current template id, group
+and `100 - coverage`, invokes the notification callback, returns zero and
+immediately re-enters EnrollDo. It performs no control transaction.
+
+The earlier opcode-4 handling was the actual sequencing mismatch. One UI
+receives opcode 4 before a touch, enables the sensor interrupt and blocks in
+`BAuthDeviceWaitInt`; only the finger-down edge permits the next EnrollDo.
+Ubuntu was consuming opcode 4 and the complete capture loop after RELEASE.
+Package `gts9u35` now pre-arms opcode 4 after every EnrollInit and resumes the
+remaining synchronous capture on PRESS. The sample trace retains the stored
+opcode-4 status so the split transaction remains visible in Tab Companion.
+The full ARM64 build and 11 wire tests pass; `gts9u35` was installed live with
+SHA-256
+`edf390dd414e83ab2d0159e91eaa0fdf8d1a893f476b176cf69fbe9957f61c23`.
