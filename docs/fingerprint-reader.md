@@ -1,22 +1,22 @@
 # The EL721 fingerprint reader under Ubuntu
 
 This document describes the experimental infrastructure for the Galaxy Tab S9
-Ultra Wi-Fi's (`SM-X910`) under-display optical reader. Real capture has reached
-17 accepted samples and 100% secure-world coverage, with only two quality
-retries in the latest run. Template encryption is **not resolved**: authenticated
-K250A reads succeed, but HwVault cannot unwrap/cache the encryption root. The
-missing Keymaster configuration and interrupt listener have been isolated;
-the subsequent secure operation still fails. Encrypted enrollment,
-same/different-finger verification and GDM/PAM testing remain outstanding. The
-[latest checkpoint](#spu-configuration-and-real-interrupts-2026-09-02)
-supersedes the historical investigation notes. Capture coverage is not the
-percentage of the complete implementation.
+Ultra Wi-Fi's (`SM-X910`) under-display optical reader. **Encrypted enrollment
+and same/different-finger recognition have now been demonstrated** in the
+prepared Ubuntu session. The user confirmed repeated correct acceptance and
+rejection; the corresponding journal contains three matches and four secure
+non-matches. One subsequent native GNOME screen unlock also succeeded. System
+startup, greeter login and the remaining optical UX still need integration and
+physical validation. The
+[latest checkpoint](#recognition-confirmed-and-first-gnome-integration-2026-09-02)
+supersedes historical investigation notes below, including older encryption
+failures and estimates.
 
-Current assessment: approximately **80% of the end-to-end feature**, with high
-uncertainty. This is an engineering estimate, not a test pass rate. The older
-99% estimate was premature: reliable capture, encrypted enrollment, matching
-and lock-screen behavior are still not demonstrated together. Historical
-sample counts do not prove that a usable fingerprint template was produced.
+Current assessment: approximately **93% of the end-to-end feature**. This is
+an uncertain engineering estimate, not a test pass rate or a security benchmark.
+The working SPU listener/DMA owner remains a transient diagnostic service; its
+startup must still be made persistent and safe across reset/suspend. Do not stop
+that owner independently while secure world can retain its DMA buffer.
 
 ### Requested desktop follow-up (after functional enrol/verify)
 
@@ -1975,3 +1975,65 @@ then use the enrolled finger. If it matches, repeat using a different finger
 and require rejection. No re-enrollment is needed. **Recognition is not yet
 validated**; the overall estimate remains roughly 90%, with persistent startup,
 same/different-finger validation and lock-screen/UX integration outstanding.
+
+## Recognition confirmed and first GNOME integration (2026-09-02)
+
+The physical tests at 20:44–20:45 UTC confirm three matches with result/final
+0/0 and slot 3, and four rejected attempts with result/final 32/0 and slot 0.
+The user identifies these as the enrolled finger versus other fingers. All
+captures followed actual PRESS edges. This is functional evidence on this
+device, not a statistical false-accept/reject evaluation.
+
+`gts9u43` reports the terminal **32 + operation 0 + slot 0** tuple as an ordinary
+non-match (`FPI_MATCH_FAIL`), not `verify-unknown-error`. IdentifyFinal must still
+succeed first. Other secure errors, retries, intermediate operations and
+contradictory nonzero slots are not reclassified. Eight new synthetic cases
+raise the driver suite to **111 passing tests**, with UBSan/strict enum warnings;
+the ARM64 build is warning-free. Companion's 16 tests also pass. Installed
+package SHA-256:
+`53547a9e7276868cbc0c77af1df2806aea1334ae424ff09befe72d1bd73a9566`.
+A post-install no-contact verification waited 20.249 seconds and cancelled
+cleanly. The new rejection wording still needs a physical different-finger test.
+
+The installed GNOME/GDM configuration already enables both fingerprint and
+password authentication. `/etc/pam.d/gdm-fingerprint` uses `pam_fprintd.so`, while
+`gdm-password` and `common-auth` retain the separate password path. All three
+files remained byte-for-byte unchanged during this update. No broad PAM
+modification or fingerprint-only login policy was introduced.
+
+Device package **2.39**, overlay **8**, removes the accelerometer dependency.
+It asynchronously reads Mutter's applied DisplayConfig transform and selects
+the built-in `DSI-1`, not whichever external display is primary. Thirty-six
+offline geometry cases cover all eight transforms at three scales, invalid
+inputs, panel selection and monitor offsets. The shade is non-reactive and
+excluded from the input region; only the target retains its touch guard.
+Package SHA-256:
+`6a3c3cd05d91f739c1eb56632174fd163a5523ed3f4c8b84eecc73802649d2be`.
+
+These geometry changes are installed on disk but **require a GNOME logout/login
+to load**, because imported extension modules remain cached. No logout/reboot
+was forced. At **21:16:16 UTC**, the user instead successfully unlocked the
+existing GNOME session using the enrolled finger. The journal identifies
+gnome-shell as the activating client, a successful secure match and the
+`gdm-fingerprint` PAM conversation; logind then reports the session unlocked.
+Companion's previous test log is unchanged, so this was a native system unlock,
+not an app test. It used the new gts9u43 driver but the still-cached v7 overlay.
+Native GNOME also logged a disposed UserVerifierProxy warning afterward, worth
+checking on repeated locks; this does not invalidate the observed unlock.
+The next tests are a logout/password login to load v8, then landscape screen
+lock, wrong-finger rejection, password fallback and repeated unlocks. Native
+GNOME handles the PAM feedback; this first step does not add near-sensor text.
+
+Remaining work is explicit: illuminate only during contact (dim icon at rest),
+coordinate keyboard overlap with the driver's touch suppression, validate actual
+rotations and suspend, provide the target in GDM's separate greeter session,
+and replace the transient SPU setup with a safe production startup/reset path.
+Merely hiding a target over the keyboard is insufficient: the kernel currently
+suppresses ordinary touches inside the enabled FOD rectangle. No UI workaround
+claims that interaction is solved yet. The saved print and the live SPU owner
+were preserved; no new enrollment is required.
+
+Implementation references: [Mutter 46 input transform matrices](https://github.com/GNOME/mutter/blob/46.0/src/backends/meta-monitor-manager.c),
+[DisplayConfig applied transforms](https://github.com/GNOME/mutter/blob/46.0/data/dbus-interfaces/org.gnome.Mutter.DisplayConfig.xml),
+[GNOME 46 extension module caching](https://github.com/GNOME/gnome-shell/blob/46.0/js/ui/extensionSystem.js),
+[native GNOME authentication feedback](https://github.com/GNOME/gnome-shell/blob/46.0/js/gdm/util.js).

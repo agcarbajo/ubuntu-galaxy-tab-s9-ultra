@@ -3,6 +3,17 @@
 #include "el721-enroll-wire.h"
 
 #define EL721_IDENTIFY_OUTPUT_SIZE 0x230089U
+#define EL721_IDENTIFY_NO_MATCH 32U
+
+/* A normal rejection is terminal, has no matched slot and is distinct from
+ * malformed data, transport errors and quality retries. Fail closed on a
+ * contradictory slot/result pair instead of reporting authentication. */
+static inline gboolean
+el721_identify_is_no_match (const El721Reply *reply)
+{
+  return reply->result == EL721_IDENTIFY_NO_MATCH &&
+         reply->opcode == 0 && reply->template_id == 0;
+}
 
 /* IdentifyDo is not decode_common's layout. The next operation is at byte 0,
  * not byte 12; the matched secure slot is at byte 20, not the score at 16.

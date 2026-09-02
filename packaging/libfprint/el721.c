@@ -696,6 +696,12 @@ handle_identify_do (FpiDeviceEl721 *self, GError **error)
       else
         fpi_device_identify_report (FP_DEVICE (self), NULL, NULL, retry);
     }
+  else if (el721_identify_is_no_match (&reply))
+    {
+      el721_reply_clear (&reply);
+      finish_identify (self, 0);
+      return TRUE;
+    }
   else if (reply.result)
     {
       g_set_error (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_GENERAL,

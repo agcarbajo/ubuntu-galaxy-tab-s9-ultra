@@ -88,6 +88,25 @@ test_contact (gconstpointer test_case)
                    ==, bits == 7);
 }
 
+static void
+test_rejection (gconstpointer test_case)
+{
+  guint mode = GPOINTER_TO_UINT (test_case);
+  El721Reply reply = { .result = 32 };
+  switch (mode)
+    {
+    case 1: reply.result = 0; break;
+    case 2: reply.result = 31; break;
+    case 3: reply.result = 39; break;
+    case 4: reply.result = 41; break;
+    case 5: reply.opcode = 4; break;
+    case 6: reply.template_id = 3; break;
+    case 7: reply.result = G_MAXUINT32; break;
+    default: break;
+    }
+  g_assert_cmpint (el721_identify_is_no_match (&reply), ==, mode == 0);
+}
+
 int
 main (int argc, char **argv)
 {
@@ -106,6 +125,11 @@ main (int argc, char **argv)
     {
       g_autofree gchar *path = g_strdup_printf ("/el721/contact/combination-%u", i);
       g_test_add_data_func (path, GUINT_TO_POINTER (i), test_contact);
+    }
+  for (guint i = 0; i < 8; i++)
+    {
+      g_autofree gchar *path = g_strdup_printf ("/el721/rejection/case-%u", i);
+      g_test_add_data_func (path, GUINT_TO_POINTER (i), test_rejection);
     }
   return g_test_run ();
 }

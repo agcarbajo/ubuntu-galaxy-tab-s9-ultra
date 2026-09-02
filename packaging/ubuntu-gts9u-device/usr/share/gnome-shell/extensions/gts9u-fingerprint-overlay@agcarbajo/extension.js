@@ -6,6 +6,7 @@ import St from 'gi://St';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
+import {sensorGeometry, panelMonitor} from './geometry.js';
 
 const BUS_NAME = 'io.github.agcarbajo.Gts9uFingerprintOverlay';
 const OBJECT_PATH = '/io/github/agcarbajo/Gts9uFingerprintOverlay';
@@ -21,10 +22,12 @@ const INTERFACE = `
 
 export default class Gts9uFingerprintOverlay extends Extension {
     enable() {
+        this._displayCancellable = new Gio.Cancellable();
+        this._panel = null;
         this._active = false;
         this._shade = new St.Widget({
             style_class: 'gts9u-fingerprint-shade',
-            reactive: true,
+            reactive: false,
             visible: false,
         });
         this._actor = new St.Widget({
@@ -35,36 +38,30 @@ export default class Gts9uFingerprintOverlay extends Extension {
         this._actor.connect('button-press-event', () => Clutter.EVENT_STOP);
         this._actor.connect('button-release-event', () => Clutter.EVENT_STOP);
         this._actor.connect('touch-event', () => Clutter.EVENT_STOP);
-        this._shade.connect('button-press-event', () => Clutter.EVENT_STOP);
-        this._shade.connect('button-release-event', () => Clutter.EVENT_STOP);
-        this._shade.connect('touch-event', () => Clutter.EVENT_STOP);
         this._shade.connect('notify::visible', () => this._enforceInactive());
         this._actor.connect('notify::visible', () => this._enforceInactive());
-        Main.layoutManager.addTopChrome(this._shade, {trackFullscreen: true});
+        // The shade only compensates global HBM. It must never intercept the
+        // password field, accessibility controls, keyboard or cancel button.
+        Main.layoutManager.addTopChrome(this._shade,
+            {trackFullscreen: true, affectsInputRegion: false});
         Main.layoutManager.addTopChrome(this._actor, {trackFullscreen: true});
         // addTopChrome() maps a newly-added actor regardless of its constructor
         // flag. Authentication must be the only thing that makes either actor
         // visible.
         this._shade.hide();
         this._actor.hide();
-        GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+        this._initialHideId = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+            this._initialHideId = 0;
             this._enforceInactive();
             return GLib.SOURCE_REMOVE;
         });
 
         this._monitorsChangedId = Main.layoutManager.connect(
-            'monitors-changed', () => this._position());
-        this._sensorProxy = Gio.DBusProxy.new_for_bus_sync(
-            Gio.BusType.SYSTEM,
-            Gio.DBusProxyFlags.NONE,
-            null,
-            'net.hadess.SensorProxy',
-            '/net/hadess/SensorProxy',
-            'net.hadess.SensorProxy',
-            null
-        );
-        this._sensorChangedId = this._sensorProxy.connect(
-            'g-properties-changed', () => this._position());
+            'monitors-changed', () => this._refreshMonitor());
+        this._displayChangedId = Gio.DBus.session.signal_subscribe(
+            'org.gnome.Mutter.DisplayConfig', 'org.gnome.Mutter.DisplayConfig',
+            'MonitorsChanged', '/org/gnome/Mutter/DisplayConfig', null,
+            Gio.DBusSignalFlags.NONE, () => this._refreshMonitor());
 
         this._busId = Gio.bus_own_name(
             Gio.BusType.SESSION,
@@ -78,11 +75,18 @@ export default class Gts9uFingerprintOverlay extends Extension {
             null,
             null
         );
-        this._position();
+        this._refreshMonitor();
         this._startPanelPoll();
     }
 
     disable() {
+        this._displayCancellable.cancel();
+        this._displayCancellable = null;
+        this._panel = null;
+        if (this._initialHideId) {
+            GLib.source_remove(this._initialHideId);
+            this._initialHideId = 0;
+        }
         this._active = false;
         this._stopPanelPoll();
         this._stopHidePoll();
@@ -94,11 +98,10 @@ export default class Gts9uFingerprintOverlay extends Extension {
         }
         this._dbus?.unexport();
         this._dbus = null;
-        if (this._sensorChangedId) {
-            this._sensorProxy.disconnect(this._sensorChangedId);
-            this._sensorChangedId = 0;
+        if (this._displayChangedId) {
+            Gio.DBus.session.signal_unsubscribe(this._displayChangedId);
+            this._displayChangedId = 0;
         }
-        this._sensorProxy = null;
         if (this._monitorsChangedId) {
             Main.layoutManager.disconnect(this._monitorsChangedId);
             this._monitorsChangedId = 0;
@@ -121,7 +124,8 @@ export default class Gts9uFingerprintOverlay extends Extension {
         this._position();
         this._updateShade();
         this._shade.show();
-        this._actor.show();
+        if (this._panel)
+            this._actor.show();
         this._startBrightnessPoll();
         this._startSafetyTimeout();
         this._dbus?.emit_property_changed(
@@ -202,44 +206,50 @@ export default class Gts9uFingerprintOverlay extends Extension {
         }
     }
 
-    _orientation() {
-        return this._sensorProxy
-            ?.get_cached_property('AccelerometerOrientation')
-            ?.deep_unpack() ?? 'normal';
+    _refreshMonitor() {
+        // Do not make synchronous calls back into our own compositor. Reject
+        // stale callbacks on disable/re-enable or rapid display changes.
+        const cancellable = this._displayCancellable;
+        const request = (this._displayRequest ?? 0) + 1;
+        this._displayRequest = request;
+        this._panel = null;
+        this._actor?.hide();
+        Gio.DBus.session.call('org.gnome.Mutter.DisplayConfig',
+            '/org/gnome/Mutter/DisplayConfig', 'org.gnome.Mutter.DisplayConfig',
+            'GetCurrentState', null, null, Gio.DBusCallFlags.NONE, 2000,
+            cancellable, (connection, result) => {
+                try {
+                    const state = connection.call_finish(result).deep_unpack();
+                    if (cancellable !== this._displayCancellable ||
+                        request !== this._displayRequest || cancellable.is_cancelled())
+                        return;
+                    this._panel = panelMonitor(state[2], Main.layoutManager.monitors);
+                    this._position();
+                    if (this._active && this._panel)
+                        this._actor.show();
+                } catch (error) {
+                    if (!cancellable.is_cancelled())
+                        console.error(`GTS9U fingerprint display state: ${error.message}`);
+                }
+            });
     }
 
     _position() {
         if (!this._actor || !this._shade)
             return;
 
-        const monitor = Main.layoutManager.primaryMonitor;
-        if (!monitor)
+        if (!this._panel)
             return;
-
-        // Stock geometry: a 14.8 mm target whose centre is 16.7 mm from
-        // the short edge. Scale both from the 196 mm / 1848 px panel axis.
-        const shortAxis = Math.min(monitor.width, monitor.height);
-        const diameter = Math.round(shortAxis * 14.8 / 196);
-        const inset = Math.round(shortAxis * 16.7 / 196);
-        const orientation = this._orientation();
-        let centerX = monitor.x + monitor.width / 2;
-        let centerY = monitor.y + monitor.height / 2;
-
-        if (orientation === 'bottom-up')
-            centerX = monitor.x + inset;
-        else if (orientation === 'left-up')
-            centerY = monitor.y + monitor.height - inset;
-        else if (orientation === 'right-up')
-            centerY = monitor.y + inset;
-        else
-            centerX = monitor.x + monitor.width - inset;
-
+        const {monitor, transform} = this._panel;
+        const target = sensorGeometry(monitor, transform);
+        if (!target) {
+            this._actor.hide();
+            return;
+        }
         this._shade.set_position(monitor.x, monitor.y);
         this._shade.set_size(monitor.width, monitor.height);
-        this._actor.set_size(diameter, diameter);
-        this._actor.set_position(
-            Math.round(centerX - diameter / 2),
-            Math.round(centerY - diameter / 2));
+        this._actor.set_size(target.width, target.height);
+        this._actor.set_position(target.x, target.y);
     }
 
     _readBacklight(name) {
