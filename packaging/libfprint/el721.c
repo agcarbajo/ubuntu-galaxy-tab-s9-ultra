@@ -25,7 +25,6 @@
 #define EL721_OP_NOTIFY_DOWN 5U
 #define EL721_OP_CAPTURE_SUCCESS 6U
 #define EL721_OP_ACQUIRED_EVENT 63U
-#define EL721_OP_FINGER_LEAVE 76U
 #define EL721_OP_CAPTURE_STEP 87U
 #define EL721_CAPTURE_STEPS_MAX 16U
 
@@ -376,6 +375,7 @@ handle_enroll_do (FpiDeviceEl721 *self, GError **error)
   guint progress = 0;
   guint step;
   gboolean terminal = FALSE;
+  g_autoptr(GString) protocol = g_string_new (NULL);
   /* Samsung's live One UI trace reports `tfd 2 0 1` while the worker handles
    * NOTIFY_DOWN/CAPTURE_STEP.  The first byte is the value passed to control
    * 87 when the override flag (the third tfd field) is clear.  Zero has the
@@ -391,6 +391,10 @@ handle_enroll_do (FpiDeviceEl721 *self, GError **error)
     {
       if (!el721_qtee_enroll_do (self->qtee, &reply, error))
         goto fail;
+      if (protocol->len)
+        g_string_append_c (protocol, ',');
+      g_string_append_printf (protocol, "%u:%u:%u", reply.opcode,
+                              reply.result, reply.status);
       fp_dbg ("EnrollDo result=%u status=%u opcode=%u fields=%u/%u/%u data=%zu",
               reply.result, reply.status, reply.opcode, reply.quality,
               reply.progress, reply.remaining,
@@ -467,14 +471,6 @@ handle_enroll_do (FpiDeviceEl721 *self, GError **error)
   el721_reply_clear (&reply);
   if (!el721_qtee_enroll_final (self->qtee, &final, error))
     goto fail;
-  /* Samsung closes every successful or rejected sample with control 76
-   * (CAPTURE_FINGER_LEAVE) immediately after EnrollFinal and before the next
-   * EnrollInit.  Without it, the trustlet can accept several samples while
-   * retaining stale contact state and eventually abort EnrollDo with result
-   * 70.  The stock call has no input or output payload. */
-  if (!el721_qtee_control_op (self->qtee, EL721_OP_FINGER_LEAVE,
-                              NULL, 0, 0, error))
-    goto fail;
   if (template && !final.result)
     progress = 100;
   fp_dbg ("EnrollFinal result=%u status=%u opcode=%u template=%zu progress=%u",
@@ -485,9 +481,10 @@ handle_enroll_do (FpiDeviceEl721 *self, GError **error)
   /* MESSAGE is retained by fprintd's default systemd journal policy.  INFO is
    * filtered unless G_MESSAGES_DEBUG is set, which made field diagnostics
    * lose the secure aggregate result while still showing fprintd retries. */
-  g_message ("EL721 sample result=%u final=%u coverage=%u accepted=%u template=%zu",
+  g_message ("EL721 sample result=%u final=%u coverage=%u accepted=%u template=%zu steps=%s final_status=%u",
              capture_result, final.result, coverage, accepted,
-             template ? g_bytes_get_size (template) : 0);
+             template ? g_bytes_get_size (template) : 0, protocol->str,
+             final.status);
 
   if ((!capture_result || capture_result == 39 || capture_result == 41) &&
       (!final.result || final.result == 39 || final.result == 41) &&

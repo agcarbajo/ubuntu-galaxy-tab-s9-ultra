@@ -6844,21 +6844,21 @@ buffered image at the paired RELEASE. Package `gts9u32` processes only the
 first RELEASE that follows a real PRESS. This restores the proven timing while
 still rejecting isolated startup releases and duplicate firmware releases.
 
-## Session 114 — release-state closure after each secure sample
+## Session 114 — deterministic 62% failure and bounded opcode tracing
 
 Date: 2026-09-02. The first `gts9u32` run accepted 10 of 11 contacts and
 advanced secure coverage to 62%; its only quality retry was the first sample.
 The following contact failed directly with result 70, proving that release-time
 capture is correct but that a per-sample secure transition was still missing.
 
-The full successful One UI trace calls control 76
-(`CAPTURE_FINGER_LEAVE`) without input or output immediately after every
-EnrollFinal, before the next EnrollInit. The Linux driver previously skipped
-that call. Package `gts9u33` mirrors the stock sequence for both accepted and
-rejected samples, and the standalone QTEE diagnostic follows the same order.
-All 11 wire-protocol tests and the complete ARM64 build pass; package SHA-256
-is `77b2fb6a673fb330b481531f9c5969926d8df66d4f936c3022bf84abf484f015`.
-It was installed live over `gts9u32` without rebooting or selecting Android.
+An initial reading associated Samsung's `CAPTURE_FINGER_LEAVE` message with
+the following control 76 and `gts9u33` reproduced that call. The next physical
+test disproved the hypothesis: it again failed at exactly 10 accepted samples
+and 62% coverage. The two failures occurred at 53 and 64 seconds and used one
+and two quality retries, so neither elapsed time nor the retry budget explains
+the boundary. Static and trace review then established that control 76 fetches
+the 1024-byte `adlg` diagnostic blob. A zero-capacity call merely receives the
+known non-fatal shape status 51 and changes no enrolment state.
 
 Tab Companion 1.1.4 delays final journal shutdown by 750 ms after fprintd
 exits. This closes the observed race where the system journal retained result
@@ -6867,3 +6867,13 @@ were upgraded and relaunched on the active Ubuntu desktop. Backend enrolment
 is approximately **99%** complete pending one full physical save and verify;
 the complete requested reader experience, including lock-screen integration
 and icon/rotation/keyboard-overlap polish, is approximately **80%** complete.
+
+Package `gts9u34` removes the ineffective control-76 probe and extends the
+safe aggregate sample record with the complete EnrollDo path encoded as
+`opcode:result:status`, plus EnrollFinal status. The report still contains no
+image or template material. This instrumentation distinguishes a failure on
+the initial wait, capture controls, acquired callback or terminal algorithm
+reply without enabling noisy global GLib debugging. All 11 protocol tests and
+the ARM64 build pass; package SHA-256 is
+`b4c0dd699c9761793d7ef63e0a827807a86e39f5bb48077de98f4bce4547c239`.
+It was installed live without restarting the tablet or selecting Android.

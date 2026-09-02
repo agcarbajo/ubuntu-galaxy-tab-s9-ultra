@@ -1559,16 +1559,19 @@ therefore captures on exactly the first RELEASE following a real PRESS.
 Isolated startup releases and the later duplicate release have no preceding
 live contact and cannot consume a sample.
 
-## Per-sample finger-leave closure
+## Deterministic 62% boundary
 
-The first release-timed diagnostic accepted 10 of 11 physical samples and
-advanced from 0 to 62% coverage before EnrollDo returned result 70. This rules
-out alignment and capture timing as the remaining cause. The complete One UI
-enrolment trace shows one additional mandatory transition after every sample:
-immediately after EnrollFinal, Samsung sends payload-free control 76
-(`CAPTURE_FINGER_LEAVE`) before the next EnrollInit. The Linux driver omitted
-that transition, allowing stale contact state to accumulate in the trustlet.
-Package `gts9u33` now mirrors that ordering for accepted and rejected samples.
-Tab Companion 1.1.4 also keeps journal collection alive for 750 ms after the
-fprintd client exits so a terminal secure result is never lost from the JSONL
-report.
+Two release-timed diagnostics accepted exactly 10 physical samples, reached
+62% coverage and returned result 70 on the following contact. They failed at
+53 and 64 seconds respectively, ruling out both a fixed session timeout and a
+quality-retry budget. Tab Companion 1.1.4 retained the terminal aggregate in
+the second report as intended.
+
+The `CAPTURE_FINGER_LEAVE` message in Samsung's service trace is followed by
+control 76, but that operation requests the 1024-byte `adlg` diagnostic blob;
+it is not a finger-state transition. Calling it with no response capacity only
+produces the already-known non-fatal shape status 51 and cannot repair result
+70. Package `gts9u34` therefore removes that probe and records every EnrollDo
+step as `opcode:result:status` in the compact per-sample journal line. This
+will show whether the 62% failure occurs before sensor capture, during an
+intermediate opcode, or in the enrolment algorithm's terminal reply.
