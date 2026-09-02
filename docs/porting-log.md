@@ -6843,3 +6843,27 @@ capture boundary: Samsung's sensor acquires while covered and exposes the
 buffered image at the paired RELEASE. Package `gts9u32` processes only the
 first RELEASE that follows a real PRESS. This restores the proven timing while
 still rejecting isolated startup releases and duplicate firmware releases.
+
+## Session 114 — release-state closure after each secure sample
+
+Date: 2026-09-02. The first `gts9u32` run accepted 10 of 11 contacts and
+advanced secure coverage to 62%; its only quality retry was the first sample.
+The following contact failed directly with result 70, proving that release-time
+capture is correct but that a per-sample secure transition was still missing.
+
+The full successful One UI trace calls control 76
+(`CAPTURE_FINGER_LEAVE`) without input or output immediately after every
+EnrollFinal, before the next EnrollInit. The Linux driver previously skipped
+that call. Package `gts9u33` mirrors the stock sequence for both accepted and
+rejected samples, and the standalone QTEE diagnostic follows the same order.
+All 11 wire-protocol tests and the complete ARM64 build pass; package SHA-256
+is `77b2fb6a673fb330b481531f9c5969926d8df66d4f936c3022bf84abf484f015`.
+It was installed live over `gts9u32` without rebooting or selecting Android.
+
+Tab Companion 1.1.4 delays final journal shutdown by 750 ms after fprintd
+exits. This closes the observed race where the system journal retained result
+70 but `latest.jsonl` missed that final aggregate line. The package and app
+were upgraded and relaunched on the active Ubuntu desktop. Backend enrolment
+is approximately **99%** complete pending one full physical save and verify;
+the complete requested reader experience, including lock-screen integration
+and icon/rotation/keyboard-overlap polish, is approximately **80%** complete.

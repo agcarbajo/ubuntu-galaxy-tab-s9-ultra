@@ -34,6 +34,7 @@ class FingerprintTest:
         self._journal_stream = None
         self._tick_id = 0
         self._kill_id = 0
+        self._drain_id = 0
         self._duration = 0
         self._started = 0.0
         self._stop_reason = None
@@ -192,7 +193,20 @@ class FingerprintTest:
             status = "completed"
         else:
             status = "failed"
+        # fprintd can exit just before journalctl delivers the driver's final
+        # aggregate sample.  Leave the journal reader alive briefly so even a
+        # failed or cancelled run retains its last secure result in JSONL.
+        if self._kill_id:
+            GLib.source_remove(self._kill_id)
+            self._kill_id = 0
+        self.state["status"] = status
+        self._emit()
+        self._drain_id = GLib.timeout_add(750, self._finish_after_drain, status)
+
+    def _finish_after_drain(self, status):
+        self._drain_id = 0
         self._finish(status)
+        return GLib.SOURCE_REMOVE
 
     def _finish(self, status, detail=None):
         if self._finished_once:
@@ -204,6 +218,9 @@ class FingerprintTest:
         if self._kill_id:
             GLib.source_remove(self._kill_id)
             self._kill_id = 0
+        if self._drain_id:
+            GLib.source_remove(self._drain_id)
+            self._drain_id = 0
         if self.journal is not None:
             self.journal.force_exit()
             self.journal = None

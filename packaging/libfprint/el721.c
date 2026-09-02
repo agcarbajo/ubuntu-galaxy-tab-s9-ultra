@@ -25,6 +25,7 @@
 #define EL721_OP_NOTIFY_DOWN 5U
 #define EL721_OP_CAPTURE_SUCCESS 6U
 #define EL721_OP_ACQUIRED_EVENT 63U
+#define EL721_OP_FINGER_LEAVE 76U
 #define EL721_OP_CAPTURE_STEP 87U
 #define EL721_CAPTURE_STEPS_MAX 16U
 
@@ -465,6 +466,14 @@ handle_enroll_do (FpiDeviceEl721 *self, GError **error)
   template = g_steal_pointer (&reply.data);
   el721_reply_clear (&reply);
   if (!el721_qtee_enroll_final (self->qtee, &final, error))
+    goto fail;
+  /* Samsung closes every successful or rejected sample with control 76
+   * (CAPTURE_FINGER_LEAVE) immediately after EnrollFinal and before the next
+   * EnrollInit.  Without it, the trustlet can accept several samples while
+   * retaining stale contact state and eventually abort EnrollDo with result
+   * 70.  The stock call has no input or output payload. */
+  if (!el721_qtee_control_op (self->qtee, EL721_OP_FINGER_LEAVE,
+                              NULL, 0, 0, error))
     goto fail;
   if (template && !final.result)
     progress = 100;

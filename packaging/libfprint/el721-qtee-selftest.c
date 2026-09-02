@@ -12,6 +12,7 @@
 #define OP_WAIT_INTERRUPT 4U
 #define OP_NOTIFY_DOWN 5U
 #define OP_CAPTURE_SUCCESS 6U
+#define OP_FINGER_LEAVE 76U
 #define OP_CAPTURE_STEP 87U
 #define EL721_POWER "/sys/bus/platform/devices/egis-el721/sensor_power"
 #define EL721_BATTERY_TEMP "/sys/class/power_supply/sm5714-battery/temp"
@@ -423,6 +424,9 @@ main (int argc, char **argv)
                    reply.result, reply.status,
                    reply.data ?
                    (guint) g_bytes_get_size (reply.data) : 0u);
+          if (!el721_qtee_control_op (session, OP_FINGER_LEAVE,
+                                      NULL, 0, 0, &error))
+            goto out;
           el721_reply_clear (&reply);
         }
       if (!el721_qtee_cancel (session, &reply, &error))

@@ -1558,3 +1558,17 @@ its buffered optical image is ready for the trustlet. Package `gts9u32`
 therefore captures on exactly the first RELEASE following a real PRESS.
 Isolated startup releases and the later duplicate release have no preceding
 live contact and cannot consume a sample.
+
+## Per-sample finger-leave closure
+
+The first release-timed diagnostic accepted 10 of 11 physical samples and
+advanced from 0 to 62% coverage before EnrollDo returned result 70. This rules
+out alignment and capture timing as the remaining cause. The complete One UI
+enrolment trace shows one additional mandatory transition after every sample:
+immediately after EnrollFinal, Samsung sends payload-free control 76
+(`CAPTURE_FINGER_LEAVE`) before the next EnrollInit. The Linux driver omitted
+that transition, allowing stale contact state to accumulate in the trustlet.
+Package `gts9u33` now mirrors that ordering for accepted and rejected samples.
+Tab Companion 1.1.4 also keeps journal collection alive for 750 ms after the
+fprintd client exits so a terminal secure result is never lost from the JSONL
+report.
