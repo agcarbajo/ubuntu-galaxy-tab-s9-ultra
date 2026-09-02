@@ -1886,3 +1886,47 @@ transient listener/DMA owner must remain alive until a controlled Ubuntu reboot;
 do not kill it, unload SPSS or start a second initializer. After a reboot the
 ordered setup must be repeated before asking the user to enroll. No Android boot,
 new HwVault root, secure credential PUT or Android-private-state import was used.
+
+## First encrypted enrollment and persisted identity fix (2026-09-02)
+
+The next physical test completed at 19:14:09 UTC: **17 accepted samples, 100%
+coverage, five quality retries**, and an **847,142-byte encrypted template**.
+The client reported `enroll-completed`, and a separate `fprintd-list` confirmed
+the right-index print on disk. Sensor power and both FOD controls returned to
+zero. This establishes encrypted enrollment, not successful recognition.
+
+A subsequent bounded, no-finger verification failed at `IdentifyInit` with 31.
+The stored blob has the expected `FPV32000` header and matching big-endian length;
+its contents were not exported or decrypted outside the TA. Review exposed a
+separate driver defect: `fpi_print_generate_user_id()` returns a fresh random ID
+on every call. The driver called it for every enrollment transaction and again
+for verification, and stored only `(uay)` (slot, ciphertext). The signed TA
+compares the supplied 256-byte identity against the identity in the decrypted
+template (`decode_each_templ_ver3`, comparison at `0x13260–0x132b0`). Regenerating
+the identifier cannot reproduce that identity.
+
+`gts9u41` generates the enrollment ID once, retains it through all captures,
+stores `(suay)` (identity, slot, ciphertext), and loads the saved ID for matching.
+It explicitly rejects legacy prints that have no saved ID, requesting enrollment
+again; it does not bypass the TA comparison or invent an identity. Mixed-identity
+galleries are rejected rather than submitted under the first print's identity;
+multi-print identification remains integration work. The first test is therefore
+one new enrollment, followed by same-finger and different-finger verification.
+Successful recognition after this correction still needs physical validation.
+
+Ten offline tests cover persisted identity roundtrip, backing-storage lifetime,
+legacy rejection and size/slot validation, alongside the previous 63 protocol
+tests. Tab Companion 1.1.5 adds an explicit verification mode, preserving the
+saved print and distinguishing a non-match from a transport/reader error.
+Sixteen offline client tests cover status parsing, retries, cancellation,
+timeout and late delivery of the final result. Zero process exit status alone
+is never counted as a successful verification.
+
+All **73** offline driver tests pass with UBSan and strict enum warnings; the
+ARM64 incremental build passed without compiler warnings. The installed
+gts9u41 package SHA-256 is
+`3643f752873f065e164b0f394c6809c0689a2a3a16ec94f77970177d6413d8ae`.
+An installed-device check confirms explicit legacy rejection before illumination,
+with all three sensor/FOD controls idle afterward. The old encrypted print was
+backed up with root-only permissions and remained byte-for-byte unchanged during
+deployment. No new physical test is claimed here. The live SPU owner was retained.

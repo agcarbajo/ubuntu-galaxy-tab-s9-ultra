@@ -30,5 +30,6 @@ struct _FpiDeviceEl721
   guint32 opcode;
   guint32 template_id;
   guint enroll_stage;
+  gchar *enroll_user;
   gint64 action_started;
 };

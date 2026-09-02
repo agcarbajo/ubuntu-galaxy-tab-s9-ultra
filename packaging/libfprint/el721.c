@@ -5,6 +5,7 @@
 
 #include "drivers_api.h"
 #include "el721.h"
+#include "el721-print-wire.h"
 
 #include <errno.h>
 #include <stdio.h>
@@ -209,6 +210,7 @@ action_cleanup (FpiDeviceEl721 *self)
   self->enroll_armed = FALSE;
   self->enroll_arm_status = 0;
   self->opcode = 0;
+  g_clear_pointer (&self->enroll_user, g_free);
   fpi_device_report_finger_status (FP_DEVICE (self), FP_FINGER_STATUS_NONE);
 }
 
@@ -236,19 +238,14 @@ action_fail (FpiDeviceEl721 *self, GError *error)
 }
 
 static gboolean
-print_data (FpPrint *print, guint32 *template_id, const guint8 **bytes,
-            gsize *size)
+print_data (FpPrint *print, gchar **user, guint32 *template_id,
+            GBytes **opaque, GError **error)
 {
   g_autoptr(GVariant) data = NULL;
-  g_autoptr(GVariant) array = NULL;
   if (!print)
     return FALSE;
   g_object_get (print, "fpi-data", &data, NULL);
-  if (!data || !g_variant_is_of_type (data, G_VARIANT_TYPE ("(uay)")))
-    return FALSE;
-  g_variant_get (data, "(u@ay)", template_id, &array);
-  *bytes = g_variant_get_fixed_array (array, size, sizeof (guint8));
-  return *bytes != NULL && *size > 0;
+  return el721_print_unpack (data, user, template_id, opaque, error);
 }
 
 static GByteArray *
@@ -260,6 +257,7 @@ build_gallery (FpiDeviceEl721 *self, GPtrArray **prints_out,
   GPtrArray *prints = NULL;
   FpPrint *single = NULL;
   GByteArray *gallery = g_byte_array_new ();
+  g_autofree gchar *gallery_user = NULL;
   guint i;
 
   if (current == FPI_DEVICE_ACTION_VERIFY)
@@ -277,16 +275,28 @@ build_gallery (FpiDeviceEl721 *self, GPtrArray **prints_out,
     {
       const guint8 *bytes;
       gsize size;
+      g_autofree gchar *user = NULL;
+      g_autoptr(GBytes) opaque = NULL;
       guint32 template_id;
       FpPrint *print = g_ptr_array_index (prints, i);
-      if (!print_data (print, &template_id, &bytes, &size))
+      if (!print_data (print, &user, &template_id, &opaque, error))
         {
-          g_set_error_literal (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_DATA_INVALID,
-                               "invalid EL721 template");
           g_ptr_array_unref (prints);
           g_byte_array_unref (gallery);
           return NULL;
         }
+      bytes = g_bytes_get_data (opaque, &size);
+      if ((gallery_user && !g_str_equal (gallery_user, user)) ||
+          gallery->len >= 0x226000 || size >= 0x226000 - gallery->len)
+        {
+          g_set_error_literal (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_DATA_INVALID,
+                               "EL721 gallery has mixed identities or is too large");
+          g_ptr_array_unref (prints);
+          g_byte_array_unref (gallery);
+          return NULL;
+        }
+      if (!gallery_user)
+        gallery_user = g_strdup (user);
       g_byte_array_append (gallery, bytes, size);
     }
   if (!prints->len)
@@ -297,7 +307,7 @@ build_gallery (FpiDeviceEl721 *self, GPtrArray **prints_out,
       g_byte_array_unref (gallery);
       return NULL;
     }
-  *user_out = fpi_print_generate_user_id (g_ptr_array_index (prints, 0));
+  *user_out = g_steal_pointer (&gallery_user);
   *prints_out = prints;
   return gallery;
 }
@@ -318,10 +328,10 @@ find_print (GPtrArray *prints, guint32 template_id)
   guint i;
   for (i = 0; i < prints->len; i++)
     {
-      const guint8 *bytes;
-      gsize size;
+      g_autofree gchar *user = NULL;
+      g_autoptr(GBytes) opaque = NULL;
       guint32 candidate;
-      if (print_data (g_ptr_array_index (prints, i), &candidate, &bytes, &size) &&
+      if (print_data (g_ptr_array_index (prints, i), &user, &candidate, &opaque, NULL) &&
           candidate == template_id)
         return g_ptr_array_index (prints, i);
     }
@@ -400,7 +410,6 @@ handle_enroll_do (FpiDeviceEl721 *self, GError **error)
 {
   El721Reply reply = { 0 };
   El721Reply final = { 0 };
-  FpPrint *enroll_print = NULL;
   g_autoptr(GBytes) template = NULL;
   g_autofree gchar *user = NULL;
   guint32 capture_result = 0;
@@ -574,7 +583,7 @@ handle_enroll_do (FpiDeviceEl721 *self, GError **error)
           bytes = g_bytes_get_data (template, &size);
           fpi_device_get_enroll_data (FP_DEVICE (self), &print);
           array = g_variant_new_fixed_array (G_VARIANT_TYPE_BYTE, bytes, size, 1);
-          data = g_variant_new ("(u@ay)", self->template_id, array);
+          data = g_variant_new ("(su@ay)", self->enroll_user, self->template_id, array);
           fpi_print_set_type (print, FPI_PRINT_RAW);
           fpi_print_set_device_stored (print, FALSE);
           g_object_set (print, "fpi-data", data, NULL);
@@ -591,8 +600,7 @@ handle_enroll_do (FpiDeviceEl721 *self, GError **error)
   /* A capture is one Init/Do/Final transaction.  The trustlet retains the
    * partial template in this QTEE session; start the next transaction using
    * the same libfprint identity and secure slot. */
-  fpi_device_get_enroll_data (FP_DEVICE (self), &enroll_print);
-  user = fpi_print_generate_user_id (enroll_print);
+  user = g_strdup (self->enroll_user);
   el721_reply_clear (&final);
   if (!el721_qtee_enroll_init (self->qtee, (guint8 *) user, strlen (user),
                                self->template_id, &reply, error))
@@ -765,7 +773,9 @@ el721_enroll (FpDevice *device)
   El721Reply reply = { 0 };
 
   fpi_device_get_enroll_data (device, &print);
-  user = fpi_print_generate_user_id (print);
+  g_clear_pointer (&self->enroll_user, g_free);
+  self->enroll_user = fpi_print_generate_user_id (print);
+  user = g_strdup (self->enroll_user);
   self->template_id = template_slot_for_finger (fp_print_get_finger (print));
   if (!operation_prepare (self, &error) ||
       !el721_qtee_authorize_enrollment (self->qtee, 0, 0, &error) ||
