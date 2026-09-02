@@ -6831,9 +6831,15 @@ longer create a false `1/17` in the UI.
 The next instrumented run produced 31 real press captures and no release
 captures. Thirty returned secure result 39, one capture taken while the glass
 was being cleaned advanced the trustlet to 2%/one accepted sample, and the
-final attempt returned result 70 after the quality budget was exhausted. The
-press path is therefore real but is sampling before a normally placed finger
-has settled over the optical area. Package `gts9u31` introduces a cancelable
-250 ms press-settle interval and records the touch coordinates plus measured
-hold time for every capture. It installed without a reboot; FOD and panel
-states were idle afterwards.
+final attempt returned result 70 after the quality budget was exhausted.
+Package `gts9u31` tested a cancelable 250 ms press-settle interval and recorded
+the touch coordinates plus measured hold time for every capture. It installed
+without a reboot; FOD and panel states were idle afterwards.
+
+That test rejected every long contact despite 271–273 ms measured settling,
+and the coordinates clustered correctly around the reader centre `(924,
+2802)`. The difference from the earlier 84%-coverage run is instead the
+capture boundary: Samsung's sensor acquires while covered and exposes the
+buffered image at the paired RELEASE. Package `gts9u32` processes only the
+first RELEASE that follows a real PRESS. This restores the proven timing while
+still rejecting isolated startup releases and duplicate firmware releases.

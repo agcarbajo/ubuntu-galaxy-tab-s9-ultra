@@ -20,7 +20,6 @@
 #define EL721_POLL_MS 45
 #define EL721_ACTION_TIMEOUT_US (90 * G_USEC_PER_SEC)
 #define EL721_UDFPS_REFRESH_US (5 * G_USEC_PER_SEC)
-#define EL721_PRESS_SETTLE_US (250 * 1000)
 #define EL721_ENROLL_STAGES 17
 #define EL721_OP_WAIT_INTERRUPT 4U
 #define EL721_OP_NOTIFY_DOWN 5U
@@ -144,8 +143,6 @@ udfps_begin (FpiDeviceEl721 *self, GError **error)
       write_child (EL721_TOUCH, "fod_enable", "0\n", NULL);
       return FALSE;
     }
-  self->capture_pending = FALSE;
-  self->finger_pressed_at = 0;
   if (!write_child (EL721_PANEL, "fod_mode", "1\n", error))
     {
       write_child (EL721_TOUCH, "fod_enable", "0\n", NULL);
@@ -186,8 +183,6 @@ udfps_end (FpiDeviceEl721 *self)
   self->udfps_active = FALSE;
   self->udfps_refreshed = 0;
   self->fod_sequence = 0;
-  self->capture_pending = FALSE;
-  self->finger_pressed_at = 0;
 }
 
 static void
@@ -207,8 +202,6 @@ action_cleanup (FpiDeviceEl721 *self)
   set_sensor_power (self, FALSE, NULL);
   self->action = EL721_ACTION_NONE;
   self->finger_present = FALSE;
-  self->capture_pending = FALSE;
-  self->finger_pressed_at = 0;
   self->opcode = 0;
   fpi_device_report_finger_status (FP_DEVICE (self), FP_FINGER_STATUS_NONE);
 }
@@ -622,7 +615,6 @@ poll_action (FpDevice *device, gpointer user_data)
   gboolean event;
   gboolean capture;
   gboolean process;
-  gint64 now;
   guint x;
   guint y;
   guint64 sequence;
@@ -656,33 +648,23 @@ poll_action (FpDevice *device, gpointer user_data)
   sequence_delta = sequence - self->fod_sequence;
   event = sequence_delta != 0;
   self->fod_sequence = sequence;
-  /* The paired kernel now publishes the ordinary in-rectangle coordinate
-   * contact as PRESS.  Never turn an isolated firmware RELEASE into a sample:
-   * this firmware emits stale releases when FOD mode starts, which produced a
-   * false 1/17 before the user touched the glass and could capture no-finger
-   * images. */
+  /* The optical sensor acquires while the finger is present, but the Samsung
+   * touch protocol's matching RELEASE is the reliable indication that its
+   * image buffer is ready.  Process exactly the first RELEASE paired with a
+   * real PRESS.  Isolated startup releases and the later duplicate firmware
+   * release both arrive while finger_present is false and are ignored. */
+  capture = event && self->finger_present && released;
   if (event)
     g_message ("EL721 contact pressed=%u released=%u sequence=%" G_GUINT64_FORMAT
-               " delta=%" G_GUINT64_FORMAT " x=%u y=%u",
-               pressed, released, sequence, sequence_delta, x, y);
+               " delta=%" G_GUINT64_FORMAT " x=%u y=%u capture=%u",
+               pressed, released, sequence, sequence_delta, x, y, capture);
   if (pressed != self->finger_present)
     {
       self->finger_present = pressed;
-      self->capture_pending = pressed;
-      self->finger_pressed_at = pressed ? g_get_monotonic_time () : 0;
       fpi_device_report_finger_status_changes (
         device,
         pressed ? FP_FINGER_STATUS_PRESENT : FP_FINGER_STATUS_NEEDED,
         pressed ? FP_FINGER_STATUS_NEEDED : FP_FINGER_STATUS_PRESENT);
-    }
-  now = g_get_monotonic_time ();
-  capture = self->capture_pending && self->finger_present &&
-            now - self->finger_pressed_at >= EL721_PRESS_SETTLE_US;
-  if (capture)
-    {
-      self->capture_pending = FALSE;
-      g_message ("EL721 capture held_ms=%" G_GINT64_FORMAT " x=%u y=%u",
-                 (now - self->finger_pressed_at) / 1000, x, y);
     }
   process = capture ||
             (self->action != EL721_ACTION_ENROLL && self->opcode != 4);

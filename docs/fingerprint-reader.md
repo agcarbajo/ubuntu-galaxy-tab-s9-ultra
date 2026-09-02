@@ -1547,6 +1547,14 @@ The first fully instrumented run contained 31 genuine PRESS captures: 30
 returned quality result 39, one reached 2% coverage/one accepted sample, and
 the next capture exhausted the trustlet's 30-retry budget with result 70.
 Every matching RELEASE had `capture=0`, confirming that duplicate capture is
-fixed. Package `gts9u31` waits 250 ms after PRESS and captures only if the
-finger is still present. It also records press coordinates and actual hold
-time so the next report can distinguish optical settling from alignment.
+fixed. Package `gts9u31` tested a 250 ms press-settle interval and recorded
+press coordinates plus actual hold time. The follow-up run placed every long
+contact around the physical centre `(924, 2802)` and still returned result 39,
+so neither alignment nor settling explains the regression.
+
+The earlier high-yield runs processed the sample after RELEASE. The sensor
+acquires while covered, but that paired Samsung event is the point at which
+its buffered optical image is ready for the trustlet. Package `gts9u32`
+therefore captures on exactly the first RELEASE following a real PRESS.
+Isolated startup releases and the later duplicate release have no preceding
+live contact and cannot consume a sample.
