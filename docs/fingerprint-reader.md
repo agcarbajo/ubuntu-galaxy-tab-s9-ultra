@@ -1542,3 +1542,11 @@ firmware can emit those events while FOD mode is starting; accepting them
 caused a false first stage before any touch. Per-contact and per-sample
 aggregate records use journal level MESSAGE so the persistent test report sees
 them without enabling global libfprint debug output.
+
+The first fully instrumented run contained 31 genuine PRESS captures: 30
+returned quality result 39, one reached 2% coverage/one accepted sample, and
+the next capture exhausted the trustlet's 30-retry budget with result 70.
+Every matching RELEASE had `capture=0`, confirming that duplicate capture is
+fixed. Package `gts9u31` waits 250 ms after PRESS and captures only if the
+finger is still present. It also records press coordinates and actual hold
+time so the next report can distinguish optical settling from alignment.

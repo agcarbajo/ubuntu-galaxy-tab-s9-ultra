@@ -6827,3 +6827,13 @@ level so they reach the journal without globally enabling debug output. Tab
 Companion 1.1.2 displays only the trustlet's accepted/coverage counters; the
 generic fprintd callback remains in the raw report for correlation but can no
 longer create a false `1/17` in the UI.
+
+The next instrumented run produced 31 real press captures and no release
+captures. Thirty returned secure result 39, one capture taken while the glass
+was being cleaned advanced the trustlet to 2%/one accepted sample, and the
+final attempt returned result 70 after the quality budget was exhausted. The
+press path is therefore real but is sampling before a normally placed finger
+has settled over the optical area. Package `gts9u31` introduces a cancelable
+250 ms press-settle interval and records the touch coordinates plus measured
+hold time for every capture. It installed without a reboot; FOD and panel
+states were idle afterwards.

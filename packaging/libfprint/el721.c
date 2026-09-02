@@ -20,6 +20,7 @@
 #define EL721_POLL_MS 45
 #define EL721_ACTION_TIMEOUT_US (90 * G_USEC_PER_SEC)
 #define EL721_UDFPS_REFRESH_US (5 * G_USEC_PER_SEC)
+#define EL721_PRESS_SETTLE_US (250 * 1000)
 #define EL721_ENROLL_STAGES 17
 #define EL721_OP_WAIT_INTERRUPT 4U
 #define EL721_OP_NOTIFY_DOWN 5U
@@ -66,8 +67,8 @@ write_child (const gchar *directory, const gchar *name, const gchar *value,
 }
 
 static gboolean
-read_fod_state (gboolean *pressed, gboolean *released, guint64 *sequence,
-                GError **error)
+read_fod_state (gboolean *pressed, gboolean *released, guint *x_out,
+                guint *y_out, guint64 *sequence, GError **error)
 {
   g_autofree gchar *path = g_build_filename (EL721_TOUCH, "fod_state", NULL);
   g_autofree gchar *state = NULL;
@@ -86,6 +87,8 @@ read_fod_state (gboolean *pressed, gboolean *released, guint64 *sequence,
     }
   *pressed = g_str_equal (name, "pressed") || g_str_equal (name, "vi");
   *released = g_str_equal (name, "released");
+  *x_out = x;
+  *y_out = y;
   return TRUE;
 }
 
@@ -126,6 +129,8 @@ udfps_begin (FpiDeviceEl721 *self, GError **error)
 {
   gboolean pressed;
   gboolean released;
+  guint x;
+  guint y;
 
   if (self->udfps_active)
     return TRUE;
@@ -133,11 +138,14 @@ udfps_begin (FpiDeviceEl721 *self, GError **error)
   if (!write_child (EL721_TOUCH, "fod_rect", "854 2732 994 2872\n", error) ||
       !write_child (EL721_TOUCH, "fod_enable", "1\n", error))
     return FALSE;
-  if (!read_fod_state (&pressed, &released, &self->fod_sequence, error))
+  if (!read_fod_state (&pressed, &released, &x, &y, &self->fod_sequence,
+                       error))
     {
       write_child (EL721_TOUCH, "fod_enable", "0\n", NULL);
       return FALSE;
     }
+  self->capture_pending = FALSE;
+  self->finger_pressed_at = 0;
   if (!write_child (EL721_PANEL, "fod_mode", "1\n", error))
     {
       write_child (EL721_TOUCH, "fod_enable", "0\n", NULL);
@@ -178,6 +186,8 @@ udfps_end (FpiDeviceEl721 *self)
   self->udfps_active = FALSE;
   self->udfps_refreshed = 0;
   self->fod_sequence = 0;
+  self->capture_pending = FALSE;
+  self->finger_pressed_at = 0;
 }
 
 static void
@@ -197,6 +207,8 @@ action_cleanup (FpiDeviceEl721 *self)
   set_sensor_power (self, FALSE, NULL);
   self->action = EL721_ACTION_NONE;
   self->finger_present = FALSE;
+  self->capture_pending = FALSE;
+  self->finger_pressed_at = 0;
   self->opcode = 0;
   fpi_device_report_finger_status (FP_DEVICE (self), FP_FINGER_STATUS_NONE);
 }
@@ -610,6 +622,9 @@ poll_action (FpDevice *device, gpointer user_data)
   gboolean event;
   gboolean capture;
   gboolean process;
+  gint64 now;
+  guint x;
+  guint y;
   guint64 sequence;
   guint64 sequence_delta;
 
@@ -633,7 +648,7 @@ poll_action (FpDevice *device, gpointer user_data)
       action_fail (self, g_steal_pointer (&error));
       return;
     }
-  if (!read_fod_state (&pressed, &released, &sequence, &error))
+  if (!read_fod_state (&pressed, &released, &x, &y, &sequence, &error))
     {
       action_fail (self, g_steal_pointer (&error));
       return;
@@ -646,18 +661,28 @@ poll_action (FpDevice *device, gpointer user_data)
    * this firmware emits stale releases when FOD mode starts, which produced a
    * false 1/17 before the user touched the glass and could capture no-finger
    * images. */
-  capture = event && !self->finger_present && pressed;
   if (event)
     g_message ("EL721 contact pressed=%u released=%u sequence=%" G_GUINT64_FORMAT
-               " delta=%" G_GUINT64_FORMAT " capture=%u",
-               pressed, released, sequence, sequence_delta, capture);
+               " delta=%" G_GUINT64_FORMAT " x=%u y=%u",
+               pressed, released, sequence, sequence_delta, x, y);
   if (pressed != self->finger_present)
     {
       self->finger_present = pressed;
+      self->capture_pending = pressed;
+      self->finger_pressed_at = pressed ? g_get_monotonic_time () : 0;
       fpi_device_report_finger_status_changes (
         device,
         pressed ? FP_FINGER_STATUS_PRESENT : FP_FINGER_STATUS_NEEDED,
         pressed ? FP_FINGER_STATUS_NEEDED : FP_FINGER_STATUS_PRESENT);
+    }
+  now = g_get_monotonic_time ();
+  capture = self->capture_pending && self->finger_present &&
+            now - self->finger_pressed_at >= EL721_PRESS_SETTLE_US;
+  if (capture)
+    {
+      self->capture_pending = FALSE;
+      g_message ("EL721 capture held_ms=%" G_GINT64_FORMAT " x=%u y=%u",
+                 (now - self->finger_pressed_at) / 1000, x, y);
     }
   process = capture ||
             (self->action != EL721_ACTION_ENROLL && self->opcode != 4);
