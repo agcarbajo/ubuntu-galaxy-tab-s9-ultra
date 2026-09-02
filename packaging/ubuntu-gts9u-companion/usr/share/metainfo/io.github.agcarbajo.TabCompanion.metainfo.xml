@@ -18,6 +18,9 @@
   <launchable type="desktop-id">io.github.agcarbajo.TabCompanion.desktop</launchable>
   <url type="homepage">https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra</url>
   <releases>
+    <release version="1.1.3" date="2026-09-02">
+      <description><p>Clarifies the press-hold-release flow used by buffered optical capture.</p></description>
+    </release>
     <release version="1.1.2" date="2026-09-02">
       <description><p>Uses secure aggregate counters for progress and retains per-contact EL721 diagnostics.</p></description>
     </release>

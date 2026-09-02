@@ -6801,7 +6801,7 @@ capping GNOME at 9/10, and emits one non-biometric aggregate log record per
 sample. All 11 encrypted-template protocol tests and the complete ARM64 build
 pass.
 
-Tab Companion 1.1.2 adds a bounded test to its Info page. The user chooses the
+Tab Companion 1.1.3 adds a bounded test to its Info page. The user chooses the
 duration and starts it locally; the view shows time remaining, coverage,
 accepted samples, quality retries and secure result in real time. Escape or
 Stop cancels the fprintd client and its partial transaction. Structured JSONL
@@ -6824,7 +6824,7 @@ records were filtered by the default daemon environment. Package `gts9u30`
 now requires the paired press-capable kernel and never converts isolated legacy
 RELEASE events into captures. Contact and sample aggregate records use MESSAGE
 level so they reach the journal without globally enabling debug output. Tab
-Companion 1.1.2 displays only the trustlet's accepted/coverage counters; the
+Companion 1.1.3 displays only the trustlet's accepted/coverage counters; the
 generic fprintd callback remains in the raw report for correlation but can no
 longer create a false `1/17` in the UI.
 

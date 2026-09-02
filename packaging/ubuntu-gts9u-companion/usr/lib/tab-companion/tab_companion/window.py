@@ -235,7 +235,8 @@ class CompanionWindow(Adw.ApplicationWindow):
             title=_("Fingerprint test"),
             description=_(
                 "Starts a bounded real capture and records safe aggregate results. "
-                "Hold the finger until feedback changes, then lift it completely."
+                "Touch the target, hold for about one second, then lift completely. "
+                "Feedback appears after you lift."
             ),
         )
 
@@ -354,7 +355,7 @@ class CompanionWindow(Adw.ApplicationWindow):
         self.fp_remaining.set_label(f"{remaining // 60:02d}:{remaining % 60:02d}")
         status = {
             "starting": _("Starting…"),
-            "running": _("Touch and hold the fingerprint target"),
+            "running": _("Touch, hold briefly, then lift your finger"),
             "stopping": _("Stopping safely…"),
             "completed": _("Test completed"),
             "timeout": _("Time expired"),
