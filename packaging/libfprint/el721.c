@@ -8,6 +8,7 @@
 #include "el721-print-wire.h"
 #include "el721-identify-wire.h"
 #include "el721-match-retry.h"
+#include "el721-touch-light.h"
 
 #include <errno.h>
 #include <stdio.h>
@@ -18,6 +19,7 @@
 #define EL721_FIRMWARE "/usr/lib/firmware/gts9u/fingerprint"
 #define EL721_TOUCH "/sys/bus/i2c/devices/13-005d"
 #define EL721_PANEL "/sys/class/backlight/ae94000.dsi.0"
+#define EL721_VISUAL_STATE "/run/gts9u-fingerprint/active"
 #define EL721_BATTERY_TEMP "/sys/class/power_supply/battery/temp"
 #define EL721_BATTERY_TEMP_FALLBACK "/sys/class/power_supply/sm5714-battery/temp"
 #define EL721_POLL_MS 45
@@ -127,6 +129,35 @@ set_sensor_power (FpiDeviceEl721 *self, gboolean enabled, GError **error)
 }
 
 static gboolean
+udfps_publish (FpiDeviceEl721 *self, GError **error)
+{
+  gint64 now = g_get_monotonic_time ();
+  g_autofree gchar *state = NULL;
+
+  if (self->visual_refreshed && now - self->visual_refreshed < G_USEC_PER_SEC)
+    return TRUE;
+  /* Root-owned RuntimeDirectory; Shell can only read this short lease. No
+   * identity, template or authentication result crosses this boundary. */
+  state = g_strdup_printf ("active %" G_GINT64_FORMAT "\n",
+                           now + 3 * G_USEC_PER_SEC);
+  if (!g_file_set_contents_full (EL721_VISUAL_STATE, state, -1,
+                                 G_FILE_SET_CONTENTS_CONSISTENT, 0644, error))
+    return FALSE;
+  self->visual_refreshed = now;
+  return TRUE;
+}
+
+static gboolean
+udfps_light (FpiDeviceEl721 *self, gboolean enabled, GError **error)
+{
+  if (!write_child (EL721_PANEL, "fod_mode", enabled ? "1\n" : "0\n", error))
+    return FALSE;
+  self->udfps_lit = enabled;
+  self->udfps_refreshed = enabled ? g_get_monotonic_time () : 0;
+  return TRUE;
+}
+
+static gboolean
 udfps_begin (FpiDeviceEl721 *self, GError **error)
 {
   gboolean pressed;
@@ -148,13 +179,16 @@ udfps_begin (FpiDeviceEl721 *self, GError **error)
     }
   self->enroll_armed = FALSE;
   self->enroll_arm_status = 0;
-  if (!write_child (EL721_PANEL, "fod_mode", "1\n", error))
+  self->capture_deadline = 0;
+  self->visual_refreshed = 0;
+  if (!udfps_light (self, FALSE, error) || !udfps_publish (self, error))
     {
       write_child (EL721_TOUCH, "fod_enable", "0\n", NULL);
+      g_unlink (EL721_VISUAL_STATE);
       return FALSE;
     }
   self->udfps_active = TRUE;
-  self->udfps_refreshed = g_get_monotonic_time ();
+  g_message ("EL721 touch-to-light armed; waiting without HBM");
   return TRUE;
 }
 
@@ -163,7 +197,7 @@ udfps_refresh (FpiDeviceEl721 *self, GError **error)
 {
   gint64 now;
 
-  if (!self->udfps_active)
+  if (!self->udfps_lit)
     return TRUE;
   now = g_get_monotonic_time ();
   if (now - self->udfps_refreshed < EL721_UDFPS_REFRESH_US)
@@ -186,6 +220,10 @@ udfps_end (FpiDeviceEl721 *self)
   write_child (EL721_PANEL, "fod_mode", "0\n", NULL);
   write_child (EL721_TOUCH, "fod_enable", "0\n", NULL);
   self->udfps_active = FALSE;
+  self->udfps_lit = FALSE;
+  self->capture_deadline = 0;
+  self->visual_refreshed = 0;
+  g_unlink (EL721_VISUAL_STATE);
   self->udfps_refreshed = 0;
   self->fod_sequence = 0;
   self->enroll_armed = FALSE;
@@ -734,6 +772,8 @@ poll_action (FpDevice *device, gpointer user_data)
   gboolean released = FALSE;
   gboolean event;
   gboolean capture;
+  El721LightStep light_step;
+  g_autofree gchar *touch_enabled = NULL;
   guint x;
   guint y;
   guint64 sequence;
@@ -754,7 +794,18 @@ poll_action (FpDevice *device, gpointer user_data)
                                                    "EL721 operation timed out"));
       return;
     }
-  if (!udfps_refresh (self, &error))
+  /* Suspend disables the touch controller's FOD mode. Do not leave a stale
+   * prompt armed after resume or silently re-enable it behind the lock UI. */
+  if (!g_file_get_contents (EL721_TOUCH "/fod_enable", &touch_enabled, NULL, &error) ||
+      !g_str_has_prefix (touch_enabled, "1"))
+    {
+      if (!error)
+        error = fpi_device_error_new_msg (FP_DEVICE_ERROR_GENERAL,
+                                           "EL721 touch mode ended (display suspended)");
+      action_fail (self, g_steal_pointer (&error));
+      return;
+    }
+  if (!udfps_publish (self, &error) || !udfps_refresh (self, &error))
     {
       action_fail (self, g_steal_pointer (&error));
       return;
@@ -784,8 +835,25 @@ poll_action (FpDevice *device, gpointer user_data)
         pressed ? FP_FINGER_STATUS_PRESENT : FP_FINGER_STATUS_NEEDED,
         pressed ? FP_FINGER_STATUS_NEEDED : FP_FINGER_STATUS_PRESENT);
     }
-  if (capture)
+  light_step = el721_touch_light_step (&self->capture_deadline,
+                                       g_get_monotonic_time (), pressed, capture);
+  if (light_step == EL721_LIGHT_ON || light_step == EL721_LIGHT_OFF)
     {
+      if (!udfps_light (self, light_step == EL721_LIGHT_ON, &error))
+        {
+          action_fail (self, g_steal_pointer (&error));
+          return;
+        }
+      /* The panel write itself takes time. Settle from completion, not from
+       * before the DDIC command, without blocking the cancellation loop. */
+      if (light_step == EL721_LIGHT_ON)
+        self->capture_deadline = g_get_monotonic_time () + EL721_LIGHT_SETTLE_US;
+      g_message ("EL721 touch-to-light %s",
+                 light_step == EL721_LIGHT_ON ? "on; settling" : "off; early release");
+    }
+  if (light_step == EL721_LIGHT_CAPTURE)
+    {
+      g_message ("EL721 touch-to-light settled; capturing");
       gboolean ok = self->action == EL721_ACTION_ENROLL ?
                     handle_enroll_do (self, &error) :
                     handle_identify_do (self, &error);
@@ -796,6 +864,13 @@ poll_action (FpDevice *device, gpointer user_data)
         }
       if (self->action == EL721_ACTION_NONE)
         return;
+      /* Enrollment may remain active for the next sample. A held finger
+       * must not keep HBM on or trigger another capture without a new edge. */
+      if (!udfps_light (self, FALSE, &error))
+        {
+          action_fail (self, g_steal_pointer (&error));
+          return;
+        }
     }
   schedule_poll (self);
 }

@@ -23,6 +23,9 @@ struct _FpiDeviceEl721
   El721Action action;
   gboolean finger_present;
   gboolean udfps_active;
+  gboolean udfps_lit;
+  gint64 capture_deadline;
+  gint64 visual_refreshed;
   gboolean enroll_armed;
   guint32 enroll_arm_status;
   gint64 udfps_refreshed;

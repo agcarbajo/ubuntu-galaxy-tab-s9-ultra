@@ -7,3 +7,13 @@
   border-radius: 999px;
   box-shadow: 0 0 12px 4px rgba(255, 255, 255, 0.45);
 }
+
+.gts9u-fingerprint-waiting {
+  background-color: rgba(30, 30, 30, 0.32);
+  border-radius: 999px;
+}
+
+.gts9u-fingerprint-icon {
+  color: rgba(255, 255, 255, 0.85);
+  icon-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+}

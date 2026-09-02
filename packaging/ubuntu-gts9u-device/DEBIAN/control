@@ -1,5 +1,5 @@
 Package: ubuntu-gts9u-device
-Version: 2.40
+Version: 2.41
 Section: admin
 Priority: optional
 Architecture: arm64

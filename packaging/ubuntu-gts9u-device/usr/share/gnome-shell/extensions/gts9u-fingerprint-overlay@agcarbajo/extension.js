@@ -9,10 +9,12 @@ import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import {sensorGeometry, panelMonitor} from './geometry.js';
 import {ShellUserVerifier} from 'resource:///org/gnome/shell/gdm/util.js';
 import {recoverClosedCancellation} from './authRecovery.js';
+import {visualState} from './visualState.js';
 
 const BUS_NAME = 'io.github.agcarbajo.Gts9uFingerprintOverlay';
 const OBJECT_PATH = '/io/github/agcarbajo/Gts9uFingerprintOverlay';
 const BACKLIGHT = '/sys/class/backlight/ae94000.dsi.0';
+const ACTIVE_LEASE = '/run/gts9u-fingerprint/active';
 const INTERFACE = `
 <node>
   <interface name="io.github.agcarbajo.Gts9uFingerprintOverlay">
@@ -32,13 +34,22 @@ export default class Gts9uFingerprintOverlay extends Extension {
         this._displayCancellable = new Gio.Cancellable();
         this._panel = null;
         this._active = false;
+        this._illuminated = false;
         this._shade = new St.Widget({
             style_class: 'gts9u-fingerprint-shade',
             reactive: false,
             visible: false,
         });
-        this._actor = new St.Widget({
-            style_class: 'gts9u-fingerprint-overlay',
+        this._icon = new St.Icon({
+            icon_name: 'auth-fingerprint-symbolic',
+            style_class: 'gts9u-fingerprint-icon',
+            x_align: Clutter.ActorAlign.CENTER,
+            y_align: Clutter.ActorAlign.CENTER,
+            reactive: false,
+        });
+        this._actor = new St.Bin({
+            style_class: 'gts9u-fingerprint-waiting',
+            child: this._icon,
             reactive: true,
             visible: false,
         });
@@ -119,6 +130,7 @@ export default class Gts9uFingerprintOverlay extends Extension {
         }
         this._actor?.destroy();
         this._actor = null;
+        this._icon = null;
         this._shade?.destroy();
         this._shade = null;
     }
@@ -133,11 +145,9 @@ export default class Gts9uFingerprintOverlay extends Extension {
         Main.panel.statusArea.quickSettings?.menu?.close();
         Main.overview.hide();
         this._position();
-        this._updateShade();
-        this._shade.show();
+        this._setIllumination(this._panelFodActive());
         if (this._panel)
             this._actor.show();
-        this._startBrightnessPoll();
         this._startSafetyTimeout();
         this._dbus?.emit_property_changed(
             'Visible', new GLib.Variant('b', true));
@@ -145,7 +155,7 @@ export default class Gts9uFingerprintOverlay extends Extension {
 
     Hide() {
         this._stopSafetyTimeout();
-        if (this._panelFodActive()) {
+        if (this._visualState().active) {
             this._startHidePoll();
             return;
         }
@@ -154,6 +164,8 @@ export default class Gts9uFingerprintOverlay extends Extension {
 
     _finishHide() {
         this._active = false;
+        this._illuminated = false;
+        this._stopSafetyTimeout();
         this._stopHidePoll();
         this._stopBrightnessPoll();
         this._actor.hide();
@@ -167,21 +179,49 @@ export default class Gts9uFingerprintOverlay extends Extension {
         return Number.isFinite(mode) && mode !== 0;
     }
 
+    _visualState() {
+        let lease = '';
+        try {
+            const [, bytes] = Gio.File.new_for_path(ACTIVE_LEASE).load_contents(null);
+            lease = new TextDecoder().decode(bytes);
+        } catch (_) {
+            // Normally absent when fprintd is idle or not running.
+        }
+        return visualState(lease, GLib.get_monotonic_time(), this._panelFodActive());
+    }
+
+    _setIllumination(illuminated) {
+        this._illuminated = illuminated;
+        this._actor.set_style_class_name(illuminated
+            ? 'gts9u-fingerprint-overlay' : 'gts9u-fingerprint-waiting');
+        this._icon.visible = !illuminated;
+        if (illuminated) {
+            this._updateShade();
+            this._shade.show();
+            this._startBrightnessPoll();
+        } else {
+            this._stopBrightnessPoll();
+            this._shade.hide();
+        }
+    }
+
     _startPanelPoll() {
         if (this._panelPollId)
             return;
 
-        // fprintd runs as root and cannot authenticate to a user's session
-        // bus.  The panel state is the cross-privilege source of truth: show
-        // the target whenever libfprint enters optical HBM and remove it once
-        // the kernel has completed its cleanup.
+        // The root-owned lease shows the waiting icon without raising HBM.
+        // Actual panel state alone controls the circle and compensation.
+        // Physical contact arrives through Goodix, which suppresses ordinary
+        // touch events in the sensor region: no Shell click is required.
         this._panelPollId = GLib.timeout_add(
-            GLib.PRIORITY_DEFAULT, 100, () => {
-                const active = this._panelFodActive();
+            GLib.PRIORITY_DEFAULT, 50, () => {
+                const {active, illuminated} = this._visualState();
                 if (active && !this._active)
                     this.Show();
                 else if (!active && this._active)
                     this._finishHide();
+                if (active && illuminated !== this._illuminated)
+                    this._setIllumination(illuminated);
                 return GLib.SOURCE_CONTINUE;
             });
     }
@@ -202,7 +242,7 @@ export default class Gts9uFingerprintOverlay extends Extension {
         // the compositor overlay disappears before the kernel-side cleanup.
         this._hidePollId = GLib.timeout_add(
             GLib.PRIORITY_DEFAULT, 50, () => {
-                if (this._panelFodActive())
+                if (this._visualState().active)
                     return GLib.SOURCE_CONTINUE;
                 this._hidePollId = 0;
                 this._finishHide();
@@ -261,6 +301,7 @@ export default class Gts9uFingerprintOverlay extends Extension {
         this._shade.set_size(monitor.width, monitor.height);
         this._actor.set_size(target.width, target.height);
         this._actor.set_position(target.x, target.y);
+        this._icon.icon_size = Math.round(Math.min(target.width, target.height) * 0.68);
     }
 
     _readBacklight(name) {
@@ -319,6 +360,8 @@ export default class Gts9uFingerprintOverlay extends Extension {
     }
 
     _enforceInactive() {
+        if (!this._illuminated || !this._active)
+            this._shade?.hide();
         if (!this._active) {
             this._actor?.hide();
             this._shade?.hide();

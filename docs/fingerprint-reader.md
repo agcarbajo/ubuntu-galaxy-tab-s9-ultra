@@ -5,14 +5,15 @@ Ultra Wi-Fi's (`SM-X910`) under-display optical reader. **Encrypted enrollment
 and same/different-finger recognition have now been demonstrated** in the
 prepared Ubuntu session. The user confirmed repeated correct acceptance and
 rejection; the corresponding journal contains three matches and four secure
-non-matches. One subsequent native GNOME screen unlock also succeeded. System
-startup, greeter login and the remaining optical UX still need integration and
-physical validation. The
-[latest checkpoint](#recognition-confirmed-and-first-gnome-integration-2026-09-02)
+non-matches. Native GNOME screen unlock also succeeded, and after the v9
+cancellation fix the user reports repeated successful tests across rotations.
+System startup, greeter login and the remaining optical UX still need integration
+and physical validation. The
+[latest checkpoint](#touch-to-light-icon-and-repeated-unlock-validation-2026-09-03)
 supersedes historical investigation notes below, including older encryption
 failures and estimates.
 
-Current assessment: approximately **93% of the end-to-end feature**. This is
+Current assessment: approximately **94% of the end-to-end feature**. This is
 an uncertain engineering estimate, not a test pass rate or a security benchmark.
 The working SPU listener/DMA owner remains a transient diagnostic service; its
 startup must still be made persistent and safe across reset/suspend. Do not stop
@@ -2087,3 +2088,61 @@ or authentication bypass was used. No reboot, GDM restart or SPU-owner restart
 was performed. The saved print and three PAM files remained byte-for-byte
 unchanged. This regression means repeat-unlock stability must not be described
 as complete despite the earlier successful single unlocks.
+
+## Touch-to-light icon and repeated-unlock validation (2026-09-03)
+
+The user returned to the desktop, logged in again, and the running extension
+was confirmed **v9 ACTIVE**. They subsequently report repeated successful
+tests in several rotations, without recurrence of the stuck prompt. This is
+useful physical validation of the applied-transform positioning and repeated
+unlock path, not a claim of exhaustive suspend/reset reliability.
+
+**gts9u45 + device 2.41 / overlay 10** implement the requested resting icon:
+
+- Arming enables the sensor and Goodix contact detection but leaves panel
+  `fod_mode=0`. A root-owned `/run/gts9u-fingerprint/active` lease tells Shell
+  to display the installed `auth-fingerprint-symbolic` icon. It contains only
+  an expiry time, never an identity, template or authentication result.
+- The lease is renewed every second, expires after three seconds and is
+  removed by normal action cleanup and fprintd's stop/crash cleanup. Its
+  directory is root-writable (0755), the file publicly readable (0644).
+  No writable sysfs permissions or authentication policy are loosened.
+- A real Goodix PRESS enables optical HBM; Shell replaces the icon with the
+  white circle and compensation shade. Normal touch/click events are not
+  required, because the controller suppresses them in the sensing region.
+- Capture waits **at least 180 ms after the panel command completes**. The
+  nonblocking timer leaves cancellation responsive while allowing the 50 ms
+  Shell observer and compositor frames to present the target. This is a
+  conservative settling interval, **not a compositor-ready acknowledgement**;
+  physical capture quality under load still needs validation.
+- Early release cancels the pending capture and turns off HBM. Completed
+  enrollment samples also turn it off before waiting for the next press;
+  holding a finger cannot trigger another sample. Verify completion/retry,
+  cancellation and errors use the existing full cleanup path. If suspend has
+  disabled Goodix FOD, the action ends instead of silently rearming it.
+- The waiting icon uses the same already-tested physical geometry. The shade
+  is hidden while waiting, including if Shell tries to remap top-chrome actors.
+  Actual panel HBM remains authoritative for compensation, including with an
+  older driver, so a stale lease cannot leave a permanently shaded desktop.
+
+Validation: **120 C tests** pass under UBSan, plus 36 geometry, seven closed-GDM
+recovery, 13 visual lease, seven mocked overlay transition and 16 Companion
+tests. The ARM64 build completed without warnings. Mock actor tests validate
+state transitions, not actual rendering. After installation, a no-contact
+hardware verification waited **20.708 seconds** with sensor/panel-FOD/touch-FOD
+`1/0/1`, no results and a continuously fresh lease. Cancellation restored
+`0/0/0` and removed the lease. The saved print and all three PAM files remained
+unchanged; the existing SPU owner was preserved. The new extension still needs a
+logout/password login to replace GNOME's cached v9 module before physical
+icon/capture testing. No new enrollment is required.
+
+Package SHA-256 values:
+
+- libfprint gts9u45: `3aaebc51064929d0697eeb76c6b985ae5f8fe700b86f8a399a01f3cea111a786`.
+- Device 2.41: `4c26f297394c865555e261472ea1b37e446bc1622a9297551e3143b435f84867`.
+
+This does **not** yet supply an overlay in GDM's separate initial-login greeter,
+coordinate the on-screen keyboard with touch suppression, add near-sensor
+error text, or replace the diagnostic SPU owner with production boot handling.
+Use the password for the initial login; then test the icon in Companion and
+the session lock screen. No reboot or SPU-owner restart is needed or performed.

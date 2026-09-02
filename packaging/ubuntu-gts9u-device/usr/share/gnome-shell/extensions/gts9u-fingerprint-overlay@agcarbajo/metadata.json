@@ -4,5 +4,5 @@
   "description": "Optical fingerprint target and regional touch guard for the Galaxy Tab S9 Ultra",
   "shell-version": ["46"],
   "session-modes": ["user", "unlock-dialog"],
-  "version": 9
+  "version": 10
 }
