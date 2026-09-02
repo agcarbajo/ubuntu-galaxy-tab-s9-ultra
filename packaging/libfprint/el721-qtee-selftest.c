@@ -371,7 +371,8 @@ main (int argc, char **argv)
           guint passes = (guint) g_ascii_strtoull (g_getenv ("EL721_ENROLL_DO"),
                                                    NULL, 10);
           guint pass;
-          guint8 touch_flags = 0;
+          /* One UI's optical capture worker supplies the pressed TSP state. */
+          guint8 touch_flags = 2;
           gint32 battery_temperature;
 
           for (pass = 0; pass < passes; pass++)

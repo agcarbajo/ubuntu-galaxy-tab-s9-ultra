@@ -20,7 +20,7 @@
 #define EL721_POLL_MS 45
 #define EL721_ACTION_TIMEOUT_US (90 * G_USEC_PER_SEC)
 #define EL721_UDFPS_REFRESH_US (5 * G_USEC_PER_SEC)
-#define EL721_ENROLL_STAGES 10
+#define EL721_ENROLL_STAGES 17
 #define EL721_OP_WAIT_INTERRUPT 4U
 #define EL721_OP_NOTIFY_DOWN 5U
 #define EL721_OP_CAPTURE_SUCCESS 6U
@@ -139,6 +139,7 @@ udfps_begin (FpiDeviceEl721 *self, GError **error)
       return FALSE;
     }
   self->fod_release_primed = FALSE;
+  self->fod_press_seen = FALSE;
   if (!write_child (EL721_PANEL, "fod_mode", "1\n", error))
     {
       write_child (EL721_TOUCH, "fod_enable", "0\n", NULL);
@@ -180,6 +181,7 @@ udfps_end (FpiDeviceEl721 *self)
   self->udfps_refreshed = 0;
   self->fod_sequence = 0;
   self->fod_release_primed = FALSE;
+  self->fod_press_seen = FALSE;
 }
 
 static void
@@ -367,10 +369,17 @@ handle_enroll_do (FpiDeviceEl721 *self, GError **error)
   g_autoptr(GBytes) template = NULL;
   g_autofree gchar *user = NULL;
   guint32 capture_result = 0;
+  guint coverage = 0;
+  guint accepted = 0;
   guint progress = 0;
   guint step;
   gboolean terminal = FALSE;
-  guint8 touch_flags = 0;
+  /* Samsung's live One UI trace reports `tfd 2 0 1` while the worker handles
+   * NOTIFY_DOWN/CAPTURE_STEP.  The first byte is the value passed to control
+   * 87 when the override flag (the third tfd field) is clear.  Zero has the
+   * right wire shape but means no active optical contact and eventually makes
+   * the trustlet abort a partially populated enrolment with result 70. */
+  guint8 touch_flags = 2;
   gint32 battery_temperature;
 
   /* The touch poll is the interrupt wait used by Samsung's service.  Once a
@@ -403,7 +412,7 @@ handle_enroll_do (FpiDeviceEl721 *self, GError **error)
       if (reply.opcode == EL721_OP_NOTIFY_DOWN)
         {
           /* Samsung passes both values as input data.  Control 87 receives
-           * the first byte of its touch-status triplet (zero by default),
+           * the first byte of its touch-status triplet (2 while pressed),
            * then control 80 receives the battery temperature in tenths of a
            * degree Celsius.  Treating these as response capacities made 80
            * return 51 and eventually made EnrollDo abort with result 70. */
@@ -446,6 +455,8 @@ handle_enroll_do (FpiDeviceEl721 *self, GError **error)
    * counter.  Keep fprintd below its terminal stage until EnrollDo returns an
    * encrypted template AND EnrollFinal succeeds. */
   progress = MIN (reply.quality, 99);
+  coverage = reply.quality;
+  accepted = reply.remaining;
   if (reply.remaining > 0)
     progress = MAX (progress,
                     MIN (reply.remaining, EL721_ENROLL_STAGES - 1) * 100 /
@@ -459,6 +470,11 @@ handle_enroll_do (FpiDeviceEl721 *self, GError **error)
   fp_dbg ("EnrollFinal result=%u status=%u opcode=%u template=%zu progress=%u",
           final.result, final.status, final.opcode,
           template ? g_bytes_get_size (template) : 0, progress);
+  /* One compact, non-biometric record per physical sample.  Tab Companion's
+   * bounded test consumes this without enabling global GLib debug logging. */
+  fp_info ("EL721 sample result=%u final=%u coverage=%u accepted=%u template=%zu",
+           capture_result, final.result, coverage, accepted,
+           template ? g_bytes_get_size (template) : 0);
 
   if ((!capture_result || capture_result == 39 || capture_result == 41) &&
       (!final.result || final.result == 39 || final.result == 41) &&
@@ -627,17 +643,24 @@ poll_action (FpDevice *device, gpointer user_data)
   sequence_delta = sequence - self->fod_sequence;
   event = sequence_delta != 0;
   self->fod_sequence = sequence;
-  /* This firmware normally publishes only RELEASE for an optical contact.
-   * It can also emit one stale RELEASE after FOD mode is enabled.  Consume
-   * the first isolated release as an arming event; a second one is physical.
-   * If PRESS+RELEASE both happened between polls, a delta of two proves the
-   * contact immediately and does not need the priming event. */
-  release_contact = released &&
+  /* Older kernels normally published only RELEASE for an optical contact.
+   * Keep that compatibility path until this operation sees a real PRESS.
+   * Once PRESS exists, a later dedicated sponge RELEASE may follow the
+   * synthetic coordinate RELEASE; treating that second release as another
+   * contact would capture with no finger and rapidly exhaust the TA's quality
+   * retry budget.  A delta of two is one press/release pair missed between
+   * polls: accept it once and remember that the press-capable protocol exists. */
+  release_contact = released && !self->fod_press_seen &&
                     (sequence_delta >= 2 || self->fod_release_primed);
   if (event && released && sequence_delta == 1)
     self->fod_release_primed = TRUE;
   if (event && pressed)
-    self->fod_release_primed = TRUE;
+    {
+      self->fod_release_primed = TRUE;
+      self->fod_press_seen = TRUE;
+    }
+  if (event && released && sequence_delta >= 2)
+    self->fod_press_seen = TRUE;
   capture = event && !self->finger_present &&
             (pressed || release_contact);
   if (pressed != self->finger_present)

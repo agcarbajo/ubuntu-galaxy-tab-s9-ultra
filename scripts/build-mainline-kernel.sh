@@ -256,6 +256,12 @@ if [ "$fingerprint_touch" = 1 ]; then
 	apply_unless 'GOODIX_BERLIN_SPONGE_FOD_RECT' \
 		drivers/input/touchscreen/goodix_berlin_core.c \
 		support-goodix-samsung-fod.patch
+	# Existing incremental trees already contain the older FOD patch.  Clean
+	# trees get this behavior from that patch directly; this small upgrade keeps
+	# incremental test builds byte-for-byte equivalent at the source level.
+	apply_unless 'starts while the finger is down instead of at the later RELEASE' \
+		drivers/input/touchscreen/goodix_berlin_core.c \
+		synthesize-goodix-fod-press.patch
 	apply_unless 'failed to disable FOD mode at suspend' \
 		drivers/input/touchscreen/goodix_berlin_core.c \
 		cleanup-goodix-fod-on-suspend.patch
