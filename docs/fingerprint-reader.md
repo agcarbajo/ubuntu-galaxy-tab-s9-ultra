@@ -1930,3 +1930,48 @@ An installed-device check confirms explicit legacy rejection before illumination
 with all three sensor/FOD controls idle afterward. The old encrypted print was
 backed up with root-only permissions and remained byte-for-byte unchanged during
 deployment. No new physical test is claimed here. The live SPU owner was retained.
+
+## Verification waits for contact, not a byte-12 false rejection (2026-09-02)
+
+The user re-enrolled with `gts9u41`: 17 accepted samples, 100% coverage and an
+848,262-byte encrypted template, with successful EnrollDo/Final. IdentifyInit
+now accepts the persisted identity. However, verification returned terminal
+`verify-no-match` about 177 ms after starting, before any physical contact.
+
+The independent bounded no-contact probe and the signed TA's `run_identify_do`
+agree on the cause: IdentifyDo's next operation is at byte **0**, not byte 12.
+The initial words `{4, 0, 0xffffffff, 0, 0, 0}` mean **wait for contact**, not
+completion. Byte 16 is the score and byte **20** the matched slot; exchanging
+those also prevented reliable match reporting. The decoder now handles this
+layout separately, bounds opaque updates and copies them only for a completed
+successful match. It never treats an update or score alone as authentication.
+
+`gts9u42` arms IdentifyDo once, requires operation 4, then waits for a fresh
+physical PRESS edge. Held contact and RELEASE cannot initiate extra captures.
+A bounded synchronous stock-style capture sequence follows the press; Final
+must succeed before reporting a match. Quality retries reinitialize and rearm
+the transaction for another press. The existing 90-second inactivity watchdog
+and cancellation remain in effect; no timeout was artificially extended to
+conceal the decoder defect.
+
+Thirty synthetic IdentifyDo/contact tests cover the observed wait regression,
+slot versus score, auxiliary versus operation fields, retries, no-match,
+malformed buffers, update ownership/bounds and all contact-gating combinations.
+All **103** driver tests pass with UBSan and strict enum warnings; the ARM64
+build has no compiler warnings. The 16 Companion tests still pass. Installed
+package SHA-256:
+`eca9a15dce248619dad0bd3f39915b4d2c5f95db712542c3e748e09080415a73`.
+
+Two real fprintd verification sessions, including one after restarting only
+fprintd, each waited **over 20 seconds without contact or any rejection**.
+Sensor power, panel FOD and touch FOD remained enabled throughout, and all
+returned to zero after VerifyStop/Release. The newly enrolled print was backed
+up root-only and remained byte-for-byte unchanged; Companion's physical-test
+log was not overwritten. The temporary debug override was removed and the
+independent SPU listener/DMA owner was retained without a reboot.
+
+Next physical test: Companion Info → **Verificar huella guardada** → start,
+then use the enrolled finger. If it matches, repeat using a different finger
+and require rejection. No re-enrollment is needed. **Recognition is not yet
+validated**; the overall estimate remains roughly 90%, with persistent startup,
+same/different-finger validation and lock-screen/UX integration outstanding.

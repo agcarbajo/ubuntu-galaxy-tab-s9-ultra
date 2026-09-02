@@ -6,6 +6,7 @@
 #include "drivers_api.h"
 #include "el721.h"
 #include "el721-print-wire.h"
+#include "el721-identify-wire.h"
 
 #include <errno.h>
 #include <stdio.h>
@@ -313,6 +314,7 @@ build_gallery (FpiDeviceEl721 *self, GPtrArray **prints_out,
 }
 
 static void poll_action (FpDevice *device, gpointer user_data);
+static gboolean initialize_identify (FpiDeviceEl721 *self, GError **error);
 
 static void
 schedule_poll (FpiDeviceEl721 *self)
@@ -346,7 +348,6 @@ finish_identify (FpiDeviceEl721 *self, guint32 template_id)
   GPtrArray *prints = NULL;
   FpPrint *verify_print = NULL;
   FpPrint *match = NULL;
-  El721Reply final = { 0 };
 
   if (current == FPI_DEVICE_ACTION_VERIFY)
     {
@@ -360,8 +361,7 @@ finish_identify (FpiDeviceEl721 *self, guint32 template_id)
       g_ptr_array_ref (prints);
     }
   match = find_print (prints, template_id);
-  el721_qtee_identify_final (self->qtee, &final, NULL);
-  el721_reply_clear (&final);
+  /* The capture path already required IdentifyFinal to succeed. */
   action_cleanup (self);
   if (current == FPI_DEVICE_ACTION_VERIFY)
     {
@@ -632,15 +632,65 @@ static gboolean
 handle_identify_do (FpiDeviceEl721 *self, GError **error)
 {
   El721Reply reply = { 0 };
-  if (!el721_qtee_identify_do (self->qtee, self->opcode, &reply, error))
-    return FALSE;
-  fp_dbg ("IdentifyDo result=%u status=%u opcode=%u template=%u quality=%u update=%zu",
-          reply.result, reply.status, reply.opcode, reply.template_id,
-          reply.quality, reply.data ? g_bytes_get_size (reply.data) : 0);
-  self->opcode = reply.opcode;
-  if (reply.result == 39)
+  El721Reply final = { 0 };
+  guint8 touch_flags = 2;
+  gint32 temperature;
+  gboolean terminal = FALSE;
+  g_autoptr(GString) steps = g_string_new ("4");
+  for (guint step = 0; step < EL721_CAPTURE_STEPS_MAX; step++)
+    {
+      if (!el721_qtee_identify_do (self->qtee, self->opcode, &reply, error))
+        goto fail;
+      self->opcode = reply.opcode;
+      g_string_append_printf (steps, ",%u:%u", reply.opcode, reply.result);
+      if (reply.result || reply.opcode == 0)
+        { terminal = TRUE; break; }
+      if (reply.opcode == EL721_OP_NOTIFY_DOWN)
+        {
+          if (!read_battery_temperature (&temperature, error) ||
+              !el721_qtee_control_op (self->qtee, 87, &touch_flags, 1, 0, error) ||
+              !el721_qtee_control_op (self->qtee, 80, (guint8 *) &temperature,
+                                      sizeof (temperature), 0, error))
+            goto fail;
+        }
+      else if (reply.opcode == EL721_OP_CAPTURE_STEP)
+        {
+          if (!el721_qtee_control_op (self->qtee, 87, &touch_flags, 1, 0, error))
+            goto fail;
+        }
+      else if (reply.opcode != EL721_OP_CAPTURE_SUCCESS &&
+               reply.opcode != EL721_OP_ACQUIRED_EVENT)
+        {
+          g_set_error (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_GENERAL,
+                       "EL721 IdentifyDo returned unexpected opcode %u", reply.opcode);
+          goto fail;
+        }
+      el721_reply_clear (&reply);
+    }
+  if (!terminal)
+    {
+      g_set_error_literal (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_GENERAL,
+                           "EL721 identify capture did not terminate");
+      goto fail;
+    }
+  if (!el721_qtee_identify_final (self->qtee, &final, error))
+    goto fail;
+  g_message ("EL721 verify result=%u final=%u matched_slot=%u score=%u steps=%s",
+             reply.result, final.result, reply.template_id, reply.quality, steps->str);
+  if (final.result)
+    {
+      g_set_error (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_GENERAL,
+                   "EL721 IdentifyFinal returned %u", final.result);
+      goto fail;
+    }
+  el721_reply_clear (&final);
+  if (reply.result == 39 || reply.result == 41)
     {
       GError *retry = fpi_device_retry_new (FP_DEVICE_RETRY_GENERAL);
+      el721_reply_clear (&reply);
+      /* A rejected capture also needs Final/Init/arm, followed by a new edge. */
+      if (!initialize_identify (self, error))
+        { g_error_free (retry); return FALSE; }
       if (self->action == EL721_ACTION_VERIFY)
         fpi_device_verify_report (FP_DEVICE (self), FPI_MATCH_ERROR, NULL, retry);
       else
@@ -650,8 +700,7 @@ handle_identify_do (FpiDeviceEl721 *self, GError **error)
     {
       g_set_error (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_GENERAL,
                    "EL721 IdentifyDo returned %u", reply.result);
-      el721_reply_clear (&reply);
-      return FALSE;
+      goto fail;
     }
   else if (reply.opcode == 0)
     {
@@ -661,7 +710,12 @@ handle_identify_do (FpiDeviceEl721 *self, GError **error)
       return TRUE;
     }
   el721_reply_clear (&reply);
+  self->action_started = g_get_monotonic_time ();
   return TRUE;
+fail:
+  el721_reply_clear (&reply);
+  el721_reply_clear (&final);
+  return FALSE;
 }
 
 static void
@@ -673,7 +727,6 @@ poll_action (FpDevice *device, gpointer user_data)
   gboolean released = FALSE;
   gboolean event;
   gboolean capture;
-  gboolean process;
   guint x;
   guint y;
   guint64 sequence;
@@ -709,8 +762,9 @@ poll_action (FpDevice *device, gpointer user_data)
   self->fod_sequence = sequence;
   /* One capture per observed PRESS edge; RELEASE only clears the latch.
    * Verification must not depend on enrollment-only state (gts9u36 did). */
-  capture = event && !self->finger_present && pressed &&
-            (self->action != EL721_ACTION_ENROLL || self->enroll_armed);
+  capture = self->action == EL721_ACTION_ENROLL ?
+            event && !self->finger_present && pressed && self->enroll_armed :
+            el721_identify_contact_ready (self->opcode, event, pressed, self->finger_present);
   if (event)
     g_message ("EL721 contact pressed=%u released=%u sequence=%" G_GUINT64_FORMAT
                " delta=%" G_GUINT64_FORMAT " x=%u y=%u capture=%u",
@@ -723,9 +777,7 @@ poll_action (FpDevice *device, gpointer user_data)
         pressed ? FP_FINGER_STATUS_PRESENT : FP_FINGER_STATUS_NEEDED,
         pressed ? FP_FINGER_STATUS_NEEDED : FP_FINGER_STATUS_PRESENT);
     }
-  process = capture ||
-            (self->action != EL721_ACTION_ENROLL && self->opcode != 4);
-  if (process)
+  if (capture)
     {
       gboolean ok = self->action == EL721_ACTION_ENROLL ?
                     handle_enroll_do (self, &error) :
@@ -813,48 +865,68 @@ el721_enroll (FpDevice *device)
   schedule_poll (self);
 }
 
+static gboolean
+initialize_identify (FpiDeviceEl721 *self, GError **error)
+{
+  g_autoptr(GByteArray) gallery = NULL;
+  g_autoptr(GPtrArray) prints = NULL;
+  g_autofree gchar *user = NULL;
+  El721Reply reply = { 0 };
+  gboolean ok = FALSE;
+  guint32 initial;
+  gallery = build_gallery (self, &prints, &user, error);
+  if (!gallery ||
+      !el721_qtee_identify_init (self->qtee, (guint8 *) user, strlen (user),
+                                 gallery->data, gallery->len, NULL, 0,
+                                 &reply, error))
+    goto out;
+  if (reply.result)
+    {
+      g_set_error (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_GENERAL,
+                   "EL721 IdentifyInit returned %u", reply.result);
+      goto out;
+    }
+  initial = reply.status;
+  el721_reply_clear (&reply);
+  /* Enter Do once, then WAIT. Never interpret its byte-12 auxiliary zero as
+   * a completed no-match: byte 0 contains the actual operation code (4). */
+  if (!el721_qtee_identify_do (self->qtee, initial, &reply, error))
+    goto out;
+  if (reply.result || reply.opcode != EL721_OP_WAIT_INTERRUPT)
+    {
+      g_set_error (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_GENERAL,
+                   "EL721 identify arm returned result/opcode %u/%u",
+                   reply.result, reply.opcode);
+      goto out;
+    }
+  self->opcode = reply.opcode;
+  g_message ("EL721 verify armed opcode=%u status=%u; waiting for a new press",
+             reply.opcode, reply.status);
+  ok = TRUE;
+out:
+  el721_reply_clear (&reply);
+  return ok;
+}
+
 static void
 start_identify (FpDevice *device)
 {
   FpiDeviceEl721 *self = FPI_DEVICE_EL721 (device);
   g_autoptr(GError) error = NULL;
-  g_autoptr(GByteArray) gallery = NULL;
-  g_autoptr(GPtrArray) prints = NULL;
-  g_autofree gchar *user = NULL;
-  El721Reply reply = { 0 };
   FpiDeviceAction current = fpi_device_get_current_action (device);
-
-  gallery = build_gallery (self, &prints, &user, &error);
-  if (!gallery || !operation_prepare (self, &error) ||
-      !el721_qtee_identify_init (self->qtee, (guint8 *) user, strlen (user),
-                                 gallery->data, gallery->len, NULL, 0,
-                                 &reply, &error))
+  if (!operation_prepare (self, &error) ||
+      !initialize_identify (self, &error) || !udfps_begin (self, &error))
     {
+      El721Reply reply = { 0 };
+      el721_qtee_identify_final (self->qtee, &reply, NULL);
       el721_reply_clear (&reply);
-      set_sensor_power (self, FALSE, NULL);
+      action_cleanup (self);
       if (current == FPI_DEVICE_ACTION_VERIFY)
         fpi_device_verify_complete (device, g_steal_pointer (&error));
       else
         fpi_device_identify_complete (device, g_steal_pointer (&error));
       return;
     }
-  if (reply.result)
-    g_set_error (&error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_GENERAL,
-                 "EL721 IdentifyInit returned %u", reply.result);
-  if (error || !udfps_begin (self, &error))
-    {
-      el721_reply_clear (&reply);
-      set_sensor_power (self, FALSE, NULL);
-      if (current == FPI_DEVICE_ACTION_VERIFY)
-        fpi_device_verify_complete (device, g_steal_pointer (&error));
-      else
-        fpi_device_identify_complete (device, g_steal_pointer (&error));
-      return;
-    }
-  self->opcode = reply.status;
-  fp_dbg ("IdentifyInit status/opcode=%u id-bytes=%zu", self->opcode,
-          reply.data ? g_bytes_get_size (reply.data) : 0);
-  el721_reply_clear (&reply);
   self->action = current == FPI_DEVICE_ACTION_VERIFY ?
                  EL721_ACTION_VERIFY : EL721_ACTION_IDENTIFY;
   self->action_started = g_get_monotonic_time ();

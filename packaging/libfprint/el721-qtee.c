@@ -3,6 +3,7 @@
 
 #include "el721-qtee.h"
 #include "el721-enroll-wire.h"
+#include "el721-identify-wire.h"
 #include "el721-hwvault-wire.h"
 #include "el721-qtee-lookup.h"
 #include "el721-spl-wire.h"
@@ -106,7 +107,7 @@
 #define FINAL_OUT_SIZE 0xa018U
 #define IDENTIFY_INIT_SIZE 0x2265bdU
 #define IDENTIFY_INIT_OUT_SIZE 0x1a0U
-#define IDENTIFY_DO_OUT_SIZE 0x230089U
+#define IDENTIFY_DO_OUT_SIZE EL721_IDENTIFY_OUTPUT_SIZE
 #define CHALLENGE_INPUT_SIZE 0xcU
 #define CHALLENGE_OUTPUT_SIZE 0x44U
 #define CHALLENGE_OUTPUT_INFO_OFFSET 0x8U
@@ -2884,7 +2885,6 @@ el721_qtee_identify_do (El721Qtee *session, guint32 opcode,
 {
   guint8 body[12] = { 0 };
   guint8 *output;
-  guint32 update_size;
   put_u32 (body, 0, CMD_IDENTIFY_DO);
   put_u32 (body, 4, opcode);
   put_u32 (body, 8, el721_probe_u32 ("EL721_SENSOR_TYPE",
@@ -2892,13 +2892,7 @@ el721_qtee_identify_do (El721Qtee *session, guint32 opcode,
   if (!invoke_body (session, CMD_IDENTIFY_DO, sizeof (body), IDENTIFY_DO_OUT_SIZE,
                     body, sizeof (body), &output, error))
     return FALSE;
-  decode_common (reply, output);
-  reply->template_id = get_u32 (output, 16);
-  reply->quality = get_u32 (output, 20);
-  update_size = get_u32 (output, 0x226038);
-  if (update_size <= 0x226000 && update_size)
-    reply->data = g_bytes_new (output + 0x38, update_size);
-  return TRUE;
+  return el721_decode_identify_output (output, IDENTIFY_DO_OUT_SIZE, reply, error);
 }
 
 gboolean
