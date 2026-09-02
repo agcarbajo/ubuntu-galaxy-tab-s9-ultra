@@ -41,6 +41,14 @@
 #define EGIS_IOC_MAGIC 'k'
 #define EGIS_SENSOR_RESET 0x04U
 
+#define K250A_DEVICE "/dev/k250a"
+#define K250A_READ_SIZE 0x80045300UL
+#define K250A_RESET_PROTOCOL 0x5302UL
+#define HWVAULT_WIRE_SIZE 41088U
+#define HWVAULT_CREDENTIAL_MAX 4096U
+#define HWVAULT_SIGN_GET 0x2714U
+#define HWVAULT_VERIFY_GET 0x2715U
+
 #define CMD_PREPARE 1U
 #define CMD_ENROLL_INIT 2U
 #define CMD_ENROLL_DO 3U
@@ -149,11 +157,13 @@ struct _El721Qtee
   struct qcomtee_object *qis_memory;
   struct qcomtee_object *app_loader;
   struct qcomtee_object *controller;
+  struct qcomtee_object *hwvault;
   struct qcomtee_object *gatekeeper;
   struct qcomtee_object *input;
   struct qcomtee_object *output;
   gchar *firmware_directory;
   gboolean loaded_here;
+  gboolean hwvault_loaded_here;
   gboolean gatekeeper_loaded_here;
 };
 
@@ -191,6 +201,7 @@ el721_qtee_error_quark (void)
 
 static guint32 el721_probe_u32 (const gchar *name, guint32 fallback);
 static gboolean el721_qtee_load_bds (El721Qtee *session, GError **error);
+static gboolean el721_qtee_restore_hwvault (El721Qtee *session, GError **error);
 
 static void
 put_u64 (guint8 *buffer, gsize offset, guint64 value)
@@ -715,6 +726,12 @@ el721_qtee_open (const gchar *firmware_directory, GError **error)
                            "cannot allocate the BAUTH shared buffers");
       goto fail;
     }
+  /* dualfp asks the separate HwVault TA for its template-encryption key.  One
+   * UI reconstructs that TA's in-memory context from authenticated K250A
+   * credentials on every service start; retain the restored TA for the whole
+   * libfprint session so the key remains available through EnrollDo. */
+  if (!el721_qtee_restore_hwvault (session, error))
+    goto fail;
   return session;
 
 fail:
@@ -744,6 +761,14 @@ el721_qtee_close (El721Qtee *session)
                              NULL, 0, &result);
     }
   qcomtee_object_refs_dec (session->controller);
+  if (session->hwvault_loaded_here &&
+      session->hwvault != QCOMTEE_OBJECT_NULL)
+    {
+      qcomtee_result_t result = QCOMTEE_ERROR;
+      qcomtee_object_invoke (session->hwvault, QSEECOM_UNLOAD_OP,
+                             NULL, 0, &result);
+    }
+  qcomtee_object_refs_dec (session->hwvault);
   qcomtee_object_refs_dec (session->app_loader);
   qcomtee_object_refs_dec (session->qis_service);
   qcomtee_memory_object_release (session->qis_memory);
@@ -760,6 +785,513 @@ secure_clear (gpointer data, gsize size)
 
   while (size--)
     *bytes++ = 0;
+}
+
+static void
+put_be32 (guint8 *out, guint32 value)
+{
+  out[0] = value >> 24;
+  out[1] = value >> 16;
+  out[2] = value >> 8;
+  out[3] = value;
+}
+
+static gboolean
+k250a_transceive (int fd, const guint8 *apdu, gsize apdu_size,
+                   guint8 *response, gsize response_capacity,
+                   gsize *response_size, GError **error)
+{
+  g_autofree guint8 *frame = g_malloc0 (16 + apdu_size);
+  guint32 size = 0;
+
+  put_be32 (frame, 1);
+  put_be32 (frame + 8, apdu_size);
+  memcpy (frame + 16, apdu, apdu_size);
+  if (write (fd, frame, 16 + apdu_size) != (ssize_t) (16 + apdu_size) ||
+      ioctl (fd, K250A_READ_SIZE, &size) < 0)
+    {
+      g_set_error (error, EL721_ERROR, errno,
+                   "K250A APDU transport failed: %s", g_strerror (errno));
+      return FALSE;
+    }
+  if (size > response_capacity)
+    {
+      g_set_error (error, EL721_ERROR, 1,
+                   "K250A response is too large (%u bytes)", size);
+      return FALSE;
+    }
+  if (read (fd, response, size) != (ssize_t) size)
+    {
+      g_set_error (error, EL721_ERROR, errno,
+                   "K250A response read failed: %s", g_strerror (errno));
+      return FALSE;
+    }
+  *response_size = size;
+  return TRUE;
+}
+
+static gboolean
+k250a_expect_status (const guint8 *response, gsize response_size,
+                      guint8 sw1, guint8 sw2, const gchar *operation,
+                      GError **error)
+{
+  if (response_size == 2 && response[0] == sw1 && response[1] == sw2)
+    return TRUE;
+  g_set_error (error, EL721_ERROR, 1,
+               "K250A %s failed (response=%" G_GSIZE_FORMAT
+               " bytes, status=%02x%02x)", operation, response_size,
+               response_size > 0 ? response[0] : 0,
+               response_size > 1 ? response[1] : 0);
+  return FALSE;
+}
+
+static gboolean
+k250a_open_and_nonce (guint8 nonce[32], int *opened_fd, GError **error)
+{
+  guint8 response[64] = { 0 };
+  const guint8 core_open[] = { 0x00, 0xfc, 0x00, 0x00, 0x00 };
+  const guint8 select_snvm[] = {
+    0x00, 0xa4, 0x04, 0x00, 0x10,
+    'S', 'E', 'C', 'U', 'R', 'E', '_', 'N', 'V', 'M', 0, 0, 0, 0, 0, 0
+  };
+  const guint8 create_nonce[] = { 0x80, 0x84, 0x00, 0x00, 0x20 };
+  gsize response_size = 0;
+  int fd = open (K250A_DEVICE, O_RDWR | O_CLOEXEC);
+
+  if (fd < 0)
+    {
+      g_set_error (error, EL721_ERROR, errno, "cannot open %s: %s",
+                   K250A_DEVICE, g_strerror (errno));
+      return FALSE;
+    }
+  if (!k250a_transceive (fd, core_open, sizeof (core_open), response,
+                         sizeof (response), &response_size, error) ||
+      !k250a_expect_status (response, response_size, 0x90, 0x00,
+                            "CORE_OPEN", error))
+    goto fail;
+  if (ioctl (fd, K250A_RESET_PROTOCOL) < 0)
+    {
+      g_set_error (error, EL721_ERROR, errno,
+                   "K250A protocol reset failed: %s", g_strerror (errno));
+      goto fail;
+    }
+  usleep (5000);
+  if (!k250a_transceive (fd, select_snvm, sizeof (select_snvm), response,
+                         sizeof (response), &response_size, error) ||
+      !k250a_expect_status (response, response_size, 0x90, 0x00,
+                            "SELECT SECURE_NVM", error))
+    goto fail;
+  if (!k250a_transceive (fd, create_nonce, sizeof (create_nonce), response,
+                         sizeof (response), &response_size, error) ||
+      response_size != 34 || response[32] != 0x90 || response[33] != 0x00)
+    {
+      if (error && !*error)
+        g_set_error_literal (error, EL721_ERROR, 1,
+                             "K250A random nonce request failed");
+      goto fail;
+    }
+  memcpy (nonce, response, 32);
+  secure_clear (response, sizeof (response));
+  *opened_fd = fd;
+  return TRUE;
+
+fail:
+  secure_clear (response, sizeof (response));
+  close (fd);
+  return FALSE;
+}
+
+static gboolean
+k250a_get_credential (int fd, guint8 credential_index, gboolean persistent,
+                      const guint8 signed_request[77],
+                      const guint8 request_hash[32], guint8 *credential,
+                      gsize credential_capacity, gsize *credential_size,
+                      guint8 response_hash[32], GError **error)
+{
+  guint8 apdu[128] = { 0 };
+  guint8 response[512] = { 0 };
+  guint8 get_response[5] = { 0 };
+  g_autofree guint8 *payload = g_malloc0 (credential_capacity + 32);
+  gsize response_size = 0;
+  gsize payload_size = 0;
+  guint8 sw1;
+  guint8 sw2;
+
+  apdu[0] = 0x80;
+  apdu[1] = 0xcb;
+  apdu[2] = persistent ? 1 : 0;
+  apdu[3] = credential_index;
+  apdu[4] = 109;
+  memcpy (apdu + 5, signed_request, 77);
+  memcpy (apdu + 82, request_hash, 32);
+  if (!k250a_transceive (fd, apdu, 114, response, sizeof (response),
+                         &response_size, error))
+    goto fail;
+  if (response_size != 2 || response[0] != 0x61)
+    {
+      g_set_error (error, EL721_ERROR, 1,
+                   "K250A credential %u is unavailable (status=%02x%02x)",
+                   credential_index, response_size > 0 ? response[0] : 0,
+                   response_size > 1 ? response[1] : 0);
+      goto fail;
+    }
+  sw1 = response[0];
+  sw2 = response[1];
+  for (;;)
+    {
+      get_response[0] = sw2 ? 0x90 : 0x80;
+      get_response[1] = 0xc0;
+      get_response[2] = 0;
+      get_response[3] = 0;
+      get_response[4] = sw2;
+      if (!k250a_transceive (fd, get_response, sizeof (get_response), response,
+                             sizeof (response), &response_size, error))
+        goto fail;
+      if (response_size < 2 ||
+          response_size - 2 > credential_capacity + 32 - payload_size)
+        {
+          g_set_error_literal (error, EL721_ERROR, 1,
+                               "K250A credential response is malformed");
+          goto fail;
+        }
+      memcpy (payload + payload_size, response, response_size - 2);
+      payload_size += response_size - 2;
+      sw1 = response[response_size - 2];
+      sw2 = response[response_size - 1];
+      if (sw1 == 0x90 && sw2 == 0x00)
+        break;
+      if (sw1 != 0x61)
+        {
+          g_set_error (error, EL721_ERROR, 1,
+                       "K250A chained response failed (status=%02x%02x)",
+                       sw1, sw2);
+          goto fail;
+        }
+    }
+  if (payload_size < 32 || payload_size - 32 > credential_capacity)
+    {
+      g_set_error_literal (error, EL721_ERROR, 1,
+                           "K250A credential has an invalid length");
+      goto fail;
+    }
+  *credential_size = payload_size - 32;
+  memcpy (credential, payload, *credential_size);
+  memcpy (response_hash, payload + *credential_size, 32);
+  secure_clear (response, sizeof (response));
+  secure_clear (payload, credential_capacity + 32);
+  return TRUE;
+
+fail:
+  secure_clear (response, sizeof (response));
+  secure_clear (payload, credential_capacity + 32);
+  return FALSE;
+}
+
+static gboolean
+hwvault_send (struct qcomtee_object *vault, const guint8 *request,
+              gsize request_size, guint8 *output, GError **error)
+{
+  g_autofree guint8 *input = g_malloc0 (HWVAULT_WIRE_SIZE);
+  g_autofree guint8 *response = g_malloc0 (HWVAULT_WIRE_SIZE);
+  guint32 is_64_bit = 1;
+  struct qcomtee_param params[10] = { 0 };
+  qcomtee_result_t result = QCOMTEE_ERROR;
+  int transport;
+  guint i;
+
+  if (request_size > HWVAULT_WIRE_SIZE)
+    {
+      g_set_error_literal (error, EL721_ERROR, 1,
+                           "HwVault request exceeds its shared buffer");
+      return FALSE;
+    }
+  memcpy (input, request, request_size);
+  params[0] = (struct qcomtee_param) {
+    .attr = QCOMTEE_UBUF_INPUT,
+    .ubuf = { input, HWVAULT_WIRE_SIZE }
+  };
+  params[1] = (struct qcomtee_param) {
+    .attr = QCOMTEE_UBUF_INPUT,
+    .ubuf = { response, HWVAULT_WIRE_SIZE }
+  };
+  params[2] = (struct qcomtee_param) {
+    .attr = QCOMTEE_UBUF_INPUT,
+    .ubuf = { NULL, 0 }
+  };
+  params[3] = (struct qcomtee_param) {
+    .attr = QCOMTEE_UBUF_INPUT,
+    .ubuf = { &is_64_bit, sizeof (is_64_bit) }
+  };
+  /* QSEECom_send_cmd aliases the same request/response areas in its input and
+   * output ObjectArgs. HwVault validates the full 40 KiB ranges. */
+  params[4] = (struct qcomtee_param) {
+    .attr = QCOMTEE_UBUF_OUTPUT,
+    .ubuf = { input, HWVAULT_WIRE_SIZE }
+  };
+  params[5] = (struct qcomtee_param) {
+    .attr = QCOMTEE_UBUF_OUTPUT,
+    .ubuf = { response, HWVAULT_WIRE_SIZE }
+  };
+  for (i = 6; i < G_N_ELEMENTS (params); i++)
+    params[i] = (struct qcomtee_param) {
+      .attr = QCOMTEE_OBJREF_INPUT,
+      .object = QCOMTEE_OBJECT_NULL
+    };
+  transport = qcomtee_object_invoke (vault, QSEECOM_SEND_REQUEST_OP,
+                                     params, G_N_ELEMENTS (params), &result);
+  if (transport || result)
+    {
+      g_set_error (error, EL721_ERROR, result,
+                   "HwVault command %u failed (transport=%d, result=%u)",
+                   get_u32 (request, 0), transport, result);
+      secure_clear (input, HWVAULT_WIRE_SIZE);
+      secure_clear (response, HWVAULT_WIRE_SIZE);
+      return FALSE;
+    }
+  memcpy (output, response, HWVAULT_WIRE_SIZE);
+  secure_clear (input, HWVAULT_WIRE_SIZE);
+  secure_clear (response, HWVAULT_WIRE_SIZE);
+  return TRUE;
+}
+
+static gboolean
+hwvault_parse_signed_get (const guint8 *output,
+                          const guint8 **signed_request,
+                          gsize *signed_request_size,
+                          const guint8 **request_hash,
+                          gsize *request_hash_size, GError **error)
+{
+  guint32 payload_size = get_u32 (output, 4);
+  guint32 status = G_MAXUINT32;
+  gsize end;
+  gsize offset = 8;
+
+  *signed_request = NULL;
+  *signed_request_size = 0;
+  *request_hash = NULL;
+  *request_hash_size = 0;
+  if (payload_size > HWVAULT_WIRE_SIZE - 8)
+    goto malformed;
+  end = 8 + payload_size;
+  while (offset + 8 <= end)
+    {
+      guint32 tag = get_u32 (output, offset);
+      guint32 value = get_u32 (output, offset + 4);
+      offset += 8;
+      if ((tag >> 24) == 1)
+        {
+          if (tag == 0x01000001)
+            status = value;
+        }
+      else if ((tag >> 24) == 2)
+        {
+          if (value > end - offset)
+            goto malformed;
+          if (tag == 0x02000007)
+            {
+              *signed_request = output + offset;
+              *signed_request_size = value;
+            }
+          else if (tag == 0x02000008)
+            {
+              *request_hash = output + offset;
+              *request_hash_size = value;
+            }
+          offset += value;
+        }
+      else
+        goto malformed;
+    }
+  if (offset != end || status != 0 || *signed_request_size != 77 ||
+      *request_hash_size != 32)
+    goto malformed;
+  return TRUE;
+
+malformed:
+  g_set_error (error, EL721_ERROR, status,
+               "HwVault signed-GET response is invalid (status=%u)", status);
+  return FALSE;
+}
+
+static gboolean
+hwvault_parse_verified_get (const guint8 *output, gsize *credential_size,
+                            GError **error)
+{
+  guint32 payload_size = get_u32 (output, 4);
+  guint32 status = G_MAXUINT32;
+  gsize end;
+  gsize offset = 8;
+
+  *credential_size = 0;
+  if (payload_size > HWVAULT_WIRE_SIZE - 8)
+    goto malformed;
+  end = 8 + payload_size;
+  while (offset + 8 <= end)
+    {
+      guint32 tag = get_u32 (output, offset);
+      guint32 value = get_u32 (output, offset + 4);
+      offset += 8;
+      if ((tag >> 24) == 1)
+        {
+          if (tag == 0x01000001)
+            status = value;
+        }
+      else if ((tag >> 24) == 2)
+        {
+          if (value > end - offset)
+            goto malformed;
+          if (tag == 0x02010006)
+            *credential_size = value;
+          offset += value;
+        }
+      else
+        goto malformed;
+    }
+  if (offset != end || status != 0 || !*credential_size)
+    goto malformed;
+  return TRUE;
+
+malformed:
+  g_set_error (error, EL721_ERROR, status,
+               "HwVault credential verification failed (status=%u)", status);
+  return FALSE;
+}
+
+static gboolean
+hwvault_restore_credential (struct qcomtee_object *vault,
+                            guint8 credential_index, gboolean persistent,
+                            GError **error)
+{
+  g_autofree guint8 *request = g_malloc0 (HWVAULT_WIRE_SIZE);
+  g_autofree guint8 *response = g_malloc0 (HWVAULT_WIRE_SIZE);
+  guint8 nonce[32] = { 0 };
+  guint8 signed_request_copy[77] = { 0 };
+  guint8 request_hash_copy[32] = { 0 };
+  guint8 encrypted_credential[HWVAULT_CREDENTIAL_MAX] = { 0 };
+  guint8 response_hash[32] = { 0 };
+  const guint8 *signed_request = NULL;
+  const guint8 *request_hash = NULL;
+  gsize signed_request_size = 0;
+  gsize request_hash_size = 0;
+  gsize encrypted_credential_size = 0;
+  gsize verified_credential_size = 0;
+  gsize size;
+  int k250a_fd = -1;
+  gboolean success = FALSE;
+
+  if (!k250a_open_and_nonce (nonce, &k250a_fd, error))
+    goto out;
+  put_u32 (request, 0, HWVAULT_SIGN_GET);
+  put_u32 (request, 4, 48);
+  put_u32 (request, 8, 0x01000005); /* HV_TAG_CRED_INDEX */
+  put_u32 (request, 12, credential_index);
+  put_u32 (request, 16, 0x0200000a); /* HV_TAG_NONCE */
+  put_u32 (request, 20, sizeof (nonce));
+  memcpy (request + 24, nonce, sizeof (nonce));
+  secure_clear (nonce, sizeof (nonce));
+  if (!hwvault_send (vault, request, 56, response, error) ||
+      !hwvault_parse_signed_get (response, &signed_request,
+                                 &signed_request_size, &request_hash,
+                                 &request_hash_size, error))
+    goto out;
+  memcpy (signed_request_copy, signed_request, sizeof (signed_request_copy));
+  memcpy (request_hash_copy, request_hash, sizeof (request_hash_copy));
+  if (!k250a_get_credential (k250a_fd, credential_index, persistent,
+                             signed_request_copy, request_hash_copy,
+                             encrypted_credential,
+                             sizeof (encrypted_credential),
+                             &encrypted_credential_size, response_hash, error))
+    goto out;
+
+  secure_clear (request, HWVAULT_WIRE_SIZE);
+  secure_clear (response, HWVAULT_WIRE_SIZE);
+  put_u32 (request, 0, HWVAULT_VERIFY_GET);
+  put_u32 (request, 8, 0x0100000e); /* HV_TAG_UPDATE_CRED */
+  put_u32 (request, 12, 0);
+  size = 16;
+#define APPEND_HWVAULT_BYTES(tag_, data_, data_size_) G_STMT_START { \
+    put_u32 (request, size, (tag_)); \
+    put_u32 (request, size + 4, (data_size_)); \
+    memcpy (request + size + 8, (data_), (data_size_)); \
+    size += 8 + (data_size_); \
+  } G_STMT_END
+  APPEND_HWVAULT_BYTES (0x02000007, signed_request_copy,
+                        signed_request_size);
+  APPEND_HWVAULT_BYTES (0x02010006, encrypted_credential,
+                        encrypted_credential_size);
+  APPEND_HWVAULT_BYTES (0x02000009, response_hash, sizeof (response_hash));
+#undef APPEND_HWVAULT_BYTES
+  put_u32 (request, 4, size - 8);
+  if (!hwvault_send (vault, request, size, response, error) ||
+      !hwvault_parse_verified_get (response, &verified_credential_size, error))
+    goto out;
+  g_debug ("HwVault restored credential %u (%" G_GSIZE_FORMAT " bytes)",
+           credential_index, verified_credential_size);
+  success = TRUE;
+
+out:
+  if (k250a_fd >= 0)
+    close (k250a_fd);
+  secure_clear (nonce, sizeof (nonce));
+  secure_clear (signed_request_copy, sizeof (signed_request_copy));
+  secure_clear (request_hash_copy, sizeof (request_hash_copy));
+  secure_clear (encrypted_credential, sizeof (encrypted_credential));
+  secure_clear (response_hash, sizeof (response_hash));
+  secure_clear (request, HWVAULT_WIRE_SIZE);
+  secure_clear (response, HWVAULT_WIRE_SIZE);
+  return success;
+}
+
+static gboolean
+el721_qtee_restore_hwvault (El721Qtee *session, GError **error)
+{
+  static const struct
+  {
+    guint8 index;
+    gboolean persistent;
+  } credentials[] = {
+    { 0, TRUE },
+    { 1, TRUE },
+    { 11, FALSE },
+  };
+  qcomtee_result_t lookup_result = QCOMTEE_ERROR;
+  guint i;
+
+  if (!lookup_ta (session, "hwvault", &session->hwvault, &lookup_result))
+    {
+      g_set_error_literal (error, EL721_ERROR, 1,
+                           "HwVault lookup transport failed");
+      return FALSE;
+    }
+  if (lookup_result || session->hwvault == QCOMTEE_OBJECT_NULL)
+    {
+      qcomtee_object_refs_dec (session->hwvault);
+      session->hwvault = QCOMTEE_OBJECT_NULL;
+      if (!load_ta (session, session->firmware_directory, "hwvault",
+                    &session->hwvault, error))
+        return FALSE;
+      session->hwvault_loaded_here = TRUE;
+    }
+  for (i = 0; i < G_N_ELEMENTS (credentials); i++)
+    if (!hwvault_restore_credential (session->hwvault,
+                                     credentials[i].index,
+                                     credentials[i].persistent, error))
+      goto fail;
+  g_debug ("HwVault K250A context and dualfp key restored");
+  return TRUE;
+
+fail:
+  if (session->hwvault_loaded_here &&
+      session->hwvault != QCOMTEE_OBJECT_NULL)
+    {
+      qcomtee_result_t result = QCOMTEE_ERROR;
+      qcomtee_object_invoke (session->hwvault, QSEECOM_UNLOAD_OP,
+                             NULL, 0, &result);
+    }
+  qcomtee_object_refs_dec (session->hwvault);
+  session->hwvault = QCOMTEE_OBJECT_NULL;
+  session->hwvault_loaded_here = FALSE;
+  return FALSE;
 }
 
 static gboolean

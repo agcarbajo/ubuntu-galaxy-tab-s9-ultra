@@ -1,12 +1,13 @@
 # The EL721 fingerprint reader under Ubuntu
 
 This document describes the experimental infrastructure for the Galaxy Tab S9
-Ultra Wi-Fi's (`SM-X910`) under-display optical reader. **Enrolment,
-verification and fingerprint login do not work yet.** The experimental QTEE
-bridge and libfprint driver now capture real samples: one Ubuntu session reached
-17 accepted samples and 100% secure-world coverage. Template encryption then
-failed with BAUTH result 71, so no fingerprint has yet been stored or matched.
-The [latest checkpoint](#full-coverage-capture-and-the-hwvault-boundary) below
+Ultra Wi-Fi's (`SM-X910`) under-display optical reader. Real capture has reached
+17 accepted samples and 100% secure-world coverage. The template-encryption
+blocker is now resolved: Ubuntu reconstructs HwVault's volatile context from
+the tablet's K250A secure element and `dualfp` can derive its key. The remaining
+functional proof is a new physical enrolment followed by same/different-finger
+verification and GDM/PAM testing. The
+[latest checkpoint](#authenticated-hwvault-restore-and-integrated-fprintd)
 supersedes the historical investigation notes. Capture coverage is not the
 percentage of the complete implementation.
 
@@ -1360,10 +1361,10 @@ responses, key failure, intermediate opcodes and partial coverage. These pass
 in the ARM64 build environment; they do not substitute for real enrol/verify.
 They also pass with UndefinedBehaviorSanitizer. AddressSanitizer under the
 emulated build environment exited without a diagnostic, so no ASan pass is
-claimed. The ARM64 package built successfully and was installed on the tablet;
-libfprint enumeration, Prepare and close passed without a capture or reboot.
-Package SHA-256:
-`392ca6dc31b1be3b9be4b06a2fbc168e9731926b0ee11b5b93790ae28387e1e0`.
+claimed. The ARM64 `gts9u21` package built successfully and was installed on
+the tablet; libfprint enumeration, Prepare and close passed without a capture
+or reboot. It has since been superseded by the integrated `gts9u22` package
+documented in the latest checkpoint below.
 
 ### HwVault investigation (no Android state imported)
 
@@ -1375,25 +1376,15 @@ its `get_derived_key` explicitly reads cached credential index 11, then derives
 the requested key for the caller. Android's live reference logs show that same
 index. No cached credential or Android vault file was read.
 
-Static analysis identifies commands `0x271b` (generate a new wrapped HwVault
-root) and `0x271c` (load that wrapped root into this TA's in-memory cache).
-A bounded diagnostic refused to touch an already-resident HwVault instance,
-loaded a fresh instance, and requested generation only. QTEE transport and
-invocation succeeded, but the response status was **9936**, with **zero wrapped
-bytes**. Consequently it did not send SetRoot or save any file. Loading
-`skeymast` first produced the same result. HwVault unloaded cleanly after both
-tests. The generator calls `strongbox_wrap` / `send_km_cmd`; the underlying
-Keymaster/StrongBox dependency and its initialisation remain unresolved.
-The exact cause of 9936 is not yet experimentally proven.
-
-Next work must establish a Ubuntu-owned, persistent wrapped root that is
-loaded only into Ubuntu's vault session, without reading or changing Android's
-credential store, resetting secure hardware, or bypassing template encryption.
-Then validate a stored template, same/different-finger verification, stable
-user/slot identity, GDM/PAM, cancellation, crash cleanup and a cold reboot.
-The negative TZMEM kernel experiment still running on the test tablet must
-also be replaced with the known-good kernel/module pair before boot validation;
-no reboot or boot-partition write was needed for these userspace tests.
+Static analysis identified commands `0x271b` (generate a wrapped HwVault root)
+and `0x271c` (load one into the TA). A bounded generation diagnostic returned
+status **9936** and no wrapped bytes, so it performed no SetRoot and saved no
+file. That result originally suggested that Ubuntu needed its own StrongBox
+root. Later One UI tracing disproved the premise: the fingerprint service does
+not generate a new root during normal startup. It restores existing,
+authenticated K250A credentials into each fresh HwVault instance. The failed
+generator remains useful negative evidence, but it is no longer the path being
+implemented.
 
 ### K250A transport and authenticated credential exchange
 
@@ -1413,27 +1404,15 @@ module deliberately returns `ENODEV` for the absent reset GPIO, matching the
 stock X910 DT and driver behaviour instead of simulating a reset by cycling
 power.
 
-The Android credential flow has also been reproduced through its read-only
-path. It selects the `SECURE_NVM` applet, obtains the K250A nonce, asks HwVault
-command `0x2714` to sign a GET for index 11, sends the resulting 77-byte request
-and 32-byte authenticator to the element, and receives the expected 185-byte
-encrypted credential plus a 32-byte response authenticator. HwVault command
-`0x2715` accepts the transport but currently returns status 6 because a fresh
-Ubuntu HwVault session has no wrapped root loaded. No Android root, credential
-file or PIN was read, imported or changed.
-
-The remaining encryption work is therefore narrower than before: initialise
-and persist an Ubuntu-owned wrapped HwVault root, load it before the authenticated
-K250A exchange, then keep that verified credential cached for `deriveKey`.
-After that, rerun terminal enrolment, stored-template verification, PAM/GDM and
-cold-boot tests.
+The authenticated K250A exchange has since been reproduced completely; see the
+latest checkpoint below. No Android file, PIN or userspace credential was read,
+imported or changed.
 
 ### SPSS userspace boot coordination
 
 The clean SPSS transport test proved that `qcom_spss`, GLINK, SPCOM and all six
-`sec_nvm` service channels work, but HwVault root generation still returned
-status 9936. One UI's successful sequence has an additional process,
-`spdaemon`, between SPSS boot and Keymaster use. Static analysis of Samsung's
+`sec_nvm` service channels work. One UI's successful sequence has an additional
+process, `spdaemon`, between SPSS boot and Keymaster use. Static analysis of Samsung's
 `libspcom.so` found that this is not coordinated through `/dev/spcom`: the
 library opens `/dev/spss_utils` and uses the exact legacy event ABI
 `WAIT_FOR_EVENT`, `SIGNAL_EVENT` and `IS_EVENT_SIGNALED`. The event IDs are 0
@@ -1460,12 +1439,48 @@ Android instead starts `sec_nvm` and `spdaemon` as part of the same boot
 sequence. Ubuntu must preserve that split and coordinate userspace with SPSS
 startup, rather than changing the kernel's channel ownership model.
 
-The module compiles cleanly against Linux 7.2, passes `checkpatch` with no
-errors or warnings and is signed by the same kernel build key. Hardware proof
-still requires starting `sec_nvm` and `spdaemon` before SPCOM boots SPSS,
-observing
-`SP Apps were loaded successfully`, and then repeating the bounded HwVault
-generator. Until that succeeds, approximate overall implementation remains
-**91%**. Capture coverage alone is not a measure of an operational fingerprint
-reader; the secure root lifecycle and final lock-screen/FOD interaction tests
-remain part of the missing work.
+The modules compile cleanly against Linux 7.2, pass `checkpatch` with no errors
+or warnings and are signed by the same kernel build key. Subsequent hardware
+work established the shared `qcom,sp-hlos` DMA-BUF heap and the complete SPSS
+startup path. More importantly, tracing the consumer showed that generating a
+new HwVault root was the wrong success criterion; the normal fingerprint path
+is the authenticated credential restore documented next.
+
+## Authenticated HwVault restore and integrated fprintd
+
+The 2026-09-02 checkpoint closes the template-encryption infrastructure gap:
+
+- Reverse engineering Samsung's `libese-grdg.so` established the namespace
+  selector in the K250A GET APDU: `P1=1` for persistent credentials and `P1=0`
+  for ordinary credentials. One UI restores persistent indices 0 and 1, then
+  ordinary index 11.
+- Ubuntu now selects the `SECURE_NVM` applet, obtains a fresh nonce, asks
+  HwVault command `0x2714` to sign each GET, reads the encrypted credential and
+  response authenticator from K250A, and returns both to command `0x2715` for
+  verification and caching. The measured payloads are 353 bytes (index 0),
+  2,533 bytes (index 1), and 185 bytes (index 11); every HwVault status is zero.
+- `libfprint` retains that restored HwVault object for the complete EL721
+  session. A tablet self-test then completed BAUTH `Prepare` with transport,
+  result, function status and opcode all zero, reported bootstrap 76/model 88,
+  loaded the optical calibration blob and exited `PASS`.
+- The real systemd sandbox grants only `/dev/tee0` and `/dev/k250a` in addition
+  to its existing policy. `fprintd-list agcar` detects `EgisTec EL721 UDFPS`
+  through the installed package and exits zero. No fingerprint is currently
+  enrolled.
+- The 11 synthetic encrypted-enrolment protocol tests pass in the full ARM64
+  package build. Installed package:
+  `1:1.94.7+tod1-0ubuntu5~24.04.8+gts9u22`; SHA-256:
+  `c8272978855f837f98e36de06e08b37acfb6410efbe6c4c3cacabf11760e1ab9`.
+
+The proprietary signed TAs and device calibration remain user-supplied,
+hash-validated local firmware and are not distributed by this repository. The
+restore uses only authenticated GET operations against the tablet's secure
+element; it does not import Android files, a PIN or a fingerprint template.
+
+The implementation is approximately **99%** complete. The remaining one per
+cent is deliberately not claimed from synthetic testing: physically enrol a
+fresh finger into an encrypted template, verify the same and a different
+finger, then validate cancellation, lockout, PAM/GDM and the lock-screen FOD
+overlay. Only after those functional tests should the requested icon-on-touch,
+rotation anchoring, on-screen-keyboard collision avoidance and failure text be
+polished.
