@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Bounded, user-started fingerprint enrolment diagnostics."""
+"""Bounded, user-started fingerprint enrollment and verification diagnostics."""
 
 import json
 import os
@@ -15,14 +15,40 @@ SAMPLE_RE = re.compile(
     r"EL721 sample result=(\d+) final=(\d+) coverage=(\d+) "
     r"accepted=(\d+) template=(\d+)"
 )
+VERIFY_RE = re.compile(r"^Verify result: (verify-[a-z-]+) \((done|not done)\)$")
+VERIFY_RETRIES = {
+    "verify-retry-scan", "verify-swipe-too-short",
+    "verify-finger-not-centered", "verify-remove-and-retry",
+}
+
+
+def test_command(mode):
+    if mode not in ("enroll", "verify"):
+        raise ValueError("Unknown fingerprint test mode")
+    return ["stdbuf", "-oL", "-eL", f"fprintd-{mode}",
+            "-f", "right-index-finger", GLib.get_user_name()]
+
+
+def final_status(state, exit_status, stop_reason):
+    if stop_reason:
+        return stop_reason
+    if state.get("mode") == "verify":
+        result = state.get("verify_result")
+        if state.get("verify_done"):
+            if result == "verify-match" and exit_status == 0:
+                return "matched"
+            if result == "verify-no-match" and exit_status == 1:
+                return "not-matched"
+        return "failed"
+    return "completed" if exit_status == 0 else "failed"
 
 
 class FingerprintTest:
-    """Run fprintd-enroll while exposing safe aggregate diagnostics.
+    """Run fprintd utilities while exposing safe aggregate diagnostics.
 
     The encrypted template remains opaque to this process.  A fully completed
-    run is a normal right-index enrolment; a timeout or Escape disconnects the
-    client and makes fprintd cancel and clean up the partial transaction.
+    enrollment run replaces the right-index print; verification never enrolls
+    or deletes prints. Timeout or Escape disconnects the client for cleanup.
     """
 
     def __init__(self, updated, finished):
@@ -39,6 +65,7 @@ class FingerprintTest:
         self._started = 0.0
         self._stop_reason = None
         self._finished_once = False
+        self._exit_status = None
         self._session_log = None
         self._latest_log = None
         self.state = {}
@@ -47,14 +74,19 @@ class FingerprintTest:
     def running(self):
         return self.process is not None and not self._finished_once
 
-    def start(self, duration):
+    def start(self, duration, mode="enroll"):
         if self.running:
             return False
+        command = test_command(mode)
         self._duration = max(30, min(int(duration), 600))
         self._started = time.monotonic()
         self._stop_reason = None
         self._finished_once = False
+        self._exit_status = None
         self.state = {
+            "mode": mode,
+            "verify_result": None,
+            "verify_done": False,
             "status": "starting",
             "duration": self._duration,
             "remaining": self._duration,
@@ -82,15 +114,7 @@ class FingerprintTest:
             self._journal_stream = Gio.DataInputStream.new(self.journal.get_stdout_pipe())
             self._read_next(self._journal_stream, "journal")
             self.process = Gio.Subprocess.new(
-                [
-                    "stdbuf",
-                    "-oL",
-                    "-eL",
-                    "fprintd-enroll",
-                    "-f",
-                    "right-index-finger",
-                    GLib.get_user_name(),
-                ],
+                command,
                 flags,
             )
         except GLib.Error as error:
@@ -162,8 +186,18 @@ class FingerprintTest:
     def _consume(self, source, line):
         self._record(source, line)
         match = SAMPLE_RE.search(line)
+        verification = VERIFY_RE.fullmatch(line) if source == "client" else None
         if source == "client" or match or "EL721" in line:
             self.state["last_message"] = line
+        if self.state.get("mode") == "verify":
+            if verification:
+                result, done = verification.groups()
+                self.state["verify_result"] = result
+                self.state["verify_done"] = done == "done"
+                if result in VERIFY_RETRIES:
+                    self.state["retries"] += 1
+            self._emit()
+            return
         if match:
             result, final, coverage, accepted, template = map(int, match.groups())
             self.state.update(
@@ -187,12 +221,8 @@ class FingerprintTest:
             process.wait_finish(result)
         except GLib.Error as error:
             self._record("error", str(error))
-        if self._stop_reason:
-            status = self._stop_reason
-        elif process.get_if_exited() and process.get_exit_status() == 0:
-            status = "completed"
-        else:
-            status = "failed"
+        self._exit_status = process.get_exit_status() if process.get_if_exited() else None
+        status = final_status(self.state, self._exit_status, self._stop_reason)
         # fprintd can exit just before journalctl delivers the driver's final
         # aggregate sample.  Leave the journal reader alive briefly so even a
         # failed or cancelled run retains its last secure result in JSONL.
@@ -205,7 +235,9 @@ class FingerprintTest:
 
     def _finish_after_drain(self, status):
         self._drain_id = 0
-        self._finish(status)
+        # The final client line can arrive after wait_async; decide only after
+        # draining. A successful process exit alone never proves a match.
+        self._finish(final_status(self.state, self._exit_status, self._stop_reason))
         return GLib.SOURCE_REMOVE
 
     def _finish(self, status, detail=None):
@@ -242,7 +274,7 @@ class FingerprintTest:
             GLib.get_user_state_dir(), "tab-companion", "fingerprint-tests"
         )
         os.makedirs(root, mode=0o700, exist_ok=True)
-        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
         self.log_path = os.path.join(root, f"{stamp}.jsonl")
         latest = os.path.join(root, "latest.jsonl")
         self._session_log = open(self.log_path, "w", encoding="utf-8")

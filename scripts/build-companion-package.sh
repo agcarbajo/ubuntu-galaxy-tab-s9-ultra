@@ -43,6 +43,9 @@ glib-compile-schemas --strict "$staging/usr/share/glib-2.0/schemas"
 desktop-file-validate "$staging/usr/share/applications/io.github.agcarbajo.TabCompanion.desktop"
 appstreamcli validate --no-net "$staging/usr/share/metainfo/io.github.agcarbajo.TabCompanion.metainfo.xml"
 python3 -m compileall -q "$staging/usr/lib/tab-companion"
+# Validate syntax above, but let the target's Python build its own caches.
+find "$staging/usr/lib/tab-companion" -type f -name '*.pyc' -delete
+find "$staging/usr/lib/tab-companion" -type d -name '__pycache__' -empty -delete
 
 chown -R root:root "$staging"
 find "$staging" -type d -exec chmod 0755 {} +

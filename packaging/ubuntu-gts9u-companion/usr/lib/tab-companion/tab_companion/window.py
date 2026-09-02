@@ -240,6 +240,12 @@ class CompanionWindow(Adw.ApplicationWindow):
             ),
         )
 
+        self.fp_mode = Adw.ComboRow(
+            title=_("Test mode"),
+            model=Gtk.StringList.new([_("Verify saved fingerprint"), _("Enroll / replace fingerprint")]),
+        )
+        fingerprint.add(self.fp_mode)
+
         self.fp_duration = Adw.SpinRow(
             title=_("Test duration"),
             subtitle=_("The test also stops immediately when you press Esc."),
@@ -256,8 +262,8 @@ class CompanionWindow(Adw.ApplicationWindow):
         controls = Adw.ActionRow(
             title=_("Ready to test"),
             subtitle=_(
-                "A completed run saves the print as the right index finger; "
-                "a timeout or cancellation saves nothing."
+                "Verification uses the saved right-index print. Enrollment replaces it. "
+                "Test the enrolled finger first, then start a new verification with another finger."
             ),
         )
         self.fp_start = Gtk.Button(
@@ -333,11 +339,13 @@ class CompanionWindow(Adw.ApplicationWindow):
     def _fingerprint_start(self, _button):
         self.fp_log.get_buffer().set_text("")
         self._fingerprint_last_message = None
-        if not self.fingerprint_test.start(round(self.fp_duration.get_value())):
+        mode = "verify" if self.fp_mode.get_selected() == 0 else "enroll"
+        if not self.fingerprint_test.start(round(self.fp_duration.get_value()), mode):
             return
         self.fp_start.set_sensitive(False)
         self.fp_cancel.set_sensitive(True)
         self.fp_duration.set_sensitive(False)
+        self.fp_mode.set_sensitive(False)
 
     def _fingerprint_cancel(self, _button=None):
         self.fingerprint_test.stop("cancelled")
@@ -351,6 +359,8 @@ class CompanionWindow(Adw.ApplicationWindow):
         fraction = max(coverage / 100, accepted / 17)
         self.fp_progress.set_fraction(min(1.0, fraction))
         self.fp_progress.set_text(f"{coverage}% · {shown_accepted}/17")
+        verifying = state.get("mode") == "verify"
+        self.fp_progress.set_visible(not verifying)
         remaining = state.get("remaining", 0)
         self.fp_remaining.set_label(f"{remaining // 60:02d}:{remaining % 60:02d}")
         status = {
@@ -358,6 +368,8 @@ class CompanionWindow(Adw.ApplicationWindow):
             "running": _("Touch, hold briefly, then lift your finger"),
             "stopping": _("Stopping safely…"),
             "completed": _("Test completed"),
+            "matched": _("Fingerprint recognized"),
+            "not-matched": _("Fingerprint does not match"),
             "timeout": _("Time expired"),
             "cancelled": _("Test cancelled"),
             "failed": _("Test failed"),
@@ -371,6 +383,11 @@ class CompanionWindow(Adw.ApplicationWindow):
         )
         if result is not None:
             feedback += _(" · secure result {result}").format(result=result)
+        if verifying:
+            feedback = _("{retries} reading retries · saved print unchanged").format(retries=retries)
+            verdict = state.get("verify_result")
+            if verdict:
+                feedback += f" · {verdict}"
         self.fp_feedback.set_label(feedback)
 
         message = state.get("last_message")
@@ -383,6 +400,7 @@ class CompanionWindow(Adw.ApplicationWindow):
         self.fp_start.set_sensitive(True)
         self.fp_cancel.set_sensitive(False)
         self.fp_duration.set_sensitive(True)
+        self.fp_mode.set_sensitive(True)
 
     def _key_pressed(self, _controller, keyval, _keycode, _state):
         if keyval == Gdk.KEY_Escape and self.fingerprint_test.running:

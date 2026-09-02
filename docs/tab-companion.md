@@ -225,6 +225,28 @@ Two entries are not actions on hardware. "Do nothing" is the default for S Pen
 gestures and leaves the event unhandled. "Keep the default action" exists only
 for keyboard keys, where there is a base utility worth falling back to.
 
+## Fingerprint diagnostics
+
+In Info, version 1.1.5 offers **Verify saved fingerprint** (default) and
+**Enroll / replace fingerprint**. Both are user-started, time-bounded and stop
+with Escape. Enrollment targets the right-index slot and replaces that print
+only on completion. Verification uses the saved print without enrolling or
+deleting it. Test the enrolled finger, then start a separate verification using
+a different finger. A non-match is a distinct result, not a generic test error;
+quality retries, timeout and reader errors do not prove correct rejection.
+
+Each run records its mode and safe aggregate results under
+`~/.local/state/tab-companion/fingerprint-tests/`, including failure/cancellation.
+Timestamped JSONL files are retained; `latest.jsonl` tracks the most recent run.
+No template contents are logged. Legacy EL721 prints created before gts9u41
+lack a saved identity and must be enrolled again before verification.
+
+The package rebuilds the target Python's bytecode caches on upgrade. This is
+necessary because normalized source timestamps and same-size edits otherwise
+allow stale caches from older releases to survive. Build-host caches are not
+shipped. The 1.1.5 Info widgets and Spanish match/non-match labels were exercised
+on the tablet without starting a capture; physical verification remains pending.
+
 ## Languages
 
 The interface, the pickers, the states, the model list and "About" are
