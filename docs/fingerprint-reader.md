@@ -8,7 +8,7 @@ K250A reads succeed, but HwVault cannot unwrap/cache the encryption root. The
 missing Keymaster configuration and interrupt listener have been isolated;
 the subsequent secure operation still fails. Encrypted enrollment,
 same/different-finger verification and GDM/PAM testing remain outstanding. The
-[latest checkpoint](#resident-keymaster-lookup-abi-2026-09-02)
+[latest checkpoint](#spu-configuration-and-real-interrupts-2026-09-02)
 supersedes the historical investigation notes. Capture coverage is not the
 percentage of the complete implementation.
 
@@ -1762,3 +1762,82 @@ A real systemd/fprintd `Claim` still fails early at the encryption preflight
 This package is an ABI correction, **not an enrollment fix**. The user should
 not repeat a 17-touch enrollment until credential 11 has a positive cache
 acknowledgement. The capture/HBM settings and the user's test logs are unchanged.
+
+## SPU configuration and real interrupts (2026-09-02)
+
+Non-biometric Ubuntu diagnostics have advanced the failure boundary. No
+fingerprint, PIN, new root, key-generation command or secure credential PUT was
+used. The Ubuntu boot image remains the previously verified `5269f2fd…744b`;
+only an Ubuntu-to-Ubuntu reboot was used to clear an earlier incomplete session.
+Android was not booted. The SPU daemons use Ubuntu-private NVM backing files,
+backed up before startup; Android filesystems are not mounted for these tests.
+
+`sec_nvm` and `spdaemon` started together through the real `/dev/spss_utils`
+events. `sp_keymaster` reports **v73.6.FE7DA67B**, hardware **06010000**, the same
+as the saved One UI trace. No fabricated event proxy was needed.
+
+The resident Qualcomm controller accepts:
+
+- `0x200`: API 4.1 / TA 4.1012, read-only version query.
+- `0x20d`: a 20 KiB control DMA buffer allocated from `qcom,secure-sp-tz`,
+  registered with QTEE and locked through SPCOM's `sp_keymaster` channel.
+  The diagnostic retains the DMA lease until an Ubuntu reboot; stopping its
+  process while secure world might retain the address is not a safe cleanup.
+- `0x207`: the stock 24-byte protocol negotiation request, status zero.
+- `0x2116`: modern CBOR Configure with the three required OS/patch tags. Ubuntu
+  uses zero values rather than claiming an Android security patch level.
+  Legacy `0x116` and optional SetVersion `0x3121` return -40; stock's modern
+  Configure path ignores SetVersion's failure and continues.
+
+After configuration, the cache failure changes from 9936 (`-64`, not configured)
+to 9998 (`-2`) with no working interrupt listener. The formerly stubbed listener
+was a second independent omission:
+
+- Service 87 / listener `0xb000` uses **SPL's raw protocol**, not libqisl's TLVs.
+  Requests are `{command, unused, timeout_ms}` and replies `{command, status}`.
+- Unknown commands, including the initial `0xdead`, receive `0xff`, as in stock.
+  `0x777` waits for `/dev/qsee_ipc_irq_spss`. Replies distinguish actual IRQ
+  (`0xaa`), timeout (`0xbb`), reset (`0xcc`), cancellation (`0xdd`) and I/O error
+  (`0xee`). Registration or elapsed time must never fabricate an IRQ.
+- The QTEE callback has two output buffers (16-byte offsets / 4-byte flag) and
+  four output objects. Callback outputs have capacities but initially NULL
+  addresses. Their backing storage must outlive dispatch until SUPPL_SEND;
+  the diagnostic now uses callback-owned storage and returns no objects.
+- A root-only, exclusive-open kernel bridge maps the stock IPCC **16:1 rising
+  edge**, separate from GLINK's 16:0. It loaded with the existing kernel signature,
+  and both `/proc/interrupts` and the userspace poll observed real interrupts.
+
+The reusable listener dispatcher is included in `gts9u40` but remains behind
+`EL721_QIS_DIAGNOSTIC=1`; neither the module nor the SPU initializer is enabled
+automatically. The bridge lacks subsystem-reset reporting, and diagnostic waits
+are capped at five seconds. These limitations are explicit, not silently treated
+as successful hardware events. See
+[`kernel/modules/spss-irq/README.md`](../kernel/modules/spss-irq/README.md).
+
+Twenty-five synthetic SPL tests cover callback shapes, output-buffer lifetime,
+raw replies, malformed requests, unknown commands, and timeout forwarding. They
+pass UndefinedBehaviorSanitizer; kernel checkpatch reports zero errors/warnings.
+The integrated dispatcher was also exercised on the tablet without enabling the
+sensor or illumination. It receives two genuine IRQs and returns both to QTEE.
+
+**Remaining failure:** with this listener, HwVault reports
+`strongbox_unwrap err -40` and cache status **9960**, despite successful outer GET
+verification. Configuring Samsung `skeymast` as well does not change it. The
+signed Qualcomm TA's command table does contain legacy `SB_UNWRAP` (`0x51b`),
+forwarded through SPU initialization/transport; the evidence does not establish
+that unwrap itself, rather than a prerequisite, rejects the request. This is the
+next boundary to investigate. Encrypted enrollment and verification are still
+unproven, and another physical enrollment test is not yet useful.
+
+The complete ARM64 `gts9u40` build passes **63 offline tests** (11 enrollment,
+21 HwVault, 6 lookup, 25 SPL). Installed package SHA-256:
+`1c99440eec266792bfa84958f9bb430a1bde689d580a79e55321782d941ced11`.
+The corrected final SPL header also rebuilds without driver warnings under
+libfprint's stricter `-Wswitch-enum` flags. The normal systemd/fprintd `Claim`
+retains the explicit early failure (9998 without the diagnostic listener),
+instead of asking for samples and failing at the end. Prior packages remain
+available for rollback. No new physical enrollment is claimed.
+
+The standalone module's final source builds and signs successfully; its
+SHA-256 is `803c3b504be4ab151ed011ab77ec66da561e55cd4fd05d90231b04a28e919653`.
+Only comment formatting differs from the module exercised on the tablet.

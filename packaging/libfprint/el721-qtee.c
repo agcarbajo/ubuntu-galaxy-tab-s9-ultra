@@ -5,11 +5,13 @@
 #include "el721-enroll-wire.h"
 #include "el721-hwvault-wire.h"
 #include "el721-qtee-lookup.h"
+#include "el721-spl-wire.h"
 
 #include <elf.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include <poll.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -177,6 +179,8 @@ typedef struct
 typedef struct
 {
   struct qcomtee_object object;
+  El721SplWire wire;
+  int irq_fd;
 } El721QisCallback;
 
 typedef struct
@@ -359,10 +363,43 @@ open_service (struct qcomtee_object *client_env, guint32 uid, GError **error)
 static void
 qis_callback_release (struct qcomtee_object *object)
 {
+  El721QisCallback *callback = (El721QisCallback *) object;
+
   /* object is deliberately the first member; avoid quic-teec's container_of
    * macro here because it performs GNU void-pointer arithmetic and makes the
    * otherwise clean libfprint build warn under -Wpointer-arith. */
-  g_free ((El721QisCallback *) object);
+  if (callback->irq_fd >= 0)
+    close (callback->irq_fd);
+  g_free (callback);
+}
+
+static El721SplResult
+spl_wait_diagnostic (guint32 timeout_ms, gpointer data)
+{
+  El721QisCallback *callback = data;
+  /* Linux UAPI POLLRDHUP, unavailable without GNU feature macros. The
+   * experimental bridge does not yet implement subsystem-reset reporting. */
+  const short reset_event = 0x2000;
+  struct pollfd event = {
+    .fd = callback->irq_fd,
+    .events = POLLIN | reset_event,
+  };
+  /* This listener is still opt-in diagnostic infrastructure. Bound even
+   * stock's timeout=0 (infinite) to five seconds; report a genuine timeout,
+   * never readiness. A system-wide production listener needs cancellation
+   * and SPSS reset handling before it can use unbounded waits. */
+  int timeout = timeout_ms && timeout_ms <= 5000 ? (int) timeout_ms : 5000;
+  int result = poll (&event, 1, timeout);
+
+  g_debug ("SPL poll requested_ms=%u result=%d events=%#x",
+           timeout_ms, result, event.revents);
+  if (result == 0)
+    return EL721_SPL_TIMEOUT;
+  if (result < 0 || (event.revents & (POLLERR | POLLHUP | POLLNVAL)))
+    return EL721_SPL_IO_ERROR;
+  if (event.revents & reset_event)
+    return EL721_SPL_RESET;
+  return event.revents & POLLIN ? EL721_SPL_IRQ : EL721_SPL_IO_ERROR;
 }
 
 static qcomtee_result_t
@@ -371,24 +408,10 @@ qis_callback_dispatch (struct qcomtee_object *object,
                        struct qcomtee_param *params,
                        int num)
 {
-  (void) object;
+  El721QisCallback *callback = (El721QisCallback *) object;
 
-  g_debug ("SPL listener callback op=%u params=%d", op, num);
-  for (int i = 0; i < num; i++)
-    {
-      if (params[i].attr == QCOMTEE_UBUF_INPUT ||
-          params[i].attr == QCOMTEE_UBUF_OUTPUT)
-        g_debug ("SPL listener callback param[%d] attr=%" G_GUINT64_FORMAT
-                 " size=%zu", i, params[i].attr, params[i].ubuf.size);
-      else
-        g_debug ("SPL listener callback param[%d] attr=%" G_GUINT64_FORMAT,
-                 i, params[i].attr);
-    }
-
-  /* Registration is useful before the first request arrives.  A complete
-   * QIS request dispatcher is deliberately not guessed from the proprietary
-   * protocol: report it explicitly if secure world needs one during Prepare. */
-  return QCOMTEE_ERROR_UNAVAIL;
+  return el721_spl_dispatch (&callback->wire, op, params, num,
+                             spl_wait_diagnostic, callback);
 }
 
 static gboolean
@@ -404,6 +427,14 @@ register_qis_listener (El721Qtee *session, GError **error)
   guint32 listener_id = QSEE_INTERRUPT_LISTENER_ID;
   gboolean callback_initialized = FALSE;
 
+  callback->irq_fd = open ("/dev/qsee_ipc_irq_spss", O_RDONLY | O_CLOEXEC);
+  if (callback->irq_fd < 0)
+    {
+      g_set_error (error, EL721_ERROR, errno,
+                   "cannot open the experimental SPSS IRQ bridge: %s",
+                   g_strerror (errno));
+      goto fail;
+    }
   session->qis_service = open_service (session->client_env,
                                        QSEE_INTERRUPT_SERVICE_UID, error);
   if (session->qis_service == QCOMTEE_OBJECT_NULL)
@@ -412,13 +443,15 @@ register_qis_listener (El721Qtee *session, GError **error)
                                    &session->qis_memory))
     {
       g_set_error_literal (error, EL721_ERROR, 1,
-                           "cannot allocate the QIS listener buffer");
+                           "cannot allocate the SPL listener buffer");
       goto fail;
     }
+  callback->wire.shared = qcomtee_memory_object_addr (session->qis_memory);
+  callback->wire.shared_size = QSEE_INTERRUPT_BUFFER_SIZE;
   if (qcomtee_object_cb_init (&callback->object, &callback_ops, session->root))
     {
       g_set_error_literal (error, EL721_ERROR, 1,
-                           "cannot initialize the QIS listener callback");
+                           "cannot initialize the SPL listener callback");
       goto fail;
     }
   callback_initialized = TRUE;
@@ -434,7 +467,7 @@ register_qis_listener (El721Qtee *session, GError **error)
                              params, G_N_ELEMENTS (params), &result) || result)
     {
       g_set_error (error, EL721_ERROR, result,
-                   "cannot register QIS listener 0x%x (result %u)",
+                   "cannot register SPL listener 0x%x (result %u)",
                    listener_id, result);
       goto fail;
     }
@@ -448,7 +481,7 @@ fail:
   if (callback_initialized)
     qcomtee_object_refs_dec (&callback->object);
   else
-    g_free (callback);
+    qis_callback_release (&callback->object);
   return FALSE;
 }
 
