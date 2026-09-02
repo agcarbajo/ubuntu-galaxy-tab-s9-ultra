@@ -6723,10 +6723,9 @@ capture, including 39, must be closed with `EnrollFinal` and followed by a new
 `Init → Do → Final → Init` without wedging the trustlet.
 
 Finally, One UI's `check_opcode` jump table supplied the missing control shape.
-Opcode 5 sends control 87 with one byte of output capacity and control 80 with
-four bytes; opcode 87 sends control 87 with one. The earlier zero-capacity call
-made control 80 return 51. Package `gts9u16` contains the exact framing and is
-installed for the next physical capture. The negative dedicated-TZMEM kernel
+The first interpretation of opcode 5 treated one byte for control 87 and four
+bytes for control 80 as output capacity. Later gateway analysis corrected
+that interpretation; see Session 112. The negative dedicated-TZMEM kernel
 experiment was removed from the branch because it changed neither HAT nor
 capture behaviour.
 
@@ -6735,3 +6734,27 @@ sensor access, the desktop target, FOD touch events and a recoverable capture
 protocol are in place. Still unproven are one accepted capture (`opcode 6`), a
 complete stored template, verification, GDM integration and reboot/crash
 recovery.
+
+## Session 112 — physical progress and corrected control input framing
+
+Date: 2026-09-02. After HwVault restoration, real fprintd enrolment reached
+96% coverage with 16 accepted samples. Goodix emits a lone `released` sponge
+event for most physical contacts, so FOD now discards the first isolated
+release after enable as stale and accepts subsequent releases. The user
+confirmed that the optical target appears correctly on repeated touches.
+
+At high coverage, EnrollDo returned 70. Retrying it could advance one boundary
+but eventually reset the TA's enrolment metrics to zero. Disassembly confirms
+that Samsung maps 70 to return state 8 and invokes `enrollSystemFail`; it is
+not a recoverable sample result. Only results 39 and 41 remain retries.
+
+The underlying divergence was in the two controls issued for opcode 5.
+`TeeProxy::ControlOp` forwards its third pointer and length to
+`BAuth_Control_OP`, which copies them into the command-12 input payload.
+Samsung supplies a zero touch-status byte to control 87, then the signed
+32-bit battery temperature in tenths of a degree to control 80. Ubuntu had
+instead supplied empty inputs and advertised one/four output bytes, explaining
+control 80's persistent result 51. Package `gts9u26` sends the stock input
+shape, reads the temperature from `sm5714-battery/temp`, and removes the
+result-70 retry. It awaits one physical enrolment run; implementation remains
+approximately 99% until a template is saved and verified.

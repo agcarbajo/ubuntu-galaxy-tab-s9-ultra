@@ -14,6 +14,7 @@
 #define OP_CAPTURE_SUCCESS 6U
 #define OP_CAPTURE_STEP 87U
 #define EL721_POWER "/sys/bus/platform/devices/egis-el721/sensor_power"
+#define EL721_BATTERY_TEMP "/sys/class/power_supply/sm5714-battery/temp"
 
 static gboolean
 write_value (const gchar *path, const gchar *value, GError **error)
@@ -31,6 +32,26 @@ write_value (const gchar *path, const gchar *value, GError **error)
                    "cannot write %s: %s", path, g_strerror (errno));
       return FALSE;
     }
+  return TRUE;
+}
+
+static gboolean
+read_battery_temperature (gint32 *temperature, GError **error)
+{
+  g_autofree gchar *contents = NULL;
+  gchar *end = NULL;
+  gint64 value;
+
+  if (!g_file_get_contents (EL721_BATTERY_TEMP, &contents, NULL, error))
+    return FALSE;
+  value = g_ascii_strtoll (contents, &end, 10);
+  if (end == contents || value < G_MININT32 || value > G_MAXINT32)
+    {
+      g_set_error (error, G_FILE_ERROR, G_FILE_ERROR_INVAL,
+                   "invalid battery temperature: %s", contents);
+      return FALSE;
+    }
+  *temperature = (gint32) value;
   return TRUE;
 }
 
@@ -350,6 +371,8 @@ main (int argc, char **argv)
           guint passes = (guint) g_ascii_strtoull (g_getenv ("EL721_ENROLL_DO"),
                                                    NULL, 10);
           guint pass;
+          guint8 touch_flags = 0;
+          gint32 battery_temperature;
 
           for (pass = 0; pass < passes; pass++)
             {
@@ -370,14 +393,20 @@ main (int argc, char **argv)
                 }
               if (reply.opcode == OP_NOTIFY_DOWN)
                 {
-                  if (!el721_qtee_control_op (session, 87, NULL, 0, 1, &error) ||
-                      !el721_qtee_control_op (session, 80, NULL, 0, 4, &error))
+                  if (!read_battery_temperature (&battery_temperature, &error) ||
+                      !el721_qtee_control_op (session, 87, &touch_flags,
+                                              sizeof (touch_flags), 0, &error) ||
+                      !el721_qtee_control_op (
+                        session, 80,
+                        (const guint8 *) &battery_temperature,
+                        sizeof (battery_temperature), 0, &error))
                     goto out;
                   continue;
                 }
               if (reply.opcode == OP_CAPTURE_STEP)
                 {
-                  if (!el721_qtee_control_op (session, 87, NULL, 0, 1, &error))
+                  if (!el721_qtee_control_op (session, 87, &touch_flags,
+                                              sizeof (touch_flags), 0, &error))
                     goto out;
                   continue;
                 }

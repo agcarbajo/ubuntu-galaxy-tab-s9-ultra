@@ -15,6 +15,8 @@
 #define EL721_FIRMWARE "/usr/lib/firmware/gts9u/fingerprint"
 #define EL721_TOUCH "/sys/bus/i2c/devices/13-005d"
 #define EL721_PANEL "/sys/class/backlight/ae94000.dsi.0"
+#define EL721_BATTERY_TEMP "/sys/class/power_supply/battery/temp"
+#define EL721_BATTERY_TEMP_FALLBACK "/sys/class/power_supply/sm5714-battery/temp"
 #define EL721_POLL_MS 45
 #define EL721_ACTION_TIMEOUT_US (90 * G_USEC_PER_SEC)
 #define EL721_UDFPS_REFRESH_US (5 * G_USEC_PER_SEC)
@@ -88,6 +90,31 @@ read_fod_state (gboolean *pressed, gboolean *released, guint64 *sequence,
 }
 
 static gboolean
+read_battery_temperature (gint32 *temperature, GError **error)
+{
+  g_autofree gchar *contents = NULL;
+  const gchar *path = EL721_BATTERY_TEMP;
+  gchar *end = NULL;
+  gint64 value;
+
+  if (!g_file_get_contents (path, &contents, NULL, NULL))
+    {
+      path = EL721_BATTERY_TEMP_FALLBACK;
+      if (!g_file_get_contents (path, &contents, NULL, error))
+        return FALSE;
+    }
+  value = g_ascii_strtoll (contents, &end, 10);
+  if (end == contents || value < G_MININT32 || value > G_MAXINT32)
+    {
+      g_set_error (error, G_FILE_ERROR, G_FILE_ERROR_INVAL,
+                   "invalid battery temperature in %s: %s", path, contents);
+      return FALSE;
+    }
+  *temperature = (gint32) value;
+  return TRUE;
+}
+
+static gboolean
 set_sensor_power (FpiDeviceEl721 *self, gboolean enabled, GError **error)
 {
   return write_child (self->sysfs_path, "sensor_power", enabled ? "1\n" : "0\n",
@@ -111,6 +138,7 @@ udfps_begin (FpiDeviceEl721 *self, GError **error)
       write_child (EL721_TOUCH, "fod_enable", "0\n", NULL);
       return FALSE;
     }
+  self->fod_release_primed = FALSE;
   if (!write_child (EL721_PANEL, "fod_mode", "1\n", error))
     {
       write_child (EL721_TOUCH, "fod_enable", "0\n", NULL);
@@ -151,6 +179,7 @@ udfps_end (FpiDeviceEl721 *self)
   self->udfps_active = FALSE;
   self->udfps_refreshed = 0;
   self->fod_sequence = 0;
+  self->fod_release_primed = FALSE;
 }
 
 static void
@@ -341,6 +370,8 @@ handle_enroll_do (FpiDeviceEl721 *self, GError **error)
   guint progress = 0;
   guint step;
   gboolean terminal = FALSE;
+  guint8 touch_flags = 0;
+  gint32 battery_temperature;
 
   /* The touch poll is the interrupt wait used by Samsung's service.  Once a
    * contact is latched, drive the remaining TA opcodes synchronously; one
@@ -371,12 +402,19 @@ handle_enroll_do (FpiDeviceEl721 *self, GError **error)
         }
       if (reply.opcode == EL721_OP_NOTIFY_DOWN)
         {
-          /* Stock reserves one response byte for 87 and four for 80.
-           * Control 80's additional temperature framing is not yet matched:
-           * it still returns 51, but successful captures have been observed. */
+          /* Samsung passes both values as input data.  Control 87 receives
+           * the first byte of its touch-status triplet (zero by default),
+           * then control 80 receives the battery temperature in tenths of a
+           * degree Celsius.  Treating these as response capacities made 80
+           * return 51 and eventually made EnrollDo abort with result 70. */
+          if (!read_battery_temperature (&battery_temperature, error))
+            goto fail;
           if (!el721_qtee_control_op (self->qtee, EL721_OP_CAPTURE_STEP,
-                                      NULL, 0, 1, error) ||
-              !el721_qtee_control_op (self->qtee, 80, NULL, 0, 4, error))
+                                      &touch_flags, sizeof (touch_flags), 0,
+                                      error) ||
+              !el721_qtee_control_op (self->qtee, 80,
+                                      (const guint8 *) &battery_temperature,
+                                      sizeof (battery_temperature), 0, error))
             goto fail;
           el721_reply_clear (&reply);
           continue;
@@ -384,7 +422,8 @@ handle_enroll_do (FpiDeviceEl721 *self, GError **error)
       if (reply.opcode == EL721_OP_CAPTURE_STEP)
         {
           if (!el721_qtee_control_op (self->qtee, EL721_OP_CAPTURE_STEP,
-                                      NULL, 0, 1, error))
+                                      &touch_flags, sizeof (touch_flags), 0,
+                                      error))
             goto fail;
           el721_reply_clear (&reply);
           continue;
@@ -556,7 +595,9 @@ poll_action (FpDevice *device, gpointer user_data)
   gboolean event;
   gboolean capture;
   gboolean process;
+  gboolean release_contact;
   guint64 sequence;
+  guint64 sequence_delta;
 
   g_clear_pointer (&self->poll_source, g_source_unref);
   if (self->action == EL721_ACTION_NONE)
@@ -583,12 +624,22 @@ poll_action (FpDevice *device, gpointer user_data)
       action_fail (self, g_steal_pointer (&error));
       return;
     }
-  event = sequence != self->fod_sequence;
+  sequence_delta = sequence - self->fod_sequence;
+  event = sequence_delta != 0;
   self->fod_sequence = sequence;
-  /* Samsung's sponge may publish PRESS and RELEASE faster than the 45 ms
-   * userspace poll.  A newly latched RELEASE with no observed pressed state
-   * still proves that one contact occurred inside the configured rectangle. */
-  capture = event && !self->finger_present && (pressed || released);
+  /* This firmware normally publishes only RELEASE for an optical contact.
+   * It can also emit one stale RELEASE after FOD mode is enabled.  Consume
+   * the first isolated release as an arming event; a second one is physical.
+   * If PRESS+RELEASE both happened between polls, a delta of two proves the
+   * contact immediately and does not need the priming event. */
+  release_contact = released &&
+                    (sequence_delta >= 2 || self->fod_release_primed);
+  if (event && released && sequence_delta == 1)
+    self->fod_release_primed = TRUE;
+  if (event && pressed)
+    self->fod_release_primed = TRUE;
+  capture = event && !self->finger_present &&
+            (pressed || release_contact);
   if (pressed != self->finger_present)
     {
       self->finger_present = pressed;

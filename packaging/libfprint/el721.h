@@ -23,6 +23,7 @@ struct _FpiDeviceEl721
   El721Action action;
   gboolean finger_present;
   gboolean udfps_active;
+  gboolean fod_release_primed;
   gint64 udfps_refreshed;
   guint64 fod_sequence;
   guint32 opcode;

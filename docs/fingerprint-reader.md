@@ -1315,11 +1315,15 @@ measured sequence `4 → 5 → 87 → 6/0`, closes with `EnrollFinal` even on
 BAD_QUALITY 39, and starts the next transaction with `EnrollInit`. This avoids
 the old permanent `0x80000000` sentinel after one rejected image.
 
-Opcode 5 uses control 87 with one byte of response capacity and control 80
-with four; opcode 87 uses control 87 with one. Subsequent physical testing
-disproved the earlier claim that reserving four bytes fixes control 80: it
-still answers 51 while captures can succeed. Its temperature-related input
-framing needs further work. The earlier 98.7% estimate is superseded below.
+Opcode 5 uses control 87 with one byte of input and control 80 with four;
+opcode 87 uses control 87 with one. The old bridge had mistaken those fields
+for response capacities. Static analysis of `TeeProxy::ControlOp` and
+`BAuth_Control_OP` proves that the third pointer and following length are
+copied into the command-12 input payload. For control 80, Samsung fills that
+four-byte input with `/sys/class/power_supply/battery/temp`; Ubuntu exposes the
+same tenths-of-a-degree value through `sm5714-battery/temp`. The reversed
+framing made control 80 return 51 and is corrected in `gts9u26`. The earlier
+98.7% estimate is superseded below.
 
 ## Full-coverage capture and the HwVault boundary
 
@@ -1484,3 +1488,13 @@ finger, then validate cancellation, lockout, PAM/GDM and the lock-screen FOD
 overlay. Only after those functional tests should the requested icon-on-touch,
 rotation anchoring, on-screen-keyboard collision avoidance and failure text be
 polished.
+
+The latest physical run also established that the Goodix firmware normally
+publishes one `released` record rather than separate press/release records.
+The driver now consumes the first isolated release after enabling FOD as a
+stale arming event and accepts subsequent releases as real contacts. The user
+confirmed that the target appears correctly on repeated touches. Captures
+reached 96% coverage and 16 accepted samples before the incorrectly framed
+control path returned EnrollDo result 70. Samsung maps 70 to its system-failure
+state, so the temporary retry was removed rather than hiding or looping the
+failure. The corrected `gts9u26` package is the next physical enrolment test.
