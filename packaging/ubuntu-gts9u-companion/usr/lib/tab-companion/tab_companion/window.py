@@ -332,7 +332,7 @@ class CompanionWindow(Adw.ApplicationWindow):
     def _fingerprint_start(self, _button):
         self.fp_log.get_buffer().set_text("")
         self._fingerprint_last_message = None
-        if not self.fingerprint_test.start(self.fp_duration.get_value_as_int()):
+        if not self.fingerprint_test.start(round(self.fp_duration.get_value())):
             return
         self.fp_start.set_sensitive(False)
         self.fp_cancel.set_sensitive(True)

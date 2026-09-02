@@ -1523,7 +1523,7 @@ many result-39 quality retries and eventually fatal result 70. Package
 `gts9u29` contains this fix, uses the trustlet's measured 17 enrolment stages
 and emits one compact aggregate sample record for diagnostics.
 
-Tab Companion 1.1.0 exposes the bounded test under Info. A completed run is a
+Tab Companion 1.1.1 exposes the bounded test under Info. A completed run is a
 normal right-index enrolment; timeout, Stop and Escape cancel without saving a
 partial template. Live coverage, accepted samples, retries and the secure
 result are shown in the window. The latest report is always:

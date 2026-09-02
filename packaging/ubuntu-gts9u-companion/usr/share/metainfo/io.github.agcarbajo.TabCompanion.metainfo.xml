@@ -18,6 +18,9 @@
   <launchable type="desktop-id">io.github.agcarbajo.TabCompanion.desktop</launchable>
   <url type="homepage">https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra</url>
   <releases>
+    <release version="1.1.1" date="2026-09-02">
+      <description><p>Fixes the fingerprint test duration control on Ubuntu 24.04.</p></description>
+    </release>
     <release version="1.1.0" date="2026-09-02">
       <description><p>Adds a bounded live fingerprint test with countdown, real secure progress, cancellation and structured local logs.</p></description>
     </release>

@@ -6801,7 +6801,7 @@ capping GNOME at 9/10, and emits one non-biometric aggregate log record per
 sample. All 11 encrypted-template protocol tests and the complete ARM64 build
 pass.
 
-Tab Companion 1.1.0 adds a bounded test to its Info page. The user chooses the
+Tab Companion 1.1.1 adds a bounded test to its Info page. The user chooses the
 duration and starts it locally; the view shows time remaining, coverage,
 accepted samples, quality retries and secure result in real time. Escape or
 Stop cancels the fprintd client and its partial transaction. Structured JSONL
