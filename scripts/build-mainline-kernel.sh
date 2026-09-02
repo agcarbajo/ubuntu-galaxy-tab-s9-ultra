@@ -538,6 +538,7 @@ install -m 0644 "$repo/kernel/include/uapi/linux/spss_utils.h" \
 	"$kernel_tree/include/uapi/linux/spss_utils.h"
 install -m 0644 "$drv/spcom.c" "$spcom_dir/spcom.c"
 install -m 0644 "$drv/spss_utils.c" "$spcom_dir/spss_utils.c"
+install -m 0644 "$drv/qcom_sp_hlos_heap.c" "$spcom_dir/qcom_sp_hlos_heap.c"
 if ! grep -q '^config QCOM_SPCOM$' "$spcom_dir/Kconfig"; then
 	cat >> "$spcom_dir/Kconfig" <<'EOF'
 
@@ -551,6 +552,20 @@ EOF
 fi
 grep -q 'CONFIG_QCOM_SPCOM).*spcom.o' "$spcom_dir/Makefile" || \
 	printf 'obj-$(CONFIG_QCOM_SPCOM) += spcom.o\n' >> "$spcom_dir/Makefile"
+if ! grep -q '^config QCOM_SP_HLOS_HEAP$' "$spcom_dir/Kconfig"; then
+	cat >> "$spcom_dir/Kconfig" <<'EOF'
+
+config QCOM_SP_HLOS_HEAP
+	tristate "Qualcomm HLOS/SPSS shared DMA-BUF heap"
+	depends on ARCH_QCOM && QCOM_SCM && DMABUF_HEAPS && CMA
+	help
+	  Exposes the contiguous qcom,sp-hlos heap used by SPSS NVM and assigns
+	  each allocation to HLOS and CP_SPSS_HLOS_SHARED for its DMA-BUF lifetime.
+EOF
+fi
+grep -q 'CONFIG_QCOM_SP_HLOS_HEAP).*qcom_sp_hlos_heap.o' "$spcom_dir/Makefile" || \
+	printf 'obj-$(CONFIG_QCOM_SP_HLOS_HEAP) += qcom_sp_hlos_heap.o\n' \
+		>> "$spcom_dir/Makefile"
 if ! grep -q '^config QCOM_SPSS_UTILS$' "$spcom_dir/Kconfig"; then
 	cat >> "$spcom_dir/Kconfig" <<'EOF'
 
@@ -618,12 +633,14 @@ if [ "$fingerprint_sensor" = 1 ]; then
 		--module QCOMTEE --enable FINGERPRINT_EGIS_EL721 \
 		--module STAR_K250A_LEGO \
 		--module RPMSG_QCOM_GLINK_SPSS --module QCOM_SPSS \
-		--module QCOM_SPSS_UTILS --module QCOM_SPCOM
+		--module QCOM_SPSS_UTILS --module QCOM_SPCOM \
+		--module QCOM_SP_HLOS_HEAP
 else
 	"$kernel_tree/scripts/config" --file "$build_dir/.config" \
 		--module QCOMTEE --disable FINGERPRINT_EGIS_EL721 \
 		--disable STAR_K250A_LEGO --disable QCOM_SPSS \
 		--disable QCOM_SPSS_UTILS --disable QCOM_SPCOM \
+		--disable QCOM_SP_HLOS_HEAP \
 		--disable RPMSG_QCOM_GLINK_SPSS
 fi
 
@@ -770,6 +787,15 @@ if [ "${BUILD_WIFI_MODULES:-1}" = 1 ]; then
 			spcom.ko
 		installed=$release_dir/updates/spcom.ko
 		install -m 0644 "$spcom_dir/spcom.ko" "$installed"
+		"$build_dir/scripts/sign-file" sha256 \
+			"$build_dir/certs/signing_key.pem" \
+			"$build_dir/certs/signing_key.x509" "$installed"
+		modinfo -F signer "$installed" | grep -q .
+
+		make -C "$kernel_tree" O="$build_dir" ARCH=arm64 LLVM=1 \
+			-j"$(nproc)" M="$spcom_dir" qcom_sp_hlos_heap.ko
+		installed=$release_dir/updates/qcom_sp_hlos_heap.ko
+		install -m 0644 "$spcom_dir/qcom_sp_hlos_heap.ko" "$installed"
 		"$build_dir/scripts/sign-file" sha256 \
 			"$build_dir/certs/signing_key.pem" \
 			"$build_dir/certs/signing_key.x509" "$installed"
