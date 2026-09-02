@@ -3,6 +3,7 @@
 
 #include "el721-qtee.h"
 #include "el721-enroll-wire.h"
+#include "el721-hwvault-wire.h"
 
 #include <elf.h>
 #include <errno.h>
@@ -44,7 +45,7 @@
 #define K250A_DEVICE "/dev/k250a"
 #define K250A_READ_SIZE 0x80045300UL
 #define K250A_RESET_PROTOCOL 0x5302UL
-#define HWVAULT_WIRE_SIZE 41088U
+#define HWVAULT_WIRE_SIZE EL721_HWVAULT_WIRE_SIZE
 #define HWVAULT_CREDENTIAL_MAX 4096U
 #define HWVAULT_SIGN_GET 0x2714U
 #define HWVAULT_VERIFY_GET 0x2715U
@@ -1114,50 +1115,6 @@ malformed:
 }
 
 static gboolean
-hwvault_parse_verified_get (const guint8 *output, gsize *credential_size,
-                            GError **error)
-{
-  guint32 payload_size = get_u32 (output, 4);
-  guint32 status = G_MAXUINT32;
-  gsize end;
-  gsize offset = 8;
-
-  *credential_size = 0;
-  if (payload_size > HWVAULT_WIRE_SIZE - 8)
-    goto malformed;
-  end = 8 + payload_size;
-  while (offset + 8 <= end)
-    {
-      guint32 tag = get_u32 (output, offset);
-      guint32 value = get_u32 (output, offset + 4);
-      offset += 8;
-      if ((tag >> 24) == 1)
-        {
-          if (tag == 0x01000001)
-            status = value;
-        }
-      else if ((tag >> 24) == 2)
-        {
-          if (value > end - offset)
-            goto malformed;
-          if (tag == 0x02010006)
-            *credential_size = value;
-          offset += value;
-        }
-      else
-        goto malformed;
-    }
-  if (offset != end || status != 0 || !*credential_size)
-    goto malformed;
-  return TRUE;
-
-malformed:
-  g_set_error (error, EL721_ERROR, status,
-               "HwVault credential verification failed (status=%u)", status);
-  return FALSE;
-}
-
-static gboolean
 hwvault_restore_credential (struct qcomtee_object *vault,
                             guint8 credential_index, gboolean persistent,
                             GError **error)
@@ -1207,7 +1164,11 @@ hwvault_restore_credential (struct qcomtee_object *vault,
   secure_clear (response, HWVAULT_WIRE_SIZE);
   put_u32 (request, 0, HWVAULT_VERIFY_GET);
   put_u32 (request, 8, 0x0100000e); /* HV_TAG_UPDATE_CRED */
-  put_u32 (request, 12, 0);
+  /* The signed GET and its verifier use the same persistent namespace.
+   * Stock restores indices 0/1 with this flag set, and ordinary index 11
+   * with it clear.  A successful VERIFY_GET alone does not prove that the
+   * subsequent, internal set_cached_cred operation succeeded. */
+  put_u32 (request, 12, persistent ? 1 : 0);
   size = 16;
 #define APPEND_HWVAULT_BYTES(tag_, data_, data_size_) G_STMT_START { \
     put_u32 (request, size, (tag_)); \
@@ -1223,10 +1184,12 @@ hwvault_restore_credential (struct qcomtee_object *vault,
 #undef APPEND_HWVAULT_BYTES
   put_u32 (request, 4, size - 8);
   if (!hwvault_send (vault, request, size, response, error) ||
-      !hwvault_parse_verified_get (response, &verified_credential_size, error))
+      !el721_decode_hwvault_restore (response, HWVAULT_WIRE_SIZE,
+                                     credential_index, persistent,
+                                     &verified_credential_size, error))
     goto out;
-  g_debug ("HwVault restored credential %u (%" G_GSIZE_FORMAT " bytes)",
-           credential_index, verified_credential_size);
+  g_debug ("HwVault cached credential %u (persistent=%u, %" G_GSIZE_FORMAT " bytes)",
+           credential_index, !!persistent, verified_credential_size);
   success = TRUE;
 
 out:
@@ -1277,7 +1240,7 @@ el721_qtee_restore_hwvault (El721Qtee *session, GError **error)
                                      credentials[i].index,
                                      credentials[i].persistent, error))
       goto fail;
-  g_debug ("HwVault K250A context and dualfp key restored");
+  g_debug ("HwVault K250A credentials cached; template encryption still requires EnrollDo validation");
   return TRUE;
 
 fail:

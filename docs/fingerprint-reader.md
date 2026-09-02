@@ -2,12 +2,12 @@
 
 This document describes the experimental infrastructure for the Galaxy Tab S9
 Ultra Wi-Fi's (`SM-X910`) under-display optical reader. Real capture has reached
-17 accepted samples and 100% secure-world coverage. The template-encryption
-blocker is now resolved: Ubuntu reconstructs HwVault's volatile context from
-the tablet's K250A secure element and `dualfp` can derive its key. The remaining
-functional proof is a new physical enrolment followed by same/different-finger
-verification and GDM/PAM testing. The
-[latest checkpoint](#optical-exposure-investigation-2026-09-02)
+17 accepted samples and 100% secure-world coverage, with only two quality
+retries in the latest run. Template encryption is **not resolved**: authenticated
+K250A reads succeed, but HwVault cannot unwrap/cache the encryption root because
+its StrongBox Keymaster context is not configured. Encrypted enrollment,
+same/different-finger verification and GDM/PAM testing remain outstanding. The
+[latest checkpoint](#full-coverage-and-hidden-strongbox-failure-2026-09-02)
 supersedes the historical investigation notes. Capture coverage is not the
 percentage of the complete implementation.
 
@@ -1469,7 +1469,10 @@ is the authenticated credential restore documented next.
 
 ## Authenticated HwVault restore and integrated fprintd
 
-The 2026-09-02 checkpoint closes the template-encryption infrastructure gap:
+This early 2026-09-02 checkpoint established authenticated transport, not usable
+template encryption. The later full-coverage test exposed a hidden cache failure;
+see the latest checkpoint below. Its original claim that the encryption gap was
+closed was incorrect.
 
 - Reverse engineering Samsung's `libese-grdg.so` established the namespace
   selector in the K250A GET APDU: `P1=1` for persistent credentials and `P1=0`
@@ -1674,3 +1677,59 @@ returns to zero while idle. No systemd units failed after this reboot.
 
 Physical enrollment and same/different-finger verification remain outstanding;
 the boot and build checks do not establish improved capture quality.
+
+## Full coverage and hidden StrongBox failure (2026-09-02)
+
+The subsequent `gts9u37` physical test, 17:19:25–17:20:11 UTC, accepted **17
+samples**, reached **100% coverage**, and needed only **two quality retries**.
+This supports the corrected optical exposure/press-time capture path. However,
+the last EnrollDo returned **72**, with **zero encrypted template bytes**;
+EnrollFinal returned zero. `fprintd-list` confirms no saved fingerprint. This is
+not the earlier result-70 capture abort and must not be counted as enrollment.
+
+Static analysis and a bounded, non-biometric Ubuntu diagnostic now establish
+the failure chain:
+
+- `dualfp:getTemplateEncryptionKey` maps HwVault result **7** to EL721 **72**
+  at `0x2f60`; other derivation errors map to 71.
+- HwVault `get_derived_key` requests cached credential 11 (`0xb258`).
+  `get_cached_cred` returns 7 when that cache entry is absent (`0xb054–0xb0a4`).
+- HwVault `VERIFY_GET` returns status zero and credential bytes even if its
+  internal `set_cached_cred` call fails: the handler ignores that return code
+  at `0x9c18–0x9c1c`. The previous success check therefore gave a false positive.
+- The existing One UI trace verifies persistent indices 0/1 with
+  `HV_TAG_UPDATE_CRED=1`, and ordinary index 11 with zero. Ubuntu incorrectly
+  always sent zero. Correcting this gives confirmed cache status zero for 0/1,
+  but does **not** fix index 11.
+- The firmware's textual diagnostic TLVs (`0x02002710`) explicitly report
+  `strongbox_unwrap err -64`, then index-11 cache status **9936**, while outer
+  verification remains zero. Android defines -64 as
+  [`KEYMASTER_NOT_CONFIGURED`](https://android.googlesource.com/platform/hardware/interfaces/+/57b63bd35606007d7f97d2b2098aec2d150859a4/keymaster/4.0/types.hal).
+
+`gts9u38` corrects the namespace flag and fails early unless each authenticated
+GET has a matching successful cache acknowledgement. The check parses only
+bounded status/log TLVs; it never exports credentials, keys or biometric bytes.
+It is an error-detection guard, **not a StrongBox initialization fix**, and still
+requires a successful encrypted EnrollDo before saving a print. There are 21 new
+synthetic restore tests in addition to the existing 11 encrypted-wire tests.
+
+The full ARM64 package build passed all 32 tests; the 21 restore cases also pass
+UndefinedBehaviorSanitizer. Installed package SHA-256:
+`34f190026cabedbe851bff94988d83dd343fe7c660f6007551f4e7f0b8247f9e`.
+The previous `gts9u37` package is retained and hash-verified on the tablet.
+An actual systemd/fprintd `Claim` now rejects the known failure with explicit
+cache status 9936 before enrollment starts. Sensor power and FOD HBM both return
+to zero. This check does not start a capture, overwrite the user's test log,
+write secure-element credentials or reboot the tablet.
+
+The next functional work is the missing StrongBox/Keymaster initialization and
+wrapped-root restore sequence, including the stock `SET_HWVAULT_ROT` step after
+the authenticated GET. A successful GET or BAUTH Prepare is not sufficient
+validation. No new root should be generated, no secure credential should be
+replaced, and no fingerprint/Android credential should be imported. Keep the
+working illumination and capture behavior unchanged while fixing this boundary.
+
+The overall estimate remains approximately **80%**, highly uncertain: physical
+capture improved materially, but encryption was previously overestimated and
+matching/lock-screen use remain untested. No Android boot is needed for this
+diagnosis; the reference logs and signed firmware are already available locally.
