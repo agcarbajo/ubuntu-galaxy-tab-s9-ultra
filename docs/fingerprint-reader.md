@@ -1595,3 +1595,20 @@ requiring Android state or a reboot. The ARM64 build and all 11 protocol tests
 pass; package SHA-256 is
 `edf390dd414e83ab2d0159e91eaa0fdf8d1a893f476b176cf69fbe9957f61c23`.
 It was installed live over `gts9u34` while fprintd was inactive.
+
+The first `gts9u35` diagnostic proved the pre-arm path but rejected long
+contacts: 12 quality retries, four accepted rapid lift-offs and then result 70
+at 8% coverage. Every accepted image occurred when RELEASE arrived while the
+press-time EnrollDo sequence was still running. Thus opcode 4 must remain
+pre-armed, while this Ubuntu touch/sensor path still requires the paired
+release before consuming the buffered image.
+
+Package `gts9u36` splits one secure transaction across the contact. PRESS
+resumes the pre-armed opcode 4 and handles only opcodes 5 and 87 plus their
+measured controls. The driver then leaves that transaction open. Its paired
+RELEASE resumes EnrollDo to obtain opcode 6/0, closes with EnrollFinal, starts
+the next EnrollInit and pre-arms opcode 4 again. The saved compact trace
+reconstructs all three pre-release opcodes across the asynchronous boundary.
+The ARM64 build and all 11 wire tests pass; package SHA-256 is
+`0f107c9585221cf7b42ef98a34e88f4ea86d00e2a64ea1d6990df7af47443881`.
+It was installed live while fprintd and both FOD endpoints were idle.

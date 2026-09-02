@@ -24,7 +24,10 @@ struct _FpiDeviceEl721
   gboolean finger_present;
   gboolean udfps_active;
   gboolean enroll_armed;
+  gboolean enroll_capture_pending;
   guint32 enroll_arm_status;
+  guint32 enroll_notify_status;
+  guint32 enroll_step_status;
   gint64 udfps_refreshed;
   guint64 fod_sequence;
   guint32 opcode;

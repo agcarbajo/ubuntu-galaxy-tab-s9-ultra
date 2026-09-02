@@ -6895,3 +6895,18 @@ opcode-4 status so the split transaction remains visible in Tab Companion.
 The full ARM64 build and 11 wire tests pass; `gts9u35` was installed live with
 SHA-256
 `edf390dd414e83ab2d0159e91eaa0fdf8d1a893f476b176cf69fbe9957f61c23`.
+
+The physical `gts9u35` run returned quality 39 for maintained contacts, then
+accepted four consecutive contacts whose RELEASE occurred while the
+press-time secure sequence was still executing. It finally returned opcode 63
+and fatal result 70 after 12 quality retries, at four accepted samples and 8%
+coverage. This shows that pre-arming opcode 4 is necessary but not sufficient:
+the Ubuntu Goodix path exposes the usable buffered image at RELEASE.
+
+`gts9u36` therefore preserves one transaction across both edges. PRESS handles
+the already-armed continuation through opcodes 5 and 87 and their controls;
+RELEASE resumes the same EnrollDo for its terminal image result. EnrollFinal,
+the next EnrollInit and the next opcode-4 arm still occur only after that
+terminal result. The full ARM64 build and 11 wire tests pass. Package SHA-256
+is `0f107c9585221cf7b42ef98a34e88f4ea86d00e2a64ea1d6990df7af47443881`;
+it was installed live over `gts9u35` with fprintd and FOD idle.
