@@ -7,6 +7,7 @@
 #include "el721.h"
 #include "el721-print-wire.h"
 #include "el721-identify-wire.h"
+#include "el721-match-retry.h"
 
 #include <errno.h>
 #include <stdio.h>
@@ -687,14 +688,14 @@ handle_identify_do (FpiDeviceEl721 *self, GError **error)
   if (reply.result == 39 || reply.result == 41)
     {
       GError *retry = fpi_device_retry_new (FP_DEVICE_RETRY_GENERAL);
+      FpiDeviceAction current = fpi_device_get_current_action (FP_DEVICE (self));
       el721_reply_clear (&reply);
-      /* A rejected capture also needs Final/Init/arm, followed by a new edge. */
-      if (!initialize_identify (self, error))
-        { g_error_free (retry); return FALSE; }
-      if (self->action == EL721_ACTION_VERIFY)
-        fpi_device_verify_report (FP_DEVICE (self), FPI_MATCH_ERROR, NULL, retry);
-      else
-        fpi_device_identify_report (FP_DEVICE (self), NULL, NULL, retry);
+      /* libfprint permits exactly ONE result per action, including retries.
+       * fprintd starts the next action. Rearming here left result_reported set
+       * and made the next physical contact violate that contract. */
+      action_cleanup (self);
+      el721_complete_match_retry (FP_DEVICE (self), current, retry);
+      return TRUE;
     }
   else if (el721_identify_is_no_match (&reply))
     {

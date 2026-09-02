@@ -7,6 +7,8 @@ import St from 'gi://St';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import {sensorGeometry, panelMonitor} from './geometry.js';
+import {ShellUserVerifier} from 'resource:///org/gnome/shell/gdm/util.js';
+import {recoverClosedCancellation} from './authRecovery.js';
 
 const BUS_NAME = 'io.github.agcarbajo.Gts9uFingerprintOverlay';
 const OBJECT_PATH = '/io/github/agcarbajo/Gts9uFingerprintOverlay';
@@ -22,6 +24,11 @@ const INTERFACE = `
 
 export default class Gts9uFingerprintOverlay extends Extension {
     enable() {
+        this._originalCancel = ShellUserVerifier.prototype.cancel;
+        this._recoveryCancel = recoverClosedCancellation(this._originalCancel,
+            error => error.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.CLOSED) ?? false,
+            () => console.log('GTS9U auth: cleared closed GDM verification connection'));
+        ShellUserVerifier.prototype.cancel = this._recoveryCancel;
         this._displayCancellable = new Gio.Cancellable();
         this._panel = null;
         this._active = false;
@@ -80,6 +87,10 @@ export default class Gts9uFingerprintOverlay extends Extension {
     }
 
     disable() {
+        if (ShellUserVerifier.prototype.cancel === this._recoveryCancel)
+            ShellUserVerifier.prototype.cancel = this._originalCancel;
+        this._originalCancel = null;
+        this._recoveryCancel = null;
         this._displayCancellable.cancel();
         this._displayCancellable = null;
         this._panel = null;

@@ -2037,3 +2037,53 @@ Implementation references: [Mutter 46 input transform matrices](https://github.c
 [DisplayConfig applied transforms](https://github.com/GNOME/mutter/blob/46.0/data/dbus-interfaces/org.gnome.Mutter.DisplayConfig.xml),
 [GNOME 46 extension module caching](https://github.com/GNOME/gnome-shell/blob/46.0/js/ui/extensionSystem.js),
 [native GNOME authentication feedback](https://github.com/GNOME/gnome-shell/blob/46.0/js/gdm/util.js).
+
+## Repeated-unlock closed connection and retry lifecycle (2026-09-02)
+
+After logging in again, overlay **8** was confirmed active. Native unlock then
+accepted the enrolled finger, rejected other fingers twice with secure result
+32, and accepted the enrolled finger again. Subsequent repeated lock/resume
+attempts left the unlock prompt unusable, while quick settings, volume and SSH
+still responded. At inspection, fprintd was inactive, sensor power/FOD/touch
+FOD were all zero and the overlay's Visible property was false.
+
+The installed Ubuntu GNOME code identifies the immediate UI failure: each
+`UnlockDialog._ensureAuthPrompt()` reset calls `ShellUserVerifier.cancel()`,
+whose synchronous cancellation throws **Gio.IOErrorEnum.CLOSED** before
+`clear()` runs. The stale verifier is therefore retained and every new gesture
+throws again. This is not evidence of a GPU or secure-processor hang. The
+preflight still succeeded after the suspensions without enabling illumination.
+
+Device **2.40**, overlay **9**, adds a narrow cancellation guard to the existing
+extension. It delegates to GNOME's original cancel method; only a CLOSED error
+with a demonstrably closed verifier connection triggers GNOME's own `clear()`.
+Other errors propagate. It never reports authentication success, unlocks the
+session or changes PAM policy. Disabling the extension restores the original
+method if its wrapper still owns it. Seven offline cases and a real private
+GJS/GIO closed-connection test pass. The running v8 session still needs a
+logout/login before the guard is active; recovery of the real stuck dialog is
+**not yet validated**.
+
+A separate driver contract violation was also found in the earlier greeter
+quality retries: `fpi_device_verify_report` asserted because the driver tried
+to report multiple results for one action. libfprint requires report **then
+complete**, even for retry errors. `gts9u44` powers down/cleans up that action,
+reports one retry and completes it with NULL completion error. fprintd owns the
+next action, instead of the driver silently rearming the already-reported one.
+Two stubbed notification-lifecycle tests exercise five consecutive actions each
+for Verify and Identify, bringing the C suite to **113 passes** with UBSan.
+The 36 geometry and 16 Companion cases also still pass. Physical repeated
+quality retries and repeated lock/suspend remain required tests.
+
+Installed SHA-256 values:
+
+- libfprint gts9u44: `3140de81227db20e43e066f317ddac3c270e51178eb6f92ee90254ab9b633b0f`.
+- Device 2.40: `ce06a231c2e86c2c8528c5c2033d444f516720a01fb17a58e44990c0861c2c35`.
+
+For non-destructive recovery, a new GDM greeter was opened using its normal
+CreateTransientDisplay interface, leaving the original session locked and its
+applications running. It still requires the user's password; no unlock signal
+or authentication bypass was used. No reboot, GDM restart or SPU-owner restart
+was performed. The saved print and three PAM files remained byte-for-byte
+unchanged. This regression means repeat-unlock stability must not be described
+as complete despite the earlier successful single unlocks.
