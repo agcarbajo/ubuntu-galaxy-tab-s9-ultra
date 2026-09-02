@@ -5,5 +5,9 @@ Before=fprintd.service
 
 [Service]
 Type=oneshot
+# HwVault reconstructs its volatile key context from the K250A secure element
+# every time libfprint opens dualfp.  The live-DT SNVM driver must therefore be
+# present before fprintd is allowed to start, including after a cold boot.
+ExecStart=/sbin/modprobe snvm
 ExecStart=/sbin/modprobe qcomtee
 RemainAfterExit=yes
