@@ -255,6 +255,9 @@ action_cleanup (FpiDeviceEl721 *self)
   self->enroll_arm_status = 0;
   self->opcode = 0;
   g_clear_pointer (&self->enroll_user, g_free);
+  el721_gallery_clear (&self->gallery);
+  g_clear_pointer (&self->match_prints, g_ptr_array_unref);
+  self->match_continue = FALSE;
   fpi_device_report_finger_status (FP_DEVICE (self), FP_FINGER_STATUS_NONE);
 }
 
@@ -282,28 +285,16 @@ action_fail (FpiDeviceEl721 *self, GError *error)
 }
 
 static gboolean
-print_data (FpPrint *print, gchar **user, guint32 *template_id,
-            GBytes **opaque, GError **error)
-{
-  g_autoptr(GVariant) data = NULL;
-  if (!print)
-    return FALSE;
-  g_object_get (print, "fpi-data", &data, NULL);
-  return el721_print_unpack (data, user, template_id, opaque, error);
-}
-
-static GByteArray *
-build_gallery (FpiDeviceEl721 *self, GPtrArray **prints_out,
-               gchar **user_out, GError **error)
+build_gallery (FpiDeviceEl721 *self, GError **error)
 {
   FpDevice *device = FP_DEVICE (self);
   FpiDeviceAction current = fpi_device_get_current_action (device);
   GPtrArray *prints = NULL;
   FpPrint *single = NULL;
-  GByteArray *gallery = g_byte_array_new ();
-  g_autofree gchar *gallery_user = NULL;
   guint i;
 
+  el721_gallery_clear (&self->gallery);
+  g_clear_pointer (&self->match_prints, g_ptr_array_unref);
   if (current == FPI_DEVICE_ACTION_VERIFY)
     {
       prints = g_ptr_array_new ();
@@ -315,45 +306,24 @@ build_gallery (FpiDeviceEl721 *self, GPtrArray **prints_out,
       fpi_device_get_identify_data (device, &prints);
       g_ptr_array_ref (prints);
     }
+  self->match_prints = prints;
   for (i = 0; i < prints->len; i++)
     {
-      const guint8 *bytes;
-      gsize size;
-      g_autofree gchar *user = NULL;
-      g_autoptr(GBytes) opaque = NULL;
-      guint32 template_id;
+      g_autoptr(GVariant) data = NULL;
       FpPrint *print = g_ptr_array_index (prints, i);
-      if (!print_data (print, &user, &template_id, &opaque, error))
-        {
-          g_ptr_array_unref (prints);
-          g_byte_array_unref (gallery);
-          return NULL;
-        }
-      bytes = g_bytes_get_data (opaque, &size);
-      if ((gallery_user && !g_str_equal (gallery_user, user)) ||
-          gallery->len >= 0x226000 || size >= 0x226000 - gallery->len)
-        {
-          g_set_error_literal (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_DATA_INVALID,
-                               "EL721 gallery has mixed identities or is too large");
-          g_ptr_array_unref (prints);
-          g_byte_array_unref (gallery);
-          return NULL;
-        }
-      if (!gallery_user)
-        gallery_user = g_strdup (user);
-      g_byte_array_append (gallery, bytes, size);
+      if (print)
+        g_object_get (print, "fpi-data", &data, NULL);
+      /* Validate every entry before any secure import or optical activation. */
+      if (!el721_gallery_add (&self->gallery, data, error))
+        return FALSE;
     }
   if (!prints->len)
     {
       g_set_error_literal (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_DATA_NOT_FOUND,
                            "no EL721 templates supplied");
-      g_ptr_array_unref (prints);
-      g_byte_array_unref (gallery);
-      return NULL;
+      return FALSE;
     }
-  *user_out = g_steal_pointer (&gallery_user);
-  *prints_out = prints;
-  return gallery;
+  return TRUE;
 }
 
 static void poll_action (FpDevice *device, gpointer user_data);
@@ -367,43 +337,18 @@ schedule_poll (FpiDeviceEl721 *self)
   g_source_ref (self->poll_source);
 }
 
-static FpPrint *
-find_print (GPtrArray *prints, guint32 template_id)
-{
-  guint i;
-  for (i = 0; i < prints->len; i++)
-    {
-      g_autofree gchar *user = NULL;
-      g_autoptr(GBytes) opaque = NULL;
-      guint32 candidate;
-      if (print_data (g_ptr_array_index (prints, i), &user, &candidate, &opaque, NULL) &&
-          candidate == template_id)
-        return g_ptr_array_index (prints, i);
-    }
-  return NULL;
-}
-
 static void
 finish_identify (FpiDeviceEl721 *self, guint32 template_id)
 {
   FpDevice *device = FP_DEVICE (self);
   FpiDeviceAction current = fpi_device_get_current_action (device);
-  GPtrArray *prints = NULL;
-  FpPrint *verify_print = NULL;
-  FpPrint *match = NULL;
+  g_autoptr(FpPrint) match = NULL;
 
-  if (current == FPI_DEVICE_ACTION_VERIFY)
-    {
-      prints = g_ptr_array_new ();
-      fpi_device_get_verify_data (device, &verify_print);
-      g_ptr_array_add (prints, verify_print);
-    }
-  else
-    {
-      fpi_device_get_identify_data (device, &prints);
-      g_ptr_array_ref (prints);
-    }
-  match = find_print (prints, template_id);
+  /* Different prints may share a secure slot. Never search the whole gallery
+   * by slot: only the identity/entry loaded for this capture can have matched. */
+  if (el721_gallery_matches_current (&self->gallery, template_id))
+    match = g_object_ref (g_ptr_array_index (self->match_prints,
+                                            self->gallery.current));
   /* The capture path already required IdentifyFinal to succeed. */
   action_cleanup (self);
   if (current == FPI_DEVICE_ACTION_VERIFY)
@@ -417,7 +362,6 @@ finish_identify (FpiDeviceEl721 *self, guint32 template_id)
       fpi_device_identify_report (device, match, match, NULL);
       fpi_device_identify_complete (device, NULL);
     }
-  g_ptr_array_unref (prints);
 }
 
 static gboolean
@@ -718,8 +662,9 @@ handle_identify_do (FpiDeviceEl721 *self, GError **error)
     }
   if (!el721_qtee_identify_final (self->qtee, &final, error))
     goto fail;
-  g_message ("EL721 verify result=%u final=%u matched_slot=%u score=%u steps=%s",
-             reply.result, final.result, reply.template_id, reply.quality, steps->str);
+  g_message ("EL721 verify result=%u final=%u matched_slot=%u score=%u steps=%s candidate=%u/%u",
+             reply.result, final.result, reply.template_id, reply.quality, steps->str,
+             self->gallery.current + 1, self->gallery.entries->len);
   if (final.result)
     {
       g_set_error (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_GENERAL,
@@ -742,6 +687,16 @@ handle_identify_do (FpiDeviceEl721 *self, GError **error)
   else if (el721_identify_is_no_match (&reply))
     {
       el721_reply_clear (&reply);
+      if (el721_gallery_next (&self->gallery))
+        {
+          if (!initialize_identify (self, error))
+            return FALSE;
+          /* One result for the entire libfprint action, not for each entry.
+           * Continue with a fresh secure capture on the next poll, provided
+           * the target is still visible and the finger is still present. */
+          self->match_continue = TRUE;
+          return TRUE;
+        }
       finish_identify (self, 0);
       return TRUE;
     }
@@ -755,6 +710,12 @@ handle_identify_do (FpiDeviceEl721 *self, GError **error)
     {
       guint32 template_id = reply.template_id;
       el721_reply_clear (&reply);
+      if (!el721_gallery_matches_current (&self->gallery, template_id))
+        {
+          g_set_error_literal (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_DATA_INVALID,
+                               "EL721 match returned a slot outside the loaded identity");
+          return FALSE;
+        }
       finish_identify (self, template_id);
       return TRUE;
     }
@@ -908,6 +869,17 @@ poll_action (FpDevice *device, gpointer user_data)
         }
       if (self->action == EL721_ACTION_NONE)
         return;
+      if (self->match_continue)
+        {
+          self->match_continue = FALSE;
+          /* HBM is already settled. Yield between independent captures so
+           * cancel, touch release, UI inhibition and the watchdog are checked.
+           * A release cancels this deadline; the new entry then waits for a
+           * new PRESS, without requiring a second touch if the finger stayed. */
+          self->capture_deadline = g_get_monotonic_time () + EL721_POLL_MS * 1000;
+          schedule_poll (self);
+          return;
+        }
       /* Enrollment may remain active for the next sample. A held finger
        * must not keep HBM on or trigger another capture without a new edge. */
       if (!udfps_light (self, FALSE, &error))
@@ -935,7 +907,8 @@ template_slot_for_finger (FpFinger finger)
   /* BAUTH exposes four template slots, whereas FpFinger numbers the ten
    * anatomical fingers from 1 to 10.  Keep the mapping stable so a template
    * stored by fprintd carries the same secure-world identifier when reloaded.
-   * The four-print limit and collision handling remain integration work. */
+   * Each print has its own identity and is imported separately for matching;
+   * a slot is never used as a global gallery index. */
   if (finger == FP_FINGER_UNKNOWN)
     return 1;
   return ((guint32) finger - 1) % 4 + 1;
@@ -994,16 +967,22 @@ el721_enroll (FpDevice *device)
 static gboolean
 initialize_identify (FpiDeviceEl721 *self, GError **error)
 {
-  g_autoptr(GByteArray) gallery = NULL;
-  g_autoptr(GPtrArray) prints = NULL;
-  g_autofree gchar *user = NULL;
+  const El721GalleryEntry *entry = el721_gallery_current (&self->gallery);
+  const guint8 *bytes;
+  gsize size;
   El721Reply reply = { 0 };
   gboolean ok = FALSE;
   guint32 initial;
-  gallery = build_gallery (self, &prints, &user, error);
-  if (!gallery ||
-      !el721_qtee_identify_init (self->qtee, (guint8 *) user, strlen (user),
-                                 gallery->data, gallery->len, NULL, 0,
+  if (!entry)
+    {
+      g_set_error_literal (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_DATA_NOT_FOUND,
+                           "no EL721 candidate to import");
+      goto out;
+    }
+  bytes = g_bytes_get_data (entry->opaque, &size);
+  if (!el721_qtee_identify_init (self->qtee,
+                                 (const guint8 *) entry->identity, strlen (entry->identity),
+                                 bytes, size, NULL, 0,
                                  &reply, error))
     goto out;
   if (reply.result)
@@ -1040,7 +1019,7 @@ start_identify (FpDevice *device)
   FpiDeviceEl721 *self = FPI_DEVICE_EL721 (device);
   g_autoptr(GError) error = NULL;
   FpiDeviceAction current = fpi_device_get_current_action (device);
-  if (!operation_prepare (self, &error) ||
+  if (!build_gallery (self, &error) || !operation_prepare (self, &error) ||
       !initialize_identify (self, &error) || !udfps_begin (self, &error))
     {
       El721Reply reply = { 0 };

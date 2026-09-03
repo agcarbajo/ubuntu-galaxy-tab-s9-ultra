@@ -2372,3 +2372,56 @@ confirmation. Remaining checkpoints are native GNOME Settings enrollment from
 scratch, validation of the guard and continued touch stability, and safe
 production SPU startup followed by a controlled Ubuntu-only reboot. Do not call
 the feature boot-independent while the secure DMA/listener owner is transient.
+
+## Native enrollment and independent matching identities (2026-09-03)
+
+The user successfully enrolled a second finger through GNOME Settings. The
+journal confirms 17 accepted samples, 100% coverage, a successful EnrollFinal
+and a saved 844,630-byte encrypted payload. The previous 848,262-byte payload
+remains unchanged. Lock-screen identification then failed before arming with
+`EL721 gallery has mixed identities or is too large`.
+
+This was a driver bug, not a missing GNOME overlay. Each enrollment deliberately
+uses a separately generated, persisted identity authenticated with the encrypted
+print. The old matcher required every gallery entry to have the same identity
+and concatenated their ciphertexts into one IdentifyInit request. That cannot
+work for independently enrolled prints: IdentifyInit accepts only one identity.
+Read-only metadata inspection confirmed two different identities and secure
+slots 3 and 2. No identity or biometric bytes were logged or published.
+
+**libfprint gts9u47** validates all supplied records, then imports and verifies
+each print independently using its original identity and ciphertext. Only an
+explicit secure no-match plus successful IdentifyFinal advances to the next
+entry. A match is attributed exclusively to the currently loaded entry, never
+to the first gallery print with the same slot. This also avoids ambiguity when
+different fingers map to the same one of the four secure slot numbers.
+
+The next candidate gets a fresh secure capture, not a reused image or a fabricated
+match. With the finger still down, the already-settled light remains on and the
+driver yields before capturing again. Cancellation, contact release, UI
+inhibition and watchdog checks run between candidates. If the finger lifts,
+the remaining candidate waits for a new contact. Only one terminal result is
+reported to libfprint: success for a securely matched supplied print, normal
+non-match after exhausting the gallery, or an unchanged quality retry/error.
+Encrypted records, enrollment identities and PAM configuration are not migrated
+or rewritten. Matching several stored fingers can require a longer held touch.
+
+Validation includes nine new offline tests for independent identity/payload
+lifetime, slot collisions, ten synthetic entries exceeding the aggregate TA
+packet size, sticky exhaustion, invalid data, cleanup, held/released contacts
+and cleared illumination deadlines. These and the preceding 136 C checks pass
+under UBSan; the ARM64 package builds successfully. Synthetic ten-print tests
+are not a claim of physical ten-finger validation.
+
+Package SHA-256:
+`526a5082ddbb0ef13c68642e2050ada7b52516cd0d7649d581930a5fb09bfb98`.
+Deployment backed up both prints and verified them byte-for-byte afterward,
+with unchanged PAM, SPU owner, GDM and user Shell. No reboot or logout occurred.
+Bounded live fprintd tests successfully armed the newly enrolled finger, the
+original finger and `any` mode, with a visible passive target, HBM off before
+contact, and all hardware flags/operation lease cleared on cancellation.
+Physical matching against the new two-print gallery remains the next user test.
+
+The estimate remains approximately **95%** pending that validation and the
+remaining production-startup/stability checkpoints. Native enrollment is now
+confirmed; full cold-start independence is still not claimed.
