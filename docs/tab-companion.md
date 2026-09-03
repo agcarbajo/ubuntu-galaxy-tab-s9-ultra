@@ -21,23 +21,59 @@ the window is closed.
   port's base utility to the special keys that have no native function in
   GNOME.
 
-## Fingerprint test
+## Fingerprint settings (1.2.0)
 
-The Info page contains a user-started, time-bounded fingerprint test. It shows
-the remaining time, TrustZone coverage, accepted samples, quality retries and
-the final secure result while the capture is running. Escape and the Stop
-button cancel the fprintd client; fprintd then closes the partial transaction
-and the panel, touch and sensor-power states return to idle. A run that reaches
-100% is a normal right-index enrolment and is saved; a timeout or cancellation
-saves no partial print.
+The **Fingerprint** tab replaces Info. Version/kernel details live in the
+header's About window. The settings page lists the current user's system
+fingerprints, offers the ten anatomical finger names, adds only unused names,
+and deletes one selected print after explicit confirmation. It uses the same
+fprintd D-Bus API and encrypted storage as Ubuntu Settings, GDM and the lock
+screen. No separate biometric store, privileged helper or PAM policy is added.
+An inline link opens `gnome-control-center system users`.
 
-Each run writes JSON Lines under
-`~/.local/state/tab-companion/fingerprint-tests/`. `latest.jsonl` always holds
-the most recent run, while timestamped files preserve older comparisons. The
-log contains only aggregate protocol results and UI events; no fingerprint
-image, template bytes or credential is exposed. The EL721 driver emits one
-compact record per physical sample so diagnosis does not require globally
-enabling GLib debug output.
+Enrollment shows secure aggregate coverage, actual accepted samples, estimated
+remaining placements and quality guidance. The EL721 currently usually needs
+17 accepted placements. This is an estimate, not fprintd's 18 processing stages:
+one placement can advance multiple stages. If the journal is unavailable, the
+UI explicitly labels native processing stages rather than inventing a count.
+
+There is no duration selector or fixed session limit. An enrollment or scan
+cancels after **30 seconds without a new contact**. Device finger-present edges
+(and matching fprintd-PID EL721 contact records) renew that interval, including
+poor-quality contacts. Progress messages and candidate changes do not renew it.
+Only the final ten seconds display a countdown. Escape, Cancel, window close
+and screen lock also stop the operation. Blocking D-Bus calls are isolated in a
+worker process, with a bounded termination fallback.
+
+Claims exist only during an explicit operation, never while browsing the list.
+Stop/Release and closing the private worker bus connection free the reader on
+success, failure and cancellation. Adding rechecks the list after Claim, so a
+concurrent addition in Ubuntu cannot silently be replaced. Lists refresh after
+operations and on returning to the tab/window; a Refresh button is also present.
+Close GNOME's own fingerprint dialog before starting a Companion operation:
+GNOME 46 keeps its claim while that dialog is open.
+
+**Named scanning on Ubuntu 24.04:** fprintd 1.94.3 exposes VerifyStatus and
+VerifyFingerSelected but not the newer VerifyFingerMatched signal. Companion
+therefore verifies each enrolled finger by its explicit name and only labels a
+finger after a terminal fprintd match. A non-match advances to the next name;
+the UI may ask the user to lift and touch again. An error is not a non-match.
+This app-only procedure does not alter GNOME's VerifyStart("any") or libfprint.
+No identity is inferred from secure slot numbers or journal output.
+
+Logs remain in `~/.local/state/tab-companion/fingerprint-tests/`, including
+`latest.jsonl` and timestamped files (0600). They contain UI events, finger
+labels and whitelisted aggregate counters, never templates, images, secure
+identities or credentials. List refreshes do not overwrite the last operation.
+Cancelled and failed runs are retained. A collapsed Diagnostics section keeps
+the main page focused on settings.
+
+Validation: private-bus integration tests cover list without Claim, named
+matches, full-gallery rejection, enrollment, duplicate protection, single-print
+deletion, cancellation, inactivity and release. Real tablet tests cover list,
+scan arming, Cancel and a no-contact timeout (~30 seconds plus cleanup). Real
+physical enrollment/matching through the new UI still needs the user's finger;
+synthetic success is not hardware validation.
 
 ## S Pen
 
@@ -225,9 +261,9 @@ Two entries are not actions on hardware. "Do nothing" is the default for S Pen
 gestures and leaves the event unhandled. "Keep the default action" exists only
 for keyboard keys, where there is a base utility worth falling back to.
 
-## Fingerprint diagnostics
+## Historical fingerprint diagnostics (1.1.5, replaced by 1.2.0)
 
-In Info, version 1.1.5 offers **Verify saved fingerprint** (default) and
+In the former Info page, version 1.1.5 offered **Verify saved fingerprint** (default) and
 **Enroll / replace fingerprint**. Both are user-started, time-bounded and stop
 with Escape. Enrollment targets the right-index slot and replaces that print
 only on completion. Verification uses the saved print without enrolling or

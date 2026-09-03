@@ -2,8 +2,8 @@
 <component type="desktop-application">
   <id>io.github.agcarbajo.TabCompanion</id>
   <name>Tab Companion</name>
-  <summary>Configure the S Pen and cover keyboard</summary>
-  <summary xml:lang="es">Configura el S Pen y la funda con teclado</summary>
+  <summary>Configure the S Pen, keyboard and fingerprints</summary>
+  <summary xml:lang="es">Configura el S Pen, el teclado y las huellas</summary>
   <summary xml:lang="fr">Configurer le S Pen et le clavier de couverture</summary>
   <summary xml:lang="de">S Pen und Tastatur-Cover einrichten</summary>
   <summary xml:lang="it">Configura la S Pen e la cover con tastiera</summary>
@@ -18,6 +18,9 @@
   <launchable type="desktop-id">io.github.agcarbajo.TabCompanion.desktop</launchable>
   <url type="homepage">https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra</url>
   <releases>
+    <release version="1.2.0" date="2026-09-03">
+      <description><p>Replaces the diagnostic Info tab with shared-system fingerprint settings: ten finger choices, confirmed deletion, named scanning, live enrollment feedback and a renewable 30-second inactivity limit. Releases the reader between operations and links to Ubuntu Settings.</p></description>
+    </release>
     <release version="1.1.5" date="2026-09-02">
       <description><p>Add bounded verification of the saved fingerprint with explicit match, non-match and error feedback, without re-enrollment.</p></description>
     </release>

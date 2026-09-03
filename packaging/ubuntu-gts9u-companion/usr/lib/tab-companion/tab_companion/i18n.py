@@ -5,6 +5,7 @@ import gettext
 import os
 
 from .translations import LANGUAGE_INDEX, TRANSLATIONS
+from .fingerprint_translations import ES as FINGERPRINT_ES
 
 
 DOMAIN = "ubuntu-gts9u-companion"
@@ -24,6 +25,8 @@ def _(message):
     translated = _translation.gettext(message)
     if translated != message:
         return translated
+    if _language == "es" and message in FINGERPRINT_ES:
+        return FINGERPRINT_ES[message]
     index = LANGUAGE_INDEX.get(_language)
     values = TRANSLATIONS.get(message)
     return values[index] if index is not None and values is not None else message
