@@ -7,14 +7,15 @@ prepared Ubuntu session. The user confirmed repeated correct acceptance and
 rejection; the corresponding journal contains three matches and four secure
 non-matches. Native GNOME screen unlock also succeeded, and after the v9
 cancellation fix the user reports repeated successful tests across rotations.
-The user has also confirmed GDM login and portrait keyboard overlap handling.
-Intermittent post-login touch failure and automatic password-keyboard opening
-are the current regression checkpoint; production startup remains unfinished. The
-[latest checkpoint](#authentication-keyboard-and-passive-overlay-2026-09-03)
+The user has also confirmed GDM login, automatic password-keyboard opening and
+portrait keyboard overlap handling. An intermittent single-touch failure was
+recovered by restarting GNOME, but its trigger is still unproven. Production
+startup remains unfinished. The
+[latest checkpoint](#native-ui-validation-and-targetless-keyboard-events-2026-09-03)
 supersedes historical investigation notes below, including older encryption
 failures and estimates.
 
-Current assessment: approximately **94% of the end-to-end feature**. This is
+Current assessment: approximately **95% of the end-to-end feature**. This is
 an uncertain engineering estimate, not a test pass rate or a security benchmark.
 The working SPU listener/DMA owner remains a transient diagnostic service; its
 startup must still be made persistent and safe across reset/suspend. Do not stop
@@ -2331,3 +2332,43 @@ the cover, manual dismissal/return of fingerprint, and repeated GDM logins with
 ordinary desktop touch afterward. Preserve a failing session for diagnostics.
 The approximately **94%** estimate is unchanged until these regressions and
 the native Settings/production-startup checkpoints are validated.
+
+## Native UI validation and targetless keyboard events (2026-09-03)
+
+The user reports that the v13 integration now works well. The corresponding
+journal shows **four secure matches and five normal non-matches**, including
+two successful fingerprint GDM logins. It also records native keyboard fallback
+activation/deactivation and reader inhibition/resumption around UI availability.
+At the final desktop snapshot there was no modal grab, keyboard-policy failure,
+visible target, operation lease or active sensor/panel/touch FOD state. The
+original SPU owner remained alive and no system service was failed.
+
+One additional GNOME exception appeared during those otherwise successful tests:
+`Argument descendant may not be null`, from KeyboardManager `maybeHandleEvent`
+at `keyboard.js:1165`, called by native modal and unlock dialogs. The installed
+GNOME implementation calls `keyboardBox.contains(actor)` without handling a
+null result from `stage.get_event_actor(event)`. This is a confirmed exception
+path, **not proof of the cause of the earlier intermittent single-touch failure**.
+
+**Device 2.45 / overlay 14** adds a reversible guard around that native keyboard
+method. With an existing keyboard but no event actor, it returns **not handled**
+so normal event propagation continues. Events with real targets retain the
+original handler, including extended keys; unrelated errors still propagate.
+It neither completes authentication nor clears grabs or injects input.
+`GetDiagnostics` gains a counter of targetless keyboard events. Ten regression
+cases cover the null-target failure, normal/extended-key dispatch, no-keyboard
+early return, unrelated failures and restoration/ownership of the method.
+All earlier geometry, UI-policy, broker and Companion tests still pass.
+
+Device 2.45 SHA-256:
+`3365084d76c144097f1dd516af7ec9eaaa3969360388ca26c2d24a1f7e3c673f`.
+The package is installed without restarting the user's working session; overlay
+14 loads on the next fresh Shell. The current successful physical tests exercised
+v13, **not the new guard**. Stored print, PAM, SPU owner and graphical processes
+are preserved by deployment checks.
+
+The engineering estimate advances to approximately **95%** with the physical UI
+confirmation. Remaining checkpoints are native GNOME Settings enrollment from
+scratch, validation of the guard and continued touch stability, and safe
+production SPU startup followed by a controlled Ubuntu-only reboot. Do not call
+the feature boot-independent while the secure DMA/listener owner is transient.

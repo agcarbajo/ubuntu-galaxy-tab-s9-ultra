@@ -12,6 +12,7 @@ import {recoverClosedCancellation} from './authRecovery.js';
 import {visualState} from './visualState.js';
 import {keyboardCovers} from './keyboardGuard.js';
 import {AuthKeyboard, isTypingKeyboard} from './authKeyboard.js';
+import {KeyboardEventGuard} from './keyboardEvents.js';
 import {getLoginManager} from 'resource:///org/gnome/shell/misc/loginManager.js';
 
 const BUS_NAME = 'io.github.agcarbajo.Gts9uFingerprintOverlay';
@@ -45,6 +46,8 @@ export default class Gts9uFingerprintOverlay extends Extension {
         this._uiPending = false;
         this._uiLastSent = null;
         this._feedbackUntil = 0;
+        this._keyboardEventGuard = new KeyboardEventGuard(Main.keyboard,
+            event => global.stage.get_event_actor(event));
         this._enableAuthKeyboard();
         const lifetime = this._displayCancellable;
         getLoginManager().getCurrentSessionProxy().then(session => {
@@ -129,6 +132,8 @@ export default class Gts9uFingerprintOverlay extends Extension {
     }
 
     disable() {
+        this._keyboardEventGuard?.destroy();
+        this._keyboardEventGuard = null;
         if (ShellUserVerifier.prototype.cancel === this._recoveryCancel)
             ShellUserVerifier.prototype.cancel = this._originalCancel;
         this._originalCancel = null;
@@ -402,7 +407,7 @@ export default class Gts9uFingerprintOverlay extends Extension {
         // Read-only state for intermittent post-login input failures. No key
         // contents, finger images, credentials, user names or auth answers.
         return JSON.stringify({
-            version: 13,
+            version: 14,
             sessionActive: Boolean(this._session?.Active),
             greeter: Boolean(Main.sessionMode.isGreeter),
             locked: Boolean(Main.screenShield?.locked),
@@ -412,6 +417,7 @@ export default class Gts9uFingerprintOverlay extends Extension {
             physicalKeyboard: this._physicalKeyboard,
             keyboardFallback: this._authKeyboard?.fallback ?? false,
             keyboardFailed: this._keyboardFailed,
+            targetlessKeyboardEvents: this._keyboardEventGuard?.targetlessEvents ?? 0,
             keyboardExists: Boolean(Main.keyboard.keyboardActor),
             keyboardVisible: Boolean(Main.keyboard.visible),
             active: this._active,
