@@ -1,12 +1,12 @@
 #!/bin/bash
 # Noble daemon plus one additive, claim-private matched-finger signal.
-# Reuse Ubuntu's runtime packaging; do not build or install a PAM module.
+# Reuse Ubuntu's runtime packaging and pair its unchanged PAM module.
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
 base=${UBUNTU_WORKDIR:-/root/ubuntu-gts9u}
 buildroot=${BUILDROOT_DIR:-$base/buildroot}
 out=${DEB_OUT_DIR:-$base/out/packages}
-version=1.94.3-1+gts9u1
+version=$(cat "$repo/packaging/fprintd/version")
 cache=$base/cache/fprintd-matched
 mkdir -p "$cache" "$out" "$buildroot/build"
 
@@ -61,4 +61,5 @@ dpkg-deb --root-owner-group --build "$stage" "$deb"
 readelf -h "$stage/usr/libexec/fprintd" | grep Machine
 dpkg-deb --info "$deb"
 sha256sum "$deb"
+bash "$repo/scripts/build-fprintd-pam-package.sh" "$deb"
 printf 'Build retained for inspection: %s\n' "$task"
