@@ -36,7 +36,7 @@ class FingerprintPage(Adw.PreferencesPage):
 
         intro = Adw.PreferencesGroup(title=_("Fingerprint"))
         link = Gtk.Label(xalign=0, wrap=True, use_markup=True)
-        link.set_markup(_("You can also manage these same fingerprints in <a href=\"ubuntu-settings\">Ubuntu Settings</a>."))
+        link.set_markup(_("You can also manage these settings from <a href=\"ubuntu-settings\">Ubuntu Settings</a>."))
         link.connect("activate-link", self.open_settings)
         intro.add(link)
         self.add(intro)

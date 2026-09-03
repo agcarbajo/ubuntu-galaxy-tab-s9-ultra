@@ -2,7 +2,7 @@
 """Spanish catalogue for the shared-system fingerprint settings page."""
 ES = {
     "Fingerprint": "Huella",
-    "You can also manage these same fingerprints in <a href=\"ubuntu-settings\">Ubuntu Settings</a>.": "También puedes gestionar estas mismas huellas desde los <a href=\"ubuntu-settings\">ajustes de Ubuntu</a>.",
+    "You can also manage these settings from <a href=\"ubuntu-settings\">Ubuntu Settings</a>.": "También puedes gestionar estos ajustes desde la <a href=\"ubuntu-settings\">configuración de Ubuntu</a>.",
     "Saved fingerprints": "Huellas registradas",
     "Add fingerprint": "Añadir huella",
     "Test fingerprints": "Probar huellas",
