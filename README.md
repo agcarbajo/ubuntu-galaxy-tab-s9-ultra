@@ -35,6 +35,7 @@ Ubuntu 24.04 LTS arm64 for the Samsung Galaxy Tab S9 Ultra Wi-Fi
 | Cameras and flash | ✅ | Four cameras, autofocus and flashlight work; colour tuning remains a future improvement |
 | Fingerprint reader | ✅ | Working for login and enrolment in Ubuntu Settings or Tab Companion |
 | Ambient light sensor | ❌ | Currently not working |
+| NPU | ❌ | Currently not working |
 | Waydroid | ❓ | Not tested |
 
 ✅ working on the physical tablet · 🟡 experimental or partially validated ·
