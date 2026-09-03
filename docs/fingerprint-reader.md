@@ -7,9 +7,10 @@ prepared Ubuntu session. The user confirmed repeated correct acceptance and
 rejection; the corresponding journal contains three matches and four secure
 non-matches. Native GNOME screen unlock also succeeded, and after the v9
 cancellation fix the user reports repeated successful tests across rotations.
-System startup, greeter login and the remaining optical UX still need integration
-and physical validation. The
-[latest checkpoint](#keyboard-inhibition-and-gdm-integration-2026-09-03)
+The user has also confirmed GDM login and portrait keyboard overlap handling.
+Intermittent post-login touch failure and automatic password-keyboard opening
+are the current regression checkpoint; production startup remains unfinished. The
+[latest checkpoint](#authentication-keyboard-and-passive-overlay-2026-09-03)
 supersedes historical investigation notes below, including older encryption
 failures and estimates.
 
@@ -2238,3 +2239,95 @@ GNOME Settings from scratch. The final separate task is production SPU startup
 and a controlled Ubuntu reboot; the diagnostic DMA/listener owner is still
 required and must not be restarted independently. The overall estimate remains
 approximately **94%**, pending real UI and cold-start validation.
+
+## Authentication keyboard and passive overlay (2026-09-03)
+
+The user physically validated **GDM fingerprint login**, hiding the portrait
+target when the native keyboard covers it, and successful fingerprint use after
+dismissing that keyboard. Two regressions remain: one GDM login left the desktop
+unresponsive to touch, and the lock-screen keyboard did not open automatically
+without the cover unless accessibility forced it on.
+
+Read-only inspection after the report found sensor power, panel FOD and touch
+FOD all zero, no operation lease, zero active multitouch slots and a hidden
+overlay. The active user Shell held the touch device; the inactive GDM Shell
+did not. No relevant touch-controller or extension exception was found in the
+examined interval. **This does not establish the cause of the intermittent
+failure.** The user subsequently confirmed that multi-finger gestures still
+worked while single-finger touches did not. A passive touch-only observation
+received 1,462 frames; disabling the overlay and briefly switching away from
+the graphical VT and back did not restore single touch. All physical touch
+slots were idle afterward, and the pen was not in proximity. With the user's
+approval, a normal logout/login recovered single touch. **This demonstrates
+recovery after restarting GNOME, not a permanent fix or the triggering cause.**
+No controller reset, Ubuntu reboot, Android boot, SPU restart or auth-grab removal
+was performed.
+
+The installed Ubuntu GNOME 46 KeyboardManager requires both seat touch mode and
+a last-device touchscreen hint for automatic OSK activation. Goodix consumes
+fingerprint contacts before Mutter, so a fingerprint touch cannot provide that
+hint. The initial **device 2.43 / overlay 12** live diagnostic also found
+`touchMode=false` and `physicalKeyboard=false` despite the attached cover being
+present in sysfs. A compositor-only inventory is insufficient when Companion
+grabs/forwards the cover. **Device 2.44 / overlay 13** therefore adds a narrowly
+scoped fallback to the existing native keyboard policy:
+
+- Only an active local authentication screen on the tablet's recognized panel
+  without a physical typing keyboard gets the additional enable predicate.
+  It supplements the read in KeyboardManager's own private Settings instance;
+  it never writes the accessibility preference or changes the shared Clutter
+  seat. Native automatic touch behavior and explicit accessibility remain intact.
+- Physical typing capabilities are read from sysfs, excluding only Companion's
+  identified permanent forwarding device. Power/lid keys are not keyboards;
+  Bluetooth keyboards are not excluded merely for using virtual UHID paths.
+  Unknown physical-device metadata does not force a keyboard. The complete
+  kernel inventory is refreshed on device events and once per second, including
+  real keyboards that Mutter may not expose in its own device list.
+- An already-focused text entry receives one native keyboard focus refresh on
+  activation. Polling never repeatedly opens an intentionally dismissed OSK.
+  Seat handoff, keyboard attachment and extension disable remove the fallback;
+  native authentication is neither answered nor modified.
+- A native keyboard API error restores the original hint and logs once without
+  stopping the fingerprint panel poll or availability lease.
+
+The fingerprint target is now **non-reactive** and excluded from the Shell
+input region, just like its shade and feedback. Goodix remains responsible for
+consuming sensor contacts. Showing the target no longer closes Quick Settings
+or the overview. These are defensive input-isolation changes, **not a proven
+fix for the reported whole-screen touch failure**.
+
+A read-only `GetDiagnostics` method on the existing overlay session-bus object
+reports session/lock state, native modal count, touch mode, physical-keyboard
+detection, OSK state and overlay visibility/reactivity. It exposes no entry text,
+finger images, templates, credentials or authentication answers. While the
+failure is present, collect this snapshot together with touch slots, FOD flags
+and the journal before logging out:
+
+```sh
+gdbus call --session --dest io.github.agcarbajo.Gts9uFingerprintOverlay \
+  --object-path /io/github/agcarbajo/Gts9uFingerprintOverlay \
+  --method io.github.agcarbajo.Gts9uFingerprintOverlay.GetDiagnostics
+```
+
+Validation: 48 keyboard policy/lifecycle checks; existing 75 overlap, 36 geometry,
+13 visual lease, seven cancellation recovery, 12 overlay transition, five
+feedback, eight broker and 16 Companion tests pass. Additional checks cover the
+passive target, absence of menu/overview mutations, diagnostics and keyboard
+failure isolation, plus five kernel-inventory/hotplug paths. A standalone GJS
+probe on the tablet verified required Clutter APIs, real input capability parsing
+(one attached physical keyboard), policy activation/restoration on a real
+Gio.Settings object and unchanged stored preference. These are **not live GNOME
+rendering tests**.
+
+Device 2.44 SHA-256:
+`c0df8e6f0e2cbfa503d3875ed611dae0556322ce377d0f1d14265948b906adcf`.
+The driver remains gts9u46. A fresh Shell via logout/login is required to load
+overlay 13. Deployment verified unchanged saved print/PAM files and preserved
+SPU/GDM/Shell processes. The user then authorized a fresh graphical session;
+the new GDM Shell reports **v13**, an active greeter session, **physical keyboard
+present**, no policy error and a non-reactive hidden target while idle. The
+next physical test is automatic native keyboard opening without
+the cover, manual dismissal/return of fingerprint, and repeated GDM logins with
+ordinary desktop touch afterward. Preserve a failing session for diagnostics.
+The approximately **94%** estimate is unchanged until these regressions and
+the native Settings/production-startup checkpoints are validated.

@@ -11,6 +11,7 @@ import {ShellUserVerifier} from 'resource:///org/gnome/shell/gdm/util.js';
 import {recoverClosedCancellation} from './authRecovery.js';
 import {visualState} from './visualState.js';
 import {keyboardCovers} from './keyboardGuard.js';
+import {AuthKeyboard, isTypingKeyboard} from './authKeyboard.js';
 import {getLoginManager} from 'resource:///org/gnome/shell/misc/loginManager.js';
 
 const BUS_NAME = 'io.github.agcarbajo.Gts9uFingerprintOverlay';
@@ -24,6 +25,7 @@ const INTERFACE = `
   <interface name="io.github.agcarbajo.Gts9uFingerprintOverlay">
     <method name="Show"/>
     <method name="Hide"/>
+    <method name="GetDiagnostics"><arg type="s" direction="out"/></method>
     <property name="Visible" type="b" access="read"/>
   </interface>
 </node>`;
@@ -43,6 +45,7 @@ export default class Gts9uFingerprintOverlay extends Extension {
         this._uiPending = false;
         this._uiLastSent = null;
         this._feedbackUntil = 0;
+        this._enableAuthKeyboard();
         const lifetime = this._displayCancellable;
         getLoginManager().getCurrentSessionProxy().then(session => {
             if (this._displayCancellable === lifetime)
@@ -66,7 +69,7 @@ export default class Gts9uFingerprintOverlay extends Extension {
         this._actor = new St.Bin({
             style_class: 'gts9u-fingerprint-waiting',
             child: this._icon,
-            reactive: true,
+            reactive: false,
             visible: false,
         });
         this._feedback = new St.Label({
@@ -74,16 +77,16 @@ export default class Gts9uFingerprintOverlay extends Extension {
             reactive: false, visible: false,
         });
         this._feedback.clutter_text.line_wrap = true;
-        this._actor.connect('button-press-event', () => Clutter.EVENT_STOP);
-        this._actor.connect('button-release-event', () => Clutter.EVENT_STOP);
-        this._actor.connect('touch-event', () => Clutter.EVENT_STOP);
         this._shade.connect('notify::visible', () => this._enforceInactive());
         this._actor.connect('notify::visible', () => this._enforceInactive());
         // The shade only compensates global HBM. It must never intercept the
         // password field, accessibility controls, keyboard or cancel button.
         Main.layoutManager.addTopChrome(this._shade,
             {trackFullscreen: true, affectsInputRegion: false});
-        Main.layoutManager.addTopChrome(this._actor, {trackFullscreen: true});
+        // FOD contacts are consumed by Goodix, not by a Shell actor. Keep every
+        // overlay element out of input picking, including during GDM handoff.
+        Main.layoutManager.addTopChrome(this._actor,
+            {trackFullscreen: true, affectsInputRegion: false});
         Main.layoutManager.addTopChrome(this._feedback,
             {trackFullscreen: true, affectsInputRegion: false});
         // addTopChrome() maps a newly-added actor regardless of its constructor
@@ -142,6 +145,12 @@ export default class Gts9uFingerprintOverlay extends Extension {
         }
         this._active = false;
         this._stopPanelPoll();
+        this._authKeyboard?.destroy();
+        this._authKeyboard = null;
+        for (const id of this._seatSignals ?? [])
+            this._seat.disconnect(id);
+        this._seatSignals = [];
+        this._seat = null;
         this._stopHidePoll();
         this._stopBrightnessPoll();
         this._stopSafetyTimeout();
@@ -176,8 +185,8 @@ export default class Gts9uFingerprintOverlay extends Extension {
     Show() {
         this._stopHidePoll();
         this._active = true;
-        Main.panel.statusArea.quickSettings?.menu?.close();
-        Main.overview?.hide();
+        // Rendering the target must not close native menus, change focus or
+        // interfere with a modal transition in either the user or GDM Shell.
         this._position();
         this._setIllumination(this._panelFodActive());
         if (this._canShowTarget())
@@ -296,6 +305,123 @@ export default class Gts9uFingerprintOverlay extends Extension {
             {x, y, width, height}, showing);
     }
 
+    _enableAuthKeyboard() {
+        this._seat = Clutter.get_default_backend().get_default_seat();
+        this._keyboardsDirty = true;
+        this._physicalKeyboard = null;
+        this._keyboardsNextScan = 0;
+        this._keyboardFailed = false;
+        this._seatSignals = ['device-added', 'device-removed'].map(signal =>
+            this._seat.connect(signal, () => { this._keyboardsDirty = true; }));
+        try {
+            this._authKeyboard = new AuthKeyboard(Main.keyboard, {
+                schedule: callback => GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+                    callback();
+                    return GLib.SOURCE_REMOVE;
+                }),
+                cancel: id => GLib.source_remove(id),
+                refreshFocus: keyboard => {
+                    // Read only the focus's type, never its text. Let the
+                    // native keyboard perform its own open/focus handling.
+                    if (global.stage.key_focus instanceof Clutter.Text)
+                        keyboard?._onKeyFocusChanged();
+                },
+                report: enabled => console.log(`GTS9U input: auth keyboard fallback=${enabled}`),
+            });
+        } catch (error) {
+            this._authKeyboard = null;
+            console.error(`GTS9U input: ${error.message}`);
+        }
+    }
+
+    _syncAuthKeyboard() {
+        if (this._keyboardFailed)
+            return;
+        try {
+            this._syncAuthKeyboardState();
+        } catch (error) {
+            // A native keyboard API failure must not stop the panel poll or
+            // its safety lease. Restore native policy and log once.
+            this._keyboardFailed = true;
+            try {
+                this._authKeyboard?.destroy();
+            } catch (_) {
+                // destroy restores the native method before synchronizing it.
+            }
+            this._authKeyboard = null;
+            console.error(`GTS9U input: auth keyboard disabled: ${error.message}`);
+        }
+    }
+
+    _syncAuthKeyboardState() {
+        const now = GLib.get_monotonic_time();
+        if (this._keyboardsDirty || now >= this._keyboardsNextScan) {
+            this._keyboardsDirty = false;
+            this._keyboardsNextScan = now + 1_000_000;
+            this._physicalKeyboard = this._scanPhysicalKeyboards();
+        }
+        this._authKeyboard?.sync({
+            active: this._session?.Active,
+            authenticating: Main.sessionMode.isGreeter || Main.screenShield?.locked,
+            panelPresent: Boolean(this._panel),
+            physicalKeyboard: this._physicalKeyboard,
+        });
+    }
+
+    _scanPhysicalKeyboards() {
+        // Companion grabs and forwards the real cover. Mutter's device list
+        // may omit that original device; inspect the actual kernel inventory.
+        // Periodic refresh also catches hotplug not exposed to the compositor.
+        const dir = Gio.File.new_for_path('/sys/class/input');
+        const files = dir.enumerate_children('standard::name', Gio.FileQueryInfoFlags.NONE, null);
+        try {
+            for (let file = files.next_file(null); file; file = files.next_file(null)) {
+                const event = file.get_name();
+                if (!/^event\d+$/.test(event))
+                    continue;
+                const root = `/sys/class/input/${event}/device`;
+                const read = suffix => {
+                    const [, bytes] = Gio.File.new_for_path(`${root}/${suffix}`).load_contents(null);
+                    return new TextDecoder().decode(bytes).trim();
+                };
+                try {
+                    if (isTypingKeyboard({name: read('name'), vendor: read('id/vendor'),
+                        product: read('id/product'), keys: read('capabilities/key')}) !== false)
+                        return true;
+                } catch (_) {
+                    return true; // Hotplug/unknown data: don't force an OSK.
+                }
+            }
+            return false;
+        } finally {
+            files.close(null);
+        }
+    }
+
+    GetDiagnostics() {
+        // Read-only state for intermittent post-login input failures. No key
+        // contents, finger images, credentials, user names or auth answers.
+        return JSON.stringify({
+            version: 13,
+            sessionActive: Boolean(this._session?.Active),
+            greeter: Boolean(Main.sessionMode.isGreeter),
+            locked: Boolean(Main.screenShield?.locked),
+            modalCount: Main.modalCount,
+            actionMode: Main.actionMode,
+            touchMode: this._seat?.get_touch_mode() ?? null,
+            physicalKeyboard: this._physicalKeyboard,
+            keyboardFallback: this._authKeyboard?.fallback ?? false,
+            keyboardFailed: this._keyboardFailed,
+            keyboardExists: Boolean(Main.keyboard.keyboardActor),
+            keyboardVisible: Boolean(Main.keyboard.visible),
+            active: this._active,
+            targetVisible: Boolean(this._actor?.visible),
+            targetReactive: Boolean(this._actor?.reactive),
+            shadeVisible: Boolean(this._shade?.visible),
+            uiAllowed: this._uiAllowed,
+        });
+    }
+
     _pulseAvailability() {
         const now = GLib.get_monotonic_time();
         this._uiAllowed = Boolean(this._panel && this._session?.Active &&
@@ -338,6 +464,7 @@ export default class Gts9uFingerprintOverlay extends Extension {
         // touch events in the sensor region: no Shell click is required.
         this._panelPollId = GLib.timeout_add(
             GLib.PRIORITY_DEFAULT, 50, () => {
+                this._syncAuthKeyboard();
                 this._pulseAvailability();
                 const {active, illuminated} = this._visualState();
                 if (active && !this._active)
