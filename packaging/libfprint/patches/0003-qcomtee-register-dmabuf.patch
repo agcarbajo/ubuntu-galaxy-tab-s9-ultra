@@ -1,0 +1,163 @@
+From: Galaxy Tab S9 Ultra Ubuntu port
+Subject: [PATCH] libqcomtee: register protected DMA-BUF memory objects
+
+Allow callers to turn an existing DMA-BUF into a QTEE memory object.  Keep a
+duplicate of the backing descriptor for clients such as SPCOM which must pin
+the same allocation independently of the TEE object descriptor.
+
+---
+ libqcomtee/include/qcomtee_object_types.h | 14 ++++++++
+ libqcomtee/src/linux/tee.h                | 20 +++++++++++
+ libqcomtee/src/objects/mem_obj.c          | 54 +++++++++++++++++++++++++++++-
+ 3 files changed, 87 insertions(+), 1 deletion(-)
+
+diff --git a/libqcomtee/include/qcomtee_object_types.h b/libqcomtee/include/qcomtee_object_types.h
+--- a/libqcomtee/include/qcomtee_object_types.h
++++ b/libqcomtee/include/qcomtee_object_types.h
+@@ -61,6 +61,20 @@ int qcomtee_memory_object_alloc(size_t size, struct qcomtee_object *root,
+ 				struct qcomtee_object **object);
+ 
++/**
++ * @brief Register a DMA-BUF as a QTEE memory object.
++ *
++ * The supplied descriptor remains owned by the caller. The returned object
++ * keeps its own descriptor for the same DMA-BUF until it is released.
++ * Protected heaps need not be CPU-mappable, so addr() returns NULL for these
++ * objects.
++ *
++ * @param dmabuf_fd DMA-BUF descriptor to register.
++ * @param root Root object whose TEE device imports the DMA-BUF.
++ * @param object Registered memory object.
++ * @return 0 on success, otherwise -1.
++ */
++int qcomtee_memory_object_register_fd(int dmabuf_fd,
++				      struct qcomtee_object *root,
++				      struct qcomtee_object **object);
++
+ void *qcomtee_memory_object_addr(struct qcomtee_object *object);
+ size_t qcomtee_memory_object_size(struct qcomtee_object *object);
+ /**
+diff --git a/libqcomtee/src/linux/tee.h b/libqcomtee/src/linux/tee.h
+--- a/libqcomtee/src/linux/tee.h
++++ b/libqcomtee/src/linux/tee.h
+@@ -404,6 +404,26 @@ struct tee_ioctl_shm_register_data {
+ 	__s32 id;
+ };
+ 
++/**
++ * struct tee_ioctl_shm_register_fd_data - DMA-BUF registration argument
++ * @fd:         [in] DMA-BUF descriptor
++ * @size:       [out] Size of referenced memory
++ * @flags:      [in/out] Flags to/from registration
++ * @id:         [out] Identifier of the shared memory
++ */
++struct tee_ioctl_shm_register_fd_data {
++	__s64 fd;
++	__u64 size;
++	__u32 flags;
++	__s32 id;
++};
++
++/**
++ * TEE_IOC_SHM_REGISTER_FD - register shared memory from a DMA-BUF
++ *
++ * Returns a TEE shared-memory descriptor on success or < 0 on failure.
++ */
++#define TEE_IOC_SHM_REGISTER_FD _IOWR(TEE_IOC_MAGIC, TEE_IOC_BASE + 8, \
++				      struct tee_ioctl_shm_register_fd_data)
++
+ /**
+  * TEE_IOC_SHM_REGISTER - Register shared memory argument
+  *
+diff --git a/libqcomtee/src/objects/mem_obj.c b/libqcomtee/src/objects/mem_obj.c
+--- a/libqcomtee/src/objects/mem_obj.c
++++ b/libqcomtee/src/objects/mem_obj.c
+@@ -27,6 +27,7 @@ struct qcomtee_memory {
+ 	struct qcomtee_object object;
+ 	enum qcomtee_memory_type type;
+ 	int fd; /**< File descriptor for TEE driver shm. */
++	int dmabuf_fd; /**< Retained backing descriptor, if imported. */
+ 	struct {
+ 		void *addr; /**< mmaped address. */
+ 		size_t size; /**< size of memory. */
+@@ -44,6 +45,9 @@ static void qcomtee_memory_release(struct qcomtee_object *object)
+ 	if (qcomtee_mem->fd != -1)
+ 		close(qcomtee_mem->fd);
+ 
++	if (qcomtee_mem->dmabuf_fd != -1)
++		close(qcomtee_mem->dmabuf_fd);
++
+ 	free(qcomtee_mem);
+ }
+ 
+@@ -66,6 +70,7 @@ static struct qcomtee_memory *qcomtee_memory_alloc(void)
+ 		qcomtee_mem->object.ops = &ops;
+ 		/* TEE shm not assigned yet. */
+ 		qcomtee_mem->fd = -1;
++		qcomtee_mem->dmabuf_fd = -1;
+ 	}
+ 
+ 	return qcomtee_mem;
+@@ -115,6 +120,51 @@ err_release:
+ 	return -1;
+ }
+ 
++int qcomtee_memory_object_register_fd(int dmabuf_fd,
++				      struct qcomtee_object *root,
++				      struct qcomtee_object **object)
++{
++	struct root_object *root_object = ROOT_OBJECT(root);
++	struct tee_ioctl_shm_register_fd_data data = { 0 };
++	struct qcomtee_memory *qcomtee_mem;
++	int retained_fd;
++	int fd;
++
++	if (dmabuf_fd < 0 || !object)
++		return -1;
++
++	qcomtee_mem = qcomtee_memory_alloc();
++	if (!qcomtee_mem)
++		return -1;
++
++	retained_fd = dup(dmabuf_fd);
++	if (retained_fd < 0)
++		goto err_release;
++	qcomtee_mem->dmabuf_fd = retained_fd;
++
++	data.fd = dmabuf_fd;
++	fd = root_object->tee_call(root_object->fd,
++				   TEE_IOC_SHM_REGISTER_FD, &data);
++	if (fd < 0)
++		goto err_release;
++
++	qcomtee_mem->object.tee_object_id = data.id;
++	qcomtee_mem->fd = fd;
++	qcomtee_mem->mem_info.addr = NULL;
++	qcomtee_mem->mem_info.size = data.size;
++	qcomtee_mem->type = QCOMTEE_MEMORY_TEE_REGISTER;
++	qcomtee_object_refs_inc(root);
++	qcomtee_mem->object.root = root;
++	*object = &qcomtee_mem->object;
++
++	return 0;
++
++err_release:
++	qcomtee_memory_object_release(&qcomtee_mem->object);
++	return -1;
++}
++
+ void *qcomtee_memory_object_addr(struct qcomtee_object *object)
+ {
+ 	return MEMORY(object)->mem_info.addr;
+@@ -131,7 +181,9 @@ size_t qcomtee_memory_object_size(struct qcomtee_object *object)
+ 
+ int qcomtee_memory_object_fd(struct qcomtee_object *object)
+ {
+-	return object ? MEMORY(object)->fd : -1;
++	if (!object)
++		return -1;
++	return MEMORY(object)->dmabuf_fd >= 0 ? MEMORY(object)->dmabuf_fd
++					      : MEMORY(object)->fd;
+ }
+ 
+ void qcomtee_memory_object_release(struct qcomtee_object *object)

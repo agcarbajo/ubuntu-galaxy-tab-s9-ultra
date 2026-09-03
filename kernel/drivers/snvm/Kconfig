@@ -1,0 +1,42 @@
+#
+# SEC STAR platform devices
+#
+
+config STAR_MEMORY_LEAK
+	bool "memory leak test in sec-star"
+	help
+	  memory leak test in sec-star.
+	  All allocated memory are listed in array.
+
+config STAR_K250A_LEGO
+	tristate "Samsung K250A secure element"
+	depends on I2C && OF && ARCH_QCOM
+	default n
+	help
+	  Driver for the Samsung K250A secure element, including its ISO7816
+	  T=1 protocol layer.  On the Galaxy Tab S9 Ultra it supplies the
+	  credential used by HwVault to derive fingerprint template keys.
+
+config SEC_SNVM_WAKELOCK_METHOD
+        int "snvm wakelock method"
+        default 0
+        help
+          Different functions must be used depending on the kernel version
+          for wakelock initialization.
+          0 - auto selection
+          1 - wakeup_source_init
+          2 - wakeup_source_register
+
+config SEC_SNVM_PLATFORM_DRV
+	bool "snvm platform driver"
+	default n
+	help
+	  make snvm driver to platfrom driver
+	  disable i2c node
+
+config SEC_SNVM_I2C_CLOCK_CONTROL
+	bool "snvm i2c clock control"
+	default n
+	help
+	  control the I2C clocks
+	  now only for MTK project

@@ -1,14 +1,14 @@
 Package: ubuntu-gts9u-device
-Version: 2.38
+Version: 2.46
 Section: admin
 Priority: optional
 Architecture: arm64
 Maintainer: Ubuntu gts9uwifi port contributors <noreply@example.invalid>
-Depends: systemd, e2fsprogs, gdisk, parted, util-linux, cloud-guest-utils,
- gnome-shell,
+Depends: systemd, kmod, e2fsprogs, gdisk, parted, util-linux, cloud-guest-utils,
+ gnome-shell, python3, python3-gi, python3-dbus,
  protection-domain-mapper, bluez, alsa-ucm-conf, pulseaudio-utils,
  fprintd, libpam-fprintd,
- libfprint-2-2 (>= 1:1.94.7+tod1-0ubuntu5~24.04.8+gts9u3),
+ libfprint-2-2 (>= 1:1.94.7+tod1-0ubuntu5~24.04.8+gts9u47),
  hexagonrpcd, libssc, iio-sensor-proxy,
  libcamera-gts9u (= 0.7.2+53.g62d4bfc-gts9u5),
  libspa-0.2-libcamera-gts9u (= 1.0.5-gts9u10),

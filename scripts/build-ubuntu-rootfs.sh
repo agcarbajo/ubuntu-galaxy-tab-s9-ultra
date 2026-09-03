@@ -235,7 +235,6 @@ chmod +x "$hooks/configure.sh"
 # Local packages: the device integration, plus the three sensor pieces Ubuntu
 # does not ship at all.  All are installed inside the same mmdebstrap
 # invocation, so the rootfs never depends on a manual dpkg run afterwards.
-bash "$repo/scripts/build-device-package.sh" >/dev/null
 bash "$repo/scripts/build-companion-package.sh" >/dev/null
 
 # libfprint has no upstream EL721 driver.  Build the full runtime with this
@@ -258,6 +257,35 @@ if [ "$fingerprint_missing" = 1 ] || \
 	bash "$repo/scripts/build-libfprint-el721.sh" >/dev/null
 	printf '%s\n' "$fingerprint_fingerprint" > "$fingerprint_stamp"
 fi
+
+# The device package embeds the native boot owner and matching signed IRQ
+# module. Build these after libfprint has provided the pinned QTEE dependencies.
+bash "$repo/scripts/build-fingerprint-secure-owner.sh" >/dev/null
+bash "$repo/scripts/build-spss-irq-module.sh" >/dev/null
+bash "$repo/scripts/build-device-package.sh" >/dev/null
+
+# Companion's one-touch named test needs the additive matched-finger signal.
+# Keep the original fprintd/PAM protocol and libfprint matcher unchanged.
+fprintd_stamp=$base/out/packages/.gts9u-fprintd-inputs.sha256
+fprintd_version=$(cat "$repo/packaging/fprintd/version")
+fprintd_fingerprint=$(
+	{
+		sha256sum "$repo/scripts/build-fprintd-matched.sh" \
+			"$repo/scripts/build-fprintd-pam-package.sh" \
+			"$repo/scripts/check-fprintd-package-pair.sh" \
+			"$repo/scripts/test-fprintd-packages.py"
+		find "$repo/packaging/fprintd" -type f -print0 | sort -z | xargs -0 sha256sum
+	} | sha256sum | awk '{print $1}'
+)
+if [ ! -f "$base/out/packages/fprintd_${fprintd_version}_arm64.deb" ] || \
+   [ ! -f "$base/out/packages/libpam-fprintd_${fprintd_version}_arm64.deb" ] || \
+   [ "$(cat "$fprintd_stamp" 2>/dev/null || true)" != "$fprintd_fingerprint" ]; then
+	bash "$repo/scripts/build-fprintd-matched.sh" >/dev/null
+	printf '%s\n' "$fprintd_fingerprint" > "$fprintd_stamp"
+fi
+bash "$repo/scripts/check-fprintd-package-pair.sh" \
+	"$base/out/packages/fprintd_${fprintd_version}_arm64.deb" \
+	"$base/out/packages/libpam-fprintd_${fprintd_version}_arm64.deb"
 
 # The signed Samsung TA is proprietary.  A builder may opt in with an extracted
 # directory; hashes are checked before a local, non-redistributable .deb exists.
@@ -349,6 +377,11 @@ for pkg in libssc hexagonrpcd iio-sensor-proxy \
 	echo "local package: ${deb##*/}"
 done
 
+# This exact matched pair was checked above. Do not pick each half separately
+# by file mtime: a cached daemon/PAM from different builds can break all of APT.
+cp "$base/out/packages/fprintd_${fprintd_version}_arm64.deb" \
+	"$base/out/packages/libpam-fprintd_${fprintd_version}_arm64.deb" "$stage_debs/"
+
 cat > "$hooks/local-packages.sh" <<HOOK
 #!/bin/sh
 set -eu
@@ -359,6 +392,7 @@ cp $stage_debs/*.deb "\$target/tmp/local-debs/"
 # archive camera packages replaced by our ABI-matched builds.  Plain dpkg
 # cannot remove an already installed package that a local .deb Conflicts with.
 chroot "\$target" sh -c 'apt-get install -y /tmp/local-debs/*.deb'
+chroot "\$target" apt-get check
 rm -rf "\$target/tmp/local-debs"
 
 # Every language pack.  mmdebstrap's --include takes no globs, so this is the

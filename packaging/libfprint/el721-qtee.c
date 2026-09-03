@@ -2,15 +2,23 @@
 /* Minimal Samsung BAUTH transport over Qualcomm's upstream QTEE object API. */
 
 #include "el721-qtee.h"
+#include "el721-enroll-wire.h"
+#include "el721-identify-wire.h"
+#include "el721-hwvault-wire.h"
+#include "el721-qtee-lookup.h"
+#include "el721-spl-wire.h"
 
 #include <elf.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include <poll.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/random.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <glib/gstdio.h>
@@ -22,7 +30,6 @@
 #define QSEE_INTERRUPT_LISTENER_ID 0xb000U
 #define QSEE_INTERRUPT_BUFFER_SIZE 1024U
 #define QSEE_REGISTER_LISTENER_OP 0U
-#define QSEECOM_LOOKUP_TA_OP 2U
 #define QSEECOM_LOAD_REGION_OP 0U
 #define QSEECOM_SEND_REQUEST_OP 0U
 #define QSEECOM_UNLOAD_OP 2U
@@ -38,6 +45,14 @@
 #define EGIS_IOC_MAGIC 'k'
 #define EGIS_SENSOR_RESET 0x04U
 
+#define K250A_DEVICE "/dev/k250a"
+#define K250A_READ_SIZE 0x80045300UL
+#define K250A_RESET_PROTOCOL 0x5302UL
+#define HWVAULT_WIRE_SIZE EL721_HWVAULT_WIRE_SIZE
+#define HWVAULT_CREDENTIAL_MAX 4096U
+#define HWVAULT_SIGN_GET 0x2714U
+#define HWVAULT_VERIFY_GET 0x2715U
+
 #define CMD_PREPARE 1U
 #define CMD_ENROLL_INIT 2U
 #define CMD_ENROLL_DO 3U
@@ -48,6 +63,9 @@
 #define CMD_CANCEL 10U
 #define CANCEL_WIRE_SIZE 8U
 #define CMD_CONTROL 12U
+#define CMD_HAT_OP 13U
+#define CMD_DECAP_KEY 15U
+#define CMD_CHALLENGE 19U
 
 #define PREPARE_SIZE 0x80010U
 #define PREPARE_MODE_CALIBRATED 36U
@@ -75,23 +93,63 @@
 #define CONTROL_LOAD_BDS 82U
 #define EL721_BDS_MAX_CHUNK 3U
 #define CONTROL_CPU_IDLE 83U
-/* Two control operations look the running board up in the TA's table of
- * Samsung model codes, and only this one goes on to build the matcher's
- * configuration from the entry it found.  Operation 90 sets the index and
- * stops there, which leaves the matcher unbuilt and every biometric command
- * answering 29. */
-#define CONTROL_SELECT_MODEL 90U
+/* Operation 88 looks the running board up in the TA's model table and builds
+ * the matcher configuration.  Operation 90 only stores the table index, so
+ * EnrollInit subsequently answers 29 because the matcher is still absent. */
+#define CONTROL_SELECT_MODEL 88U
 #define EL721_MODEL "X916"
 #define EL721_MODEL_FIELD 10U
 #define EL721_BDS_MAX (4U * 1024U * 1024U)
 #define EL721_BDS_CHUNK 0x3000U
 #define ENROLL_INIT_SIZE 0x178U
 #define ENROLL_INIT_OUT_SIZE 0xcU
-#define ENROLL_DO_OUT_SIZE 0x230024U
+#define ENROLL_DO_OUT_SIZE EL721_ENROLL_OUTPUT_SIZE
 #define FINAL_OUT_SIZE 0xa018U
 #define IDENTIFY_INIT_SIZE 0x2265bdU
 #define IDENTIFY_INIT_OUT_SIZE 0x1a0U
-#define IDENTIFY_DO_OUT_SIZE 0x230089U
+#define IDENTIFY_DO_OUT_SIZE EL721_IDENTIFY_OUTPUT_SIZE
+#define CHALLENGE_INPUT_SIZE 0xcU
+#define CHALLENGE_OUTPUT_SIZE 0x44U
+#define CHALLENGE_OUTPUT_INFO_OFFSET 0x8U
+#define HAT_INPUT_SIZE 0x48dU
+#define HAT_OUTPUT_SIZE 0x40cU
+#define HAT_TOKEN_OFFSET 0x4U
+#define HAT_SELECTOR_OFFSET 0x49U
+#define HAT_PAYLOAD_OFFSET 0x4dU
+#define HAT_PAYLOAD_MAX 0x400U
+#define HAT_PAYLOAD_LENGTH_OFFSET 0x44dU
+#define HAT_CHALLENGE_OFFSET 0x451U
+
+#define DECAP_KEY_INPUT_SIZE 0x408U
+#define DECAP_KEY_INPUT_DATA_OFFSET 4U
+#define DECAP_KEY_INPUT_DATA_MAX 0x400U
+#define DECAP_KEY_INPUT_LENGTH_OFFSET 0x404U
+#define DECAP_KEY_OUTPUT_SIZE 0x8000cU
+#define DECAP_KEY_OUTPUT_DATA_OFFSET 8U
+#define DECAP_KEY_OUTPUT_DATA_MAX 0x80000U
+#define DECAP_KEY_OUTPUT_LENGTH_OFFSET 0x80008U
+
+#define GATEKEEPER_SHARED_SIZE 0x2080U
+#define GATEKEEPER_UID 0x47545355U
+#define GATEKEEPER_HANDLE_SIZE 58U
+#define GATEKEEPER_SECRET_SIZE 32U
+#define GATEKEEPER_STATE_DIRECTORY "/var/lib/gts9u-fingerprint"
+#define GATEKEEPER_STATE_PATH GATEKEEPER_STATE_DIRECTORY "/gts9u-gatekeeper"
+#define GATEKEEPER_LEGACY_STATE_PATH "/var/lib/fprint/gts9u-gatekeeper"
+#define GATEKEEPER_STATE_SIZE (8U + 1U + GATEKEEPER_SECRET_SIZE + \
+                               GATEKEEPER_HANDLE_SIZE)
+#define GATEKEEPER_ENROLL_COMMAND 0x201U
+#define GATEKEEPER_VERIFY_COMMAND 0x202U
+#define GATEKEEPER_GET_HAT_KEY_COMMAND 0x203U
+#define GATEKEEPER_ENROLL_SCHEMA 0x4d29U
+#define GATEKEEPER_VERIFY_SCHEMA 0x5b3dU
+#define GATEKEEPER_KEY_REQUEST_SIZE 0x14080U
+#define GATEKEEPER_KEY_RESPONSE_SIZE 0x40U
+#define GATEKEEPER_KEY_NAME_OFFSET 0x10U
+#define GATEKEEPER_KEY_DATA_OFFSET 0xa010U
+#define GATEKEEPER_KEY_DATA_MAX 0xa000U
+#define CONTROL_HAT_ENABLE 22U
+#define CONTROL_SEND_HAT_KEY 49U
 
 #define EL721_ERROR el721_qtee_error_quark ()
 
@@ -103,10 +161,14 @@ struct _El721Qtee
   struct qcomtee_object *qis_memory;
   struct qcomtee_object *app_loader;
   struct qcomtee_object *controller;
+  struct qcomtee_object *hwvault;
+  struct qcomtee_object *gatekeeper;
   struct qcomtee_object *input;
   struct qcomtee_object *output;
   gchar *firmware_directory;
   gboolean loaded_here;
+  gboolean hwvault_loaded_here;
+  gboolean gatekeeper_loaded_here;
 };
 
 typedef struct
@@ -118,6 +180,8 @@ typedef struct
 typedef struct
 {
   struct qcomtee_object object;
+  El721SplWire wire;
+  int irq_fd;
 } El721QisCallback;
 
 typedef struct
@@ -143,6 +207,7 @@ el721_qtee_error_quark (void)
 
 static guint32 el721_probe_u32 (const gchar *name, guint32 fallback);
 static gboolean el721_qtee_load_bds (El721Qtee *session, GError **error);
+static gboolean el721_qtee_restore_hwvault (El721Qtee *session, GError **error);
 
 static void
 put_u64 (guint8 *buffer, gsize offset, guint64 value)
@@ -299,7 +364,43 @@ open_service (struct qcomtee_object *client_env, guint32 uid, GError **error)
 static void
 qis_callback_release (struct qcomtee_object *object)
 {
-  g_free (container_of (object, El721QisCallback, object));
+  El721QisCallback *callback = (El721QisCallback *) object;
+
+  /* object is deliberately the first member; avoid quic-teec's container_of
+   * macro here because it performs GNU void-pointer arithmetic and makes the
+   * otherwise clean libfprint build warn under -Wpointer-arith. */
+  if (callback->irq_fd >= 0)
+    close (callback->irq_fd);
+  g_free (callback);
+}
+
+static El721SplResult
+spl_wait_diagnostic (guint32 timeout_ms, gpointer data)
+{
+  El721QisCallback *callback = data;
+  /* Linux UAPI POLLRDHUP, unavailable without GNU feature macros. The
+   * experimental bridge does not yet implement subsystem-reset reporting. */
+  const short reset_event = 0x2000;
+  struct pollfd event = {
+    .fd = callback->irq_fd,
+    .events = POLLIN | reset_event,
+  };
+  /* This listener is still opt-in diagnostic infrastructure. Bound even
+   * stock's timeout=0 (infinite) to five seconds; report a genuine timeout,
+   * never readiness. A system-wide production listener needs cancellation
+   * and SPSS reset handling before it can use unbounded waits. */
+  int timeout = timeout_ms && timeout_ms <= 5000 ? (int) timeout_ms : 5000;
+  int result = poll (&event, 1, timeout);
+
+  g_debug ("SPL poll requested_ms=%u result=%d events=%#x",
+           timeout_ms, result, event.revents);
+  if (result == 0)
+    return EL721_SPL_TIMEOUT;
+  if (result < 0 || (event.revents & (POLLERR | POLLHUP | POLLNVAL)))
+    return EL721_SPL_IO_ERROR;
+  if (event.revents & reset_event)
+    return EL721_SPL_RESET;
+  return event.revents & POLLIN ? EL721_SPL_IRQ : EL721_SPL_IO_ERROR;
 }
 
 static qcomtee_result_t
@@ -308,24 +409,10 @@ qis_callback_dispatch (struct qcomtee_object *object,
                        struct qcomtee_param *params,
                        int num)
 {
-  (void) object;
+  El721QisCallback *callback = (El721QisCallback *) object;
 
-  g_debug ("SPL listener callback op=%u params=%d", op, num);
-  for (int i = 0; i < num; i++)
-    {
-      if (params[i].attr == QCOMTEE_UBUF_INPUT ||
-          params[i].attr == QCOMTEE_UBUF_OUTPUT)
-        g_debug ("SPL listener callback param[%d] attr=%" G_GUINT64_FORMAT
-                 " size=%zu", i, params[i].attr, params[i].ubuf.size);
-      else
-        g_debug ("SPL listener callback param[%d] attr=%" G_GUINT64_FORMAT,
-                 i, params[i].attr);
-    }
-
-  /* Registration is useful before the first request arrives.  A complete
-   * QIS request dispatcher is deliberately not guessed from the proprietary
-   * protocol: report it explicitly if secure world needs one during Prepare. */
-  return QCOMTEE_ERROR_UNAVAIL;
+  return el721_spl_dispatch (&callback->wire, op, params, num,
+                             spl_wait_diagnostic, callback);
 }
 
 static gboolean
@@ -341,6 +428,14 @@ register_qis_listener (El721Qtee *session, GError **error)
   guint32 listener_id = QSEE_INTERRUPT_LISTENER_ID;
   gboolean callback_initialized = FALSE;
 
+  callback->irq_fd = open ("/dev/qsee_ipc_irq_spss", O_RDONLY | O_CLOEXEC);
+  if (callback->irq_fd < 0)
+    {
+      g_set_error (error, EL721_ERROR, errno,
+                   "cannot open the experimental SPSS IRQ bridge: %s",
+                   g_strerror (errno));
+      goto fail;
+    }
   session->qis_service = open_service (session->client_env,
                                        QSEE_INTERRUPT_SERVICE_UID, error);
   if (session->qis_service == QCOMTEE_OBJECT_NULL)
@@ -349,13 +444,15 @@ register_qis_listener (El721Qtee *session, GError **error)
                                    &session->qis_memory))
     {
       g_set_error_literal (error, EL721_ERROR, 1,
-                           "cannot allocate the QIS listener buffer");
+                           "cannot allocate the SPL listener buffer");
       goto fail;
     }
+  callback->wire.shared = qcomtee_memory_object_addr (session->qis_memory);
+  callback->wire.shared_size = QSEE_INTERRUPT_BUFFER_SIZE;
   if (qcomtee_object_cb_init (&callback->object, &callback_ops, session->root))
     {
       g_set_error_literal (error, EL721_ERROR, 1,
-                           "cannot initialize the QIS listener callback");
+                           "cannot initialize the SPL listener callback");
       goto fail;
     }
   callback_initialized = TRUE;
@@ -371,7 +468,7 @@ register_qis_listener (El721Qtee *session, GError **error)
                              params, G_N_ELEMENTS (params), &result) || result)
     {
       g_set_error (error, EL721_ERROR, result,
-                   "cannot register QIS listener 0x%x (result %u)",
+                   "cannot register SPL listener 0x%x (result %u)",
                    listener_id, result);
       goto fail;
     }
@@ -385,7 +482,7 @@ fail:
   if (callback_initialized)
     qcomtee_object_refs_dec (&callback->object);
   else
-    g_free (callback);
+    qis_callback_release (&callback->object);
   return FALSE;
 }
 
@@ -406,13 +503,14 @@ read_file (const gchar *path, guint8 *buffer, gsize size, GError **error)
 }
 
 static gboolean
-assemble_ta (const gchar *directory, guint8 **image_out, gsize *size_out,
-             GError **error)
+assemble_ta (const gchar *directory, const gchar *basename,
+             guint8 **image_out, gsize *size_out, GError **error)
 {
   Elf64_Ehdr header;
   Elf64_Phdr phdr[EL721_TA_SEGMENTS];
   gsize segment_sizes[EL721_TA_SEGMENTS] = { 0 };
-  g_autofree gchar *first = g_build_filename (directory, "dualfp.b00", NULL);
+  g_autofree gchar *first_name = g_strdup_printf ("%s.b00", basename);
+  g_autofree gchar *first = g_build_filename (directory, first_name, NULL);
   g_autofree gchar *header_data = NULL;
   gsize header_size = 0;
   guint8 *image;
@@ -434,7 +532,7 @@ assemble_ta (const gchar *directory, guint8 **image_out, gsize *size_out,
   segment_sizes[0] = header_size;
   for (i = 1; i < EL721_TA_SEGMENTS; i++)
     {
-      g_autofree gchar *name = g_strdup_printf ("dualfp.b%02u", i);
+      g_autofree gchar *name = g_strdup_printf ("%s.b%02u", basename, i);
       g_autofree gchar *path = g_build_filename (directory, name, NULL);
       GStatBuf stat_buffer;
       if (g_stat (path, &stat_buffer) || stat_buffer.st_size < 0)
@@ -452,7 +550,7 @@ assemble_ta (const gchar *directory, guint8 **image_out, gsize *size_out,
   image = g_malloc0 (image_size);
   for (i = 0; i < EL721_TA_SEGMENTS; i++)
     {
-      g_autofree gchar *name = g_strdup_printf ("dualfp.b%02u", i);
+      g_autofree gchar *name = g_strdup_printf ("%s.b%02u", basename, i);
       g_autofree gchar *path = g_build_filename (directory, name, NULL);
       gsize offset = i ? phdr[i].p_offset : 0;
       if (offset > image_size || segment_sizes[i] > image_size - offset ||
@@ -467,42 +565,31 @@ assemble_ta (const gchar *directory, guint8 **image_out, gsize *size_out,
   return TRUE;
 
 invalid:
-  g_set_error_literal (error, EL721_ERROR, 1,
-                       "dualfp.b00 has an unsupported signed ELF layout");
+  g_set_error (error, EL721_ERROR, 1,
+               "%s.b00 has an unsupported signed ELF layout", basename);
   return FALSE;
 }
 
 static gboolean
-lookup_ta (El721Qtee *session, struct qcomtee_object **controller,
+lookup_ta (El721Qtee *session, const gchar *name,
+           struct qcomtee_object **controller,
            qcomtee_result_t *result)
 {
-  /* EL721 is an optical in-display sensor.  Samsung's gateway selects the
-   * dualfp trustlet for this path; securefp is a different, concurrently
-   * available TA and can therefore be looked up successfully by mistake. */
-  static const gchar name[] = "dualfp";
-  struct qcomtee_param params[2] = { 0 };
-  params[0].attr = QCOMTEE_UBUF_INPUT;
-  params[0].ubuf.addr = (void *) name;
-  params[0].ubuf.size = strlen (name);
-  params[1].attr = QCOMTEE_OBJREF_OUTPUT;
-  if (qcomtee_object_invoke (session->app_loader, QSEECOM_LOOKUP_TA_OP,
-                             params, 2, result))
-    return FALSE;
-  *controller = params[1].object;
-  return TRUE;
+  return el721_qtee_lookup_controller (session->app_loader, name, controller,
+                                       result);
 }
 
 static gboolean
-load_ta (El721Qtee *session, const gchar *directory, GError **error)
+load_ta (El721Qtee *session, const gchar *directory, const gchar *basename,
+         struct qcomtee_object **controller, GError **error)
 {
-  static const gchar load_name[] = "dualfp";
   g_autofree guint8 *image = NULL;
   gsize image_size = 0;
   struct qcomtee_object *memory = QCOMTEE_OBJECT_NULL;
   struct qcomtee_param params[3] = { 0 };
   qcomtee_result_t result = QCOMTEE_ERROR;
 
-  if (!assemble_ta (directory, &image, &image_size, error))
+  if (!assemble_ta (directory, basename, &image, &image_size, error))
     return FALSE;
   if (qcomtee_memory_object_alloc (image_size, session->root, &memory))
     {
@@ -512,8 +599,8 @@ load_ta (El721Qtee *session, const gchar *directory, GError **error)
     }
   memcpy (qcomtee_memory_object_addr (memory), image, image_size);
   params[0].attr = QCOMTEE_UBUF_INPUT;
-  params[0].ubuf.addr = (void *) load_name;
-  params[0].ubuf.size = strlen (load_name);
+  params[0].ubuf.addr = (void *) basename;
+  params[0].ubuf.size = strlen (basename);
   params[1].attr = QCOMTEE_OBJREF_INPUT;
   params[1].object = memory;
   params[2].attr = QCOMTEE_OBJREF_OUTPUT;
@@ -522,12 +609,12 @@ load_ta (El721Qtee *session, const gchar *directory, GError **error)
       params[2].object == QCOMTEE_OBJECT_NULL)
     {
       g_set_error (error, EL721_ERROR, result,
-                   "TrustZone rejected the signed dualfp image (result %u)", result);
+                   "TrustZone rejected the signed %s image (result %u)",
+                   basename, result);
       qcomtee_memory_object_release (memory);
       return FALSE;
     }
-  session->controller = params[2].object;
-  session->loaded_here = TRUE;
+  *controller = params[2].object;
   qcomtee_memory_object_release (memory);
   return TRUE;
 }
@@ -611,7 +698,10 @@ el721_qtee_open (const gchar *firmware_directory, GError **error)
                                       QSEECOM_APP_LOADER_UID, error);
   if (session->app_loader == QCOMTEE_OBJECT_NULL)
     goto fail;
-  if (!lookup_ta (session, &session->controller, &lookup_result))
+  /* EL721 is an optical in-display sensor.  Samsung's gateway selects the
+   * dualfp trustlet for this path; securefp is a different, concurrently
+   * available TA and can therefore be looked up successfully by mistake. */
+  if (!lookup_ta (session, "dualfp", &session->controller, &lookup_result))
     {
       g_set_error_literal (error, EL721_ERROR, 1, "lookupTA transport failed");
       goto fail;
@@ -623,8 +713,10 @@ el721_qtee_open (const gchar *firmware_directory, GError **error)
     {
       qcomtee_object_refs_dec (session->controller);
       session->controller = QCOMTEE_OBJECT_NULL;
-      if (!load_ta (session, firmware_directory, error))
+      if (!load_ta (session, firmware_directory, "dualfp",
+                    &session->controller, error))
         goto fail;
+      session->loaded_here = TRUE;
     }
   /* The wire views are smaller, but every command handler in the TA validates
    * the two non-secure pointers as ranges of exactly EL721_SHARED_ALLOC bytes
@@ -661,6 +753,12 @@ el721_qtee_open (const gchar *firmware_directory, GError **error)
                            "cannot allocate the BAUTH shared buffers");
       goto fail;
     }
+  /* dualfp asks the separate HwVault TA for its template-encryption key.  One
+   * UI reconstructs that TA's in-memory context from authenticated K250A
+   * credentials on every service start; retain the restored TA for the whole
+   * libfprint session so the key remains available through EnrollDo. */
+  if (!el721_qtee_restore_hwvault (session, error))
+    goto fail;
   return session;
 
 fail:
@@ -675,6 +773,14 @@ el721_qtee_close (El721Qtee *session)
     return;
   qcomtee_memory_object_release (session->output);
   qcomtee_memory_object_release (session->input);
+  if (session->gatekeeper_loaded_here &&
+      session->gatekeeper != QCOMTEE_OBJECT_NULL)
+    {
+      qcomtee_result_t result = QCOMTEE_ERROR;
+      qcomtee_object_invoke (session->gatekeeper, QSEECOM_UNLOAD_OP,
+                             NULL, 0, &result);
+    }
+  qcomtee_object_refs_dec (session->gatekeeper);
   if (session->loaded_here && session->controller != QCOMTEE_OBJECT_NULL)
     {
       qcomtee_result_t result = QCOMTEE_ERROR;
@@ -682,6 +788,14 @@ el721_qtee_close (El721Qtee *session)
                              NULL, 0, &result);
     }
   qcomtee_object_refs_dec (session->controller);
+  if (session->hwvault_loaded_here &&
+      session->hwvault != QCOMTEE_OBJECT_NULL)
+    {
+      qcomtee_result_t result = QCOMTEE_ERROR;
+      qcomtee_object_invoke (session->hwvault, QSEECOM_UNLOAD_OP,
+                             NULL, 0, &result);
+    }
+  qcomtee_object_refs_dec (session->hwvault);
   qcomtee_object_refs_dec (session->app_loader);
   qcomtee_object_refs_dec (session->qis_service);
   qcomtee_memory_object_release (session->qis_memory);
@@ -689,6 +803,1083 @@ el721_qtee_close (El721Qtee *session)
   qcomtee_object_refs_dec (session->root);
   g_free (session->firmware_directory);
   g_free (session);
+}
+
+static void
+secure_clear (gpointer data, gsize size)
+{
+  volatile guint8 *bytes = data;
+
+  while (size--)
+    *bytes++ = 0;
+}
+
+static void
+put_be32 (guint8 *out, guint32 value)
+{
+  out[0] = value >> 24;
+  out[1] = value >> 16;
+  out[2] = value >> 8;
+  out[3] = value;
+}
+
+static gboolean
+k250a_transceive (int fd, const guint8 *apdu, gsize apdu_size,
+                   guint8 *response, gsize response_capacity,
+                   gsize *response_size, GError **error)
+{
+  g_autofree guint8 *frame = g_malloc0 (16 + apdu_size);
+  guint32 size = 0;
+
+  put_be32 (frame, 1);
+  put_be32 (frame + 8, apdu_size);
+  memcpy (frame + 16, apdu, apdu_size);
+  if (write (fd, frame, 16 + apdu_size) != (ssize_t) (16 + apdu_size) ||
+      ioctl (fd, K250A_READ_SIZE, &size) < 0)
+    {
+      g_set_error (error, EL721_ERROR, errno,
+                   "K250A APDU transport failed: %s", g_strerror (errno));
+      return FALSE;
+    }
+  if (size > response_capacity)
+    {
+      g_set_error (error, EL721_ERROR, 1,
+                   "K250A response is too large (%u bytes)", size);
+      return FALSE;
+    }
+  if (read (fd, response, size) != (ssize_t) size)
+    {
+      g_set_error (error, EL721_ERROR, errno,
+                   "K250A response read failed: %s", g_strerror (errno));
+      return FALSE;
+    }
+  *response_size = size;
+  return TRUE;
+}
+
+static gboolean
+k250a_expect_status (const guint8 *response, gsize response_size,
+                      guint8 sw1, guint8 sw2, const gchar *operation,
+                      GError **error)
+{
+  if (response_size == 2 && response[0] == sw1 && response[1] == sw2)
+    return TRUE;
+  g_set_error (error, EL721_ERROR, 1,
+               "K250A %s failed (response=%" G_GSIZE_FORMAT
+               " bytes, status=%02x%02x)", operation, response_size,
+               response_size > 0 ? response[0] : 0,
+               response_size > 1 ? response[1] : 0);
+  return FALSE;
+}
+
+static gboolean
+k250a_open_and_nonce (guint8 nonce[32], int *opened_fd, GError **error)
+{
+  guint8 response[64] = { 0 };
+  const guint8 core_open[] = { 0x00, 0xfc, 0x00, 0x00, 0x00 };
+  const guint8 select_snvm[] = {
+    0x00, 0xa4, 0x04, 0x00, 0x10,
+    'S', 'E', 'C', 'U', 'R', 'E', '_', 'N', 'V', 'M', 0, 0, 0, 0, 0, 0
+  };
+  const guint8 create_nonce[] = { 0x80, 0x84, 0x00, 0x00, 0x20 };
+  gsize response_size = 0;
+  int fd = open (K250A_DEVICE, O_RDWR | O_CLOEXEC);
+
+  if (fd < 0)
+    {
+      g_set_error (error, EL721_ERROR, errno, "cannot open %s: %s",
+                   K250A_DEVICE, g_strerror (errno));
+      return FALSE;
+    }
+  if (!k250a_transceive (fd, core_open, sizeof (core_open), response,
+                         sizeof (response), &response_size, error) ||
+      !k250a_expect_status (response, response_size, 0x90, 0x00,
+                            "CORE_OPEN", error))
+    goto fail;
+  if (ioctl (fd, K250A_RESET_PROTOCOL) < 0)
+    {
+      g_set_error (error, EL721_ERROR, errno,
+                   "K250A protocol reset failed: %s", g_strerror (errno));
+      goto fail;
+    }
+  usleep (5000);
+  if (!k250a_transceive (fd, select_snvm, sizeof (select_snvm), response,
+                         sizeof (response), &response_size, error) ||
+      !k250a_expect_status (response, response_size, 0x90, 0x00,
+                            "SELECT SECURE_NVM", error))
+    goto fail;
+  if (!k250a_transceive (fd, create_nonce, sizeof (create_nonce), response,
+                         sizeof (response), &response_size, error) ||
+      response_size != 34 || response[32] != 0x90 || response[33] != 0x00)
+    {
+      if (error && !*error)
+        g_set_error_literal (error, EL721_ERROR, 1,
+                             "K250A random nonce request failed");
+      goto fail;
+    }
+  memcpy (nonce, response, 32);
+  secure_clear (response, sizeof (response));
+  *opened_fd = fd;
+  return TRUE;
+
+fail:
+  secure_clear (response, sizeof (response));
+  close (fd);
+  return FALSE;
+}
+
+static gboolean
+k250a_get_credential (int fd, guint8 credential_index, gboolean persistent,
+                      const guint8 signed_request[77],
+                      const guint8 request_hash[32], guint8 *credential,
+                      gsize credential_capacity, gsize *credential_size,
+                      guint8 response_hash[32], GError **error)
+{
+  guint8 apdu[128] = { 0 };
+  guint8 response[512] = { 0 };
+  guint8 get_response[5] = { 0 };
+  g_autofree guint8 *payload = g_malloc0 (credential_capacity + 32);
+  gsize response_size = 0;
+  gsize payload_size = 0;
+  guint8 sw1;
+  guint8 sw2;
+
+  apdu[0] = 0x80;
+  apdu[1] = 0xcb;
+  apdu[2] = persistent ? 1 : 0;
+  apdu[3] = credential_index;
+  apdu[4] = 109;
+  memcpy (apdu + 5, signed_request, 77);
+  memcpy (apdu + 82, request_hash, 32);
+  if (!k250a_transceive (fd, apdu, 114, response, sizeof (response),
+                         &response_size, error))
+    goto fail;
+  if (response_size != 2 || response[0] != 0x61)
+    {
+      g_set_error (error, EL721_ERROR, 1,
+                   "K250A credential %u is unavailable (status=%02x%02x)",
+                   credential_index, response_size > 0 ? response[0] : 0,
+                   response_size > 1 ? response[1] : 0);
+      goto fail;
+    }
+  sw1 = response[0];
+  sw2 = response[1];
+  for (;;)
+    {
+      get_response[0] = sw2 ? 0x90 : 0x80;
+      get_response[1] = 0xc0;
+      get_response[2] = 0;
+      get_response[3] = 0;
+      get_response[4] = sw2;
+      if (!k250a_transceive (fd, get_response, sizeof (get_response), response,
+                             sizeof (response), &response_size, error))
+        goto fail;
+      if (response_size < 2 ||
+          response_size - 2 > credential_capacity + 32 - payload_size)
+        {
+          g_set_error_literal (error, EL721_ERROR, 1,
+                               "K250A credential response is malformed");
+          goto fail;
+        }
+      memcpy (payload + payload_size, response, response_size - 2);
+      payload_size += response_size - 2;
+      sw1 = response[response_size - 2];
+      sw2 = response[response_size - 1];
+      if (sw1 == 0x90 && sw2 == 0x00)
+        break;
+      if (sw1 != 0x61)
+        {
+          g_set_error (error, EL721_ERROR, 1,
+                       "K250A chained response failed (status=%02x%02x)",
+                       sw1, sw2);
+          goto fail;
+        }
+    }
+  if (payload_size < 32 || payload_size - 32 > credential_capacity)
+    {
+      g_set_error_literal (error, EL721_ERROR, 1,
+                           "K250A credential has an invalid length");
+      goto fail;
+    }
+  *credential_size = payload_size - 32;
+  memcpy (credential, payload, *credential_size);
+  memcpy (response_hash, payload + *credential_size, 32);
+  secure_clear (response, sizeof (response));
+  secure_clear (payload, credential_capacity + 32);
+  return TRUE;
+
+fail:
+  secure_clear (response, sizeof (response));
+  secure_clear (payload, credential_capacity + 32);
+  return FALSE;
+}
+
+static gboolean
+hwvault_send (struct qcomtee_object *vault, const guint8 *request,
+              gsize request_size, guint8 *output, GError **error)
+{
+  g_autofree guint8 *input = g_malloc0 (HWVAULT_WIRE_SIZE);
+  g_autofree guint8 *response = g_malloc0 (HWVAULT_WIRE_SIZE);
+  guint32 is_64_bit = 1;
+  struct qcomtee_param params[10] = { 0 };
+  qcomtee_result_t result = QCOMTEE_ERROR;
+  int transport;
+  guint i;
+
+  if (request_size > HWVAULT_WIRE_SIZE)
+    {
+      g_set_error_literal (error, EL721_ERROR, 1,
+                           "HwVault request exceeds its shared buffer");
+      return FALSE;
+    }
+  memcpy (input, request, request_size);
+  params[0] = (struct qcomtee_param) {
+    .attr = QCOMTEE_UBUF_INPUT,
+    .ubuf = { input, HWVAULT_WIRE_SIZE }
+  };
+  params[1] = (struct qcomtee_param) {
+    .attr = QCOMTEE_UBUF_INPUT,
+    .ubuf = { response, HWVAULT_WIRE_SIZE }
+  };
+  params[2] = (struct qcomtee_param) {
+    .attr = QCOMTEE_UBUF_INPUT,
+    .ubuf = { NULL, 0 }
+  };
+  params[3] = (struct qcomtee_param) {
+    .attr = QCOMTEE_UBUF_INPUT,
+    .ubuf = { &is_64_bit, sizeof (is_64_bit) }
+  };
+  /* QSEECom_send_cmd aliases the same request/response areas in its input and
+   * output ObjectArgs. HwVault validates the full 40 KiB ranges. */
+  params[4] = (struct qcomtee_param) {
+    .attr = QCOMTEE_UBUF_OUTPUT,
+    .ubuf = { input, HWVAULT_WIRE_SIZE }
+  };
+  params[5] = (struct qcomtee_param) {
+    .attr = QCOMTEE_UBUF_OUTPUT,
+    .ubuf = { response, HWVAULT_WIRE_SIZE }
+  };
+  for (i = 6; i < G_N_ELEMENTS (params); i++)
+    params[i] = (struct qcomtee_param) {
+      .attr = QCOMTEE_OBJREF_INPUT,
+      .object = QCOMTEE_OBJECT_NULL
+    };
+  transport = qcomtee_object_invoke (vault, QSEECOM_SEND_REQUEST_OP,
+                                     params, G_N_ELEMENTS (params), &result);
+  if (transport || result)
+    {
+      g_set_error (error, EL721_ERROR, result,
+                   "HwVault command %u failed (transport=%d, result=%u)",
+                   get_u32 (request, 0), transport, result);
+      secure_clear (input, HWVAULT_WIRE_SIZE);
+      secure_clear (response, HWVAULT_WIRE_SIZE);
+      return FALSE;
+    }
+  memcpy (output, response, HWVAULT_WIRE_SIZE);
+  secure_clear (input, HWVAULT_WIRE_SIZE);
+  secure_clear (response, HWVAULT_WIRE_SIZE);
+  return TRUE;
+}
+
+static gboolean
+hwvault_parse_signed_get (const guint8 *output,
+                          const guint8 **signed_request,
+                          gsize *signed_request_size,
+                          const guint8 **request_hash,
+                          gsize *request_hash_size, GError **error)
+{
+  guint32 payload_size = get_u32 (output, 4);
+  guint32 status = G_MAXUINT32;
+  gsize end;
+  gsize offset = 8;
+
+  *signed_request = NULL;
+  *signed_request_size = 0;
+  *request_hash = NULL;
+  *request_hash_size = 0;
+  if (payload_size > HWVAULT_WIRE_SIZE - 8)
+    goto malformed;
+  end = 8 + payload_size;
+  while (offset + 8 <= end)
+    {
+      guint32 tag = get_u32 (output, offset);
+      guint32 value = get_u32 (output, offset + 4);
+      offset += 8;
+      if ((tag >> 24) == 1)
+        {
+          if (tag == 0x01000001)
+            status = value;
+        }
+      else if ((tag >> 24) == 2)
+        {
+          if (value > end - offset)
+            goto malformed;
+          if (tag == 0x02000007)
+            {
+              *signed_request = output + offset;
+              *signed_request_size = value;
+            }
+          else if (tag == 0x02000008)
+            {
+              *request_hash = output + offset;
+              *request_hash_size = value;
+            }
+          offset += value;
+        }
+      else
+        goto malformed;
+    }
+  if (offset != end || status != 0 || *signed_request_size != 77 ||
+      *request_hash_size != 32)
+    goto malformed;
+  return TRUE;
+
+malformed:
+  g_set_error (error, EL721_ERROR, status,
+               "HwVault signed-GET response is invalid (status=%u)", status);
+  return FALSE;
+}
+
+static gboolean
+hwvault_restore_credential (struct qcomtee_object *vault,
+                            guint8 credential_index, gboolean persistent,
+                            GError **error)
+{
+  g_autofree guint8 *request = g_malloc0 (HWVAULT_WIRE_SIZE);
+  g_autofree guint8 *response = g_malloc0 (HWVAULT_WIRE_SIZE);
+  guint8 nonce[32] = { 0 };
+  guint8 signed_request_copy[77] = { 0 };
+  guint8 request_hash_copy[32] = { 0 };
+  guint8 encrypted_credential[HWVAULT_CREDENTIAL_MAX] = { 0 };
+  guint8 response_hash[32] = { 0 };
+  const guint8 *signed_request = NULL;
+  const guint8 *request_hash = NULL;
+  gsize signed_request_size = 0;
+  gsize request_hash_size = 0;
+  gsize encrypted_credential_size = 0;
+  gsize verified_credential_size = 0;
+  gsize size;
+  int k250a_fd = -1;
+  gboolean success = FALSE;
+
+  if (!k250a_open_and_nonce (nonce, &k250a_fd, error))
+    goto out;
+  put_u32 (request, 0, HWVAULT_SIGN_GET);
+  put_u32 (request, 4, 48);
+  put_u32 (request, 8, 0x01000005); /* HV_TAG_CRED_INDEX */
+  put_u32 (request, 12, credential_index);
+  put_u32 (request, 16, 0x0200000a); /* HV_TAG_NONCE */
+  put_u32 (request, 20, sizeof (nonce));
+  memcpy (request + 24, nonce, sizeof (nonce));
+  secure_clear (nonce, sizeof (nonce));
+  if (!hwvault_send (vault, request, 56, response, error) ||
+      !hwvault_parse_signed_get (response, &signed_request,
+                                 &signed_request_size, &request_hash,
+                                 &request_hash_size, error))
+    goto out;
+  memcpy (signed_request_copy, signed_request, sizeof (signed_request_copy));
+  memcpy (request_hash_copy, request_hash, sizeof (request_hash_copy));
+  if (!k250a_get_credential (k250a_fd, credential_index, persistent,
+                             signed_request_copy, request_hash_copy,
+                             encrypted_credential,
+                             sizeof (encrypted_credential),
+                             &encrypted_credential_size, response_hash, error))
+    goto out;
+
+  secure_clear (request, HWVAULT_WIRE_SIZE);
+  secure_clear (response, HWVAULT_WIRE_SIZE);
+  put_u32 (request, 0, HWVAULT_VERIFY_GET);
+  put_u32 (request, 8, 0x0100000e); /* HV_TAG_UPDATE_CRED */
+  /* The signed GET and its verifier use the same persistent namespace.
+   * Stock restores indices 0/1 with this flag set, and ordinary index 11
+   * with it clear.  A successful VERIFY_GET alone does not prove that the
+   * subsequent, internal set_cached_cred operation succeeded. */
+  put_u32 (request, 12, persistent ? 1 : 0);
+  size = 16;
+#define APPEND_HWVAULT_BYTES(tag_, data_, data_size_) G_STMT_START { \
+    put_u32 (request, size, (tag_)); \
+    put_u32 (request, size + 4, (data_size_)); \
+    memcpy (request + size + 8, (data_), (data_size_)); \
+    size += 8 + (data_size_); \
+  } G_STMT_END
+  APPEND_HWVAULT_BYTES (0x02000007, signed_request_copy,
+                        signed_request_size);
+  APPEND_HWVAULT_BYTES (0x02010006, encrypted_credential,
+                        encrypted_credential_size);
+  APPEND_HWVAULT_BYTES (0x02000009, response_hash, sizeof (response_hash));
+#undef APPEND_HWVAULT_BYTES
+  put_u32 (request, 4, size - 8);
+  if (!hwvault_send (vault, request, size, response, error) ||
+      !el721_decode_hwvault_restore (response, HWVAULT_WIRE_SIZE,
+                                     credential_index, persistent,
+                                     &verified_credential_size, error))
+    goto out;
+  g_debug ("HwVault cached credential %u (persistent=%u, %" G_GSIZE_FORMAT " bytes)",
+           credential_index, !!persistent, verified_credential_size);
+  success = TRUE;
+
+out:
+  if (k250a_fd >= 0)
+    close (k250a_fd);
+  secure_clear (nonce, sizeof (nonce));
+  secure_clear (signed_request_copy, sizeof (signed_request_copy));
+  secure_clear (request_hash_copy, sizeof (request_hash_copy));
+  secure_clear (encrypted_credential, sizeof (encrypted_credential));
+  secure_clear (response_hash, sizeof (response_hash));
+  secure_clear (request, HWVAULT_WIRE_SIZE);
+  secure_clear (response, HWVAULT_WIRE_SIZE);
+  return success;
+}
+
+static gboolean
+el721_qtee_restore_hwvault (El721Qtee *session, GError **error)
+{
+  static const struct
+  {
+    guint8 index;
+    gboolean persistent;
+  } credentials[] = {
+    { 0, TRUE },
+    { 1, TRUE },
+    { 11, FALSE },
+  };
+  qcomtee_result_t lookup_result = QCOMTEE_ERROR;
+  guint i;
+
+  if (!lookup_ta (session, "hwvault", &session->hwvault, &lookup_result))
+    {
+      g_set_error_literal (error, EL721_ERROR, 1,
+                           "HwVault lookup transport failed");
+      return FALSE;
+    }
+  if (lookup_result || session->hwvault == QCOMTEE_OBJECT_NULL)
+    {
+      qcomtee_object_refs_dec (session->hwvault);
+      session->hwvault = QCOMTEE_OBJECT_NULL;
+      if (!load_ta (session, session->firmware_directory, "hwvault",
+                    &session->hwvault, error))
+        return FALSE;
+      session->hwvault_loaded_here = TRUE;
+    }
+  for (i = 0; i < G_N_ELEMENTS (credentials); i++)
+    if (!hwvault_restore_credential (session->hwvault,
+                                     credentials[i].index,
+                                     credentials[i].persistent, error))
+      goto fail;
+  g_debug ("HwVault K250A credentials cached; template encryption still requires EnrollDo validation");
+  return TRUE;
+
+fail:
+  if (session->hwvault_loaded_here &&
+      session->hwvault != QCOMTEE_OBJECT_NULL)
+    {
+      qcomtee_result_t result = QCOMTEE_ERROR;
+      qcomtee_object_invoke (session->hwvault, QSEECOM_UNLOAD_OP,
+                             NULL, 0, &result);
+    }
+  qcomtee_object_refs_dec (session->hwvault);
+  session->hwvault = QCOMTEE_OBJECT_NULL;
+  session->hwvault_loaded_here = FALSE;
+  return FALSE;
+}
+
+static gboolean
+ensure_gatekeeper (El721Qtee *session, GError **error)
+{
+  qcomtee_result_t lookup_result = QCOMTEE_ERROR;
+
+  if (session->gatekeeper != QCOMTEE_OBJECT_NULL)
+    return TRUE;
+  if (!lookup_ta (session, "skeymast", &session->gatekeeper,
+                  &lookup_result))
+    {
+      g_set_error_literal (error, EL721_ERROR, 1,
+                           "Gatekeeper lookupTA transport failed");
+      return FALSE;
+    }
+  if (!lookup_result && session->gatekeeper != QCOMTEE_OBJECT_NULL)
+    return TRUE;
+
+  qcomtee_object_refs_dec (session->gatekeeper);
+  session->gatekeeper = QCOMTEE_OBJECT_NULL;
+  if (!load_ta (session, session->firmware_directory, "skeymast",
+                &session->gatekeeper, error))
+    return FALSE;
+  session->gatekeeper_loaded_here = TRUE;
+  return TRUE;
+}
+
+typedef struct
+{
+  guint8 bytes[256];
+  gsize size;
+} El721DerBuilder;
+
+static gboolean
+der_append_length (El721DerBuilder *builder, gsize length)
+{
+  if (length < 0x80)
+    {
+      if (builder->size == sizeof (builder->bytes))
+        return FALSE;
+      builder->bytes[builder->size++] = (guint8) length;
+      return TRUE;
+    }
+  if (length > 0xff || builder->size > sizeof (builder->bytes) - 2)
+    return FALSE;
+  builder->bytes[builder->size++] = 0x81;
+  builder->bytes[builder->size++] = (guint8) length;
+  return TRUE;
+}
+
+static gboolean
+der_append_tlv (El721DerBuilder *builder, guint8 tag,
+                const guint8 *value, gsize value_size)
+{
+  if (builder->size == sizeof (builder->bytes))
+    return FALSE;
+  builder->bytes[builder->size++] = tag;
+  if (!der_append_length (builder, value_size) ||
+      value_size > sizeof (builder->bytes) - builder->size)
+    return FALSE;
+  if (value_size)
+    memcpy (builder->bytes + builder->size, value, value_size);
+  builder->size += value_size;
+  return TRUE;
+}
+
+static gboolean
+der_append_integer (El721DerBuilder *builder, guint64 value)
+{
+  guint8 integer[9];
+  gsize first = sizeof (integer) - 1;
+
+  integer[first] = (guint8) value;
+  while ((value >>= 8) != 0)
+    integer[--first] = (guint8) value;
+  if (integer[first] & 0x80)
+    integer[--first] = 0;
+  return der_append_tlv (builder, 0x02, integer + first,
+                         sizeof (integer) - first);
+}
+
+static gboolean
+der_append_explicit_integer (El721DerBuilder *builder, guint8 tag,
+                             guint64 value)
+{
+  El721DerBuilder inner = { 0 };
+
+  return der_append_integer (&inner, value) &&
+         der_append_tlv (builder, tag, inner.bytes, inner.size);
+}
+
+static gboolean
+der_append_explicit_octet (El721DerBuilder *builder, guint8 tag,
+                           const guint8 *value, gsize value_size)
+{
+  El721DerBuilder inner = { 0 };
+
+  return der_append_tlv (&inner, 0x04, value, value_size) &&
+         der_append_tlv (builder, tag, inner.bytes, inner.size);
+}
+
+static gboolean
+gatekeeper_build_frame (guint32 command, guint64 challenge,
+                        const guint8 secret[GATEKEEPER_SECRET_SIZE],
+                        const guint8 *handle, gsize handle_size,
+                        guint8 frame[256], gsize *frame_size, GError **error)
+{
+  El721DerBuilder content = { 0 };
+  El721DerBuilder sequence = { 0 };
+  gboolean enrolling = command == GATEKEEPER_ENROLL_COMMAND;
+  guint32 schema = enrolling ? GATEKEEPER_ENROLL_SCHEMA :
+                               GATEKEEPER_VERIFY_SCHEMA;
+
+  if ((!enrolling && (!handle || handle_size != GATEKEEPER_HANDLE_SIZE)) ||
+      (enrolling && handle_size))
+    goto invalid;
+  if (!der_append_integer (&content, 3) ||
+      !der_append_integer (&content, 100) ||
+      !der_append_integer (&content, command) ||
+      !der_append_integer (&content, schema) ||
+      !der_append_explicit_integer (&content, 0xa0, GATEKEEPER_UID) ||
+      (!enrolling &&
+       !der_append_explicit_integer (&content, 0xa1, challenge)) ||
+      !der_append_explicit_octet (&content, 0xa3,
+                                  enrolling ? NULL : secret,
+                                  enrolling ? 0 : GATEKEEPER_SECRET_SIZE) ||
+      (enrolling &&
+       !der_append_explicit_octet (&content, 0xa4, secret,
+                                   GATEKEEPER_SECRET_SIZE)) ||
+      !der_append_explicit_octet (&content, 0xa6, handle, handle_size) ||
+      !der_append_tlv (&sequence, 0x30, content.bytes, content.size) ||
+      sequence.size > 256 - 8)
+    goto invalid;
+  memset (frame, 0, 256);
+  put_u64 (frame, 0, sequence.size);
+  memcpy (frame + 8, sequence.bytes, sequence.size);
+  *frame_size = 8 + sequence.size;
+  secure_clear (&content, sizeof (content));
+  secure_clear (&sequence, sizeof (sequence));
+  return TRUE;
+
+invalid:
+  secure_clear (&content, sizeof (content));
+  secure_clear (&sequence, sizeof (sequence));
+  g_set_error_literal (error, EL721_ERROR, 1,
+                       "cannot encode the Gatekeeper request");
+  return FALSE;
+}
+
+static gboolean
+gatekeeper_send (El721Qtee *session, const guint8 *frame, gsize frame_size,
+                 guint8 response_out[GATEKEEPER_SHARED_SIZE], GError **error)
+{
+  guint8 request[GATEKEEPER_SHARED_SIZE] = { 0 };
+  guint8 response[GATEKEEPER_SHARED_SIZE] = { 0 };
+  guint8 request_out[GATEKEEPER_SHARED_SIZE] = { 0 };
+  guint32 is_64_bit = 1;
+  struct qcomtee_param params[10] = { 0 };
+  qcomtee_result_t result = QCOMTEE_ERROR;
+  gboolean ok = FALSE;
+  guint i;
+
+  if (frame_size > sizeof (request))
+    {
+      g_set_error_literal (error, EL721_ERROR, 1,
+                           "Gatekeeper request is too large");
+      return FALSE;
+    }
+  memcpy (request, frame, frame_size);
+  memset (response_out, 0, GATEKEEPER_SHARED_SIZE);
+  params[0] = (struct qcomtee_param) {
+    .attr = QCOMTEE_UBUF_INPUT,
+    .ubuf = { request, sizeof (request) }
+  };
+  params[1] = (struct qcomtee_param) {
+    .attr = QCOMTEE_UBUF_INPUT,
+    .ubuf = { response, sizeof (response) }
+  };
+  params[2] = (struct qcomtee_param) {
+    .attr = QCOMTEE_UBUF_INPUT,
+    .ubuf = { NULL, 0 }
+  };
+  params[3] = (struct qcomtee_param) {
+    .attr = QCOMTEE_UBUF_INPUT,
+    .ubuf = { &is_64_bit, sizeof (is_64_bit) }
+  };
+  params[4] = (struct qcomtee_param) {
+    .attr = QCOMTEE_UBUF_OUTPUT,
+    .ubuf = { request_out, sizeof (request_out) }
+  };
+  params[5] = (struct qcomtee_param) {
+    .attr = QCOMTEE_UBUF_OUTPUT,
+    .ubuf = { response_out, GATEKEEPER_SHARED_SIZE }
+  };
+  for (i = 6; i < G_N_ELEMENTS (params); i++)
+    params[i] = (struct qcomtee_param) {
+      .attr = QCOMTEE_OBJREF_INPUT,
+      .object = QCOMTEE_OBJECT_NULL
+    };
+  if (qcomtee_object_invoke (session->gatekeeper, QSEECOM_SEND_REQUEST_OP,
+                             params, G_N_ELEMENTS (params), &result))
+    g_set_error_literal (error, EL721_ERROR, 1,
+                         "Gatekeeper transport failed");
+  else if (result)
+    g_set_error (error, EL721_ERROR, result,
+                 "Gatekeeper rejected the request (result %u)", result);
+  else
+    ok = TRUE;
+  secure_clear (request, sizeof (request));
+  secure_clear (response, sizeof (response));
+  secure_clear (request_out, sizeof (request_out));
+  return ok;
+}
+
+/* Samsung's KeyMint bridge asks skeymast to encapsulate the current Hardware
+ * Auth Token HMAC key for the named biometric TA.  The key itself never
+ * crosses the secure boundary: userspace only relays this target-bound
+ * envelope to dualfp's DECAP_KEY command. */
+static gboolean
+gatekeeper_get_hat_key_envelope (El721Qtee *session, guint8 **envelope,
+                                 gsize *envelope_size, GError **error)
+{
+  static const guint8 target[] = "dualfp";
+  g_autofree guint8 *request = g_malloc0 (GATEKEEPER_KEY_REQUEST_SIZE);
+  g_autofree guint8 *request_out = g_malloc0 (GATEKEEPER_KEY_REQUEST_SIZE);
+  guint8 response[GATEKEEPER_KEY_RESPONSE_SIZE] = { 0 };
+  guint8 response_out[GATEKEEPER_KEY_RESPONSE_SIZE] = { 0 };
+  guint32 is_64_bit = 1;
+  struct qcomtee_param params[10] = { 0 };
+  qcomtee_result_t result = QCOMTEE_ERROR;
+  guint32 returned_size;
+  guint32 status;
+  gboolean ok = FALSE;
+  guint i;
+
+  *envelope = NULL;
+  *envelope_size = 0;
+  put_u32 (request, 0, GATEKEEPER_GET_HAT_KEY_COMMAND);
+  put_u32 (request, 4, sizeof (target) - 1);
+  put_u32 (request, 8, GATEKEEPER_KEY_DATA_MAX);
+  memcpy (request + GATEKEEPER_KEY_NAME_OFFSET, target, sizeof (target) - 1);
+  params[0] = (struct qcomtee_param) {
+    .attr = QCOMTEE_UBUF_INPUT,
+    .ubuf = { request, GATEKEEPER_KEY_REQUEST_SIZE }
+  };
+  params[1] = (struct qcomtee_param) {
+    .attr = QCOMTEE_UBUF_INPUT,
+    .ubuf = { response, sizeof (response) }
+  };
+  params[2] = (struct qcomtee_param) {
+    .attr = QCOMTEE_UBUF_INPUT,
+    .ubuf = { NULL, 0 }
+  };
+  params[3] = (struct qcomtee_param) {
+    .attr = QCOMTEE_UBUF_INPUT,
+    .ubuf = { &is_64_bit, sizeof (is_64_bit) }
+  };
+  params[4] = (struct qcomtee_param) {
+    .attr = QCOMTEE_UBUF_OUTPUT,
+    .ubuf = { request_out, GATEKEEPER_KEY_REQUEST_SIZE }
+  };
+  params[5] = (struct qcomtee_param) {
+    .attr = QCOMTEE_UBUF_OUTPUT,
+    .ubuf = { response_out, sizeof (response_out) }
+  };
+  for (i = 6; i < G_N_ELEMENTS (params); i++)
+    params[i] = (struct qcomtee_param) {
+      .attr = QCOMTEE_OBJREF_INPUT,
+      .object = QCOMTEE_OBJECT_NULL
+    };
+  if (qcomtee_object_invoke (session->gatekeeper, QSEECOM_SEND_REQUEST_OP,
+                             params, G_N_ELEMENTS (params), &result))
+    g_set_error_literal (error, EL721_ERROR, 1,
+                         "skeymast HAT-key transport failed");
+  else
+    {
+      returned_size = get_u32 (request_out, 8);
+      status = get_u32 (request_out, 12);
+      if (result || status || returned_size == 0 ||
+          returned_size > GATEKEEPER_KEY_DATA_MAX)
+        g_set_error (error, EL721_ERROR, status ? status : result,
+                     "skeymast HAT-key request failed (invoke=%u, status=%u, "
+                     "size=%u)", result, status, returned_size);
+      else
+        {
+          *envelope = g_memdup2 (request_out + GATEKEEPER_KEY_DATA_OFFSET,
+                                 returned_size);
+          *envelope_size = returned_size;
+          ok = TRUE;
+        }
+    }
+  secure_clear (request, GATEKEEPER_KEY_REQUEST_SIZE);
+  secure_clear (request_out, GATEKEEPER_KEY_REQUEST_SIZE);
+  secure_clear (response, sizeof (response));
+  secure_clear (response_out, sizeof (response_out));
+  return ok;
+}
+
+static gboolean
+der_read_length (const guint8 *buffer, gsize size,
+                 gsize *header_size, gsize *value_size)
+{
+  gsize bytes;
+  gsize value = 0;
+  gsize i;
+
+  if (size < 2)
+    return FALSE;
+  if (!(buffer[1] & 0x80))
+    {
+      *header_size = 2;
+      *value_size = buffer[1];
+      return *value_size <= size - 2;
+    }
+  bytes = buffer[1] & 0x7f;
+  if (!bytes || bytes > sizeof (gsize) || bytes > size - 2)
+    return FALSE;
+  for (i = 0; i < bytes; i++)
+    value = (value << 8) | buffer[2 + i];
+  *header_size = 2 + bytes;
+  *value_size = value;
+  return value <= size - *header_size;
+}
+
+static gboolean
+gatekeeper_extract_octet (const guint8 frame[GATEKEEPER_SHARED_SIZE],
+                          gsize expected_size, const guint8 **octet)
+{
+  guint64 declared = 0;
+  gsize sequence_header;
+  gsize sequence_size;
+  gsize offset;
+  guint i;
+
+  for (i = 0; i < 8; i++)
+    declared |= (guint64) frame[i] << (8 * i);
+  if (declared > GATEKEEPER_SHARED_SIZE - 8 || frame[8] != 0x30 ||
+      !der_read_length (frame + 8, (gsize) declared, &sequence_header,
+                        &sequence_size))
+    return FALSE;
+  offset = 8 + sequence_header;
+  while (offset < 8 + sequence_header + sequence_size)
+    {
+      const guint8 *outer = frame + offset;
+      gsize remaining = 8 + sequence_header + sequence_size - offset;
+      gsize outer_header;
+      gsize outer_size;
+      gsize inner_header;
+      gsize inner_size;
+
+      if (!der_read_length (outer, remaining, &outer_header, &outer_size))
+        return FALSE;
+      if ((outer[0] & 0xe0) == 0xa0 && outer_size >= 2 &&
+          outer[outer_header] == 0x04 &&
+          der_read_length (outer + outer_header, outer_size,
+                           &inner_header, &inner_size) &&
+          inner_header + inner_size == outer_size &&
+          inner_size == expected_size)
+        {
+          *octet = outer + outer_header + inner_header;
+          return TRUE;
+        }
+      offset += outer_header + outer_size;
+    }
+  return FALSE;
+}
+
+static gboolean
+random_secret (guint8 secret[GATEKEEPER_SECRET_SIZE], GError **error)
+{
+  gsize offset = 0;
+
+  while (offset < GATEKEEPER_SECRET_SIZE)
+    {
+      ssize_t got = getrandom (secret + offset,
+                               GATEKEEPER_SECRET_SIZE - offset, 0);
+
+      if (got > 0)
+        offset += got;
+      else if (got < 0 && errno == EINTR)
+        continue;
+      else
+        {
+          g_set_error (error, G_FILE_ERROR, g_file_error_from_errno (errno),
+                       "cannot obtain Gatekeeper randomness: %s",
+                       g_strerror (errno));
+          secure_clear (secret, GATEKEEPER_SECRET_SIZE);
+          return FALSE;
+        }
+    }
+  return TRUE;
+}
+
+static gboolean
+read_full (int fd, guint8 *buffer, gsize size)
+{
+  gsize offset = 0;
+
+  while (offset < size)
+    {
+      ssize_t got = read (fd, buffer + offset, size - offset);
+
+      if (got > 0)
+        offset += got;
+      else if (got < 0 && errno == EINTR)
+        continue;
+      else
+        return FALSE;
+    }
+  return TRUE;
+}
+
+static gboolean
+write_full (int fd, const guint8 *buffer, gsize size)
+{
+  gsize offset = 0;
+
+  while (offset < size)
+    {
+      ssize_t wrote = write (fd, buffer + offset, size - offset);
+
+      if (wrote > 0)
+        offset += wrote;
+      else if (wrote < 0 && errno == EINTR)
+        continue;
+      else
+        return FALSE;
+    }
+  return TRUE;
+}
+
+static gboolean
+gatekeeper_read_state (guint8 secret[GATEKEEPER_SECRET_SIZE],
+                       guint8 handle[GATEKEEPER_HANDLE_SIZE],
+                       gboolean *found, GError **error)
+{
+  static const guint8 magic[8] = { 'G', 'T', 'S', '9', 'U', 'G', 'K', '1' };
+  guint8 state[GATEKEEPER_STATE_SIZE];
+  struct stat stat_buffer;
+  int fd;
+  int saved_errno;
+
+  *found = FALSE;
+  fd = open (GATEKEEPER_STATE_PATH, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+  if (fd < 0 && errno == ENOENT)
+    fd = open (GATEKEEPER_LEGACY_STATE_PATH,
+               O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+  if (fd < 0 && errno == ENOENT)
+    return TRUE;
+  if (fd < 0)
+    goto fail;
+  if (fstat (fd, &stat_buffer))
+    {
+      saved_errno = errno;
+      close (fd);
+      secure_clear (state, sizeof (state));
+      errno = saved_errno;
+      goto fail;
+    }
+  if (!S_ISREG (stat_buffer.st_mode) || stat_buffer.st_uid != 0 ||
+      (stat_buffer.st_mode & 077) ||
+      stat_buffer.st_size != GATEKEEPER_STATE_SIZE ||
+      !read_full (fd, state, sizeof (state)) ||
+      memcmp (state, magic, sizeof (magic)) || state[8] != 1)
+    {
+      close (fd);
+      secure_clear (state, sizeof (state));
+      errno = EINVAL;
+      goto fail;
+    }
+  close (fd);
+  memcpy (secret, state + 9, GATEKEEPER_SECRET_SIZE);
+  memcpy (handle, state + 9 + GATEKEEPER_SECRET_SIZE,
+          GATEKEEPER_HANDLE_SIZE);
+  secure_clear (state, sizeof (state));
+  *found = TRUE;
+  return TRUE;
+
+fail:
+  saved_errno = errno;
+  g_set_error (error, G_FILE_ERROR, g_file_error_from_errno (saved_errno),
+               "cannot read secure Gatekeeper state: %s",
+               g_strerror (saved_errno));
+  return FALSE;
+}
+
+static gboolean
+gatekeeper_write_state (const guint8 secret[GATEKEEPER_SECRET_SIZE],
+                        const guint8 handle[GATEKEEPER_HANDLE_SIZE],
+                        GError **error)
+{
+  static const guint8 magic[8] = { 'G', 'T', 'S', '9', 'U', 'G', 'K', '1' };
+  guint8 state[GATEKEEPER_STATE_SIZE] = { 0 };
+  g_autofree gchar *temporary = NULL;
+  int fd = -1;
+  int saved_errno = 0;
+
+  if (g_mkdir_with_parents (GATEKEEPER_STATE_DIRECTORY, 0700))
+    goto fail;
+  memcpy (state, magic, sizeof (magic));
+  state[8] = 1;
+  memcpy (state + 9, secret, GATEKEEPER_SECRET_SIZE);
+  memcpy (state + 9 + GATEKEEPER_SECRET_SIZE, handle,
+          GATEKEEPER_HANDLE_SIZE);
+  temporary = g_strdup (GATEKEEPER_STATE_PATH ".XXXXXX");
+  fd = g_mkstemp_full (temporary, O_WRONLY | O_CLOEXEC, 0600);
+  if (fd < 0)
+    goto fail;
+  if (!write_full (fd, state, sizeof (state)) || fsync (fd))
+    {
+      saved_errno = errno;
+      close (fd);
+      fd = -1;
+      goto fail;
+    }
+  if (close (fd))
+    {
+      saved_errno = errno;
+      fd = -1;
+      goto fail;
+    }
+  fd = -1;
+  if (g_rename (temporary, GATEKEEPER_STATE_PATH))
+    goto fail;
+  secure_clear (state, sizeof (state));
+  return TRUE;
+
+fail:
+  saved_errno = saved_errno ? saved_errno : errno;
+  if (fd >= 0)
+    close (fd);
+  if (temporary)
+    g_unlink (temporary);
+  secure_clear (state, sizeof (state));
+  g_set_error (error, G_FILE_ERROR, g_file_error_from_errno (saved_errno),
+               "cannot save secure Gatekeeper state: %s",
+               g_strerror (saved_errno));
+  return FALSE;
+}
+
+static gboolean
+gatekeeper_enroll_secret (El721Qtee *session,
+                          const guint8 secret[GATEKEEPER_SECRET_SIZE],
+                          guint8 handle[GATEKEEPER_HANDLE_SIZE],
+                          GError **error)
+{
+  guint8 frame[256] = { 0 };
+  guint8 response[GATEKEEPER_SHARED_SIZE] = { 0 };
+  const guint8 *returned_handle = NULL;
+  gsize frame_size = 0;
+  gboolean ok = FALSE;
+
+  if (gatekeeper_build_frame (GATEKEEPER_ENROLL_COMMAND, 0, secret,
+                              NULL, 0, frame, &frame_size, error) &&
+      gatekeeper_send (session, frame, frame_size, response, error) &&
+      gatekeeper_extract_octet (response, GATEKEEPER_HANDLE_SIZE,
+                                &returned_handle))
+    {
+      memcpy (handle, returned_handle, GATEKEEPER_HANDLE_SIZE);
+      ok = TRUE;
+    }
+  else if (!error || !*error)
+    g_set_error_literal (error, EL721_ERROR, 1,
+                         "Gatekeeper enrolment returned no password handle");
+  secure_clear (frame, sizeof (frame));
+  secure_clear (response, sizeof (response));
+  return ok;
+}
+
+static gboolean
+gatekeeper_verify_secret (El721Qtee *session, guint64 challenge,
+                          const guint8 secret[GATEKEEPER_SECRET_SIZE],
+                          const guint8 handle[GATEKEEPER_HANDLE_SIZE],
+                          guint8 hat[EL721_HARDWARE_AUTH_TOKEN_SIZE],
+                          GError **error)
+{
+  guint8 frame[256] = { 0 };
+  guint8 response[GATEKEEPER_SHARED_SIZE] = { 0 };
+  const guint8 *returned_hat = NULL;
+  gsize frame_size = 0;
+  gboolean ok = FALSE;
+
+  if (gatekeeper_build_frame (GATEKEEPER_VERIFY_COMMAND, challenge, secret,
+                              handle, GATEKEEPER_HANDLE_SIZE, frame,
+                              &frame_size, error) &&
+      gatekeeper_send (session, frame, frame_size, response, error) &&
+      gatekeeper_extract_octet (response, EL721_HARDWARE_AUTH_TOKEN_SIZE,
+                                &returned_hat))
+    {
+      memcpy (hat, returned_hat, EL721_HARDWARE_AUTH_TOKEN_SIZE);
+      ok = TRUE;
+    }
+  else if (!error || !*error)
+    g_set_error_literal (error, EL721_ERROR, 1,
+                         "Gatekeeper verification returned no auth token");
+  secure_clear (frame, sizeof (frame));
+  secure_clear (response, sizeof (response));
+  return ok;
 }
 
 void
@@ -710,6 +1901,86 @@ static gboolean invoke_body_full (El721Qtee *session, guint32 command,
                                   gsize out_capacity_offset,
                                   guint32 out_capacity,
                                   guint8 **output, GError **error);
+static gboolean el721_qtee_control_full (El721Qtee *session,
+                                         guint32 operation, guint32 scalar,
+                                         const guint8 *user, gsize user_size,
+                                         const guint8 *data, gsize data_size,
+                                         guint8 *response_data,
+                                         gsize response_capacity,
+                                         gsize *response_size,
+                                         gboolean require_zero_result,
+                                         GError **error);
+
+static gboolean
+dualfp_decap_hat_key (El721Qtee *session, const guint8 *envelope,
+                      gsize envelope_size, guint8 **metadata,
+                      gsize *metadata_size, GError **error)
+{
+  guint8 body[DECAP_KEY_INPUT_SIZE] = { 0 };
+  guint8 *output;
+  guint32 result;
+  guint32 returned_size;
+
+  *metadata = NULL;
+  *metadata_size = 0;
+  if (!envelope || envelope_size == 0 ||
+      envelope_size > DECAP_KEY_INPUT_DATA_MAX)
+    {
+      g_set_error (error, EL721_ERROR, 1,
+                   "invalid skeymast HAT-key envelope size %"
+                   G_GSIZE_FORMAT, envelope_size);
+      return FALSE;
+    }
+  put_u32 (body, 0, CMD_DECAP_KEY);
+  memcpy (body + DECAP_KEY_INPUT_DATA_OFFSET, envelope, envelope_size);
+  put_u32 (body, DECAP_KEY_INPUT_LENGTH_OFFSET, (guint32) envelope_size);
+  if (!invoke_body (session, CMD_DECAP_KEY, sizeof (body),
+                    DECAP_KEY_OUTPUT_SIZE, body, sizeof (body), &output,
+                    error))
+    return FALSE;
+  result = get_u32 (output, 4);
+  returned_size = get_u32 (output, DECAP_KEY_OUTPUT_LENGTH_OFFSET);
+  if (result || returned_size == 0 ||
+      returned_size > DECAP_KEY_OUTPUT_DATA_MAX)
+    {
+      g_set_error (error, EL721_ERROR, result,
+                   "dualfp HAT-key decapsulation failed (result=%u, size=%u)",
+                   result, returned_size);
+      return FALSE;
+    }
+  *metadata = g_memdup2 (output + DECAP_KEY_OUTPUT_DATA_OFFSET,
+                         returned_size);
+  *metadata_size = returned_size;
+  return TRUE;
+}
+
+static gboolean
+el721_qtee_provision_hat_key (El721Qtee *session, GError **error)
+{
+  g_autofree guint8 *envelope = NULL;
+  g_autofree guint8 *metadata = NULL;
+  gsize envelope_size = 0;
+  gsize metadata_size = 0;
+  gboolean ok;
+
+  if (!gatekeeper_get_hat_key_envelope (session, &envelope, &envelope_size,
+                                        error) ||
+      !dualfp_decap_hat_key (session, envelope, envelope_size,
+                            &metadata, &metadata_size, error))
+    {
+      if (envelope)
+        secure_clear (envelope, envelope_size);
+      if (metadata)
+        secure_clear (metadata, metadata_size);
+      return FALSE;
+    }
+  ok = el721_qtee_control_full (session, CONTROL_SEND_HAT_KEY, 0,
+                                NULL, 0, metadata, metadata_size,
+                                NULL, 0, NULL, TRUE, error);
+  secure_clear (envelope, envelope_size);
+  secure_clear (metadata, metadata_size);
+  return ok;
+}
 
 static gboolean
 load_runtime_file (El721Qtee *session, const gchar *name, gsize maximum,
@@ -865,6 +2136,139 @@ el721_qtee_raw_command (El721Qtee *session, guint32 command,
                  word, get_u32 (output, word * 4));
     }
   return TRUE;
+}
+
+gboolean
+el721_qtee_generate_challenge (El721Qtee *session, guint32 user_id,
+                               guint32 authenticator_id,
+                               El721Challenge *challenge, guint32 *result,
+                               GError **error)
+{
+  guint8 body[CHALLENGE_INPUT_SIZE] = { 0 };
+  guint8 *output;
+
+  g_return_val_if_fail (challenge != NULL, FALSE);
+  put_u32 (body, 0, CMD_CHALLENGE);
+  put_u32 (body, 4, user_id);
+  put_u32 (body, 8, authenticator_id);
+  if (!invoke_body (session, CMD_CHALLENGE, sizeof (body),
+                    CHALLENGE_OUTPUT_SIZE, body, sizeof (body), &output,
+                    error))
+    return FALSE;
+  if (result)
+    *result = get_u32 (output, 4);
+  memcpy (challenge->bytes, output + CHALLENGE_OUTPUT_INFO_OFFSET,
+          sizeof (challenge->bytes));
+  return TRUE;
+}
+
+gboolean
+el721_qtee_hat_op (El721Qtee *session, const guint8 *hat, gsize hat_size,
+                   guint32 selector, const guint8 *payload,
+                   gsize payload_size, const El721Challenge *challenge,
+                   guint32 *result, GError **error)
+{
+  guint8 body[HAT_INPUT_SIZE] = { 0 };
+  guint8 *output;
+
+  if (!hat || hat_size != EL721_HARDWARE_AUTH_TOKEN_SIZE ||
+      payload_size > HAT_PAYLOAD_MAX || (payload_size && !payload) ||
+      !challenge)
+    {
+      g_set_error_literal (error, EL721_ERROR, 1,
+                           "invalid BAUTH authentication envelope");
+      return FALSE;
+    }
+  put_u32 (body, 0, CMD_HAT_OP);
+  memcpy (body + HAT_TOKEN_OFFSET, hat, hat_size);
+  put_u32 (body, HAT_SELECTOR_OFFSET, selector);
+  if (payload_size)
+    memcpy (body + HAT_PAYLOAD_OFFSET, payload, payload_size);
+  put_u32 (body, HAT_PAYLOAD_LENGTH_OFFSET, (guint32) payload_size);
+  memcpy (body + HAT_CHALLENGE_OFFSET, challenge->bytes,
+          sizeof (challenge->bytes));
+  if (!invoke_body (session, CMD_HAT_OP, sizeof (body), HAT_OUTPUT_SIZE,
+                    body, sizeof (body), &output, error))
+    return FALSE;
+  if (result)
+    *result = get_u32 (output, 4);
+  return TRUE;
+}
+
+gboolean
+el721_qtee_authorize_enrollment (El721Qtee *session, guint32 user_id,
+                                 guint32 authenticator_id, GError **error)
+{
+  guint8 secret[GATEKEEPER_SECRET_SIZE] = { 0 };
+  guint8 handle[GATEKEEPER_HANDLE_SIZE] = { 0 };
+  guint8 hat[EL721_HARDWARE_AUTH_TOKEN_SIZE] = { 0 };
+  guint8 enabled = 1;
+  El721Challenge challenge = { 0 };
+  gboolean found = FALSE;
+  gboolean ok = FALSE;
+  guint64 challenge_value = 0;
+  guint32 result = 0;
+
+  if (!el721_qtee_control_op (session, CONTROL_HAT_ENABLE, &enabled,
+                              sizeof (enabled), 0, error) ||
+      !el721_qtee_generate_challenge (session, user_id, authenticator_id,
+                                      &challenge, &result, error))
+    goto out;
+  if (result)
+    {
+      g_set_error (error, EL721_ERROR, result,
+                   "BAUTH challenge generation returned %u", result);
+      goto out;
+    }
+  /* Samsung's challenge record and raw HAT carry the uint64 in host order;
+   * MDFPP then represents that value as a positive ASN.1 INTEGER. */
+  memcpy (&challenge_value, challenge.bytes + 8, sizeof (challenge_value));
+  if (!ensure_gatekeeper (session, error) ||
+      !gatekeeper_read_state (secret, handle, &found, error))
+    goto out;
+  if (!found)
+    {
+      if (!random_secret (secret, error))
+        goto out;
+      g_debug ("created a device-local Gatekeeper identity for Ubuntu");
+    }
+  /* Samsung's skeymast instance accepts the handle it creates for the life
+   * of that loaded TA, but this firmware rejects it after an unload/reload.
+   * Re-enrol the same root-only random credential in each QTEE session and
+   * persist the newest handle; no user password or Android credential is
+   * involved. */
+  if (!gatekeeper_enroll_secret (session, secret, handle, error) ||
+      !gatekeeper_write_state (secret, handle, error) ||
+      !el721_qtee_provision_hat_key (session, error))
+    goto out;
+  if (!gatekeeper_verify_secret (session, challenge_value, secret, handle,
+                                 hat, error))
+    goto out;
+  /* BAUTH checks both the signed token and its challenge.  Do not duplicate
+   * that check by assuming an endian convention for Samsung's raw HAT blob. */
+  if (hat[0] != 0)
+    {
+      g_set_error_literal (error, EL721_ERROR, 1,
+                           "Gatekeeper returned an unsupported token version");
+      goto out;
+    }
+  if (!el721_qtee_hat_op (session, hat, sizeof (hat), 0, NULL, 0,
+                          &challenge, &result, error))
+    goto out;
+  if (result)
+    {
+      g_set_error (error, EL721_ERROR, result,
+                   "BAUTH rejected the Gatekeeper token (result %u)", result);
+      goto out;
+    }
+  ok = TRUE;
+
+out:
+  secure_clear (secret, sizeof (secret));
+  secure_clear (handle, sizeof (handle));
+  secure_clear (hat, sizeof (hat));
+  secure_clear (&challenge, sizeof (challenge));
+  return ok;
 }
 
 /* Diagnostic: One UI sends several control operations with the active user
@@ -1043,7 +2447,7 @@ el721_qtee_prepare (El721Qtee *session, GError **error)
   gsize calibration_size = 0;
   guint8 *output;
   guint attempt;
-  guint32 sensor_type = 0;
+  guint32 status = 0;
   guint32 result = 0;
   guint32 function_status = 0;
   guint32 opcode = 0;
@@ -1070,16 +2474,17 @@ el721_qtee_prepare (El721Qtee *session, GError **error)
                         el721_probe_u32 ("EL721_PREPARE_OUT", PREPARE_SIZE),
                         body, PREPARE_SIZE, &output, error))
         return FALSE;
-      /* The Prepare envelope is not the BAUTH reply envelope: word 0 carries
-       * the sensor type rather than an opcode, and the opcode - when the TA
-       * asks for host work at all - lives in word 3 like everywhere else. */
-      sensor_type = get_u32 (output, 0);
+      /* One UI's check_opcode() treats a zeroed Prepare reply as success.  A
+       * value of 8 or 9 in word 0 is a request for host work, not the kernel's
+       * public sensor-type enum; accepting 8 as EL721 used to skip that work
+       * and made a correctly powered sensor look broken when it returned 0. */
+      status = get_u32 (output, 0);
       result = get_u32 (output, 4);
       function_status = get_u32 (output, 8);
       opcode = get_u32 (output, 12);
-      g_debug ("BAUTH calibrated Prepare attempt %u returned sensor_type=%u "
+      g_debug ("BAUTH calibrated Prepare attempt %u returned status=%u "
                "result=%u function_status=%u opcode=%u", attempt + 1,
-               sensor_type, result, function_status, opcode);
+               status, result, function_status, opcode);
       if (g_getenv ("EL721_DUMP_PREPARE"))
         {
           guint word;
@@ -1090,15 +2495,15 @@ el721_qtee_prepare (El721Qtee *session, GError **error)
         }
       if (result || function_status)
         break;
-      if (opcode == 0)
+      if (status == 0 && opcode == 0)
         break;
-      if (opcode == 8)
+      if (status == 8 || opcode == 8)
         {
           if (!reset_sensor (error))
             return FALSE;
           continue;
         }
-      if (opcode == 9)
+      if (status == 9 || opcode == 9)
         {
           /* Samsung's check_opcode() does not power-cycle the reader here.
            * It drops the optional CPU boost (irrelevant under Linux) and
@@ -1110,15 +2515,12 @@ el721_qtee_prepare (El721Qtee *session, GError **error)
         }
       break;
     }
-  if (g_getenv ("EL721_ANY_SENSOR_TYPE") && !result && !function_status &&
-      !opcode)
-    sensor_type = EL721_SENSOR_TYPE;
-  if (result || function_status || opcode || sensor_type != EL721_SENSOR_TYPE)
+  if (result || function_status || status || opcode)
     {
       g_set_error (error, EL721_ERROR, result,
-                   "calibrated Prepare returned sensor_type=%u, result=%u, "
+                   "calibrated Prepare returned status=%u, result=%u, "
                    "function_status=%u, opcode=%u",
-                   sensor_type, result, function_status, opcode);
+                   status, result, function_status, opcode);
       return FALSE;
     }
   /* One UI's common_prepare() continues with the optical bring-up before any
@@ -1139,12 +2541,9 @@ el721_qtee_prepare (El721Qtee *session, GError **error)
    * carries; this one is "X916", the model the kernel driver reports. */
   /* The TA resolves the board against a table of twenty-nine Samsung model
    * codes and keeps the index in the structure the matcher is configured
-   * from; "X916" is what this tablet's driver reports.  Two operations reach
-   * that setter: 88 goes on to build the matcher configuration from the entry
-   * it found, and 90 stops at the index.  Only 88 leaves the matcher usable,
-   * but it takes the TA down whenever the reader has actually been identified,
-   * so the default is the one that cannot crash and EL721_MODEL_OP selects the
-   * other; zero skips the step entirely. */
+   * from; "X916" is what this tablet's driver reports.  Operation 88 both
+   * selects that entry and constructs the matcher.  Operation 90 stops after
+   * the lookup and is retained only as a diagnostic override. */
   {
     guint8 model[EL721_MODEL_FIELD] = { 0 };
     guint32 op = el721_probe_u32 ("EL721_MODEL_OP", CONTROL_SELECT_MODEL);
@@ -1276,7 +2675,11 @@ invoke_body_full (El721Qtee *session, guint32 command, gsize input_size,
     }
   trustlet = get_u32 (response_out, 4);
   payload = output_size >= 8 ? get_u32 (out, 4) : 0;
-  if (result || trustlet)
+  /* QSEEComCompat mirrors a command-level BAUTH result into both the outer
+   * response and the command's own result word.  Such replies (notably 39,
+   * the normal capture-retry result) reached the TA successfully and must be
+   * decoded by the caller instead of being promoted to a transport error. */
+  if (result || (trustlet && trustlet != payload))
     {
       g_set_error (error, EL721_ERROR, trustlet,
                    "BAUTH command %u failed (invoke=%u, trustlet=%u, payload=%u,"
@@ -1389,16 +2792,18 @@ el721_qtee_enroll_do (El721Qtee *session, El721Reply *reply, GError **error)
   guint8 body[12] = { 0 };
   guint8 *output;
   put_u32 (body, 0, CMD_ENROLL_DO);
-  put_u32 (body, 8, el721_probe_u32 ("EL721_SENSOR_TYPE",
-                                     EL721_SENSOR_TYPE));
+  /* BAuthService resets EnrollContext::state to one before every stock call.
+   * This field is not the sensor type; sending EL721's type (8) leaves the TA
+   * in its high-bit sentinel state without ever starting a capture. */
+  put_u32 (body, 8, el721_probe_u32 ("EL721_ENROLL_DO_STATE", 1));
   if (!invoke_body (session, CMD_ENROLL_DO, sizeof (body), ENROLL_DO_OUT_SIZE,
                     body, sizeof (body), &output, error))
     return FALSE;
-  decode_common (reply, output);
-  reply->quality = get_u32 (output, 16);
-  reply->progress = get_u32 (output, 20);
-  reply->remaining = get_u32 (output, 24);
-  return TRUE;
+  /* BAuth_Enroll_Do's response is not a common command reply.  The gateway
+   * copies its first word back to EnrollContext::state (the opcode), the
+   * timeout from +8, and the function status from +12.  Its three capture
+   * metrics are reordered again while copying them to _enroll_status_t. */
+  return el721_decode_enroll_output (output, ENROLL_DO_OUT_SIZE, reply, error);
 }
 
 static gboolean
@@ -1409,8 +2814,9 @@ final_command (El721Qtee *session, guint32 command, El721Reply *reply,
   guint8 *output;
   guint32 size;
   put_u32 (body, 0, command);
-  put_u32 (body, 8, el721_probe_u32 ("EL721_SENSOR_TYPE",
-                                     EL721_SENSOR_TYPE));
+  /* Both stock EnrollFinal and IdentifyFinal reset their context opcode to
+   * one immediately before entering the gateway. */
+  put_u32 (body, 8, el721_probe_u32 ("EL721_FINAL_STATE", 1));
   if (!invoke_body (session, command, sizeof (body), FINAL_OUT_SIZE,
                     body, sizeof (body), &output, error))
     return FALSE;
@@ -1419,11 +2825,11 @@ final_command (El721Qtee *session, guint32 command, El721Reply *reply,
   if (size > 0xa000)
     {
       g_set_error (error, EL721_ERROR, 1,
-                   "BAUTH returned an invalid template size %u", size);
+                   "BAUTH returned an invalid final bitmap size %u", size);
       return FALSE;
     }
-  if (size)
-    reply->data = g_bytes_new (output + 0x14, size);
+  /* This is optional bitmap/debug output, not an encrypted template.  Do not
+   * copy image material out of the shared buffer or offer it to libfprint. */
   return TRUE;
 }
 
@@ -1479,7 +2885,6 @@ el721_qtee_identify_do (El721Qtee *session, guint32 opcode,
 {
   guint8 body[12] = { 0 };
   guint8 *output;
-  guint32 update_size;
   put_u32 (body, 0, CMD_IDENTIFY_DO);
   put_u32 (body, 4, opcode);
   put_u32 (body, 8, el721_probe_u32 ("EL721_SENSOR_TYPE",
@@ -1487,13 +2892,7 @@ el721_qtee_identify_do (El721Qtee *session, guint32 opcode,
   if (!invoke_body (session, CMD_IDENTIFY_DO, sizeof (body), IDENTIFY_DO_OUT_SIZE,
                     body, sizeof (body), &output, error))
     return FALSE;
-  decode_common (reply, output);
-  reply->template_id = get_u32 (output, 16);
-  reply->quality = get_u32 (output, 20);
-  update_size = get_u32 (output, 0x226038);
-  if (update_size <= 0x226000 && update_size)
-    reply->data = g_bytes_new (output + 0x38, update_size);
-  return TRUE;
+  return el721_decode_identify_output (output, IDENTIFY_DO_OUT_SIZE, reply, error);
 }
 
 gboolean

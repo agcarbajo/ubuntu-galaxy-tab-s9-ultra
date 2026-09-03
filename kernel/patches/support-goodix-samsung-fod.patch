@@ -362,6 +362,7 @@ index 580e402e0..d2d424acf 100644
 +					     u8 id, u8 action, u16 x, u16 y)
 +{
 +	bool suppress = false;
++	bool notify = false;
 +
 +	mutex_lock(&cd->fod_lock);
 +	if (!cd->fod_enabled)
@@ -369,18 +370,37 @@ index 580e402e0..d2d424acf 100644
 +
 +	if (action == GOODIX_BERLIN_SAMSUNG_ACTION_RELEASE) {
 +		suppress = test_and_clear_bit(id, &cd->fod_suppressed_slots);
++		if (suppress) {
++			cd->fod_state = GOODIX_BERLIN_FOD_RELEASED;
++			cd->fod_x = x;
++			cd->fod_y = y;
++			cd->fod_sequence++;
++			notify = true;
++		}
 +		goto out;
 +	}
 +
 +	if (action == GOODIX_BERLIN_SAMSUNG_ACTION_PRESS &&
 +	    cd->fod_rect_valid && x >= cd->fod_rect[0] &&
 +	    x <= cd->fod_rect[2] && y >= cd->fod_rect[1] &&
-+	    y <= cd->fod_rect[3])
-+		set_bit(id, &cd->fod_suppressed_slots);
++	    y <= cd->fod_rect[3] &&
++	    !test_and_set_bit(id, &cd->fod_suppressed_slots)) {
++		/* Some Samsung firmware revisions omit the dedicated FOD PRESS
++		 * gesture but still report the ordinary coordinate contact.  Publish
++		 * that first in-rectangle contact immediately so the optical capture
++		 * starts while the finger is down instead of at the later RELEASE. */
++		cd->fod_state = GOODIX_BERLIN_FOD_PRESSED;
++		cd->fod_x = x;
++		cd->fod_y = y;
++		cd->fod_sequence++;
++		notify = true;
++	}
 +
 +	suppress = test_bit(id, &cd->fod_suppressed_slots);
 +out:
 +	mutex_unlock(&cd->fod_lock);
++	if (notify)
++		sysfs_notify(&cd->dev->kobj, NULL, "fod_state");
 +	return suppress;
 +}
 +

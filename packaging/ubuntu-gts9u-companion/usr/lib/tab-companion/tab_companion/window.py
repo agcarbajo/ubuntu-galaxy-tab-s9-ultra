@@ -7,6 +7,7 @@ from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 from . import VERSION
 from . import boot_sets
 from .actions import action_for, action_label, actions_for
+from .fingerprint_page import FingerprintPage
 from .hardware import HardwareClient
 from .i18n import _, N_
 from .key_selector import KeyChooser, chord_label
@@ -172,6 +173,11 @@ class CompanionWindow(Adw.ApplicationWindow):
         self.settings.connect("changed::spen-remote-enabled", self._remote_settings_changed)
         self.settings.connect("changed::spen-remote-mode", self._remote_settings_changed)
         self._build()
+        key_controller = Gtk.EventControllerKey()
+        key_controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        key_controller.connect("key-pressed", self._key_pressed)
+        self.add_controller(key_controller)
+        self.connect("close-request", self._close_requested)
         self._update_hardware()
 
     def _build(self):
@@ -195,6 +201,10 @@ class CompanionWindow(Adw.ApplicationWindow):
             self.view_stack.add_titled_with_icon(
                 self._system_page(), "dualboot", _("Dualboot"), "drive-multidisk-symbolic"
             )
+        self.fingerprint_page = FingerprintPage(self)
+        self.view_stack.add_titled_with_icon(
+            self.fingerprint_page, "fingerprint", _("Fingerprint"), "auth-fingerprint-symbolic"
+        )
         switcher = Adw.ViewSwitcherBar(stack=self.view_stack, reveal=True)
         toolbar.set_content(self.view_stack)
         toolbar.add_bottom_bar(switcher)
@@ -212,6 +222,22 @@ class CompanionWindow(Adw.ApplicationWindow):
         page.set_margin_top(18)
         page.set_margin_bottom(18)
         return page
+
+    # -- fingerprint settings lifecycle ------------------------------------
+
+    def _key_pressed(self, _controller, keyval, _keycode, _state):
+        if keyval == Gdk.KEY_Escape and self.fingerprint_page.running:
+            self.fingerprint_page.cancel()
+            return True
+        return False
+
+    def _close_requested(self, _window):
+        if self.fingerprint_page.running:
+            self.fingerprint_page.closing = True
+            self.fingerprint_page.cancel()
+            return True
+        self.fingerprint_page.dispose()
+        return False
 
     # -- dual boot -----------------------------------------------------------
 
@@ -1118,6 +1144,8 @@ class CompanionWindow(Adw.ApplicationWindow):
     def _show_about(self, _button):
         state = self.hardware.state
         debug = (
+            f"Application version: {VERSION}\n"
+            f"Kernel: {os.uname().release}\n"
             f"S Pen: {state.pen_state}\n"
             f"Orientation: {state.pen_orientation}\n"
             f"Battery: {state.pen_battery}\n"
@@ -1135,7 +1163,7 @@ class CompanionWindow(Adw.ApplicationWindow):
             website="https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra",
             issue_url="https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/issues",
             license_type=Gtk.License.MIT_X11,
-            comments=_("S Pen and cover keyboard settings for the Galaxy Tab S9 Ultra."),
+            comments=_("S Pen, keyboard and fingerprint settings for the Galaxy Tab S9 Ultra.") + "\n" + _("Kernel") + ": " + os.uname().release,
             debug_info=debug,
             debug_info_filename="tab-companion-hardware.txt",
         )

@@ -21,6 +21,76 @@ the window is closed.
   port's base utility to the special keys that have no native function in
   GNOME.
 
+## Fingerprint settings (1.2.1)
+
+The **Fingerprint** tab replaces Info. Version/kernel details live in the
+header's About window. The settings page lists the current user's system
+fingerprints, offers the ten anatomical finger names, adds only unused names,
+and deletes one selected print after explicit confirmation. It uses the same
+fprintd D-Bus API and encrypted storage as Ubuntu Settings, GDM and the lock
+screen. No separate biometric store, privileged helper or PAM policy is added.
+An inline link opens `gnome-control-center system users`.
+
+Enrollment shows secure aggregate coverage, actual accepted samples, estimated
+remaining placements and quality guidance. The EL721 currently usually needs
+17 accepted placements. This is an estimate, not fprintd's 18 processing stages:
+one placement can advance multiple stages. If the journal is unavailable, the
+UI explicitly labels native processing stages rather than inventing a count.
+
+There is no duration selector or fixed session limit. An enrollment or scan
+cancels after **60 seconds without a new contact**. Device finger-present edges
+(and matching fprintd-PID EL721 contact records) renew that interval, including
+poor-quality contacts. Progress messages do not renew it. There is no countdown
+or inactivity explanation in the UI. Escape, Cancel, window close
+and screen lock also stop the operation. Blocking D-Bus calls are isolated in a
+worker process, with a bounded termination fallback.
+
+Claims exist only during an explicit operation, never while browsing the list.
+Stop/Release and closing the private worker bus connection free the reader on
+success, failure and cancellation. Adding rechecks the list after Claim, so a
+concurrent addition in Ubuntu cannot silently be replaced. Lists refresh after
+operations and on returning to the tab/window. Sharing is automatic: there is
+no synchronization option and no per-print availability subtitle.
+Close GNOME's own fingerprint dialog before starting a Companion operation:
+GNOME 46 keeps its claim while that dialog is open.
+
+**Test fingerprints:** one `VerifyStart("any")` operation searches the same
+gallery as GNOME login, continuing across entries while the finger stays down.
+The saved list stays visible and the matched row gains a green tint, accent
+edge and checkmark. The result says only "Fingerprint recognized", without
+additional prose. The highlight survives list refreshes and clears on the next
+operation. An error is not a non-match.
+
+Noble's original fprintd lacks the matched-name signal. The dependency
+`fprintd 1.94.3-1+gts9u1` adds [claim-private matched-name reporting](../packaging/fprintd/README.md)
+from the actual libfprint `FpPrint`, before terminal `VerifyStatus`. The app
+requires both signals and fails safely if the name is missing/not enrolled.
+No identity is inferred from secure slot numbers or journal output. PAM,
+policy, libfprint recognition and encrypted storage are unchanged.
+
+Logs remain in `~/.local/state/tab-companion/fingerprint-tests/`, including
+`latest.jsonl` and timestamped files (0600). They contain UI events, finger
+labels and whitelisted aggregate counters, never templates, images, secure
+identities or credentials. List refreshes do not overwrite the last operation.
+Cancelled and failed runs are retained. A collapsed Diagnostics section keeps
+the main page focused on settings.
+
+Validation: 34 private-bus/state tests cover a single any-scan with a named
+match, missing/invalid match metadata, rejection, enrollment, duplicate
+protection, single-print deletion, cancellation, renewable inactivity and
+release. The daemon's virtual-device suites pass 152 tests (4 skipped),
+including actual matched names, ordering, claim-private delivery, cancellation
+and rejection. Tablet checks passed for scan arming, visible saved rows,
+disabled destructive controls, cancellation, a 60-second no-contact timeout
+(62.2 seconds including cleanup), and normal/narrow-window rendering. The
+highlight/result presentation was exercised with synthetic UI state only;
+neither saved print nor libfprint/PAM changed during deployment or these tests.
+The user validated enrollment/testing in 1.2.0 and subsequently confirmed that
+the single-touch testing redesign in 1.2.1 works correctly. Version 1.2.2 only
+changes the Ubuntu Settings shortcut wording. On 2026-09-03 the owner accepted
+the complete fingerprint feature for merging into main. These physical
+confirmations, not synthetic presentation tests, establish the working status.
+
 ## S Pen
 
 The page shows the orientation and state graphically, with a bar holding the
@@ -206,6 +276,28 @@ gesture.
 Two entries are not actions on hardware. "Do nothing" is the default for S Pen
 gestures and leaves the event unhandled. "Keep the default action" exists only
 for keyboard keys, where there is a base utility worth falling back to.
+
+## Historical fingerprint diagnostics (1.1.5, replaced by 1.2.0)
+
+In the former Info page, version 1.1.5 offered **Verify saved fingerprint** (default) and
+**Enroll / replace fingerprint**. Both are user-started, time-bounded and stop
+with Escape. Enrollment targets the right-index slot and replaces that print
+only on completion. Verification uses the saved print without enrolling or
+deleting it. Test the enrolled finger, then start a separate verification using
+a different finger. A non-match is a distinct result, not a generic test error;
+quality retries, timeout and reader errors do not prove correct rejection.
+
+Each run records its mode and safe aggregate results under
+`~/.local/state/tab-companion/fingerprint-tests/`, including failure/cancellation.
+Timestamped JSONL files are retained; `latest.jsonl` tracks the most recent run.
+No template contents are logged. Legacy EL721 prints created before gts9u41
+lack a saved identity and must be enrolled again before verification.
+
+The package rebuilds the target Python's bytecode caches on upgrade. This is
+necessary because normalized source timestamps and same-size edits otherwise
+allow stale caches from older releases to survive. Build-host caches are not
+shipped. The 1.1.5 Info widgets and Spanish match/non-match labels were exercised
+on the tablet without starting a capture; physical verification remains pending.
 
 ## Languages
 

@@ -1,8 +1,8 @@
 {
   "uuid": "gts9u-fingerprint-overlay@agcarbajo",
   "name": "Galaxy Tab S9 Ultra fingerprint overlay",
-  "description": "Optical fingerprint target and regional touch guard for the Galaxy Tab S9 Ultra",
+  "description": "Optical fingerprint target and native authentication keyboard integration for the Galaxy Tab S9 Ultra",
   "shell-version": ["46"],
-  "session-modes": ["user", "unlock-dialog"],
-  "version": 6
+  "session-modes": ["user", "unlock-dialog", "gdm"],
+  "version": 14
 }

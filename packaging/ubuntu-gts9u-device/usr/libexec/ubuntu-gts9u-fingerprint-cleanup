@@ -9,4 +9,5 @@ write_if_present() {
 write_if_present /sys/class/backlight/ae94000.dsi.0/fod_mode 0
 write_if_present /sys/bus/i2c/devices/13-005d/fod_enable 0
 write_if_present /sys/bus/platform/devices/egis-el721/sensor_power 0
+rm -f /run/gts9u-fingerprint/active
 exit 0

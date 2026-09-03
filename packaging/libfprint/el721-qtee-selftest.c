@@ -14,6 +14,7 @@
 #define OP_CAPTURE_SUCCESS 6U
 #define OP_CAPTURE_STEP 87U
 #define EL721_POWER "/sys/bus/platform/devices/egis-el721/sensor_power"
+#define EL721_BATTERY_TEMP "/sys/class/power_supply/sm5714-battery/temp"
 
 static gboolean
 write_value (const gchar *path, const gchar *value, GError **error)
@@ -31,6 +32,26 @@ write_value (const gchar *path, const gchar *value, GError **error)
                    "cannot write %s: %s", path, g_strerror (errno));
       return FALSE;
     }
+  return TRUE;
+}
+
+static gboolean
+read_battery_temperature (gint32 *temperature, GError **error)
+{
+  g_autofree gchar *contents = NULL;
+  gchar *end = NULL;
+  gint64 value;
+
+  if (!g_file_get_contents (EL721_BATTERY_TEMP, &contents, NULL, error))
+    return FALSE;
+  value = g_ascii_strtoll (contents, &end, 10);
+  if (end == contents || value < G_MININT32 || value > G_MAXINT32)
+    {
+      g_set_error (error, G_FILE_ERROR, G_FILE_ERROR_INVAL,
+                   "invalid battery temperature: %s", contents);
+      return FALSE;
+    }
+  *temperature = (gint32) value;
   return TRUE;
 }
 
@@ -78,6 +99,56 @@ main (int argc, char **argv)
   if (!g_getenv ("EL721_SKIP_PREPARE") && !el721_qtee_prepare (session, &error))
     goto out;
   g_print ("EL721 userspace transport: signed TA loaded and Prepare succeeded.\n");
+  if (g_getenv ("EL721_AUTH_PROBE"))
+    {
+      El721Challenge challenge = { 0 };
+      guint8 hat[EL721_HARDWARE_AUTH_TOKEN_SIZE] = { 0 };
+      guint8 enabled = 1;
+      guint32 challenge_result = 0;
+      guint32 hat_result = 0;
+
+      /* Reproduce the measured pre-enrol boundary without importing an
+       * Android credential.  The challenge ID occupies bytes 8..15 of the
+       * opaque challenge record and the packed HAT stores it after version. */
+      if (!el721_qtee_control_op (session, 22, &enabled, sizeof (enabled),
+                                  0, &error) ||
+          !el721_qtee_generate_challenge (session, 0, 0, &challenge,
+                                          &challenge_result, &error))
+        goto out;
+      if (g_getenv ("EL721_DUMP_AUTH"))
+        {
+          guint index;
+
+          g_print ("Challenge record:");
+          for (index = 0; index < sizeof (challenge.bytes); index++)
+            g_print ("%02x", challenge.bytes[index]);
+          g_print ("\n");
+        }
+      memcpy (hat + 1, challenge.bytes + 8, sizeof (guint64));
+      if (!el721_qtee_hat_op (session, hat, sizeof (hat), 0, NULL, 0,
+                              &challenge, &hat_result, &error))
+        {
+          /* Rejection is expected for this deliberately unsigned token.
+           * Preserve the secure-world code while keeping this a bounded
+           * diagnostic rather than a failing enrolment attempt. */
+          if (!error)
+            goto out;
+          hat_result = (guint32) error->code;
+          g_clear_error (&error);
+        }
+      g_print ("Auth probe: challenge result=%u, unsigned HAT result=%u\n",
+               challenge_result, hat_result);
+    }
+  if (g_getenv ("EL721_GATEKEEPER_AUTH_PROBE"))
+    {
+      if (el721_qtee_authorize_enrollment (session, 0, 0, &error))
+        g_print ("Gatekeeper authorization probe: accepted\n");
+      else if (error)
+        {
+          g_print ("Gatekeeper authorization probe: %s\n", error->message);
+          g_clear_error (&error);
+        }
+    }
   /* One ordered probe list, so a stock sequence can be replayed exactly:
    * "c84" a bare control, "c22=1" a control with one byte, "u49" a control
    * carrying the user identifier, "r2:376:12" a raw command. */
@@ -268,9 +339,12 @@ main (int argc, char **argv)
     }
   if (argc == 3)
     {
-      if (g_getenv ("EL721_SKIP_GROUP"))
+      if (!g_getenv ("EL721_SET_ACTIVE_GROUP"))
         {
-          g_print ("Active group skipped by request\n");
+          /* The Android set_active_group path sends storage operation 48.
+           * Controls 45/46 are secure-authenticator-ID operations, not a
+           * wrapped group-key pair; keep that older experiment opt-in. */
+          g_print ("Active-group experiment skipped\n");
         }
       else if (!el721_qtee_set_active_group (session,
                                              (const guint8 *) argv[2],
@@ -297,6 +371,9 @@ main (int argc, char **argv)
           guint passes = (guint) g_ascii_strtoull (g_getenv ("EL721_ENROLL_DO"),
                                                    NULL, 10);
           guint pass;
+          /* One UI's optical capture worker supplies the pressed TSP state. */
+          guint8 touch_flags = 2;
+          gint32 battery_temperature;
 
           for (pass = 0; pass < passes; pass++)
             {
@@ -317,14 +394,20 @@ main (int argc, char **argv)
                 }
               if (reply.opcode == OP_NOTIFY_DOWN)
                 {
-                  if (!el721_qtee_control_op (session, 87, NULL, 0, 0, &error) ||
-                      !el721_qtee_control_op (session, 80, NULL, 0, 0, &error))
+                  if (!read_battery_temperature (&battery_temperature, &error) ||
+                      !el721_qtee_control_op (session, 87, &touch_flags,
+                                              sizeof (touch_flags), 0, &error) ||
+                      !el721_qtee_control_op (
+                        session, 80,
+                        (const guint8 *) &battery_temperature,
+                        sizeof (battery_temperature), 0, &error))
                     goto out;
                   continue;
                 }
               if (reply.opcode == OP_CAPTURE_STEP)
                 {
-                  if (!el721_qtee_control_op (session, 87, NULL, 0, 0, &error))
+                  if (!el721_qtee_control_op (session, 87, &touch_flags,
+                                              sizeof (touch_flags), 0, &error))
                     goto out;
                   continue;
                 }

@@ -1,0 +1,212 @@
+#!/usr/bin/python3
+"""Boot-only secure startup supervisor. Never restarts an initialized SPU.
+
+Readiness is a short-lived root-owned lease, not an authentication answer.
+--check is read-only; --wait is the bounded fprintd dependency check.
+"""
+import hashlib
+import json
+import os
+from pathlib import Path
+import selectors
+import stat
+import subprocess
+import sys
+import time
+
+RUNTIME = Path('/var/lib/ubuntu-gts9u/android-secnvm-root')
+STATE = Path('/run/gts9u-fingerprint-secure')
+LOG = Path('/var/log/gts9u-fingerprint-secure')
+OWNER = '/usr/libexec/ubuntu-gts9u-fingerprint-secure-owner'
+MANIFEST = Path('/usr/share/ubuntu-gts9u/fingerprint-runtime.sha256')
+MODULES = ('qcom_spss_irq', 'qcom_sp_hlos_heap', 'qcom_glink_spss',
+           'qcom_spss', 'spss_utils', 'spcom', 'snvm', 'qcomtee')
+
+def protected(path):
+    info = path.lstat()
+    if info.st_uid != 0 or info.st_mode & 0o022 or stat.S_ISLNK(info.st_mode):
+        raise RuntimeError(f'untrusted ownership/type: {path}')
+
+def command(*args):
+    return subprocess.check_output(args, text=True, timeout=10).strip()
+
+def remoteprocs():
+    return [p for p in Path('/sys/class/remoteproc').glob('remoteproc*')
+            if 'spss' in (p / 'name').read_text().lower()]
+
+def runtime_preflight():
+    protected(RUNTIME)
+    protected(MANIFEST)
+    for line in MANIFEST.read_text().splitlines():
+        digest, name = line.split(None, 1)
+        rel = Path(name)
+        if rel.is_absolute() or '..' in rel.parts:
+            raise RuntimeError('invalid runtime manifest path')
+        path = RUNTIME / rel
+        if path.resolve() != path:
+            raise RuntimeError(f'runtime symlink not permitted: {name}')
+        protected(path.parent)
+        protected(path)
+        if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
+            raise RuntimeError(f'runtime hash mismatch: {name}')
+    for path in (Path('/mnt/vendor/persist'), Path('/mnt/vendor/spunvm')):
+        protected(path)
+        if path.resolve() != path or command('findmnt', '-n', '-o', 'TARGET', '-T', str(path)) != '/':
+            raise RuntimeError('NVM must be Ubuntu-local, not an Android mount')
+    protected(Path(OWNER))
+    for module in MODULES:
+        command('modinfo', '-n', module)
+
+def fresh_preflight():
+    if STATE.joinpath('attempt').exists():
+        raise RuntimeError('startup already attempted this boot; full Ubuntu reboot required')
+    for proc in Path('/proc').glob('[0-9]*'):
+        if int(proc.name) == os.getpid():
+            continue
+        try:
+            args = (proc / 'cmdline').read_bytes().split(b'\0')
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+        if any(a in (bytes(RUNTIME / 'bin/sec_nvm'), bytes(RUNTIME / 'bin/spdaemon')) for a in args):
+            raise RuntimeError('existing SPSS daemons: refusing duplicate startup')
+        if args and b'probe-hwvault' in Path(os.fsdecode(args[0])).name.encode():
+            raise RuntimeError('diagnostic secure owner present: reboot before handover')
+    for proc in remoteprocs():
+        if (proc / 'state').read_text().strip() != 'offline':
+            raise RuntimeError('SPSS is not cold/offline; refusing live reinitialization')
+
+def ready_record(record, now):
+    return (isinstance(record, dict) and record.get('state') == 'ready'
+            and isinstance(record.get('expires'), (int, float))
+            and now < record['expires'] <= now + 6
+            and isinstance(record.get('owner_pid'), int) and record['owner_pid'] > 1)
+
+def wait_ready():
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        try:
+            protected(STATE)
+            path = STATE / 'status.json'
+            protected(path)
+            record = json.loads(path.read_text())
+            if not isinstance(record, dict):
+                raise RuntimeError('invalid secure readiness record')
+            if record.get('state') == 'failed':
+                raise RuntimeError('secure startup failed; password remains available')
+            if ready_record(record, time.monotonic()):
+                os.kill(record['owner_pid'], 0)
+                return
+        except (FileNotFoundError, ProcessLookupError, json.JSONDecodeError):
+            pass
+        time.sleep(0.2)
+    raise RuntimeError('secure readiness timed out; password remains available')
+
+def publish(state, owner=None):
+    record = dict(state=state, expires=time.monotonic() + 5,
+                  owner_pid=owner.pid if owner else 0)
+    temporary = STATE / 'status.tmp'
+    temporary.write_text(json.dumps(record) + '\n')
+    os.chmod(temporary, 0o600)
+    temporary.replace(STATE / 'status.json')
+
+def boot():
+    if os.geteuid() != 0:
+        raise RuntimeError('root required')
+    runtime_preflight()
+    fresh_preflight()
+    STATE.mkdir(mode=0o700, exist_ok=True)
+    protected(STATE)
+    # Preserved across service stops, but removed by the next full boot.
+    fd = os.open(STATE / 'attempt', os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    os.close(fd)
+    LOG.mkdir(mode=0o700, exist_ok=True)
+    protected(LOG)
+    children = []
+    owner = None
+    publish('starting')
+    try:
+        for module in MODULES:
+            command('modprobe', module)
+        procs = remoteprocs()
+        if len(procs) != 1 or (procs[0] / 'state').read_text().strip() != 'offline':
+            raise RuntimeError('expected one offline SPSS processor')
+        env = {'PATH': '/usr/sbin:/usr/bin:/sbin:/bin',
+               'LD_LIBRARY_PATH': str(RUNTIME / 'lib64'),
+               'LD_PRELOAD': str(RUNTIME / 'lib64/liblog_capture.so')}
+        for name in ('sec_nvm', 'spdaemon'):
+            with (LOG / (name + '.log')).open('wb') as log:
+                child = subprocess.Popen([str(RUNTIME / 'bin/linker64'), str(RUNTIME / 'bin' / name)],
+                    env=env, cwd=RUNTIME / 'spdaemon-cwd' if name == 'spdaemon' else '/',
+                    stdin=subprocess.DEVNULL, stdout=log, stderr=log)
+            children.append(child)
+            if name == 'sec_nvm':
+                time.sleep(0.3)
+        deadline = time.monotonic() + 45
+        while True:
+            if any(c.poll() is not None for c in children):
+                raise RuntimeError('SPSS daemon exited during startup')
+            text = (LOG / 'spdaemon.log').read_bytes()[-65536:]
+            if b'SP Apps were loaded successfully' in text:
+                break
+            if b'going to sleep for a day' in text or time.monotonic() >= deadline:
+                raise RuntimeError('SPSS applications did not become ready')
+            time.sleep(0.1)
+        print('SPSS applications ready; starting listener-first secure owner', flush=True)
+        owner = subprocess.Popen([OWNER, '--boot'], stdin=subprocess.DEVNULL,
+                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        children.append(owner)
+        poll = selectors.DefaultSelector()
+        poll.register(owner.stdout, selectors.EVENT_READ)
+        os.set_blocking(owner.stdout.fileno(), False)
+        pending = b''
+        ready = False
+        deadline = time.monotonic() + 45
+        with (LOG / 'owner.log').open('wb', buffering=0) as log:
+            while True:
+                if any(c.poll() is not None for c in children):
+                    raise RuntimeError('secure startup child exited; no automatic restart')
+                if (procs[0] / 'state').read_text().strip() != 'running':
+                    raise RuntimeError('SPSS left running state; full reboot required')
+                for key, _ in poll.select(timeout=0.25):
+                    chunk = os.read(key.fileobj.fileno(), 4096)
+                    log.write(chunk)
+                    pending += chunk
+                    if len(pending) > 65536:
+                        raise RuntimeError('secure owner output overflow')
+                    while b'\n' in pending:
+                        line, pending = pending.split(b'\n', 1)
+                        if line == b'SECURE_FAILED':
+                            raise RuntimeError('authenticated secure initialization failed')
+                        if line == b'SECURE_READY':
+                            ready = True
+                            print('Secure cache verified; fingerprint service ready', flush=True)
+                if not ready and time.monotonic() >= deadline:
+                    raise RuntimeError('secure initialization timed out')
+                if ready:
+                    publish('ready', owner)
+    except BaseException as error:
+        publish('failed', owner)
+        print(f'Secure startup unavailable: {error}; retaining resources until Ubuntu reboot', flush=True)
+        # Never kill a child that may have lent memory to the TA, even if its
+        # reply was lost. Keep the error observable and deny fprintd readiness.
+        while True:
+            time.sleep(60)
+
+def main():
+    os.umask(0o077)
+    if sys.argv[1:] == ['--wait']:
+        wait_ready()
+    elif sys.argv[1:] == ['--check']:
+        runtime_preflight()
+        print('Runtime, module and Ubuntu-local NVM preflight passed (read-only)')
+    elif sys.argv[1:] == ['--boot']:
+        boot()
+    else:
+        raise RuntimeError('expected --check, --wait or --boot')
+
+if __name__ == '__main__':
+    try:
+        main()
+    except Exception as error:
+        print(str(error), file=sys.stderr)
+        sys.exit(1)

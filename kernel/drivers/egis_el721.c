@@ -105,6 +105,8 @@ struct el721_data {
 	char position[EL721_POSITION_LEN];
 };
 
+static int el721_publish_rail(struct device *consumer);
+
 static void el721_free(struct kref *ref)
 {
 	struct el721_data *el721 = container_of(ref, struct el721_data,
@@ -115,6 +117,7 @@ static void el721_free(struct kref *ref)
 
 static int el721_prepare_hardware_locked(struct el721_data *el721)
 {
+	int attempt;
 	int ret;
 
 	/*
@@ -132,7 +135,26 @@ static int el721_prepare_hardware_locked(struct el721_data *el721)
 	 * secure SPI, and every biometric command fails far downstream.
 	 */
 	if (!el721->vdd) {
-		el721->vdd = devm_regulator_get(el721->dev, "vdd");
+		/*
+		 * The fallback device deliberately probes without a supply node so
+		 * boot remains identical to the known-good image.  Publish the rail
+		 * only now, in response to an explicit userspace power request.
+		 */
+		if (!device_property_present(el721->dev, "vdd-supply")) {
+			ret = el721_publish_rail(el721->dev);
+			if (ret)
+				return dev_err_probe(el721->dev, ret,
+						     "failed to publish the 3.3 V supply\n");
+		}
+
+		/* The newly created RPMh device may still be binding. */
+		for (attempt = 0; attempt < 50; attempt++) {
+			el721->vdd = devm_regulator_get(el721->dev, "vdd");
+			if (!IS_ERR(el721->vdd) ||
+			    PTR_ERR(el721->vdd) != -EPROBE_DEFER)
+				break;
+			msleep(20);
+		}
 		if (IS_ERR(el721->vdd)) {
 			ret = PTR_ERR(el721->vdd);
 			el721->vdd = NULL;
@@ -679,17 +701,30 @@ static struct gpiod_lookup_table el721_fallback_gpios = {
  * The rail is real all the same - the stock node names it VDD_BTP_3P3 and the
  * stock fixups map it to the PMIC's second LDO - and without it the sensor is
  * never powered, TrustZone reads nothing over the secure SPI and every
- * biometric command fails far downstream.  Add the two nodes from here instead,
- * before the RPMh regulator driver enumerates its children, so the tree the
- * bootloader hands us is never modified.
+ * biometric command fails far downstream.  Publish a separate RPMh-regulator
+ * sibling only when userspace explicitly powers the reader.  That is late
+ * enough that a broken fingerprint description cannot turn boot into a reset
+ * loop, and it matches the loadable-module experiment already validated on the
+ * tablet.
  */
 #define EL721_RAIL_NAME "vreg_l2b_3p3"
-#define EL721_RAIL_MICROVOLTS 3300000
+#define EL721_RAIL_MICROVOLTS_MIN 3296000
+#define EL721_RAIL_MICROVOLTS_MAX 3304000
 /* Well above the phandles the board description itself uses. */
 #define EL721_RAIL_PHANDLE 0x7000
 #define EL721_SUPPLY_NODE "el721-supply"
+#define EL721_RPMH_MODE_LPM 1
+#define EL721_RPMH_MODE_HPM 3
 
 static struct device_node *el721_supply_node;
+static struct platform_device *el721_rail_device;
+static struct of_changeset el721_rail_changeset;
+static bool el721_rail_applied;
+
+static const u32 el721_rail_allowed_modes[] = {
+	EL721_RPMH_MODE_LPM,
+	EL721_RPMH_MODE_HPM,
+};
 
 static struct device_node *el721_find_pmic_regulators(void)
 {
@@ -706,59 +741,99 @@ static struct device_node *el721_find_pmic_regulators(void)
 	return NULL;
 }
 
-static int __init el721_add_rail(void)
+static int el721_publish_rail(struct device *consumer)
 {
-	struct device_node *regulators, *rail, *supply;
-	struct of_changeset ocs;
+	struct device_node *regulators, *holder, *rail, *supply;
 	int ret;
+
+	if (el721_supply_node) {
+		if (consumer->of_node == el721_supply_node)
+			return 0;
+		return device_add_of_node(consumer, el721_supply_node);
+	}
 
 	regulators = el721_find_pmic_regulators();
 	if (!regulators)
-		return 0;
+		return -ENODEV;
 
 	rail = of_get_child_by_name(regulators, "ldo2");
 	if (rail) {
-		/* A board description that already carries it needs nothing. */
 		of_node_put(rail);
 		of_node_put(regulators);
-		return 0;
+		return -EEXIST;
 	}
 
-	of_changeset_init(&ocs);
-	rail = of_changeset_create_node(&ocs, regulators, "ldo2");
+	/*
+	 * The original PM8550 device enumerated its children during boot.  A new
+	 * child under that already-bound node would never become a regulator, so
+	 * give the EL721 rail its own sibling device with the same PMIC id.
+	 */
+	of_changeset_init(&el721_rail_changeset);
+	holder = of_changeset_create_node(&el721_rail_changeset,
+					  regulators->parent,
+					  "regulators-el721");
+	if (!holder) {
+		ret = -ENOMEM;
+		goto out_destroy;
+	}
+	ret = of_changeset_add_prop_string(&el721_rail_changeset, holder,
+					   "compatible",
+					   "qcom,pm8550-rpmh-regulators");
+	if (!ret)
+		ret = of_changeset_add_prop_string(&el721_rail_changeset,
+						   holder, "qcom,pmic-id", "b");
+	if (ret)
+		goto out_destroy;
+
+	rail = of_changeset_create_node(&el721_rail_changeset, holder, "ldo2");
 	if (!rail) {
 		ret = -ENOMEM;
-		goto out;
+		goto out_destroy;
 	}
-	ret = of_changeset_add_prop_string(&ocs, rail, "regulator-name",
+	ret = of_changeset_add_prop_string(&el721_rail_changeset, rail,
+					   "regulator-name",
 					   EL721_RAIL_NAME);
 	if (!ret)
-		ret = of_changeset_add_prop_u32(&ocs, rail,
+		ret = of_changeset_add_prop_u32(&el721_rail_changeset, rail,
 						"regulator-min-microvolt",
-						EL721_RAIL_MICROVOLTS);
+						EL721_RAIL_MICROVOLTS_MIN);
 	if (!ret)
-		ret = of_changeset_add_prop_u32(&ocs, rail,
+		ret = of_changeset_add_prop_u32(&el721_rail_changeset, rail,
 						"regulator-max-microvolt",
-						EL721_RAIL_MICROVOLTS);
+						EL721_RAIL_MICROVOLTS_MAX);
 	if (!ret)
-		ret = of_changeset_add_prop_u32(&ocs, rail, "phandle",
+		ret = of_changeset_add_prop_u32(&el721_rail_changeset, rail,
+						"regulator-initial-mode",
+						EL721_RPMH_MODE_HPM);
+	if (!ret)
+		ret = of_changeset_add_prop_u32_array(&el721_rail_changeset,
+						      rail,
+						      "regulator-allowed-modes",
+						      el721_rail_allowed_modes,
+						      ARRAY_SIZE(el721_rail_allowed_modes));
+	if (!ret)
+		ret = of_changeset_add_prop_u32(&el721_rail_changeset, rail,
+						"phandle",
 						EL721_RAIL_PHANDLE);
 	if (ret)
-		goto out;
+		goto out_destroy;
 
-	supply = of_changeset_create_node(&ocs, of_root, EL721_SUPPLY_NODE);
+	supply = of_changeset_create_node(&el721_rail_changeset, of_root,
+					  EL721_SUPPLY_NODE);
 	if (!supply) {
 		ret = -ENOMEM;
-		goto out;
+		goto out_destroy;
 	}
-	ret = of_changeset_add_prop_u32(&ocs, supply, "vdd-supply",
+	ret = of_changeset_add_prop_u32(&el721_rail_changeset, supply,
+					"vdd-supply",
 					EL721_RAIL_PHANDLE);
 	if (ret)
-		goto out;
+		goto out_destroy;
 
-	ret = of_changeset_apply(&ocs);
+	ret = of_changeset_apply(&el721_rail_changeset);
 	if (ret)
-		goto out;
+		goto out_destroy;
+	el721_rail_applied = true;
 
 	/*
 	 * __of_attach_node() reads the phandle property only for nodes that
@@ -767,20 +842,33 @@ static int __init el721_add_rail(void)
 	 */
 	rail->phandle = EL721_RAIL_PHANDLE;
 	el721_supply_node = of_node_get(supply);
+	el721_rail_device = of_platform_device_create(holder, NULL, NULL);
+	if (!el721_rail_device)
+		dev_warn(consumer,
+			 "the rail node has no explicit platform device\n");
+	ret = device_add_of_node(consumer, el721_supply_node);
+	if (ret)
+		goto out_unregister;
 	of_node_put(regulators);
-	pr_info("egis-el721: published the %s rail and its consumer\n",
+	dev_info(consumer, "published the %s rail on first power request\n",
 		EL721_RAIL_NAME);
 
 	return 0;
 
-out:
-	of_changeset_destroy(&ocs);
+out_unregister:
+	if (el721_rail_device) {
+		platform_device_unregister(el721_rail_device);
+		el721_rail_device = NULL;
+	}
+	of_node_put(el721_supply_node);
+	el721_supply_node = NULL;
+	of_changeset_revert(&el721_rail_changeset);
+	el721_rail_applied = false;
+out_destroy:
+	of_changeset_destroy(&el721_rail_changeset);
 	of_node_put(regulators);
-	pr_warn("egis-el721: cannot publish the sensor rail (%d)\n", ret);
-
-	return 0;
+	return ret;
 }
-postcore_initcall(el721_add_rail);
 
 static int __init el721_init(void)
 {
@@ -805,11 +893,8 @@ static int __init el721_init(void)
 		of_node_put(node);
 		return 0;
 	}
-	/* No usable board node, so borrow the one published above for its
-	 * supply; the software device below still owns the two TLMM lines. */
-	if (!node)
-		node = of_node_get(el721_supply_node);
-
+	of_node_put(node);
+	node = NULL;
 	gpiod_add_lookup_table(&el721_fallback_gpios);
 	el721_fallback_device = platform_device_alloc("egis-el721",
 						      PLATFORM_DEVID_NONE);
@@ -819,15 +904,6 @@ static int __init el721_init(void)
 		of_node_put(node);
 		return -ENOMEM;
 	}
-
-	/*
-	 * Borrow the disabled node purely so the supply written next to it can be
-	 * resolved.  The node describes no GPIO, so the two TLMM lines still come
-	 * from the lookup table above, and nothing probes from the node itself.
-	 */
-	if (node)
-		device_set_node(&el721_fallback_device->dev,
-				of_fwnode_handle(node));
 
 	ret = platform_device_add(el721_fallback_device);
 	if (ret) {
@@ -844,8 +920,18 @@ static int __init el721_init(void)
 static void __exit el721_exit(void)
 {
 	if (el721_fallback_device) {
+		if (el721_fallback_device->dev.of_node == el721_supply_node)
+			device_remove_of_node(&el721_fallback_device->dev);
 		platform_device_unregister(el721_fallback_device);
 		gpiod_remove_lookup_table(&el721_fallback_gpios);
+	}
+	if (el721_rail_device)
+		platform_device_unregister(el721_rail_device);
+	if (el721_rail_applied) {
+		of_node_put(el721_supply_node);
+		el721_supply_node = NULL;
+		of_changeset_revert(&el721_rail_changeset);
+		of_changeset_destroy(&el721_rail_changeset);
 	}
 	platform_driver_unregister(&el721_driver);
 }

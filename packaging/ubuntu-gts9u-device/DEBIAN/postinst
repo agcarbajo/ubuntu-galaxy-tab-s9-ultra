@@ -19,10 +19,20 @@ ubuntu-gts9u-pogo-firmware.service:multi-user.target
 ubuntu-gts9u-desktop-user.service:multi-user.target
 ubuntu-gts9u-desktop-user.path:multi-user.target
 ubuntu-gts9u-camera-relays.service:graphical.target
+ubuntu-gts9u-fingerprint-ui.service:multi-user.target
+ubuntu-gts9u-fingerprint-secure.service:multi-user.target
 '
 
 case "$1" in
 	configure)
+		# Index the signed IRQ bridge for the matching installed kernel. Never
+		# load/unload it or restart the boot-lifetime secure owner on upgrade.
+		for module in /usr/lib/modules/*/updates/qcom_spss_irq.ko; do
+			[ -f "$module" ] || continue
+			release=${module#/usr/lib/modules/}
+			release=${release%%/*}
+			depmod -a "$release"
+		done
 		for pair in $UNITS; do
 			unit=${pair%%:*}
 			# deb-systemd-helper is not guaranteed inside a foreign-arch
@@ -49,6 +59,7 @@ case "$1" in
 			# fprintd is D-Bus activated and normally inactive.  If a client kept
 			# it alive during this upgrade, restart it so the new QTEE dependency
 			# and device sandbox are effective immediately.
+			systemctl try-restart ubuntu-gts9u-fingerprint-ui.service || true
 			systemctl try-restart fprintd.service || true
 		fi
 
@@ -56,6 +67,11 @@ case "$1" in
 		# power key only takes effect once the schemas are recompiled.
 		if command -v glib-compile-schemas >/dev/null 2>&1; then
 			glib-compile-schemas /usr/share/glib-2.0/schemas >/dev/null 2>&1 || true
+		fi
+		# Recompile Ubuntu GDM's vendor keyfiles, preserving its existing
+		# profile and other defaults. This does NOT restart GDM or log users out.
+		if [ -x /usr/share/gdm/generate-config ]; then
+			/usr/share/gdm/generate-config
 		fi
 		if command -v gtk-update-icon-cache >/dev/null 2>&1; then
 			gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor >/dev/null 2>&1 || true

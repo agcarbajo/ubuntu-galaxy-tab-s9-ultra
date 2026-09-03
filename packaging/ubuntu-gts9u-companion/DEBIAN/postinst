@@ -1,6 +1,15 @@
 #!/bin/sh
 set -e
 
+# Reproducible packages normalize source mtimes. A same-size edit can otherwise
+# leave a timestamp-based cache from an older release looking valid to Python.
+if command -v py3clean >/dev/null 2>&1; then
+	py3clean -p ubuntu-gts9u-companion
+fi
+if command -v py3compile >/dev/null 2>&1; then
+	py3compile -p ubuntu-gts9u-companion
+fi
+
 if command -v glib-compile-schemas >/dev/null 2>&1; then
 	glib-compile-schemas /usr/share/glib-2.0/schemas
 fi

@@ -83,6 +83,13 @@ test -f "$repo/packaging/v4l2loopback/patches/0002-fix-buffer-queue-management.p
 test -f "$repo/packaging/v4l2loopback/patches/0003-preserve-output-queue-for-capture.patch"
 test -f "$repo/kernel/include/linux/samsung_wacom.h"
 test -f "$drv/egis_el721.c"
+test -f "$drv/qcom_spss.c"
+test -f "$drv/qcom_glink_spss.c"
+test -f "$drv/spcom.c"
+test -f "$drv/spss_utils.c"
+test -f "$repo/kernel/include/linux/remoteproc/qcom_spss.h"
+test -f "$repo/kernel/include/uapi/linux/spcom.h"
+test -f "$repo/kernel/include/uapi/linux/spss_utils.h"
 
 mkdir -p "$(dirname "$kernel_tree")" "$build_dir" "$out_dir"
 
@@ -201,6 +208,12 @@ if ! grep -q 'qcomtee_bridged_alloc' \
 	git -C "$kernel_tree" apply --recount \
 		"$pat/qcomtee-bridge-large-objects.patch"
 fi
+# Samsung keymaster bootstraps the SPU through a carveout shared exclusively
+# by TrustZone and CP_SPSS_SP_SHARED.  Publish that existing reserved-memory
+# range as a protected TEE DMA heap so both QTEE and SPCOM retain the same
+# physical allocation.
+apply_unless 'TEE_DMA_HEAP_SPSS_SHARED' \
+	include/linux/tee_core.h qcomtee-add-spss-shared-heap.patch
 if [ "$qtee_admin_null_credentials" = 1 ]; then
 	# Diagnostic only.  This reproduces Samsung's in-kernel QSEECom client
 	# environment for a CAP_SYS_ADMIN process; it is not part of release builds.
@@ -243,6 +256,12 @@ if [ "$fingerprint_touch" = 1 ]; then
 	apply_unless 'GOODIX_BERLIN_SPONGE_FOD_RECT' \
 		drivers/input/touchscreen/goodix_berlin_core.c \
 		support-goodix-samsung-fod.patch
+	# Existing incremental trees already contain the older FOD patch.  Clean
+	# trees get this behavior from that patch directly; this small upgrade keeps
+	# incremental test builds byte-for-byte equivalent at the source level.
+	apply_unless 'starts while the finger is down instead of at the later RELEASE' \
+		drivers/input/touchscreen/goodix_berlin_core.c \
+		synthesize-goodix-fod-press.patch
 	apply_unless 'failed to disable FOD mode at suspend' \
 		drivers/input/touchscreen/goodix_berlin_core.c \
 		cleanup-goodix-fod-on-suspend.patch
@@ -453,6 +472,121 @@ grep -q 'egis_el721.o' "$fingerprint_dir/Makefile" || \
 	printf 'obj-$(CONFIG_FINGERPRINT_EGIS_EL721) += egis_el721.o\n' \
 		>> "$fingerprint_dir/Makefile"
 
+# The encrypted fingerprint templates are tied to a credential kept by the
+# Samsung K250A secure element.  The shipping DT describes its I2C controller
+# as disabled because Samsung ABL rejects enlarged replacement DTBs.  This
+# port therefore instantiates the already-present controller at module load
+# time and reverts that live-DT change when the module is removed.
+snvm_source=$repo/kernel/drivers/snvm
+snvm_dir=$fingerprint_dir/snvm
+case "$snvm_dir" in
+	"$kernel_tree"/drivers/misc/snvm) rm -rf -- "$snvm_dir" ;;
+	*) echo "unsafe SNVM driver path: $snvm_dir" >&2; exit 1 ;;
+esac
+cp -a "$snvm_source" "$snvm_dir"
+if ! grep -q 'drivers/misc/snvm/Kconfig' "$fingerprint_dir/Kconfig"; then
+	printf '\nsource "drivers/misc/snvm/Kconfig"\n' >> "$fingerprint_dir/Kconfig"
+fi
+grep -q 'CONFIG_STAR_K250A_LEGO).*snvm/' "$fingerprint_dir/Makefile" || \
+	printf 'obj-$(CONFIG_STAR_K250A_LEGO) += snvm/\n' \
+		>> "$fingerprint_dir/Makefile"
+
+# HwVault wraps Ubuntu's fingerprint root through Qualcomm's Secure Processing
+# Unit.  Mainline has the common remoteproc and GLINK machinery but not the
+# SM8550 SPSS transport.  These two GPL Qualcomm drivers are kept as modules:
+# the remoteproc half publishes the stock resources dynamically after boot, so
+# Samsung ABL still receives the byte-for-byte validated DTB.
+spss_header=$kernel_tree/include/linux/remoteproc/qcom_spss.h
+spss_rproc_dir=$kernel_tree/drivers/remoteproc
+spss_glink_dir=$kernel_tree/drivers/rpmsg
+install -m 0644 "$repo/kernel/include/linux/remoteproc/qcom_spss.h" \
+	"$spss_header"
+install -m 0644 "$drv/qcom_spss.c" "$spss_rproc_dir/qcom_spss.c"
+install -m 0644 "$drv/qcom_glink_spss.c" \
+	"$spss_glink_dir/qcom_glink_spss.c"
+if ! grep -q '^config QCOM_SPSS$' "$spss_rproc_dir/Kconfig"; then
+	cat >> "$spss_rproc_dir/Kconfig" <<'EOF'
+
+config QCOM_SPSS
+	tristate "Qualcomm Secure Processing SubSystem"
+	depends on ARCH_QCOM && REMOTEPROC
+	depends on RPMSG_QCOM_GLINK_SPSS
+	select QCOM_MDT_LOADER
+	help
+	  Loads the signed SPSS firmware and exposes its GLINK channels on
+	  Qualcomm SM8450/SM8550 devices.
+EOF
+fi
+grep -q 'qcom_spss.o' "$spss_rproc_dir/Makefile" || \
+	printf 'obj-$(CONFIG_QCOM_SPSS) += qcom_spss.o\n' \
+		>> "$spss_rproc_dir/Makefile"
+if ! grep -q '^config RPMSG_QCOM_GLINK_SPSS$' "$spss_glink_dir/Kconfig"; then
+	cat >> "$spss_glink_dir/Kconfig" <<'EOF'
+
+config RPMSG_QCOM_GLINK_SPSS
+	tristate "Qualcomm GLINK SPSS transport"
+	depends on RPMSG_QCOM_GLINK && QCOM_SMEM && MAILBOX
+	help
+	  GLINK transport for Qualcomm's Secure Processing SubSystem.
+EOF
+fi
+grep -q 'qcom_glink_spss.o' "$spss_glink_dir/Makefile" || \
+	printf 'obj-$(CONFIG_RPMSG_QCOM_GLINK_SPSS) += qcom_glink_spss.o\n' \
+		>> "$spss_glink_dir/Makefile"
+
+# SPCOM is the userspace-facing channel multiplexer above GLINK SPSS.  Keep it
+# in drivers/soc/qcom so it is built against the same in-tree headers and
+# symbol versions as the remoteproc transport.
+spcom_dir=$kernel_tree/drivers/soc/qcom
+install -m 0644 "$repo/kernel/include/uapi/linux/spcom.h" \
+	"$kernel_tree/include/uapi/linux/spcom.h"
+install -m 0644 "$repo/kernel/include/uapi/linux/spss_utils.h" \
+	"$kernel_tree/include/uapi/linux/spss_utils.h"
+install -m 0644 "$drv/spcom.c" "$spcom_dir/spcom.c"
+install -m 0644 "$drv/spss_utils.c" "$spcom_dir/spss_utils.c"
+install -m 0644 "$drv/qcom_sp_hlos_heap.c" "$spcom_dir/qcom_sp_hlos_heap.c"
+if ! grep -q '^config QCOM_SPCOM$' "$spcom_dir/Kconfig"; then
+	cat >> "$spcom_dir/Kconfig" <<'EOF'
+
+config QCOM_SPCOM
+	tristate "Qualcomm Secure Processor communication"
+	depends on ARCH_QCOM && QCOM_SPSS
+	help
+	  Exposes the SPSS GLINK channels and DMA-BUF retention ioctls used by
+	  Qualcomm Keymaster and Samsung's fingerprint secure applications.
+EOF
+fi
+grep -q 'CONFIG_QCOM_SPCOM).*spcom.o' "$spcom_dir/Makefile" || \
+	printf 'obj-$(CONFIG_QCOM_SPCOM) += spcom.o\n' >> "$spcom_dir/Makefile"
+if ! grep -q '^config QCOM_SP_HLOS_HEAP$' "$spcom_dir/Kconfig"; then
+	cat >> "$spcom_dir/Kconfig" <<'EOF'
+
+config QCOM_SP_HLOS_HEAP
+	tristate "Qualcomm HLOS/SPSS shared DMA-BUF heap"
+	depends on ARCH_QCOM && QCOM_SCM && DMABUF_HEAPS && CMA
+	help
+	  Exposes the contiguous qcom,sp-hlos heap used by SPSS NVM and assigns
+	  each allocation to HLOS and CP_SPSS_HLOS_SHARED for its DMA-BUF lifetime.
+EOF
+fi
+grep -q 'CONFIG_QCOM_SP_HLOS_HEAP).*qcom_sp_hlos_heap.o' "$spcom_dir/Makefile" || \
+	printf 'obj-$(CONFIG_QCOM_SP_HLOS_HEAP) += qcom_sp_hlos_heap.o\n' \
+		>> "$spcom_dir/Makefile"
+if ! grep -q '^config QCOM_SPSS_UTILS$' "$spcom_dir/Kconfig"; then
+	cat >> "$spcom_dir/Kconfig" <<'EOF'
+
+config QCOM_SPSS_UTILS
+	tristate "Qualcomm Secure Processor userspace utilities"
+	depends on ARCH_QCOM && QCOM_SPSS
+	help
+	  Exposes the SPSS boot-event ABI used to coordinate Qualcomm's sec_nvm
+	  service and SP daemon across userspace processes.
+EOF
+fi
+grep -q 'CONFIG_QCOM_SPSS_UTILS).*spss_utils.o' "$spcom_dir/Makefile" || \
+	printf 'obj-$(CONFIG_QCOM_SPSS_UTILS) += spss_utils.o\n' \
+		>> "$spcom_dir/Makefile"
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -502,10 +636,18 @@ done
 
 if [ "$fingerprint_sensor" = 1 ]; then
 	"$kernel_tree/scripts/config" --file "$build_dir/.config" \
-		--module QCOMTEE --enable FINGERPRINT_EGIS_EL721
+		--module QCOMTEE --enable FINGERPRINT_EGIS_EL721 \
+		--module STAR_K250A_LEGO \
+		--module RPMSG_QCOM_GLINK_SPSS --module QCOM_SPSS \
+		--module QCOM_SPSS_UTILS --module QCOM_SPCOM \
+		--module QCOM_SP_HLOS_HEAP
 else
 	"$kernel_tree/scripts/config" --file "$build_dir/.config" \
-		--module QCOMTEE --disable FINGERPRINT_EGIS_EL721
+		--module QCOMTEE --disable FINGERPRINT_EGIS_EL721 \
+		--disable STAR_K250A_LEGO --disable QCOM_SPSS \
+		--disable QCOM_SPSS_UTILS --disable QCOM_SPCOM \
+		--disable QCOM_SP_HLOS_HEAP \
+		--disable RPMSG_QCOM_GLINK_SPSS
 fi
 
 make -C "$kernel_tree" O="$build_dir" ARCH=arm64 LLVM=1 olddefconfig
@@ -598,10 +740,73 @@ if [ "${BUILD_WIFI_MODULES:-1}" = 1 ]; then
 			M="$qcomtee_tree" INSTALL_MOD_PATH="$modules_root" \
 			INSTALL_MOD_STRIP=1 DEPMOD=true modules_install
 	fi
+	if grep -qx 'CONFIG_STAR_K250A_LEGO=m' "$build_dir/.config"; then
+		make -C "$kernel_tree" O="$build_dir" ARCH=arm64 LLVM=1 \
+			-j"$(nproc)" M="$snvm_dir" modules
+		make -C "$kernel_tree" O="$build_dir" ARCH=arm64 LLVM=1 \
+			M="$snvm_dir" INSTALL_MOD_PATH="$modules_root" \
+			INSTALL_MOD_STRIP=1 DEPMOD=true modules_install
+	fi
 
 	release=$(make -s -C "$kernel_tree" O="$build_dir" ARCH=arm64 LLVM=1 \
 		kernelrelease)
 	release_dir=$modules_root/lib/modules/$release
+	if grep -qx 'CONFIG_QCOM_SPSS=m' "$build_dir/.config" &&
+	   grep -qx 'CONFIG_RPMSG_QCOM_GLINK_SPSS=m' "$build_dir/.config"; then
+		# Build only the two imported objects.  A directory-wide remoteproc
+		# modules build also selects unrelated optional PRU modules, whose
+		# dependencies are deliberately absent from this tablet kernel.
+		make -C "$kernel_tree" O="$build_dir" ARCH=arm64 LLVM=1 \
+			M="$spss_glink_dir" clean
+		make -C "$kernel_tree" O="$build_dir" ARCH=arm64 LLVM=1 \
+			M="$spss_rproc_dir" clean
+		make -C "$kernel_tree" O="$build_dir" ARCH=arm64 LLVM=1 \
+			-j"$(nproc)" M="$spss_glink_dir" qcom_glink_spss.ko
+		make -C "$kernel_tree" O="$build_dir" ARCH=arm64 LLVM=1 \
+			-j"$(nproc)" M="$spss_rproc_dir" \
+			KBUILD_EXTRA_SYMBOLS="$spss_glink_dir/Module.symvers" \
+			qcom_spss.ko
+		install -d "$release_dir/updates"
+		for module in \
+			"$spss_glink_dir/qcom_glink_spss.ko" \
+			"$spss_rproc_dir/qcom_spss.ko"; do
+			installed=$release_dir/updates/${module##*/}
+			install -m 0644 "$module" "$installed"
+			"$build_dir/scripts/sign-file" sha256 \
+				"$build_dir/certs/signing_key.pem" \
+				"$build_dir/certs/signing_key.x509" "$installed"
+			modinfo -F signer "$installed" | grep -q .
+		done
+
+		make -C "$kernel_tree" O="$build_dir" ARCH=arm64 LLVM=1 \
+			-j"$(nproc)" M="$spcom_dir" spss_utils.ko
+		installed=$release_dir/updates/spss_utils.ko
+		install -m 0644 "$spcom_dir/spss_utils.ko" "$installed"
+		"$build_dir/scripts/sign-file" sha256 \
+			"$build_dir/certs/signing_key.pem" \
+			"$build_dir/certs/signing_key.x509" "$installed"
+		modinfo -F signer "$installed" | grep -q .
+
+		make -C "$kernel_tree" O="$build_dir" ARCH=arm64 LLVM=1 \
+			-j"$(nproc)" M="$spcom_dir" \
+			KBUILD_EXTRA_SYMBOLS="$spss_rproc_dir/Module.symvers" \
+			spcom.ko
+		installed=$release_dir/updates/spcom.ko
+		install -m 0644 "$spcom_dir/spcom.ko" "$installed"
+		"$build_dir/scripts/sign-file" sha256 \
+			"$build_dir/certs/signing_key.pem" \
+			"$build_dir/certs/signing_key.x509" "$installed"
+		modinfo -F signer "$installed" | grep -q .
+
+		make -C "$kernel_tree" O="$build_dir" ARCH=arm64 LLVM=1 \
+			-j"$(nproc)" M="$spcom_dir" qcom_sp_hlos_heap.ko
+		installed=$release_dir/updates/qcom_sp_hlos_heap.ko
+		install -m 0644 "$spcom_dir/qcom_sp_hlos_heap.ko" "$installed"
+		"$build_dir/scripts/sign-file" sha256 \
+			"$build_dir/certs/signing_key.pem" \
+			"$build_dir/certs/signing_key.x509" "$installed"
+		modinfo -F signer "$installed" | grep -q .
+	fi
 
 	# v4l2loopback is the application-facing half of the camera bridge. Build
 	# the exact reviewed revision against this exact kernel, then sign it with

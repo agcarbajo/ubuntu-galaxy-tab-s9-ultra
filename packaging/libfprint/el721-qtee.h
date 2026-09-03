@@ -6,6 +6,14 @@
 
 typedef struct _El721Qtee El721Qtee;
 
+#define EL721_HARDWARE_AUTH_TOKEN_SIZE 69U
+#define EL721_CHALLENGE_INFO_SIZE 60U
+
+typedef struct
+{
+  guint8 bytes[EL721_CHALLENGE_INFO_SIZE];
+} El721Challenge;
+
 typedef struct
 {
   guint32 sensor;
@@ -30,6 +38,25 @@ gboolean    el721_qtee_raw_command   (El721Qtee   *session,
                                      gsize         output_size,
                                      guint32      *result,
                                      GError      **error);
+gboolean    el721_qtee_generate_challenge (El721Qtee      *session,
+                                           guint32          user_id,
+                                           guint32          authenticator_id,
+                                           El721Challenge  *challenge,
+                                           guint32         *result,
+                                           GError         **error);
+gboolean    el721_qtee_hat_op        (El721Qtee           *session,
+                                     const guint8         *hat,
+                                     gsize                 hat_size,
+                                     guint32               selector,
+                                     const guint8         *payload,
+                                     gsize                 payload_size,
+                                     const El721Challenge *challenge,
+                                     guint32              *result,
+                                     GError              **error);
+gboolean    el721_qtee_authorize_enrollment (El721Qtee   *session,
+                                             guint32       user_id,
+                                             guint32       authenticator_id,
+                                             GError      **error);
 gboolean    el721_qtee_control_user  (El721Qtee   *session,
                                      guint32       operation,
                                      const guint8 *user,

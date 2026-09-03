@@ -11,15 +11,15 @@
  
  #include "qcomtee.h"
  
-@@ -106,6 +109,7 @@
+@@ -109,6 +112,7 @@
   */
  #define QCOMTEE_SHM_POOL_MAX_SIZE	SZ_32M
- #define QCOMTEE_PAGE_SHM_MAX_SIZE	SZ_4M
-+#define QCOMTEE_BRIDGED_SHM_MIN_SIZE	SZ_2M
+ #define QCOMTEE_TZMEM_OBJECT_MIN_SIZE	SZ_2M
++#define QCOMTEE_BRIDGED_SHM_MAX_SIZE	SZ_4M
  
  static int qcomtee_shm_register(struct tee_context *ctx, struct tee_shm *shm,
  				struct page **pages, size_t num_pages,
-@@ -132,17 +136,118 @@
+@@ -135,17 +139,123 @@
  	return container_of(pool, struct qcomtee_shm_pool, base);
  }
  
@@ -121,10 +121,10 @@
  			 size_t size, size_t align)
  {
  	struct qcomtee_shm_pool *qpool = to_qcomtee_shm_pool(pool);
+ 	phys_addr_t paddr;
  	void *vaddr;
  
--	if (size <= QCOMTEE_PAGE_SHM_MAX_SIZE)
-+	if (size <= QCOMTEE_BRIDGED_SHM_MIN_SIZE)
+ 	if (size < QCOMTEE_TZMEM_OBJECT_MIN_SIZE)
  		return tee_dyn_shm_alloc_helper(shm, size, align,
  						qcomtee_shm_register);
  
@@ -133,10 +133,12 @@
 +	 * registers its two buffers with QTEE itself, which needs one whole
 +	 * contiguous bridge.  Objects in that size range get one of their own;
 +	 * the signed TA image is far larger and stays on the TZMEM pool. */
-+	if (size <= QCOMTEE_PAGE_SHM_MAX_SIZE && !qcomtee_bridged_alloc(shm, size))
++	if (size <= QCOMTEE_BRIDGED_SHM_MAX_SIZE &&
++	    !qcomtee_bridged_alloc(shm, size))
 +		return 0;
 +
- 	vaddr = qcom_tzmem_alloc(qpool->tzmem, size, GFP_KERNEL);
+ 	vaddr = qcom_tzmem_alloc(qpool->tzmem, size,
+ 				  GFP_KERNEL | GFP_DMA32);
  	if (!vaddr)
  		return -ENOMEM;
 @@ -164,6 +269,9 @@

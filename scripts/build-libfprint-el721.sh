@@ -15,7 +15,7 @@ mirror=${UBUNTU_MIRROR:-http://ports.ubuntu.com/ubuntu-ports}
 libfprint_commit=bebe8565cd7e2c89c0b0c5e6ee7353b80d6a51e1
 quic_teec_commit=736419e25a2036aac3292a10a93e394a90750ca3
 qcbor_commit=4ace4620d549f22c1163c5b00d3ae0c0dae1d207
-package_version=${LIBFPRINT_EL721_VERSION:-1:1.94.7+tod1-0ubuntu5~24.04.8+gts9u3}
+package_version=${LIBFPRINT_EL721_VERSION:-1:1.94.7+tod1-0ubuntu5~24.04.8+gts9u47}
 
 command -v mmdebstrap >/dev/null || {
 	echo 'mmdebstrap is missing; run scripts/install-build-deps.sh' >&2
@@ -103,9 +103,67 @@ fetch_source qcbor \
 	https://github.com/laurencelundblade/QCBOR.git "$qcbor_commit"
 
 git -C "$src/libfprint" apply "$input/patches/0001-el721-platform-driver.patch"
+git -C "$src/quic-teec" apply --recount \
+	"$input/patches/0002-qcomtee-expose-memory-fd.patch" \
+	"$input/patches/0003-qcomtee-register-dmabuf.patch"
 install -m0644 "$input/el721.c" "$input/el721.h" \
-	"$input/el721-qtee.c" "$input/el721-qtee.h" \
+	"$input/el721-qtee.c" "$input/el721-qtee.h" "$input/el721-enroll-wire.h" \
+	"$input/el721-hwvault-wire.h" "$input/el721-qtee-lookup.h" "$input/el721-spl-wire.h" \
+	"$input/el721-print-wire.h" "$input/el721-identify-wire.h" "$input/el721-gallery.h" \
+	"$input/el721-match-retry.h" "$input/el721-touch-light.h" "$input/el721-ui-lease.h" \
 	"$src/libfprint/libfprint/drivers/"
+
+step 'offline touch-to-light lifecycle tests'
+run 'cd /build/el721-libfprint/input
+cc -std=c11 -Wall -Wextra -Werror $(pkg-config --cflags glib-2.0) \
+  el721-ui-lease-test.c -o /tmp/el721-ui-lease-test \
+  $(pkg-config --libs glib-2.0)
+/tmp/el721-ui-lease-test'
+run 'cd /build/el721-libfprint/input
+cc -std=c11 -Wall -Wextra -Werror $(pkg-config --cflags glib-2.0) \
+  el721-touch-light-test.c -o /tmp/el721-touch-light-test \
+  $(pkg-config --libs glib-2.0)
+/tmp/el721-touch-light-test'
+
+step 'offline persisted identity tests'
+run 'cd /build/el721-libfprint/input
+cc -std=c11 -Wall -Wextra -Werror $(pkg-config --cflags glib-2.0) \
+  el721-gallery-test.c -o /tmp/el721-gallery-test \
+  $(pkg-config --libs glib-2.0)
+/tmp/el721-gallery-test'
+run 'cd /build/el721-libfprint/input
+cc -std=c11 -Wall -Wextra -Werror $(pkg-config --cflags glib-2.0) \
+  el721-print-wire-test.c -o /tmp/el721-print-wire-test \
+  $(pkg-config --libs glib-2.0)
+/tmp/el721-print-wire-test'
+
+step 'offline match retry lifecycle tests'
+run 'cd /build/el721-libfprint/input
+cc -std=c11 -Wall -Wextra -Werror $(pkg-config --cflags glib-2.0) \
+  el721-match-retry-test.c -o /tmp/el721-match-retry-test \
+  $(pkg-config --libs glib-2.0)
+/tmp/el721-match-retry-test'
+
+step 'offline IdentifyDo protocol and contact-gating tests'
+run 'cd /build/el721-libfprint/input
+cc -std=c11 -Wall -Wextra -Werror $(pkg-config --cflags glib-2.0) \
+  el721-identify-wire-test.c -o /tmp/el721-identify-wire-test \
+  $(pkg-config --libs glib-2.0)
+/tmp/el721-identify-wire-test'
+
+step 'offline EnrollDo protocol tests'
+run 'cd /build/el721-libfprint/input
+cc -std=c11 -Wall -Wextra -Werror $(pkg-config --cflags glib-2.0) \
+  el721-enroll-wire-test.c -o /tmp/el721-enroll-wire-test \
+  $(pkg-config --libs glib-2.0)
+/tmp/el721-enroll-wire-test'
+
+step 'offline HwVault restore tests'
+run 'cd /build/el721-libfprint/input
+cc -std=c11 -Wall -Wextra -Werror $(pkg-config --cflags glib-2.0) \
+  el721-hwvault-wire-test.c -o /tmp/el721-hwvault-wire-test \
+  $(pkg-config --libs glib-2.0)
+/tmp/el721-hwvault-wire-test'
 
 step 'static QTEE dependencies'
 run 'cd /build/el721-libfprint
@@ -120,6 +178,22 @@ cmake -S quic-teec -B build-qcomtee -DCMAKE_BUILD_TYPE=Release \
   -DQCBOR_DIR_HINT=/build/el721-libfprint/qtee-prefix >/dev/null
 cmake --build build-qcomtee -j2 >/dev/null
 cmake --install build-qcomtee >/dev/null'
+
+step 'offline QTEE lookup ABI tests'
+run 'cd /build/el721-libfprint/input
+cc -std=c11 -Wall -Wextra -Werror $(pkg-config --cflags glib-2.0) \
+  -I/build/el721-libfprint/qtee-prefix/include \
+  el721-qtee-lookup-test.c -o /tmp/el721-qtee-lookup-test \
+  $(pkg-config --libs glib-2.0)
+/tmp/el721-qtee-lookup-test'
+
+step 'offline SPL callback protocol tests'
+run 'cd /build/el721-libfprint/input
+cc -std=c11 -Wall -Wextra -Werror $(pkg-config --cflags glib-2.0) \
+  -I/build/el721-libfprint/qtee-prefix/include \
+  el721-spl-wire-test.c -o /tmp/el721-spl-wire-test \
+  $(pkg-config --libs glib-2.0)
+/tmp/el721-spl-wire-test'
 
 step 'libfprint EL721 build'
 run 'cd /build/el721-libfprint
