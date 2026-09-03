@@ -125,6 +125,11 @@ class WorkerTests(unittest.TestCase):
             def act():
                 if manager.state.data["status"] != "running":
                     return True
+                # The metadata-only fixture emits a touch before its name.
+                # Expiring at Ready races with that queued touch, which
+                # correctly renews the real inactivity deadline by 60s.
+                if expire and self.scenario == "metadata-only" and not manager.state.data["contact_seen"]:
+                    return True
                 if cancel:
                     manager.stop()
                 else:
