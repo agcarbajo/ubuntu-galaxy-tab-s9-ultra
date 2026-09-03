@@ -17,7 +17,7 @@ Ubuntu 24.04 LTS arm64 for the Samsung Galaxy Tab S9 Ultra Wi-Fi
 | S Pen writing | ✅ | Hover, pressure, tilt, side button and palm rejection |
 | S Pen dock | ✅ | Insertion, orientation and charging |
 | S Pen BLE | ✅ | Pairing, real battery levels, air gestures and pointer mode fully validated |
-| Tab Companion | ✅ | S Pen remote modes, behaviour options, haptics and keyboard remapping |
+| Tab Companion | ✅ | S Pen remote modes, behaviour options, haptics, keyboard remapping and fingerprint settings |
 | Keyboard cover | ✅ | Only EF-DX920 tested, not sure if other models will work |
 | Cover switch | ✅ | Closing the cover turns off the display |
 | Power and volume buttons | ✅ | Including suspend from the power button |
@@ -34,7 +34,7 @@ Ubuntu 24.04 LTS arm64 for the Samsung Galaxy Tab S9 Ultra Wi-Fi
 | USB-C DisplayPort | ✅ | External video output |
 | Cameras and flash | ✅ | Four cameras, autofocus and flashlight work; colour tuning remains a future improvement |
 | Ambient light sensor | ❌ | Currently not working |
-| Fingerprint reader | 🟡 | Optical UI, touch exclusion and secure EL721 initialisation validated; enrolment, verification and GNOME integration remain pending |
+| Fingerprint reader | ✅ | Enrolment and recognition in Ubuntu Settings and Tab Companion; GDM login, screen unlock, rotation and reboot/resume validated |
 | Waydroid | ❓ | Not tested |
 
 ✅ working on the physical tablet · 🟡 experimental or partially validated ·
@@ -43,14 +43,18 @@ Ubuntu 24.04 LTS arm64 for the Samsung Galaxy Tab S9 Ultra Wi-Fi
 The evidence and technical limitations for every component are documented in
 [hardware-status.md](docs/hardware-status.md).
 
+This table describes the current source tree; previously published installation
+ZIPs may not include the latest changes.
+
 ## Tab Companion
 <img width="2164" height="1764" alt="Screenshot from 2026-08-20 04-02-55" src="https://github.com/user-attachments/assets/df7cddca-46e8-438a-bcb8-be713cc93bed" />
 
-Tab Companion 1.0.0 is preinstalled and provides:
+Tab Companion provides:
 
 - full S Pen settings (pairing, gestures and air-pointer mouse mode);
 - remapping for compatible Samsung Book Cover Keyboard keys;
 - adjustable vibration feedback for GNOME's on-screen keyboard and optional notification vibration;
+- fingerprint enrolment with progress, deletion and named recognition tests, using the same fingerprints as Ubuntu Settings and login;
 - dual boot to Android, with an optional toggle in quick settings.
 
 The air-pointer concept is inspired by
@@ -117,9 +121,9 @@ EF-DX925 are untested as I don't have them, so they might not work.
 | [Boot strategy](docs/boot-strategy.md) | Requirements, partitions, the boot chain and recovery |
 | [Dual boot](docs/dual-boot.md) | How switching systems works, and what it never touches |
 | [Hardware status](docs/hardware-status.md) | Evidence, limitations and pending hardware tests |
-| [Tab Companion](docs/tab-companion.md) | S Pen and keyboard behaviour, architecture and diagnostics |
+| [Tab Companion](docs/tab-companion.md) | S Pen, keyboard and fingerprint settings, architecture and diagnostics |
 | [Ubuntu userspace](docs/ubuntu-userspace.md) | Root filesystem and desktop integration |
-| [Fingerprint reader](docs/fingerprint-reader.md) | EL721/UDFPS architecture, security model and validation plan |
+| [Fingerprint reader](docs/fingerprint-reader.md) | Working EL721/UDFPS integration, validation evidence and maintenance constraints |
 | [Development notes](docs/development-notes.md) | Durable technical conclusions and rejected approaches |
 | [Porting log](docs/porting-log.md) | Chronological engineering history |
 

@@ -85,9 +85,11 @@ disabled destructive controls, cancellation, a 60-second no-contact timeout
 (62.2 seconds including cleanup), and normal/narrow-window rendering. The
 highlight/result presentation was exercised with synthetic UI state only;
 neither saved print nor libfprint/PAM changed during deployment or these tests.
-The user validated enrollment/testing in 1.2.0; a physical
-single-touch named match in 1.2.1 still needs the user's finger. Synthetic
-success is not hardware validation.
+The user validated enrollment/testing in 1.2.0 and subsequently confirmed that
+the single-touch testing redesign in 1.2.1 works correctly. Version 1.2.2 only
+changes the Ubuntu Settings shortcut wording. On 2026-09-03 the owner accepted
+the complete fingerprint feature for merging into main. These physical
+confirmations, not synthetic presentation tests, establish the working status.
 
 ## S Pen
 

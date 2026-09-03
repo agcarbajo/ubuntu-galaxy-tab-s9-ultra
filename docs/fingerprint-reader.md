@@ -1,47 +1,57 @@
 # The EL721 fingerprint reader under Ubuntu
 
-This document describes the experimental infrastructure for the Galaxy Tab S9
-Ultra Wi-Fi's (`SM-X910`) under-display optical reader. **Encrypted enrollment
-and same/different-finger recognition have now been demonstrated** in the
-prepared Ubuntu session. The user confirmed repeated correct acceptance and
-rejection; the corresponding journal contains three matches and four secure
-non-matches. Native GNOME screen unlock also succeeded, and after the v9
-cancellation fix the user reports repeated successful tests across rotations.
-The user has also confirmed GDM login, automatic password-keyboard opening and
-portrait keyboard overlap handling. An intermittent single-touch failure was
-recovered by restarting GNOME, but its trigger is still unproven. Native Settings
-enrollment and matching either of two independently encrypted prints now work.
-The v14 keyboard guard has been loaded and the user confirmed GDM login and
-ordinary single-finger input afterward. The boot-only secure service has now
-initialized successfully after a full Ubuntu reboot, without manual startup.
-The user has also confirmed both fingerprints after reboot and resume, and the
-journal records secure matches for both saved slots across suspension. The
-[latest checkpoint](#automatic-secure-startup-first-ubuntu-boot-2026-09-03)
-supersedes historical investigation notes below, including older encryption
-failures and estimates.
+## Current status: working, owner-confirmed
 
-Current assessment: approximately **98% of the end-to-end feature**. This is
-an uncertain engineering estimate, not a test pass rate or a security benchmark.
-The SPU listener/DMA owner is now a persistent boot-only service. Full-boot
-initialization and post-boot authentication are validated, but repeated
-resume/boot stability and recovery limitations remain separate acceptance
-criteria. Do not stop that owner independently while secure world can retain
-its DMA buffer; it does not support automatic or manual in-place restart.
+On 2026-09-03 the owner accepted the Galaxy Tab S9 Ultra Wi-Fi's (`SM-X910`)
+EL721 under-display fingerprint feature as functionally complete and requested
+its merge into main. The hardware status is **✅ working**, replacing earlier
+partial-completion estimates.
 
-Tab Companion 1.2.1 now has a dedicated [fingerprint settings page](tab-companion.md#fingerprint-settings-121)
-sharing GNOME's fprintd store. The separate [multiple-fingerprint latency report](fingerprint-gallery-performance.md)
-explains current costs and possible future work; it changes no recognition code.
+Physically confirmed on the tablet:
 
-### Requested desktop follow-up (after functional enrol/verify)
+- Encrypted enrollment, deletion and re-enrollment through Ubuntu Settings and
+  Tab Companion, using the same fprintd store throughout.
+- Repeated acceptance of enrolled fingers and rejection of other fingers;
+  Companion's single held-touch test identifies and highlights the matched
+  saved finger.
+- GDM login before a session starts and GNOME screen unlock, with password
+  fallback, automatic password keyboard and portrait keyboard-overlap handling.
+- Waiting fingerprint icon and illumination on contact, correctly aligned to
+  the physical sensor across display rotations.
+- Automatic secure startup after a full Ubuntu reboot, and successful use of
+  both saved fingerprints after reboot and suspend/resume.
+
+Tab Companion 1.2.2 includes the [fingerprint settings page](tab-companion.md#fingerprint-settings-121).
+The matched [fprintd/PAM package pair](../packaging/fprintd/README.md) also passes
+APT dependency checks; future image builds include and validate both packages.
+This status describes the current implementation, not a newly published
+installation ZIP or a security certification. Only two physical fingers have
+been validated as a multi-print gallery; the ten-name capacity is software-tested.
+
+Maintenance constraints remain: the SPU listener/DMA owner is a persistent
+boot-only service and must not be stopped or restarted in place while secure
+world can retain its DMA buffer. Recovery of that owner requires an Ubuntu
+reboot. The [multiple-fingerprint latency report](fingerprint-gallery-performance.md)
+documents the current independent-gallery cost and optional future optimization;
+it is not a remaining functional blocker.
+
+The detailed checkpoints below preserve the investigation history. This status
+supersedes their earlier encryption failures, pending tests and percentage
+estimates; see also the [automatic-startup checkpoint](#automatic-secure-startup-first-ubuntu-boot-2026-09-03).
+
+### Original desktop follow-up checklist (completed)
+
+The following records the original desktop requirements, now covered by the
+owner-confirmed integration above; it is not a list of remaining work.
 
 GNOME Settings 46.7 already handles `EnrollStatus`: progress, accepted-stage
 animation, retry instructions and errors. The current console-driven probes
 do not open that dialog, and the target overlay is not an enrolment wizard.
-Reuse and validate the native dialog rather than duplicate it. GNOME Shell's
+The native dialog remains supported alongside Companion's settings. GNOME Shell's
 authentication prompt also supports feedback from GDM; placement near this
 physical under-display sensor still requires device-specific integration.
 
-After encrypted storage and real matching are working:
+The requested integration was:
 
 1. Show a dim fingerprint icon while waiting; illuminate the optical target
    only during actual contact/capture, then restore brightness on release,
