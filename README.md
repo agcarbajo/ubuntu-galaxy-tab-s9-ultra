@@ -33,8 +33,8 @@ Ubuntu 24.04 LTS arm64 for the Samsung Galaxy Tab S9 Ultra Wi-Fi
 | USB host | ✅ | HID and storage, powered or unpowered |
 | USB-C DisplayPort | ✅ | External video output |
 | Cameras and flash | ✅ | Four cameras, autofocus and flashlight work; colour tuning remains a future improvement |
+| Fingerprint reader | ✅ | Working for login and enrolment in Ubuntu Settings or Tab Companion |
 | Ambient light sensor | ❌ | Currently not working |
-| Fingerprint reader | ✅ | Enrolment and recognition in Ubuntu Settings and Tab Companion; GDM login, screen unlock, rotation and reboot/resume validated |
 | Waydroid | ❓ | Not tested |
 
 ✅ working on the physical tablet · 🟡 experimental or partially validated ·
@@ -54,7 +54,7 @@ Tab Companion provides:
 - full S Pen settings (pairing, gestures and air-pointer mouse mode);
 - remapping for compatible Samsung Book Cover Keyboard keys;
 - adjustable vibration feedback for GNOME's on-screen keyboard and optional notification vibration;
-- fingerprint enrolment with progress, deletion and named recognition tests, using the same fingerprints as Ubuntu Settings and login;
+- fingerprint enrolment with progress, deletion and recognition tests, using the same fingerprints as Ubuntu Settings and login;
 - dual boot to Android, with an optional toggle in quick settings.
 
 The air-pointer concept is inspired by
