@@ -235,7 +235,6 @@ chmod +x "$hooks/configure.sh"
 # Local packages: the device integration, plus the three sensor pieces Ubuntu
 # does not ship at all.  All are installed inside the same mmdebstrap
 # invocation, so the rootfs never depends on a manual dpkg run afterwards.
-bash "$repo/scripts/build-device-package.sh" >/dev/null
 bash "$repo/scripts/build-companion-package.sh" >/dev/null
 
 # libfprint has no upstream EL721 driver.  Build the full runtime with this
@@ -258,6 +257,12 @@ if [ "$fingerprint_missing" = 1 ] || \
 	bash "$repo/scripts/build-libfprint-el721.sh" >/dev/null
 	printf '%s\n' "$fingerprint_fingerprint" > "$fingerprint_stamp"
 fi
+
+# The device package embeds the native boot owner and matching signed IRQ
+# module. Build these after libfprint has provided the pinned QTEE dependencies.
+bash "$repo/scripts/build-fingerprint-secure-owner.sh" >/dev/null
+bash "$repo/scripts/build-spss-irq-module.sh" >/dev/null
+bash "$repo/scripts/build-device-package.sh" >/dev/null
 
 # The signed Samsung TA is proprietary.  A builder may opt in with an extracted
 # directory; hashes are checked before a local, non-redistributable .deb exists.

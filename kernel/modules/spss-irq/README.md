@@ -17,13 +17,18 @@ key. It does not rebuild or flash a boot image. Before manually loading the resu
 check that `modinfo -F vermagic` matches `uname -r` and its signer is trusted by the
 running kernel. The validated build used Linux `7.2.0-rc3-dirty` under lockdown.
 
-This is **not enabled at boot or included in the normal deployment workflow**.
-It lacks SPSS subsystem-reset notification (the stock device reports
-`POLLRDHUP`). The current libfprint consumer remains gated by the historical
-`EL721_QIS_DIAGNOSTIC=1` option and caps polling at five seconds. A production
-listener still needs coordinated SPU startup, cancellation, reset handling and
-safe ownership of the Keymaster DMA lease. Do not stop or unload the running
-SPSS transport to retry a failed initialization; use a controlled Ubuntu reboot.
+Device package **2.46** embeds the matching signed module and loads it through
+the boot-only `ubuntu-gts9u-fingerprint-secure.service`. The native owner
+registers the global SPL listener before initializing the Keymaster DMA context
+and restoring authenticated HwVault credentials. A full Ubuntu reboot has
+validated automatic startup and a subsequent fprintd Claim without manual
+initialization. Enrollment and both saved-print matching paths were physically
+validated before this boot; the user subsequently confirmed post-boot login
+and resume, with secure matches for both saved slots recorded in the journal.
 
-Receiving an IRQ proves transport only. Current HwVault restoration still fails
-with StrongBox `-40`; this module is not evidence of successful enrollment.
+The bridge still lacks SPSS subsystem-reset notification (`POLLRDHUP`). The
+supervisor withdraws readiness on observed remoteproc state loss or child exit,
+but does not attempt in-place recovery or claim to detect every fast SSR. SPL
+polls remain bounded to five seconds. Only this boot owner may own the listener;
+normal fprintd must not enable `EL721_QIS_DIAGNOSTIC`. Do not stop or unload the
+running SPSS transport to retry a failure; use a controlled full Ubuntu reboot.

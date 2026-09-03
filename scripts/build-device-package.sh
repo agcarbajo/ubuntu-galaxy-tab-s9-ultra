@@ -20,6 +20,23 @@ deb=$out/ubuntu-gts9u-device_${version}_${arch}.deb
 rm -rf -- "$staging"
 mkdir -p "$staging" "$out"
 cp -a "$src/." "$staging/"
+# Test imports may leave ignored bytecode beside extensionless Python helpers.
+# Generated caches are not package source or reproducible runtime artifacts.
+find "$staging" -type f -name '*.pyc' -delete
+find "$staging" -type d -name '__pycache__' -empty -delete
+
+# Boot-lifetime native secure owner and the matching signed IRQ module are
+# built separately. No proprietary runtime/firmware bytes enter this package.
+owner=$base/out/fingerprint-secure/ubuntu-gts9u-fingerprint-secure-owner
+irq=$base/out/spss-irq-module/qcom_spss_irq.ko
+test -x "$owner" || { echo 'Run scripts/build-fingerprint-secure-owner.sh first' >&2; exit 1; }
+test -f "$irq" || { echo 'Run scripts/build-spss-irq-module.sh first' >&2; exit 1; }
+release=$(modinfo -F vermagic "$irq" | cut -d' ' -f1)
+test -n "$(modinfo -F signer "$irq")"
+[[ "$release" =~ ^[a-zA-Z0-9.+_-]+$ ]]
+install -m0755 "$owner" "$staging/usr/libexec/"
+install -d "$staging/usr/lib/modules/$release/updates"
+install -m0644 "$irq" "$staging/usr/lib/modules/$release/updates/"
 
 # --- flashlight tile translations -----------------------------------------
 # The one place where what ships is not byte-for-byte what is versioned: the

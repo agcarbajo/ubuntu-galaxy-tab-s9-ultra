@@ -1,0 +1,26 @@
+[Unit]
+Description=Galaxy Tab S9 Ultra boot-lifetime fingerprint secure transport
+After=local-fs.target systemd-udev-settle.service
+Before=fprintd.service
+ConditionPathExists=/sys/bus/platform/devices/egis-el721
+# The secure firmware can retain DMA addresses. Only a full OS reboot may
+# replace this owner; neither package upgrades nor failure should restart it.
+RefuseManualStop=yes
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/ubuntu-gts9u-fingerprint-secure --boot
+Restart=no
+UMask=0077
+RuntimeDirectory=gts9u-fingerprint-secure
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+LogsDirectory=gts9u-fingerprint-secure
+LogsDirectoryMode=0700
+LimitCORE=0
+# Children stay together through the normal full-OS shutdown sequence.
+TimeoutStopSec=10
+OOMScoreAdjust=-900
+
+[Install]
+WantedBy=multi-user.target

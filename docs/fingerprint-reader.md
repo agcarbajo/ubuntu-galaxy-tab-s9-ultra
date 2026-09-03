@@ -9,17 +9,24 @@ non-matches. Native GNOME screen unlock also succeeded, and after the v9
 cancellation fix the user reports repeated successful tests across rotations.
 The user has also confirmed GDM login, automatic password-keyboard opening and
 portrait keyboard overlap handling. An intermittent single-touch failure was
-recovered by restarting GNOME, but its trigger is still unproven. Production
-startup remains unfinished. The
-[latest checkpoint](#native-ui-validation-and-targetless-keyboard-events-2026-09-03)
+recovered by restarting GNOME, but its trigger is still unproven. Native Settings
+enrollment and matching either of two independently encrypted prints now work.
+The v14 keyboard guard has been loaded and the user confirmed GDM login and
+ordinary single-finger input afterward. The boot-only secure service has now
+initialized successfully after a full Ubuntu reboot, without manual startup.
+The user has also confirmed both fingerprints after reboot and resume, and the
+journal records secure matches for both saved slots across suspension. The
+[latest checkpoint](#automatic-secure-startup-first-ubuntu-boot-2026-09-03)
 supersedes historical investigation notes below, including older encryption
 failures and estimates.
 
-Current assessment: approximately **95% of the end-to-end feature**. This is
+Current assessment: approximately **98% of the end-to-end feature**. This is
 an uncertain engineering estimate, not a test pass rate or a security benchmark.
-The working SPU listener/DMA owner remains a transient diagnostic service; its
-startup must still be made persistent and safe across reset/suspend. Do not stop
-that owner independently while secure world can retain its DMA buffer.
+The SPU listener/DMA owner is now a persistent boot-only service. Full-boot
+initialization and post-boot authentication are validated, but repeated
+resume/boot stability and recovery limitations remain separate acceptance
+criteria. Do not stop that owner independently while secure world can retain
+its DMA buffer; it does not support automatic or manual in-place restart.
 
 ### Requested desktop follow-up (after functional enrol/verify)
 
@@ -2425,3 +2432,78 @@ Physical matching against the new two-print gallery remains the next user test.
 The estimate remains approximately **95%** pending that validation and the
 remaining production-startup/stability checkpoints. Native enrollment is now
 confirmed; full cold-start independence is still not claimed.
+
+## Automatic secure startup: first Ubuntu boot (2026-09-03)
+
+The user confirmed native login with the newly registered finger after loading
+overlay 14, followed by working ordinary single-finger desktop input. The
+journal confirms secure matching of the second candidate, without a mixed-gallery
+error. This closes the immediate v14 fresh-session checkpoint, not a statistical
+proof that the earlier intermittent input issue cannot recur.
+
+**Device 2.46** introduces `ubuntu-gts9u-fingerprint-secure.service`, a
+boot-lifetime supervisor and a separately compiled native secure owner. It:
+
+- Checks hashes of the owner's existing 23-file firmware/runtime set and
+  requires Ubuntu-local NVM directories, rejecting Android-mounted storage.
+  Proprietary binaries and NVM contents are not included in the public package.
+- Loads the matching signed SPSS IRQ module and transport modules, then starts
+  `sec_nvm` and `spdaemon` in the measured order. No boot image or DTB changes.
+- Registers the global SPL listener **before** Keymaster negotiation, the
+  20-KiB secure DMA binding, configuration and authenticated HwVault restore.
+  Only actual cache acknowledgement produces readiness. The optional
+  SetVersion status is handled as in the validated stock sequence; Configure
+  and credential restoration must succeed.
+- Gives fprintd a bounded readiness prerequisite with a five-second renewable
+  root-owned lease. Daemon exit, observed SPSS state loss or initialization
+  failure withdraws readiness. Password/PAM configuration is unchanged.
+- Rejects duplicate initialization and repeat attempts in the same boot,
+  disables automatic restart and refuses manual service stop. Once a DMA
+  address may have reached secure world, even an uncertain failure retains the
+  owner rather than freeing its memory and retrying.
+
+The service uses the normal full-OS shutdown path, as the previously validated
+transient owner did. It does **not** attempt a secure subsystem restart. It also
+does not use `SurviveFinalKillSignal`/the `@argv` mechanism: upstream documents
+that mechanism for initrd infrastructure, not daemons running from the root
+filesystem ([systemd shutdown guidance](https://systemd.io/ROOT_STORAGE_DAEMONS/)).
+The IRQ bridge still lacks full SSR notification; polling remoteproc state is
+not a guarantee of observing a rapid reset/recovery cycle. The existing
+device-specific static shared-heap compatibility runtime is retained and
+hash-checked, not replaced by or advertised as a generic StrongBox implementation.
+
+Fifteen offline tests cover lease validity/expiry, ownership and symlink guards,
+duplicate attempts, read-only checks, bounded failure, service lifetime policy
+and source-level protocol ordering/DMA-retention contracts. These are not
+hardware failure-injection tests. The native ARM64 build and systemd unit
+validation pass. The IRQ module is byte-identical to the already tested signed
+build. Device package SHA-256:
+`74cc0b40c65b83362bbe4459f32c085c76a9b9d06780aaf16eb9c98bdff3a66e`.
+
+Deployment backed up both enrolled prints, device-local Gatekeeper state and
+Ubuntu NVM. Byte comparisons and checksums confirmed that the prints,
+Gatekeeper state, PAM and active Ubuntu boot partition were unchanged. The
+existing secure owner was not restarted or killed during installation.
+
+With user authorization, a **normal Ubuntu-only reboot** then completed.
+The service started automatically, announced SPSS applications ready after
+about six seconds and authenticated secure-cache readiness one second later.
+The new boot has no failed system units. fprintd subsequently completed Claim
+and Release without manual secure initialization, leaving sensor power, panel
+HBM and touch FOD disabled. Both saved prints, Gatekeeper state, PAM and the
+boot partition again compare unchanged after reboot.
+
+The user then confirmed both fingerprints in the requested post-boot and
+resume tests. The journal records a secure new-print match at 03:34:53, an
+actual suspend/resume at 03:35:09–11, and old-print matches at 03:35:17 and
+03:35:40. The native owner and both SPSS daemons remained the same processes.
+All sensor/FOD flags returned to zero and there were no failed system units.
+The final package was rebuilt without a generated Python test cache; the
+runtime code did not change, and reinstalling it preserved both prints and
+the running secure owner/Shell. Test imports and packaging now exclude caches.
+
+The approximate **98%** assessment counts automatic boot initialization and
+this physical confirmation, not long-run stability or general crash-recovery
+safety. Fresh-image builders must still provide the
+validated private runtime at the manifest's documented location; this feature
+does not fetch or copy Android credentials or user biometric data.

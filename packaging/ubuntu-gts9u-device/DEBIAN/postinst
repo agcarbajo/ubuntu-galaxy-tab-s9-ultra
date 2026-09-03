@@ -20,10 +20,19 @@ ubuntu-gts9u-desktop-user.service:multi-user.target
 ubuntu-gts9u-desktop-user.path:multi-user.target
 ubuntu-gts9u-camera-relays.service:graphical.target
 ubuntu-gts9u-fingerprint-ui.service:multi-user.target
+ubuntu-gts9u-fingerprint-secure.service:multi-user.target
 '
 
 case "$1" in
 	configure)
+		# Index the signed IRQ bridge for the matching installed kernel. Never
+		# load/unload it or restart the boot-lifetime secure owner on upgrade.
+		for module in /usr/lib/modules/*/updates/qcom_spss_irq.ko; do
+			[ -f "$module" ] || continue
+			release=${module#/usr/lib/modules/}
+			release=${release%%/*}
+			depmod -a "$release"
+		done
 		for pair in $UNITS; do
 			unit=${pair%%:*}
 			# deb-systemd-helper is not guaranteed inside a foreign-arch
