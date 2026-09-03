@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "packaging/ubuntu-gts9u-companion/usr/lib/tab-companion"))
 from gi.repository import GLib
 import dbus
-from tab_companion.fingerprint_state import FingerprintState, FINGERS, MAX_PRINTS
+from tab_companion.fingerprint_state import FingerprintState, FINGERS, MAX_PRINTS, IDLE_SECONDS
 from tab_companion.fingerprint import FingerprintManager
 
 
@@ -32,22 +32,23 @@ class StateTests(unittest.TestCase):
         self.assertEqual(self.state.data["feedback"], "retry")
 
     def test_inactivity_renews_on_touch(self):
-        self.now = 29
+        self.assertEqual(IDLE_SECONDS, 60)
+        self.now = 59
         self.assertEqual(self.state.remaining(), 1)
         self.state.event({"event": "touch"})
-        self.now = 58
+        self.now = 118
         self.assertEqual(self.state.remaining(), 1)
-        self.now = 59
+        self.now = 119
         self.assertEqual(self.state.remaining(), 0)
 
     def test_long_session_has_no_total_deadline(self):
         for i in range(200):
-            self.now = i * 25
+            self.now = i * 55
             self.state.touch()
-        self.assertEqual(self.state.remaining(), 30)
+        self.assertEqual(self.state.remaining(), 60)
 
     def test_progress_does_not_fake_contact(self):
-        self.now = 29
+        self.now = 59
         self.state.event({"event": "progress", "result": "enroll-stage-passed"})
         self.assertEqual(self.state.remaining(), 1)
         self.assertEqual(self.state.data["accepted"], 0)
@@ -56,14 +57,14 @@ class StateTests(unittest.TestCase):
     def test_duplicate_journal_contact_does_not_extend(self):
         line = "EL721 contact pressed=1 released=0 sequence=1 delta=1"
         self.state.journal(line)
-        self.now = 29
+        self.now = 59
         self.state.journal(line)
         self.assertEqual(self.state.remaining(), 1)
 
     def test_quality_contacts_renew(self):
-        self.now = 29
+        self.now = 59
         self.state.journal("EL721 contact pressed=1 released=0 sequence=2 delta=1")
-        self.assertEqual(self.state.remaining(), 30)
+        self.assertEqual(self.state.remaining(), 60)
 
     def test_secure_aggregates(self):
         self.state.journal("EL721 sample result=0 final=0 coverage=62 accepted=10 template=0")
@@ -75,8 +76,8 @@ class StateTests(unittest.TestCase):
         self.state.journal("EL721 verify result=0 final=0 matched_slot=3")
         self.assertNotEqual(self.state.data["status"], "matched")
 
-    def test_candidate_is_not_a_match(self):
-        self.state.event(dict(event="candidate", finger=FINGERS[0], index=1, count=2))
+    def test_untrusted_metadata_is_not_a_match(self):
+        self.state.event(dict(event="finger-matched", finger=FINGERS[0]))
         self.assertIsNone(self.state.data.get("matched_finger"))
 
     def test_no_match_is_not_service_error(self):
@@ -148,7 +149,7 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(state["status"], "matched")
         self.assertEqual(state["matched_finger"], "left-index-finger")
         self.assertEqual(list(self.device.ListEnrolledFingers("")), list(FINGERS[:2]))
-        self.assertEqual(list(self.control.Calls()), ["Claim", "Verify:right-index-finger", "VerifyStop", "Verify:left-index-finger", "VerifyStop", "Release"])
+        self.assertEqual(list(self.control.Calls()), ["Claim", "Verify:any", "VerifyStop", "Release"])
         self.assertEqual(os.stat(manager.log_path).st_mode & 0o777, 0o600)
 
     def test_add_unused_finger(self):
@@ -184,6 +185,12 @@ class CancellationTests(WorkerTests):
         self.assertEqual(state["status"], "timeout")
         self.assertIn("VerifyStop", self.control.Calls())
 
+    def test_idle_enrollment_timeout(self):
+        state, _ = self.operation("enroll", "right-thumb", expire=True)
+        self.assertEqual(state["status"], "timeout")
+        self.assertIn("EnrollStop", self.control.Calls())
+        self.assertNotIn("right-thumb", self.device.ListEnrolledFingers(""))
+
 
 class RejectionTests(WorkerTests):
     scenario = "reject"
@@ -213,7 +220,7 @@ class CapacityTests(WorkerTests):
     def test_ten_candidates_exhaust_without_wrap(self):
         state, _ = self.operation("scan")
         self.assertEqual(state["status"], "not-matched")
-        self.assertEqual(len([c for c in self.control.Calls() if c.startswith("Verify:")]), 10)
+        self.assertEqual([c for c in self.control.Calls() if c.startswith("Verify:")], ["Verify:any"])
 
 
 class ErrorTests(CapacityTests):
@@ -226,6 +233,41 @@ class ErrorTests(CapacityTests):
         self.assertEqual(state["status"], "failed")
         self.assertEqual(state["error"], "verify-unknown-error")
         self.assertEqual(len([c for c in self.control.Calls() if c.startswith("Verify:")]), 1)
+
+
+class MissingNameTests(ErrorTests):
+    scenario = "missing-name"
+    test_error_does_not_advance_or_reject = None
+
+    def test_never_guesses_the_matched_finger(self):
+        state, _ = self.operation("scan")
+        self.assertEqual(state["status"], "failed")
+        self.assertEqual(state["error"], "MatchedFingerUnavailable")
+        self.assertIsNone(state["matched_finger"])
+
+
+class InvalidNameTests(MissingNameTests):
+    scenario = "invalid-name"
+
+
+class MetadataRejectTests(ErrorTests):
+    scenario = "metadata-reject"
+    test_error_does_not_advance_or_reject = None
+
+    def test_metadata_cannot_override_rejection(self):
+        state, _ = self.operation("scan")
+        self.assertEqual(state["status"], "not-matched")
+        self.assertIsNone(state["matched_finger"])
+
+
+class MetadataOnlyTests(ErrorTests):
+    scenario = "metadata-only"
+    test_error_does_not_advance_or_reject = None
+
+    def test_name_alone_does_not_authenticate(self):
+        state, _ = self.operation("scan", expire=True)
+        self.assertEqual(state["status"], "timeout")
+        self.assertIsNone(state["matched_finger"])
 
 
 if __name__ == "__main__":

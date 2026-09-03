@@ -264,6 +264,21 @@ bash "$repo/scripts/build-fingerprint-secure-owner.sh" >/dev/null
 bash "$repo/scripts/build-spss-irq-module.sh" >/dev/null
 bash "$repo/scripts/build-device-package.sh" >/dev/null
 
+# Companion's one-touch named test needs the additive matched-finger signal.
+# Keep the original fprintd/PAM protocol and libfprint matcher unchanged.
+fprintd_stamp=$base/out/packages/.gts9u-fprintd-inputs.sha256
+fprintd_fingerprint=$(
+	{
+		sha256sum "$repo/scripts/build-fprintd-matched.sh"
+		find "$repo/packaging/fprintd" -type f -print0 | sort -z | xargs -0 sha256sum
+	} | sha256sum | awk '{print $1}'
+)
+if [ ! -f "$base/out/packages/fprintd_1.94.3-1+gts9u1_arm64.deb" ] || \
+   [ "$(cat "$fprintd_stamp" 2>/dev/null || true)" != "$fprintd_fingerprint" ]; then
+	bash "$repo/scripts/build-fprintd-matched.sh" >/dev/null
+	printf '%s\n' "$fprintd_fingerprint" > "$fprintd_stamp"
+fi
+
 # The signed Samsung TA is proprietary.  A builder may opt in with an extracted
 # directory; hashes are checked before a local, non-redistributable .deb exists.
 fingerprint_firmware_package=
@@ -342,7 +357,7 @@ stage_debs=$base/out/local-debs
 rm -rf -- "$stage_debs"
 mkdir -p "$stage_debs"
 for pkg in libssc hexagonrpcd iio-sensor-proxy \
-	libfprint-2-2 $fingerprint_firmware_package \
+	libfprint-2-2 fprintd $fingerprint_firmware_package \
 	libcamera-gts9u libspa-0.2-libcamera-gts9u \
 	ubuntu-gts9u-device ubuntu-gts9u-companion fastfetch v4l2-relayd-gts9u; do
 	deb=$(ls -t "$base"/out/packages/${pkg}_*.deb 2>/dev/null | head -1 || true)

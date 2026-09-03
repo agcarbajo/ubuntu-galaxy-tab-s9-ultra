@@ -21,7 +21,7 @@ the window is closed.
   port's base utility to the special keys that have no native function in
   GNOME.
 
-## Fingerprint settings (1.2.0)
+## Fingerprint settings (1.2.1)
 
 The **Fingerprint** tab replaces Info. Version/kernel details live in the
 header's About window. The settings page lists the current user's system
@@ -38,10 +38,10 @@ one placement can advance multiple stages. If the journal is unavailable, the
 UI explicitly labels native processing stages rather than inventing a count.
 
 There is no duration selector or fixed session limit. An enrollment or scan
-cancels after **30 seconds without a new contact**. Device finger-present edges
+cancels after **60 seconds without a new contact**. Device finger-present edges
 (and matching fprintd-PID EL721 contact records) renew that interval, including
-poor-quality contacts. Progress messages and candidate changes do not renew it.
-Only the final ten seconds display a countdown. Escape, Cancel, window close
+poor-quality contacts. Progress messages do not renew it. There is no countdown
+or inactivity explanation in the UI. Escape, Cancel, window close
 and screen lock also stop the operation. Blocking D-Bus calls are isolated in a
 worker process, with a bounded termination fallback.
 
@@ -49,17 +49,24 @@ Claims exist only during an explicit operation, never while browsing the list.
 Stop/Release and closing the private worker bus connection free the reader on
 success, failure and cancellation. Adding rechecks the list after Claim, so a
 concurrent addition in Ubuntu cannot silently be replaced. Lists refresh after
-operations and on returning to the tab/window; a Refresh button is also present.
+operations and on returning to the tab/window. Sharing is automatic: there is
+no synchronization option and no per-print availability subtitle.
 Close GNOME's own fingerprint dialog before starting a Companion operation:
 GNOME 46 keeps its claim while that dialog is open.
 
-**Named scanning on Ubuntu 24.04:** fprintd 1.94.3 exposes VerifyStatus and
-VerifyFingerSelected but not the newer VerifyFingerMatched signal. Companion
-therefore verifies each enrolled finger by its explicit name and only labels a
-finger after a terminal fprintd match. A non-match advances to the next name;
-the UI may ask the user to lift and touch again. An error is not a non-match.
-This app-only procedure does not alter GNOME's VerifyStart("any") or libfprint.
-No identity is inferred from secure slot numbers or journal output.
+**Test fingerprints:** one `VerifyStart("any")` operation searches the same
+gallery as GNOME login, continuing across entries while the finger stays down.
+The saved list stays visible and the matched row gains a green tint, accent
+edge and checkmark. The result says only "Fingerprint recognized", without
+additional prose. The highlight survives list refreshes and clears on the next
+operation. An error is not a non-match.
+
+Noble's original fprintd lacks the matched-name signal. The dependency
+`fprintd 1.94.3-1+gts9u1` adds [claim-private matched-name reporting](../packaging/fprintd/README.md)
+from the actual libfprint `FpPrint`, before terminal `VerifyStatus`. The app
+requires both signals and fails safely if the name is missing/not enrolled.
+No identity is inferred from secure slot numbers or journal output. PAM,
+policy, libfprint recognition and encrypted storage are unchanged.
 
 Logs remain in `~/.local/state/tab-companion/fingerprint-tests/`, including
 `latest.jsonl` and timestamped files (0600). They contain UI events, finger
@@ -68,12 +75,19 @@ identities or credentials. List refreshes do not overwrite the last operation.
 Cancelled and failed runs are retained. A collapsed Diagnostics section keeps
 the main page focused on settings.
 
-Validation: private-bus integration tests cover list without Claim, named
-matches, full-gallery rejection, enrollment, duplicate protection, single-print
-deletion, cancellation, inactivity and release. Real tablet tests cover list,
-scan arming, Cancel and a no-contact timeout (~30 seconds plus cleanup). Real
-physical enrollment/matching through the new UI still needs the user's finger;
-synthetic success is not hardware validation.
+Validation: 34 private-bus/state tests cover a single any-scan with a named
+match, missing/invalid match metadata, rejection, enrollment, duplicate
+protection, single-print deletion, cancellation, renewable inactivity and
+release. The daemon's virtual-device suites pass 152 tests (4 skipped),
+including actual matched names, ordering, claim-private delivery, cancellation
+and rejection. Tablet checks passed for scan arming, visible saved rows,
+disabled destructive controls, cancellation, a 60-second no-contact timeout
+(62.2 seconds including cleanup), and normal/narrow-window rendering. The
+highlight/result presentation was exercised with synthetic UI state only;
+neither saved print nor libfprint/PAM changed during deployment or these tests.
+The user validated enrollment/testing in 1.2.0; a physical
+single-touch named match in 1.2.1 still needs the user's finger. Synthetic
+success is not hardware validation.
 
 ## S Pen
 

@@ -10,7 +10,7 @@ FINGERS = (
     "left-ring-finger", "right-little-finger", "left-little-finger",
 )
 MAX_PRINTS = len(FINGERS)
-IDLE_SECONDS = 30
+IDLE_SECONDS = 60
 SAMPLE = re.compile(r"EL721 sample result=(\d+) final=(\d+) coverage=(\d+) accepted=(\d+) template=(\d+)")
 CONTACT = re.compile(r"EL721 contact pressed=1 released=0 sequence=(\d+)")
 
@@ -20,7 +20,7 @@ class FingerprintState:
         self.clock = clock
         self.deadline = clock() + IDLE_SECONDS
         self.last_contact = None
-        self.data = dict(mode=mode, finger=finger, status="starting", remaining=30,
+        self.data = dict(mode=mode, finger=finger, status="starting", remaining=IDLE_SECONDS,
                          accepted=0, coverage=0, stages=0, total_stages=18,
                          retries=0, aggregates=False, contact_seen=False, feedback="place", prints=[])
 
@@ -64,9 +64,6 @@ class FingerprintState:
             # Start the inactivity interval once the device is ready, not
             # during a polkit password dialog or secure-device initialization.
             self.touch()
-        elif kind == "candidate":
-            self.data.update(candidate=event["finger"], index=event["index"],
-                             count=event["count"], feedback="next" if event["index"] > 1 else "place")
         elif kind == "progress":
             result = event["result"]
             self.data["last_result"] = result

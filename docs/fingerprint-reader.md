@@ -28,7 +28,7 @@ resume/boot stability and recovery limitations remain separate acceptance
 criteria. Do not stop that owner independently while secure world can retain
 its DMA buffer; it does not support automatic or manual in-place restart.
 
-Tab Companion 1.2.0 now has a dedicated [fingerprint settings page](tab-companion.md#fingerprint-settings-120)
+Tab Companion 1.2.1 now has a dedicated [fingerprint settings page](tab-companion.md#fingerprint-settings-121)
 sharing GNOME's fprintd store. The separate [multiple-fingerprint latency report](fingerprint-gallery-performance.md)
 explains current costs and possible future work; it changes no recognition code.
 

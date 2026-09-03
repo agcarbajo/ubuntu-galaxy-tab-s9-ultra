@@ -35,7 +35,7 @@ class Client:
         self.started = False
         self.stopping = False
         self.pending = False
-        self.index = 0
+        self.matched_finger = None
         self.prints = []
         self.result = None
         self.loop = GLib.MainLoop()
@@ -84,6 +84,7 @@ class Client:
                 return
             self.device.connect_to_signal("EnrollStatus", self.enroll_status)
             self.device.connect_to_signal("VerifyStatus", self.verify_status)
+            self.device.connect_to_signal("VerifyFingerMatched", self.finger_matched)
             props.connect_to_signal("PropertiesChanged", self.properties_changed)
             bus_daemon = dbus.Interface(self.bus.get_object("org.freedesktop.DBus", "/org/freedesktop/DBus"), "org.freedesktop.DBus")
             daemon_pid = bus_daemon.GetConnectionUnixProcessID(self.bus.get_name_owner(NAME), timeout=10)
@@ -95,7 +96,11 @@ class Client:
                 self.started = True  # cleanup even after an uncertain Start
                 self.device.EnrollStart(self.finger, timeout=30)
             else:
-                self.start_candidate()
+                # Same single identify operation as GNOME login. fprintd's
+                # matched-print signal names the actual gallery match; a
+                # selected finger or a secure slot is NOT proof of identity.
+                self.started = True
+                self.device.VerifyStart("any", timeout=30)
             emit("ready", stages=max(1, stages))
             self.loop.run()
         except Exception as error:
@@ -104,14 +109,11 @@ class Client:
             self.cleanup()
             emit("result", **(self.result or dict(status="failed", error="Internal")))
 
-    def start_candidate(self):
-        # Ubuntu 24.04's fprintd has no VerifyFingerMatched signal. Target each
-        # named print to identify it truthfully; never infer identity from a
-        # secure slot (slots can collide) or from a journal line. This affects
-        # only Companion's scanner, not GNOME's normal VerifyStart("any").
-        emit("candidate", finger=self.prints[self.index], index=self.index + 1, count=len(self.prints))
-        self.started = True
-        self.device.VerifyStart(self.prints[self.index], timeout=30)
+    def finger_matched(self, finger):
+        # The backport emits this before terminal VerifyStatus on the same
+        # bus connection. Do not turn this metadata alone into a success.
+        if self.mode == "scan" and not self.stopping and not self.pending:
+            self.matched_finger = str(finger) if finger in self.prints else None
 
     def properties_changed(self, interface, changed, _invalidated):
         if interface == IFACE and "finger-present" in changed and not self.stopping:
@@ -136,29 +138,15 @@ class Client:
             return
         self.pending = True
         if result == "verify-match":
-            self.result = dict(status="matched", finger=self.prints[self.index])
-            GLib.idle_add(self.finish)
+            if self.matched_finger:
+                self.result = dict(status="matched", finger=self.matched_finger)
+            else:
+                self.result = dict(status="failed", error="MatchedFingerUnavailable")
         elif result == "verify-no-match":
-            GLib.idle_add(self.next_candidate)
+            self.result = dict(status="not-matched")
         else:
             self.result = dict(status="failed", error=result)
-            GLib.idle_add(self.finish)
-
-    def next_candidate(self):
-        if self.stopping:
-            return GLib.SOURCE_REMOVE
-        try:
-            self.stop_operation()
-            self.index += 1
-            if self.index == len(self.prints):
-                self.result = dict(status="not-matched")
-                return self.finish()
-            self.pending = False
-            self.start_candidate()
-        except Exception as error:
-            self.result = dict(status="failed", error=error_name(error))
-            return self.finish()
-        return GLib.SOURCE_REMOVE
+        GLib.idle_add(self.finish)
 
     def stop_operation(self):
         if not self.started:

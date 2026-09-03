@@ -52,9 +52,9 @@ but this investigation does not establish its exact implementation. A future
 change should start with stock-protocol evidence and a separate test plan,
 preserving password fallback and existing templates.
 
-## Separate Companion UI limitation
+## Separate Companion UI limitation (fixed in 1.2.1)
 
-Installed Ubuntu fprintd 1.94.3 has no `VerifyFingerMatched` D-Bus signal (checked
+Original Ubuntu fprintd 1.94.3 has no `VerifyFingerMatched` D-Bus signal (checked
 by live introspection). A terminal `VerifyStatus("verify-match", true)` for
 `VerifyStart("any")` does not identify which anatomical finger matched.
 Companion 1.2.0 therefore scans explicitly named prints in sequence to report
@@ -63,7 +63,9 @@ can take longer than GNOME's normal held-contact gallery flow. This only affects
 the app's "Which finger is this?" action, not login or screen unlock.
 
 Newer [fprintd API documentation](https://fprint.freedesktop.org/fprintd-dev/Device.html)
-includes `VerifyFingerMatched`. A separately reviewed compatible backport or
-upgrade could let the app obtain the matched name from a normal "any" scan;
-that would remove this UI-specific overhead, not the driver's independent
-gallery-import cost. No daemon update/backport was performed.
+includes `VerifyFingerMatched`. At the user's subsequent request for one-touch
+testing, Companion 1.2.1 now uses `VerifyStart("any")` with an additive
+[matched-name implementation](../packaging/fprintd/README.md) for Noble's daemon.
+This removes the UI-specific stop/start and lift-between-names overhead,
+**not** the driver's independent gallery-import cost described above. The
+driver, firmware, PAM and secure owner remain unchanged.

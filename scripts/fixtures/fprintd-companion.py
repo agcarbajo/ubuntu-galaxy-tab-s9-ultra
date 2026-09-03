@@ -92,7 +92,14 @@ class Device(dbus.service.Object):
         if self.scenario == "error":
             self.VerifyStatus("verify-unknown-error", True)
             return False
-        self.VerifyStatus("verify-match" if self.scenario == "match" and finger == "left-index-finger" else "verify-no-match", True)
+        if self.scenario in ("match", "metadata-only", "metadata-reject"):
+            self.VerifyFingerMatched("left-index-finger")
+        elif self.scenario == "invalid-name":
+            self.VerifyFingerMatched("right-thumb")  # not enrolled
+        if self.scenario == "metadata-only":
+            return False
+        matched = self.scenario in ("match", "missing-name", "invalid-name")
+        self.VerifyStatus("verify-match" if matched else "verify-no-match", True)
         return False
 
     @dbus.service.method(IFACE)
@@ -118,6 +125,10 @@ class Device(dbus.service.Object):
 
     @dbus.service.signal(IFACE, signature="sb")
     def VerifyStatus(self, result, done):
+        pass
+
+    @dbus.service.signal(IFACE, signature="s")
+    def VerifyFingerMatched(self, finger):
         pass
 
     @dbus.service.signal("org.freedesktop.DBus.Properties", signature="sa{sv}as")

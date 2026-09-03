@@ -1,0 +1,105 @@
+From: Ubuntu gts9uwifi port contributors
+Subject: [PATCH] expose matched finger to the claiming client
+
+Minimal compatible implementation of the newer VerifyFingerMatched D-Bus
+signal for Noble 1.94.3. Never changes VerifyStatus, PAM, policy or storage.
+The name is unicast to the claim owner and is only emitted on a genuine,
+non-cancelled match, before terminal VerifyStatus. Existing clients ignore it.
+Source: https://fprint.freedesktop.org/fprintd-dev/Device.html
+
+--- a/src/device.c
++++ b/src/device.c
+@@ -1537,3 +1537,24 @@
+-  matched = match != NULL && cancelled == FALSE;
+-
+-  report_verify_status (rdev, matched, error);
++  matched = match != NULL && cancelled == FALSE;
++
++  if (matched && error == NULL)
++    {
++      g_autoptr(SessionData) session = session_data_get (priv);
++      GDBusInterfaceSkeleton *skeleton = G_DBUS_INTERFACE_SKELETON (rdev);
++      GDBusConnection *connection = g_dbus_interface_skeleton_get_connection (skeleton);
++      const char *path = g_dbus_interface_skeleton_get_object_path (skeleton);
++      FpFinger finger = fp_print_get_finger (match);
++
++      /* Metadata for the actual matched gallery print, not the selected
++       * candidate or a device slot. Send only to the claiming client, before
++       * the existing terminal status on the same connection. Authentication
++       * decisions, cancellation and retry handling remain unchanged. */
++      if (!session->verify_status_reported && session->sender && connection &&
++          path && finger != FP_FINGER_UNKNOWN)
++        g_dbus_connection_emit_signal (connection, session->sender, path,
++                                       "net.reactivated.Fprint.Device",
++                                       "VerifyFingerMatched",
++                                       g_variant_new ("(s)", fp_finger_to_name (finger)),
++                                       NULL);
++    }
++
++  report_verify_status (rdev, matched, error);
+--- a/src/net.reactivated.Fprint.Device.xml
++++ b/src/net.reactivated.Fprint.Device.xml
+@@ -463,1 +463,7 @@
+-		<signal name="VerifyFingerSelected">
++		<!-- Matched anatomical name, sent only to the claiming client before
++		     terminal VerifyStatus. Metadata alone is not an authentication result. -->
++		<signal name="VerifyFingerMatched">
++			<arg type="s" name="finger_name"/>
++		</signal>
++
++		<signal name="VerifyFingerSelected">
+--- a/tests/fprintd.py
++++ b/tests/fprintd.py
+@@ -640,1 +640,3 @@
+-        def signal_cb(proxy, sender, signal, params):
++        self._matched_finger = None
++
++        def signal_cb(proxy, sender, signal, params):
+--- a/tests/fprintd.py
++++ b/tests/fprintd.py
+@@ -655,1 +655,3 @@
+-            elif signal == 'VerifyFingerSelected':
++            elif signal == 'VerifyFingerMatched':
++                self._matched_finger = params[0]
++            elif signal == 'VerifyFingerSelected':
+--- a/tests/fprintd.py
++++ b/tests/fprintd.py
+@@ -1984,1 +1984,37 @@
+-    def test_verify_finger_match(self):
++    def test_matched_name_any_and_private(self):
++        enrolled, images = self.enroll_multiple_images()
++        observer_bus, observer = self.get_secondary_bus_and_device()
++        self.addCleanup(observer_bus.close_sync)
++        observed = []
++        observer.connect('g-signal', lambda _p, _s, signal, _v: observed.append(signal))
++        for finger in enrolled:
++            self._matched_finger = None
++            self.device.VerifyStart('(s)', 'any')
++            self.send_image(images[finger])
++            self.wait_for_result(expected='verify-match')
++            # Already available before the terminal result reaches the client.
++            self.assertEqual(self._matched_finger, finger)
++            self.device.VerifyStop()
++        self.assertIn('VerifyStatus', observed)
++        self.assertNotIn('VerifyFingerMatched', observed)
++
++    def test_matched_name_absent_on_reject_and_cancel(self):
++        self.enroll_image('whorl', finger='left-thumb')
++        self.device.VerifyStart('(s)', 'any')
++        self.send_image('tented_arch')
++        self.wait_for_result(expected='verify-no-match')
++        self.assertIsNone(self._matched_finger)
++        self.device.VerifyStop()
++        self.device.VerifyStart('(s)', 'any')
++        self.device.VerifyStop()
++        self.assertIsNone(self._matched_finger)
++
++    def test_matched_name_explicit_finger(self):
++        self.enroll_image('whorl', finger='left-thumb')
++        self.device.VerifyStart('(s)', 'left-thumb')
++        self.send_image('whorl')
++        self.wait_for_result(expected='verify-match')
++        self.assertEqual(self._matched_finger, 'left-thumb')
++        self.device.VerifyStop()
++
++    def test_verify_finger_match(self):

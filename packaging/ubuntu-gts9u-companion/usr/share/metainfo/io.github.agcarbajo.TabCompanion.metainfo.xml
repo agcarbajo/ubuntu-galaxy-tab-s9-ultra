@@ -18,6 +18,9 @@
   <launchable type="desktop-id">io.github.agcarbajo.TabCompanion.desktop</launchable>
   <url type="homepage">https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra</url>
   <releases>
+    <release version="1.2.1" date="2026-09-03">
+      <description><p>Simplifies fingerprint settings, keeps the saved list visible during tests and highlights the recognized finger. Tests use one continuous identification operation. Enrollment and testing cancel silently after one minute without a new touch.</p></description>
+    </release>
     <release version="1.2.0" date="2026-09-03">
       <description><p>Replaces the diagnostic Info tab with shared-system fingerprint settings: ten finger choices, confirmed deletion, named scanning, live enrollment feedback and a renewable 30-second inactivity limit. Releases the reader between operations and links to Ubuntu Settings.</p></description>
     </release>

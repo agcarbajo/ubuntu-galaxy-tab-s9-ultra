@@ -24,9 +24,15 @@ class FingerprintPage(Adw.PreferencesPage):
         self.prints = []
         self.loaded = False
         self.rows = []
+        self.finger_rows = {}
+        self.delete_buttons = []
+        self.matched_finger = None
         self.closing = False
         self.last_line = None
         self.choosing = False
+        self.match_css = Gtk.CssProvider()
+        self.match_css.load_from_data(b"row.fingerprint-match { background-color: alpha(@success_color, 0.14); box-shadow: inset 4px 0 @success_color; }")
+        Gtk.StyleContext.add_provider_for_display(window.get_display(), self.match_css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
         intro = Adw.PreferencesGroup(title=_("Fingerprint"))
         link = Gtk.Label(xalign=0, wrap=True, use_markup=True)
@@ -41,10 +47,10 @@ class FingerprintPage(Adw.PreferencesPage):
         self.saved.set_header_suffix(self.add_button)
         self.add(self.saved)
 
-        scan = Adw.PreferencesGroup(title=_("Recognize a fingerprint"))
+        scan = Adw.PreferencesGroup()
         self.scan_group = scan
-        row = Adw.ActionRow(title=_("Which finger is this?"), subtitle=_("Scan a saved finger to identify it. This does not unlock anything or change your fingerprints."))
-        self.scan_button = Gtk.Button(label=_("Scan fingerprint"), valign=Gtk.Align.CENTER, sensitive=False)
+        row = Adw.ActionRow(title=_("Test fingerprints"))
+        self.scan_button = Gtk.Button(label=_("Test"), valign=Gtk.Align.CENTER, sensitive=False)
         self.scan_button.connect("clicked", lambda _button: self.begin("scan"))
         row.add_suffix(self.scan_button)
         scan.add(row)
@@ -56,14 +62,12 @@ class FingerprintPage(Adw.PreferencesPage):
         box.append(self.symbol)
         self.status = Gtk.Label(label=_("Ready"), wrap=True, css_classes=["title-3"])
         box.append(self.status)
-        self.feedback = Gtk.Label(label=_("Choose Add fingerprint or Scan fingerprint to begin."), wrap=True, justify=Gtk.Justification.CENTER)
+        self.feedback = Gtk.Label(label=_("Add a fingerprint or start a test."), wrap=True, justify=Gtk.Justification.CENTER)
         box.append(self.feedback)
         self.progress = Gtk.ProgressBar(show_text=True, visible=False)
         box.append(self.progress)
         self.samples = Gtk.Label(wrap=True, css_classes=["dim-label"], visible=False)
         box.append(self.samples)
-        self.inactivity = Gtk.Label(label=_("Automatically cancels after 30 seconds without touching the reader. Each new touch renews this time."), wrap=True, justify=Gtk.Justification.CENTER, css_classes=["dim-label"])
-        box.append(self.inactivity)
         self.cancel_button = Gtk.Button(label=_("Cancel"), halign=Gtk.Align.CENTER, visible=False)
         self.cancel_button.connect("clicked", lambda _b: self.cancel())
         box.append(self.cancel_button)
@@ -79,11 +83,6 @@ class FingerprintPage(Adw.PreferencesPage):
         scroll.set_child(self.log)
         expander.add_row(scroll)
         diagnostics.add(expander)
-        refresh = Adw.ActionRow(title=_("Synchronize with Ubuntu Settings"), subtitle=_("The same fingerprints are used by both applications and the lock screen."))
-        self.refresh_button = Gtk.Button(icon_name="view-refresh-symbolic", tooltip_text=_("Refresh"), valign=Gtk.Align.CENTER)
-        self.refresh_button.connect("clicked", lambda _button: self.refresh())
-        refresh.add_suffix(self.refresh_button)
-        diagnostics.add(refresh)
         self.add(diagnostics)
         self.connect("map", lambda _page: self.refresh())
         window.connect("notify::is-active", lambda *_args: self.refresh() if window.is_active() and self.get_mapped() else None)
@@ -108,14 +107,15 @@ class FingerprintPage(Adw.PreferencesPage):
         busy = self.running
         self.add_button.set_sensitive(self.loaded and not busy and len(self.prints) < MAX_PRINTS)
         self.scan_button.set_sensitive(self.loaded and not busy and bool(self.prints))
-        self.refresh_button.set_sensitive(not busy)
-        for row in self.rows:
-            row.set_sensitive(not busy)
+        for button in self.delete_buttons:
+            button.set_sensitive(not busy)
 
     def render_prints(self):
         for row in self.rows:
             self.saved.remove(row)
         self.rows = []
+        self.finger_rows = {}
+        self.delete_buttons = []
         self.saved.set_description(_("{count} of {maximum} fingerprints registered").format(count=len(self.prints), maximum=MAX_PRINTS))
         if not self.prints:
             row = Adw.ActionRow(title=_("No fingerprints yet"), subtitle=_("Add a finger to use fingerprint login in Ubuntu."))
@@ -123,14 +123,28 @@ class FingerprintPage(Adw.PreferencesPage):
             self.saved.add(row)
             self.rows.append(row)
         for finger in self.prints:
-            row = Adw.ActionRow(title=finger_label(finger), subtitle=_("Available in Companion and Ubuntu"))
+            row = Adw.ActionRow(title=finger_label(finger))
             row.add_prefix(Gtk.Image(icon_name="auth-fingerprint-symbolic"))
+            matched = Gtk.Image(icon_name="emblem-ok-symbolic", tooltip_text=_("Fingerprint recognized"), css_classes=["success"], visible=False)
+            row.add_suffix(matched)
             remove = Gtk.Button(icon_name="user-trash-symbolic", tooltip_text=_("Delete {finger}").format(finger=finger_label(finger)), valign=Gtk.Align.CENTER, css_classes=["flat"])
             remove.connect("clicked", self.confirm_delete, finger)
             row.add_suffix(remove)
             self.saved.add(row)
             self.rows.append(row)
+            self.finger_rows[finger] = (row, matched)
+            self.delete_buttons.append(remove)
+        self.highlight_match()
         self.set_controls()
+
+    def highlight_match(self):
+        for finger, (row, indicator) in self.finger_rows.items():
+            matched = finger == self.matched_finger
+            indicator.set_visible(matched)
+            if matched:
+                row.add_css_class("fingerprint-match")
+            else:
+                row.remove_css_class("fingerprint-match")
 
     def choose_finger(self, _button):
         self.choosing = True
@@ -179,6 +193,8 @@ class FingerprintPage(Adw.PreferencesPage):
             return
         self.log.get_buffer().set_text("")
         self.last_line = None
+        self.matched_finger = None
+        self.highlight_match()
         self.manager.start(mode, finger)
         self.set_controls()
 
@@ -193,12 +209,12 @@ class FingerprintPage(Adw.PreferencesPage):
         busy = self.running
         # Keep guidance/progress/Cancel on screen during enrollment, including
         # narrow portrait windows, instead of below the entire saved list.
-        self.saved.set_visible(not busy)
-        self.scan_group.set_visible(not busy)
+        enrolling = state["mode"] == "enroll"
+        self.saved.set_visible(not (busy and enrolling))
+        self.scan_group.set_visible(not (busy and enrolling))
         self.cancel_button.set_visible(busy)
         self.cancel_button.set_sensitive(status != "stopping")
         self.set_controls()
-        enrolling = state["mode"] == "enroll"
         self.progress.set_visible(enrolling)
         self.samples.set_visible(enrolling)
         if state["aggregates"] or not state["contact_seen"] or status == "completed":
@@ -217,24 +233,23 @@ class FingerprintPage(Adw.PreferencesPage):
         title = {
             "starting": _("Preparing reader…"), "running": _("Registering {finger}").format(finger=finger_label(state.get("finger"))) if enrolling else _("Reading fingerprint…"),
             "stopping": _("Stopping safely…"), "completed": _("Fingerprint registered"),
-            "matched": _("Recognized: {finger}").format(finger=finger_label(state.get("matched_finger"))),
+            "matched": _("Fingerprint recognized"),
             "not-matched": _("Fingerprint not recognized"), "deleted": _("Fingerprint deleted"),
-            "cancelled": _("Cancelled"), "timeout": _("Cancelled due to inactivity"), "failed": _("Could not complete the operation"),
+            "cancelled": _("Cancelled"), "timeout": _("Cancelled"), "failed": _("Could not complete the operation"),
         }.get(status, _("Ready"))
         self.status.set_label(title)
         text = {
-            "place": _("Place your finger on the fingerprint icon, hold briefly, then lift it completely."),
+            "place": _("Place your finger on the fingerprint icon, hold briefly, then lift it completely.") if enrolling else _("Place your finger on the reader and hold until the result."),
             "hold": _("Keep your finger still while the reader lights up."),
             "accepted": _("Good reading. Lift your finger and touch again at a slightly different angle."),
             "retry": _("The reading was not clear. Lift your finger, cover the reader fully and try again."),
-            "next": _("Lift your finger and touch again to check the next saved fingerprint."),
         }.get(state.get("feedback"), "")
-        if status == "running" and not enrolling and state.get("candidate"):
-            text += "\n" + _("Checking {finger} ({index}/{count})").format(finger=finger_label(state["candidate"]), index=state["index"], count=state["count"])
         if status == "completed":
             text = _("Ready to use in Ubuntu login and the lock screen. The reader has been released.")
         elif status == "matched":
-            text = _("This is one of your saved fingerprints. No settings were changed.")
+            text = ""
+            self.matched_finger = state.get("matched_finger")
+            self.highlight_match()
         elif status == "not-matched":
             text = _("None of your saved fingerprints matched. You can scan again.")
         elif status == "deleted":
@@ -246,6 +261,7 @@ class FingerprintPage(Adw.PreferencesPage):
         elif status == "starting":
             text = _("Ubuntu may ask for authorization. Do not touch the reader until the icon appears.")
         self.feedback.set_label(text)
+        self.feedback.set_visible(bool(text))
         for css in ("error", "success"):
             self.feedback.remove_css_class(css)
         if status == "running" and state.get("feedback") == "retry":
@@ -259,8 +275,6 @@ class FingerprintPage(Adw.PreferencesPage):
             self.status.add_css_class("success")
         elif status in ("failed", "not-matched"):
             self.status.add_css_class("error")
-        self.inactivity.set_visible(status in ("running", "starting"))
-        self.inactivity.set_label(_("Touch the reader within {seconds} seconds to continue.").format(seconds=state["remaining"]) if status == "running" and state["remaining"] <= 10 else _("Automatically cancels after 30 seconds without touching the reader. Each new touch renews this time."))
         line = f"{status} · {state.get('last_result', '')} · {state['coverage']}% · {state['accepted']} · {state['retries']}"
         if line != self.last_line:
             self.last_line = line
@@ -276,7 +290,7 @@ class FingerprintPage(Adw.PreferencesPage):
         if error in ("NoEnrolledPrints",):
             return _("No saved fingerprints were found. Add one first.")
         if error == "AlreadyEnrolled":
-            return _("That finger is already registered, or all ten spaces are occupied. Refresh the list.")
+            return _("That finger is already registered, or all ten spaces are occupied.")
         return _("The reader could not complete the request. Try again; details are saved in Diagnostics.")
 
     def finished(self, state):
@@ -301,6 +315,7 @@ class FingerprintPage(Adw.PreferencesPage):
             self.refresh()
 
     def open_settings(self, _label, _uri):
+        self.feedback.set_visible(True)
         if self.running:
             self.feedback.set_label(_("Finish or cancel the current operation before opening Ubuntu Settings."))
             return True
@@ -314,6 +329,7 @@ class FingerprintPage(Adw.PreferencesPage):
         return True
 
     def dispose(self):
+        Gtk.StyleContext.remove_provider_for_display(self.window.get_display(), self.match_css)
         if self.lock_subscription:
             self.session_bus.signal_unsubscribe(self.lock_subscription)
             self.lock_subscription = 0
