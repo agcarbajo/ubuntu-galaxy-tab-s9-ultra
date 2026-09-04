@@ -8,6 +8,7 @@ asks for a password.
 """
 
 import subprocess
+import fcntl
 import sys
 
 sys.path.insert(0, "/usr/lib/tab-companion")
@@ -23,8 +24,18 @@ def main(argv):
     set_id = argv[1]
     reboot = "--reboot" in argv[2:]
 
-    if not boot_core.write_set(set_id, boot_core.emit):
-        return 1
+    from tab_companion.update_core import boot_lock, status
+    with boot_lock() as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            boot_core.emit("error", "An update or boot switch is already running.")
+            return 1
+        if status().get("state") in ("ready", "applying"):
+            boot_core.emit("error", "Install or cancel the prepared update before switching systems.")
+            return 1
+        if not boot_core.write_set(set_id, boot_core.emit):
+            return 1
 
     if reboot:
         boot_core.emit("step", "Reiniciando…")

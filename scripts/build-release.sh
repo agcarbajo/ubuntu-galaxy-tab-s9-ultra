@@ -50,10 +50,19 @@ else
 		bash "$repo/scripts/build-ubuntu-rootfs.sh"
 fi
 
+python3 "$repo/scripts/sanitize-release-rootfs.py" "$rootfs"
+
 step "3/7 firmware and module overlay, and early Bluetooth firmware"
 bash "$repo/scripts/build-rootfs-overlay.sh"
 
 step "4/7 UFS root filesystem image and Ubuntu initramfs"
+python3 - "$rootfs" "$version" "$kernel_release" <<'PY'
+import json, pathlib, sys
+root, version, kernel = sys.argv[1:]
+pathlib.Path(root, 'usr/lib/gts9u-release.json').write_text(json.dumps({
+    'device': 'gts9uwifi', 'version': version, 'tag': 'v' + version,
+    'kernel_release': kernel}) + '\n')
+PY
 IMAGE_OUT="$image" KERNEL_RELEASE="$kernel_release" \
 	bash "$repo/scripts/build-ufs-image.sh"
 
@@ -67,13 +76,17 @@ INITRAMFS_OVERLAY_DIR="$initramfs_overlay" \
 
 step "6/7 TWRP ZIP"
 mkdir -p "$artifacts"
+python3 "$repo/scripts/build-update-payload.py" --base "$base" --version "$version" \
+	--bootstrap "$artifacts/gts9u-update.pyz"
 python3 "$repo/scripts/make-twrp-zip.py" "$bundle" "$zip" \
 	--project "$repo" \
+	--update-payload "$base/out/update-payload" \
 	--rootfs "$image" \
 	--label "Ubuntu 24.04 LTS v$version for SM-X910 (mainline $kernel_release)"
 
 step "7/7 static validation and manifest"
 bash "$repo/scripts/validate-bundle.sh" "$zip"
+python3 "$repo/scripts/validate-update-zip.py" "$zip"
 
 {
 	printf 'Ubuntu 24.04 LTS for Samsung Galaxy Tab S9 Ultra Wi-Fi (SM-X910)\n'
@@ -90,6 +103,7 @@ bash "$repo/scripts/validate-bundle.sh" "$zip"
 	printf 'rootfs_image_bytes: %s\n' "$(stat -c %s "$image")"
 	printf '\n'
 	( cd "$artifacts" && sha256sum "${zip##*/}" )
+	( cd "$artifacts" && sha256sum gts9u-update.pyz )
 	printf '\n'
 	cat "$bundle/SHA256SUMS"
 } > "$artifacts/MANIFEST-v$version.txt"

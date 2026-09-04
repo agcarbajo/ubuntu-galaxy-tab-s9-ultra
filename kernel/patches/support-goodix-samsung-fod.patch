@@ -307,7 +307,7 @@ index 580e402e0..d2d424acf 100644
  	return 0;
  }
  
-@@ -469,12 +652,88 @@ static int goodix_berlin_get_remaining_contacts(struct goodix_berlin_core *cd,
+@@ -469,12 +652,108 @@ static int goodix_berlin_get_remaining_contacts(struct goodix_berlin_core *cd,
  	return 0;
  }
  

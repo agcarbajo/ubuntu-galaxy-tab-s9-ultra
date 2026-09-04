@@ -1,0 +1,20 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: MIT
+import json
+import os
+import sys
+import select
+
+sys.path.insert(0, "/usr/lib/tab-companion")
+from tab_companion.keyboard_diagnostics import collect_privileged
+
+if __name__ == "__main__":
+    if os.geteuid() != 0 or sys.argv[1:] not in ([], ["--record-keys"]):
+        raise SystemExit("Run through pkexec with optional --record-keys")
+    if sys.argv[1:]:
+        # Authentication is complete. Let the UI start its session-owned recorder
+        # before the 20-second system snapshot begins. Never capture auth input.
+        print(json.dumps({"event": "authorized"}), flush=True)
+        if not select.select([sys.stdin], [], [], 10)[0] or sys.stdin.readline().strip() != "start":
+            raise SystemExit("Diagnostic start was cancelled")
+    print(json.dumps(collect_privileged(), ensure_ascii=False, indent=2))

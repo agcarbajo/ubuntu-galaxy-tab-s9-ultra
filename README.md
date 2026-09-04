@@ -82,7 +82,7 @@ split the UFS first.
 
 ### Ubuntu on the whole tablet
 
-1. From TWRP just flash the installation ZIP (`ubuntu-24.04-sm-x910-v1.0.0.zip`) using a microSD, external USB storage or sideload. **Don't flash it from internal storage** as it will get wiped.
+1. From TWRP just flash the installation ZIP (`ubuntu-24.04-sm-x910-v1.1.0.zip`) using a microSD, external USB storage or sideload. **Don't flash it from internal storage** as it will get wiped.
 2. Reboot and enjoy!
 
 ### Ubuntu beside Android
@@ -95,7 +95,7 @@ split the UFS first.
    keys on its next boot.
 2. Reboot to TWRP (Reboot > Recovery).
 3. Wipe > Format Data.
-4. Flash the installation ZIP (`ubuntu-24.04-sm-x910-v1.0.0.zip`).
+4. Flash the installation ZIP (`ubuntu-24.04-sm-x910-v1.1.0.zip`).
 5. Reboot and enjoy! (see below for how to reboot to Android).
 
 ### Switching systems
@@ -123,6 +123,7 @@ EF-DX925 are untested as I don't have them, so they might not work.
 | [Dual boot](docs/dual-boot.md) | How switching systems works, and what it never touches |
 | [Hardware status](docs/hardware-status.md) | Evidence, limitations and pending hardware tests |
 | [Tab Companion](docs/tab-companion.md) | S Pen, keyboard and fingerprint settings, architecture and diagnostics |
+| [System updates](docs/system-updates.md) | GitHub and local ZIP updates, current-build repair and the updater for older installations |
 | [Ubuntu userspace](docs/ubuntu-userspace.md) | Root filesystem and desktop integration |
 | [Fingerprint reader](docs/fingerprint-reader.md) | Working EL721/UDFPS integration, validation evidence and maintenance constraints |
 | [Development notes](docs/development-notes.md) | Durable technical conclusions and rejected approaches |
@@ -156,3 +157,16 @@ BSD-3-Clause. Imported sources are listed in
 
 Contributions must be reproducible in the repository and validated on physical
 hardware before a component is marked as working.
+
+## Updating an existing installation
+
+Starting with v1.1.0, open **Tab Companion → Updates** to update the complete
+port. For v1.0.0 installations without the updater, run:
+
+```sh
+d=$(mktemp -d) && curl -fL https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/releases/latest/download/gts9u-update.pyz -o "$d/gts9u-update.pyz" && sudo python3 "$d/gts9u-update.pyz" --latest
+```
+
+After preparation succeeds, save your work and run `systemctl reboot`.
+Updates preserve your data and settings. See [system updates](docs/system-updates.md)
+for local ZIP installation, repair and troubleshooting.

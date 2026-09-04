@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<policyconfig>
+  <vendor>Tab Companion</vendor>
+  <action id="io.github.agcarbajo.TabCompanion.keyboard-diagnostics">
+    <description>Collect keyboard cover diagnostics</description>
+    <description xml:lang="es">Recopilar diagnósticos de la funda con teclado</description>
+    <description xml:lang="fr">Recueillir le diagnostic de la coque clavier</description>
+    <description xml:lang="de">Diagnosedaten der Tastaturhülle erfassen</description>
+    <description xml:lang="it">Raccogliere la diagnostica della cover con tastiera</description>
+    <description xml:lang="pt">Recolher diagnósticos da capa com teclado</description>
+    <message>Authentication is required to read keyboard cover system logs</message>
+    <message xml:lang="es">Se necesita autenticación para leer los registros del sistema de la funda con teclado</message>
+    <message xml:lang="fr">Une authentification est nécessaire pour lire les journaux système de la coque clavier</message>
+    <message xml:lang="de">Zum Lesen der Systemprotokolle der Tastaturhülle ist eine Authentifizierung erforderlich</message>
+    <message xml:lang="it">È richiesta l’autenticazione per leggere i registri di sistema della cover con tastiera</message>
+    <message xml:lang="pt">É necessária autenticação para ler os registos do sistema da capa com teclado</message>
+    <defaults><allow_any>no</allow_any><allow_inactive>no</allow_inactive><allow_active>auth_admin</allow_active></defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/tab-companion-keyboard-diagnostics</annotate>
+  </action>
+</policyconfig>

@@ -51,6 +51,7 @@ chown -R root:root "$staging"
 find "$staging" -type d -exec chmod 0755 {} +
 find "$staging" -type f -exec chmod 0644 {} +
 chmod 0755 "$staging/usr/bin/tab-companion" \
+	"$staging/usr/bin/gts9u-update" \
 	"$staging/DEBIAN/postinst" "$staging/DEBIAN/postrm"
 # Everything in libexec is something polkit or the window runs, so mark the
 # whole directory rather than a list: the boot helpers were missing from the

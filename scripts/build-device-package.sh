@@ -82,6 +82,10 @@ find "$staging/DEBIAN" -type f -name 'p*rm' -exec chmod 0755 {} + 2>/dev/null ||
 
 # Deterministic output: without a fixed mtime the .deb changes hash on every
 # build even when its contents do not.
+if [ -d "$staging/etc" ]; then
+	(cd "$staging" && find etc -type f | LC_ALL=C sort | sed 's|^|/|') \
+		> "$staging/DEBIAN/conffiles"
+fi
 find "$staging" -exec touch -h -d '@0' {} +
 
 dpkg-deb --root-owner-group --build "$staging" "$deb"

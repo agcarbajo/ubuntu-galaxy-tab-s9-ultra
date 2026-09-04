@@ -560,6 +560,10 @@ if [ -n "$authorized_keys" ] && [ -f "$authorized_keys" ]; then
 fi
 
 echo '=== rootfs summary ==='
+# The updater consumes the same desired package list as a fresh installation.
+# Keep it outside /etc: this is release metadata, not a user preference.
+printf '%s' "$packages" | tr ',[:space:]' '\n' | sed '/^$/d' | sort -u \
+	> "$rootfs/usr/lib/gts9u-required-packages.txt"
 du -sh "$rootfs"
 chroot "$rootfs" dpkg-query -f '${binary:Package}\n' -W | wc -l | \
 	sed 's/^/packages installed: /'

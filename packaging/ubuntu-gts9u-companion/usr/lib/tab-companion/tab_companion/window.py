@@ -8,9 +8,11 @@ from . import VERSION
 from . import boot_sets
 from .actions import action_for, action_label, actions_for
 from .fingerprint_page import FingerprintPage
+from .update_page import UpdatePage
 from .hardware import HardwareClient
 from .i18n import _, N_
 from .key_selector import KeyChooser, chord_label
+from .keyboard_diagnostics_ui import add_to_about as add_keyboard_diagnostics
 
 
 GESTURES = (
@@ -205,6 +207,10 @@ class CompanionWindow(Adw.ApplicationWindow):
         self.view_stack.add_titled_with_icon(
             self.fingerprint_page, "fingerprint", _("Fingerprint"), "auth-fingerprint-symbolic"
         )
+        self.update_page = UpdatePage(self)
+        self.view_stack.add_titled_with_icon(
+            self.update_page, "updates", _("Updates"), "software-update-available-symbolic"
+        )
         switcher = Adw.ViewSwitcherBar(stack=self.view_stack, reveal=True)
         toolbar.set_content(self.view_stack)
         toolbar.add_bottom_bar(switcher)
@@ -232,6 +238,9 @@ class CompanionWindow(Adw.ApplicationWindow):
         return False
 
     def _close_requested(self, _window):
+        if self.update_page.busy:
+            self.view_stack.set_visible_child_name("updates")
+            return True
         if self.fingerprint_page.running:
             self.fingerprint_page.closing = True
             self.fingerprint_page.cancel()
@@ -1176,4 +1185,5 @@ class CompanionWindow(Adw.ApplicationWindow):
             _("PenMouse S on GitHub"),
             "https://github.com/jojczak/PenMouseS",
         )
+        add_keyboard_diagnostics(about)
         about.present()

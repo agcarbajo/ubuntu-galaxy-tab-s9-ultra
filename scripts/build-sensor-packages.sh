@@ -27,6 +27,9 @@ mirror=${UBUNTU_MIRROR:-http://ports.ubuntu.com/ubuntu-ports}
 libssc_ver=${LIBSSC_VERSION:-0.4.4}
 hexagonrpc_ver=${HEXAGONRPC_VERSION:-0.4.0}
 isp_ver=${IIO_SENSOR_PROXY_VERSION:-3.9}
+# Keep patched package versions distinct from the pinned upstream source tags.
+libssc_pkgver=${LIBSSC_PACKAGE_VERSION:-${libssc_ver}-gts9u2}
+isp_pkgver=${IIO_SENSOR_PROXY_PACKAGE_VERSION:-${isp_ver}-gts9u2}
 
 mkdir -p "$out"
 
@@ -154,7 +157,7 @@ echo 'libssc built'"
 # The next two builds link against it, so it must be visible in the chroot.
 run 'cp -a /build/stage-libssc/. / && ldconfig && echo "libssc available to the chroot"'
 
-package_tree /build/stage-libssc libssc "$libssc_ver" \
+package_tree /build/stage-libssc libssc "$libssc_pkgver" \
 	'libc6, libglib2.0-0t64, libqmi-glib5, libqrtr-glib0, libprotobuf-c1' \
 	'Client library for the Qualcomm Sensor Core (SSC)'
 
@@ -189,7 +192,7 @@ install -Dm644 /build/10-fastrpc.rules \
 	/build/stage-hexagonrpcd/usr/lib/udev/rules.d/10-fastrpc.rules
 echo 'hexagonrpcd built'"
 
-# Upstream hexagonrpc ships no systemd units at all — Alpine adds them with a
+# Upstream hexagonrpc ships no systemd units at all â€” Alpine adds them with a
 # distro patch, which is why the reference port had them.  Author the one unit
 # this device needs instead of carrying a patch for a file that does not exist
 # upstream.  The device package supplies the board-specific arguments through a
@@ -284,7 +287,7 @@ meson compile -C output
 DESTDIR=/build/stage-isp meson install --no-rebuild -C output
 echo 'iio-sensor-proxy built'"
 
-package_tree /build/stage-isp iio-sensor-proxy "$isp_ver" \
+package_tree /build/stage-isp iio-sensor-proxy "$isp_pkgver" \
 	'libc6, dbus, libglib2.0-0t64, libgudev-1.0-0, libssc' \
 	'IIO sensors to D-Bus proxy, built with Qualcomm SSC support'
 

@@ -7,6 +7,7 @@ from dataclasses import dataclass, fields
 import fcntl
 from glob import glob
 import math
+import json
 import os
 from pathlib import Path
 import re
@@ -146,6 +147,8 @@ INTROSPECTION = """
   <interface name="io.github.agcarbajo.TabCompanion.Hardware">
     <method name="TriggerMapping"><arg name="mapping" type="s" direction="in"/><arg name="accepted" type="b" direction="out"/></method>
     <method name="Vibrate"><arg name="duration_ms" type="u" direction="in"/><arg name="magnitude" type="u" direction="in"/><arg name="accepted" type="b" direction="out"/></method>
+    <method name="BeginKeyboardCapture"/>
+    <method name="FinishKeyboardCapture"><arg name="report" type="s" direction="out"/></method>
     <property name="PenState" type="s" access="read"/>
     <property name="PenOrientation" type="s" access="read"/>
     <property name="PenBattery" type="i" access="read"/>
@@ -325,6 +328,44 @@ class VirtualPointer:
             self.fd = None
 
 
+class KeyboardCapture:
+    """Explicit, owner-bound diagnostic capture; never a background key history."""
+    def __init__(self):
+        self.clear()
+
+    def clear(self):
+        self.owner = None
+        self.events = []
+        self.started = 0
+        self.dropped = 0
+        return GLib.SOURCE_REMOVE
+
+    def begin(self, owner):
+        if self.owner:
+            raise ValueError("A keyboard capture is already pending")
+        self.clear()
+        self.owner = owner
+        self.started = time.monotonic()
+
+    def record(self, code, value):
+        elapsed = time.monotonic() - self.started
+        if not self.owner or not 0 <= elapsed < 20:
+            return
+        if len(self.events) >= 10000:
+            self.dropped += 1
+            return
+        self.events.append({"seconds": round(elapsed, 4), "code": code, "value": value})
+
+    def finish(self, owner):
+        if owner != self.owner:
+            raise ValueError("No keyboard capture belongs to this caller")
+        report = {"source": "physical cover keyboard before remapping", "duration_seconds": 20,
+                  "values": {"0": "release", "1": "press", "2": "repeat"},
+                  "events": self.events, "dropped": self.dropped}
+        self.clear()
+        return report
+
+
 class ForceFeedback:
     """Small evdev FF_RUMBLE client for the board's gpio-vibrator."""
 
@@ -436,15 +477,20 @@ class HardwareService:
         # Created on demand; see _sync_pointer().
         self.virtual_pointer = None
         self.haptics = ForceFeedback()
+        self.keyboard_capture = KeyboardCapture()
+        self.keyboard_capture_cleanup = None
         self.notification_bus = None
-        self.notification_match = (
+        self.notification_matches = (
             "type='method_call',interface='org.freedesktop.Notifications',"
-            "member='Notify',eavesdrop='true'"
+            "member='Notify',eavesdrop='true'",
+            "type='method_call',interface='org.gtk.Notifications',"
+            "member='AddNotification',eavesdrop='true'",
         )
         self.last_notification_haptic = 0.0
         try:
             self.notification_bus = dbus.SessionBus()
-            self.notification_bus.add_match_string(self.notification_match)
+            for rule in self.notification_matches:
+                self.notification_bus.add_match_string(rule)
             self.notification_bus.add_message_filter(
                 self._notification_bus_message
             )
@@ -454,8 +500,10 @@ class HardwareService:
     def _notification_bus_message(self, _bus, message):
         if (
             message.get_type() != dbus.lowlevel.MESSAGE_TYPE_METHOD_CALL
-            or message.get_interface() != "org.freedesktop.Notifications"
-            or message.get_member() != "Notify"
+            or (message.get_interface(), message.get_member()) not in (
+                ("org.freedesktop.Notifications", "Notify"),
+                ("org.gtk.Notifications", "AddNotification"),
+            )
             or not self.settings.get_boolean("notification-haptics-enabled")
         ):
             return
@@ -1150,6 +1198,7 @@ class HardwareService:
             _sec, _usec, event_type, code, value = event
             suppress = False
             if event_type == EV_KEY:
+                self.keyboard_capture.record(code, value)
                 mapping = self._mapping_for_code(code)
                 if mapping and (
                     self.settings.get_string(mapping) != "none"
@@ -1440,7 +1489,27 @@ class HardwareService:
             )
 
     def method_call(self, _connection, _sender, _path, _interface, method, params, invocation):
-        if method == "TriggerMapping":
+        if method in ("BeginKeyboardCapture", "FinishKeyboardCapture"):
+            try:
+                if method == "BeginKeyboardCapture":
+                    self.keyboard_capture.begin(_sender)
+                    # Discard unclaimed data if the diagnostic UI crashes or closes.
+                    if self.keyboard_capture_cleanup is not None:
+                        GLib.source_remove(self.keyboard_capture_cleanup)
+                    def expire():
+                        self.keyboard_capture_cleanup = None
+                        return self.keyboard_capture.clear()
+                    self.keyboard_capture_cleanup = GLib.timeout_add_seconds(120, expire)
+                    invocation.return_value(GLib.Variant("()", ()))
+                else:
+                    report = self.keyboard_capture.finish(_sender)
+                    if self.keyboard_capture_cleanup is not None:
+                        GLib.source_remove(self.keyboard_capture_cleanup)
+                        self.keyboard_capture_cleanup = None
+                    invocation.return_value(GLib.Variant("(s)", (json.dumps(report),)))
+            except ValueError as error:
+                invocation.return_dbus_error(BUS_NAME + ".CaptureError", str(error))
+        elif method == "TriggerMapping":
             mapping = params.unpack()[0]
             invocation.return_value(GLib.Variant("(b)", (self.execute_mapping(mapping),)))
         elif method == "Vibrate":
@@ -1469,6 +1538,9 @@ class HardwareService:
         GLib.timeout_add_seconds(1, self.sample)
 
     def close(self):
+        if self.keyboard_capture_cleanup is not None:
+            GLib.source_remove(self.keyboard_capture_cleanup)
+        self.keyboard_capture.clear()
         self._close_keyboard_reader()
         self._close_pen_reader()
         for timer in (self.pen_long_timer, self.pen_single_timer):
@@ -1486,9 +1558,8 @@ class HardwareService:
                 self._notification_bus_message
             )
             try:
-                self.notification_bus.remove_match_string(
-                    self.notification_match
-                )
+                for rule in self.notification_matches:
+                    self.notification_bus.remove_match_string(rule)
             except dbus.DBusException:
                 pass
         self.haptics.close()

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<policyconfig>
+  <vendor>Tab Companion</vendor>
+  <action id="io.github.agcarbajo.TabCompanion.update">
+    <description>Prepare a system update</description>
+    <description xml:lang="es">Preparar una actualización del sistema</description>
+    <message>Authentication is required to update the tablet</message>
+    <message xml:lang="es">Se necesita autenticación para actualizar la tablet</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/tab-companion-update</annotate>
+  </action>
+</policyconfig>

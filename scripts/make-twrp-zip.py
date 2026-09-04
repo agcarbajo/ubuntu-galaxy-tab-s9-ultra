@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import shutil
 import stat
 import zipfile
@@ -61,6 +62,8 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("bundle", type=Path)
     parser.add_argument("output", type=Path)
+    parser.add_argument("--update-payload", type=Path,
+                        help="non-destructive update packages produced by build-update-payload.py")
     parser.add_argument(
         "--project", type=Path, default=Path(__file__).resolve().parents[1]
     )
@@ -165,6 +168,17 @@ def main() -> None:
         raise SystemExit("--enable-unit needs --rootfs-overlay")
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
+    update_files = {}
+    update_manifest = None
+    if args.update_payload:
+        update_manifest = json.loads((args.update_payload / "metadata.json").read_text())
+        update_files = {"UPDATE/debs/" + p.name: p for p in sorted(
+            (args.update_payload / "debs").glob("*.deb"))}
+        if not update_files:
+            raise SystemExit("Update payload has no packages")
+        all_files = {**{n: args.bundle / n for n in IMAGES if n != "vbmeta.img"}, **update_files}
+        update_manifest["files"] = {name: {"sha256": digest(path), "size": path.stat().st_size}
+                                    for name, path in all_files.items()}
     with zipfile.ZipFile(
         args.output, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6
     ) as zf:
@@ -176,6 +190,10 @@ def main() -> None:
         add_file(zf, updater_script, "META-INF/com/google/android/updater-script")
         zf.writestr(zip_info("BUNDLE-LABEL"), args.label + "\n")
         zf.writestr(zip_info("SHA256SUMS"), manifest)
+        if update_manifest:
+            zf.writestr(zip_info("UPDATE/manifest.json"), json.dumps(update_manifest, sort_keys=True) + "\n")
+            for name, path in update_files.items():
+                add_file(zf, path, name)
         if rootfs_manifest:
             add_file(zf, args.rootfs, "rootfs.img")
             zf.writestr(zip_info("ROOTFS-IMAGE"), rootfs_manifest)

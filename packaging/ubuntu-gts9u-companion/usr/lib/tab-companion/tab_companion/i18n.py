@@ -6,6 +6,12 @@ import os
 
 from .translations import LANGUAGE_INDEX, TRANSLATIONS
 from .fingerprint_translations import ES as FINGERPRINT_ES
+from .update_translations import ES as UPDATE_ES
+from .fingerprint_languages import TRANSLATIONS as FINGERPRINT_LANGUAGES
+from .update_languages import TRANSLATIONS as UPDATE_LANGUAGES
+from .keyboard_translations import TRANSLATIONS as KEYBOARD_TRANSLATIONS
+
+TRANSLATIONS = {**TRANSLATIONS, **KEYBOARD_TRANSLATIONS}
 
 
 DOMAIN = "ubuntu-gts9u-companion"
@@ -27,7 +33,13 @@ def _(message):
         return translated
     if _language == "es" and message in FINGERPRINT_ES:
         return FINGERPRINT_ES[message]
+    if _language == "es" and message in UPDATE_ES:
+        return UPDATE_ES[message]
     index = LANGUAGE_INDEX.get(_language)
+    if index is not None and index > 0:
+        values = FINGERPRINT_LANGUAGES.get(message) or UPDATE_LANGUAGES.get(message)
+        if values is not None:
+            return values[index - 1]
     values = TRANSLATIONS.get(message)
     return values[index] if index is not None and values is not None else message
 ngettext = _translation.ngettext

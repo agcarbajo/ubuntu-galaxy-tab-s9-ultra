@@ -20,7 +20,7 @@ also works across independent PipeWire clients.
 +	 * configure fail with EBUSY. Cameras sharing those pads are serialized
 +	 * by this pipeline handler, so clear the graph before selecting one. */
 +	if (sensor_->entity()->device()->driver() == "qcom-camss") {
-+		ret = sensor_->entity()->device()->disableLinks();
++		ret = const_cast<MediaDevice *>(sensor_->entity()->device())->disableLinks();
 +		if (ret < 0)
 +			return ret;
 +	}

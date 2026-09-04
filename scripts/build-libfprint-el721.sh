@@ -88,9 +88,13 @@ fetch_source() {
 		git init --quiet --bare "$mirror_cache"
 		git -C "$mirror_cache" remote add origin "$url"
 	fi
+	git -C "$mirror_cache" remote set-url origin "$url"
 	if ! git -C "$mirror_cache" cat-file -e "$commit^{commit}" 2>/dev/null; then
 		git -C "$mirror_cache" fetch --quiet --depth=1 origin "$commit"
 	fi
+	# Fetching an exact SHA only creates FETCH_HEAD, which clone does not copy.
+	# Give the pinned commit a ref so an initially empty cache clones correctly.
+	git -C "$mirror_cache" update-ref refs/heads/pinned "$commit"
 	git clone --quiet --no-checkout "$mirror_cache" "$src/$name"
 	git -C "$src/$name" checkout --quiet "$commit"
 	test "$(git -C "$src/$name" rev-parse HEAD)" = "$commit"
@@ -98,7 +102,7 @@ fetch_source() {
 fetch_source libfprint \
 	https://gitlab.freedesktop.org/libfprint/libfprint.git "$libfprint_commit"
 fetch_source quic-teec \
-	https://github.com/qualcomm-linux/quic-teec.git "$quic_teec_commit"
+	https://github.com/qualcomm/quic-teec.git "$quic_teec_commit"
 fetch_source qcbor \
 	https://github.com/laurencelundblade/QCBOR.git "$qcbor_commit"
 

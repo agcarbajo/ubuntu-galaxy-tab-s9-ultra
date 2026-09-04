@@ -19,6 +19,7 @@
 #include <linux/gpio/consumer.h>
 #include <linux/i2c.h>
 #include <linux/input.h>
+#include <linux/input/mt.h>
 #include <linux/interrupt.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
@@ -52,6 +53,8 @@
 #define POGO_APP_CMD_CRC		0x03
 #define POGO_APP_CMD_ABORT	0x17
 #define POGO_APP_CMD_TC_VERSION	0x18
+#define POGO_APP_CMD_TC_CRC	0x19
+#define POGO_APP_CMD_TC_RESOLUTION 0x1a
 #define POGO_APP_MODE_APP	1
 #define POGO_APP_MODE_EXCEPTION	3
 #define STM32_BOOT_I2C_ADDR	0x51
@@ -73,6 +76,9 @@ struct samsung_pogo {
 	struct gpio_desc *boot;
 	struct gpio_desc *reset;
 	struct input_dev *input;
+	struct input_dev *touchpad;
+	u16 touchpad_max_x;
+	u16 touchpad_max_y;
 	struct delayed_work connection_work;
 	struct delayed_work application_work;
 	struct mutex lock;
@@ -99,12 +105,17 @@ struct samsung_pogo {
 	atomic64_t key_event_count;
 	atomic64_t recovery_count;
 	atomic64_t read_retry_release_count;
+	atomic64_t touchpad_packets;
+	atomic64_t touchpad_bad_packets;
+	atomic64_t init_attempts;
+	int last_init_error;
 };
 
 static int samsung_pogo_input_event(struct input_dev *input,
 				    unsigned int type, unsigned int code, int value);
 static void samsung_pogo_set_data_irq(struct samsung_pogo *pogo, bool enable);
 static void samsung_pogo_release_keys(struct samsung_pogo *pogo);
+static void samsung_pogo_release_touchpad(struct samsung_pogo *pogo);
 
 static const char *samsung_pogo_model_name(u8 protocol_model,
 					   const u8 version[4])
@@ -681,6 +692,7 @@ static int samsung_pogo_initialize_application(struct samsung_pogo *pogo)
 {
 	u8 crc[4];
 	u8 tc_version[6];
+	u8 tc_crc[2], tc_resolution[4];
 	u8 mode;
 	int ret;
 
@@ -707,6 +719,21 @@ static int samsung_pogo_initialize_application(struct samsung_pogo *pogo)
 	if (ret)
 		return ret;
 
+	/* Finish Samsung's touch-controller handshake on covers with a pad. */
+	if (pogo->touchpad && (get_unaligned_le16(tc_version + 2) != 0xff ||
+			     get_unaligned_le16(tc_version + 4) != 0)) {
+		ret = samsung_pogo_app_read_reg(pogo, POGO_APP_ID_TOUCHPAD,
+			POGO_APP_CMD_TC_CRC, tc_crc, sizeof(tc_crc));
+		if (!ret)
+			ret = samsung_pogo_app_read_reg(pogo, POGO_APP_ID_TOUCHPAD,
+				POGO_APP_CMD_TC_RESOLUTION, tc_resolution, sizeof(tc_resolution));
+		if (ret)
+			return ret;
+		dev_info(&pogo->client->dev, "touchpad controller: CRC %*ph, resolution %ux%u\n",
+			 (int)sizeof(tc_crc), tc_crc,
+			 get_unaligned_le16(tc_resolution + 2), get_unaligned_le16(tc_resolution));
+	}
+
 	dev_info(&pogo->client->dev,
 		 "application initialized: version %*ph, mode %u, CRC %*ph, accessory %*ph\n",
 		 (int)sizeof(pogo->app_version), pogo->app_version, mode,
@@ -723,10 +750,13 @@ static void samsung_pogo_application_work(struct work_struct *work)
 	int ret;
 
 	mutex_lock(&pogo->lock);
-	if (!pogo->attached || pogo->model != POGO_MODEL_EF_DX920)
+	if (!pogo->attached || !pogo->input)
 		goto out_unlock;
 
+	/* Samsung runs check_ic_work for every supported cover, not just Slim. */
+	atomic64_inc(&pogo->init_attempts);
 	ret = samsung_pogo_initialize_application(pogo);
+	pogo->last_init_error = ret;
 	if (ret)
 		dev_warn(&pogo->client->dev,
 			 "application initialization failed: %d\n", ret);
@@ -739,6 +769,7 @@ static void samsung_pogo_release_keys(struct samsung_pogo *pogo)
 {
 	unsigned int code;
 	bool changed = false;
+	samsung_pogo_release_touchpad(pogo);
 
 	if (!pogo->input) {
 		bitmap_zero(pogo->keys_down, KEY_MAX + 1);
@@ -752,6 +783,123 @@ static void samsung_pogo_release_keys(struct samsung_pogo *pogo)
 	bitmap_zero(pogo->keys_down, KEY_MAX + 1);
 	if (changed)
 		input_sync(pogo->input);
+}
+
+static void samsung_pogo_release_touchpad(struct samsung_pogo *pogo)
+{
+	int slot;
+
+	if (!pogo->touchpad)
+		return;
+	for (slot = 0; slot < 3; slot++) {
+		input_mt_slot(pogo->touchpad, slot);
+		input_mt_report_slot_state(pogo->touchpad, MT_TOOL_FINGER, false);
+	}
+	input_report_key(pogo->touchpad, BTN_LEFT, 0);
+	input_mt_sync_frame(pogo->touchpad);
+	input_sync(pogo->touchpad);
+}
+
+static int samsung_pogo_register_touchpad(struct samsung_pogo *pogo)
+{
+	struct input_dev *input;
+	int ret;
+
+	if (pogo->touchpad)
+		return 0;
+	/* Dimensions and model IDs from Samsung stm32_pogo_touchpad_v3.c. */
+	switch (pogo->model) {
+	case 0xf9: /* EF-DX915 */
+	case 0xfe: /* EF-DX900 */
+	case POGO_MODEL_EF_DX925:
+		pogo->touchpad_max_x = 1764;
+		pogo->touchpad_max_y = 1072;
+		break;
+	case 0xfd:
+	case 0xfb:
+	case 0xd1:
+	case 0xd2:
+		pogo->touchpad_max_x = 1560;
+		pogo->touchpad_max_y = 820;
+		break;
+	default:
+		/* Do not create a phantom touchpad on Slim or unknown models. */
+		return 0;
+	}
+	input = input_allocate_device();
+	if (!input)
+		return -ENOMEM;
+	/* Keep it out of the existing Companion keyboard-remapping name match. */
+	input->name = "Samsung Book Cover Touchpad";
+	input->phys = "samsung-pogo/input1";
+	input->dev.parent = &pogo->client->dev;
+	input->id.bustype = BUS_I2C;
+	input->id.vendor = 0x04e8;
+	input->id.product = 0xa035;
+	__set_bit(INPUT_PROP_BUTTONPAD, input->propbit);
+	input_set_capability(input, EV_KEY, BTN_LEFT);
+	input_set_abs_params(input, ABS_MT_POSITION_X, 0, pogo->touchpad_max_x - 1, 0, 0);
+	input_set_abs_params(input, ABS_MT_POSITION_Y, 0, pogo->touchpad_max_y - 1, 0, 0);
+	input_set_abs_params(input, ABS_MT_TOUCH_MAJOR, 0, 255, 0, 0);
+	input_abs_set_res(input, ABS_MT_POSITION_X, 15);
+	input_abs_set_res(input, ABS_MT_POSITION_Y, 15);
+	ret = input_mt_init_slots(input, 3, INPUT_MT_POINTER);
+	if (!ret)
+		ret = input_register_device(input);
+	if (ret) {
+		input_free_device(input);
+		return ret;
+	}
+	pogo->touchpad = input;
+	dev_info(&pogo->client->dev, "touchpad enabled: %ux%u, three slots\n",
+		 pogo->touchpad_max_x, pogo->touchpad_max_y);
+	return 0;
+}
+
+static void samsung_pogo_report_touchpad(struct samsung_pogo *pogo,
+				       const u8 *payload, size_t len)
+{
+	struct input_dev *input = pogo->touchpad;
+	u16 status;
+	int slot;
+
+	atomic64_inc(&pogo->touchpad_packets);
+	if (!input)
+		return;
+	/* Samsung's packed point_data: status, count, button, 3 x six bytes. */
+	if (len != 22 || (payload[2] & 0xf) > 3)
+		goto malformed;
+	status = get_unaligned_le16(payload);
+	/* Validate the complete frame before changing any input state. */
+	for (slot = 0; slot < 3; slot++) {
+		const u8 *point = payload + 4 + 6 * slot;
+
+		if ((status & BIT(11)) && (point[5] & BIT(0)) &&
+		    (get_unaligned_le16(point) >= pogo->touchpad_max_x ||
+		     get_unaligned_le16(point + 2) >= pogo->touchpad_max_y))
+			goto malformed;
+	}
+	if (status & BIT(15))
+		input_report_key(input, BTN_LEFT, payload[3] & BIT(0));
+	for (slot = 0; slot < 3; slot++) {
+		const u8 *point = payload + 4 + 6 * slot;
+		bool active = (status & BIT(11)) && (point[5] & BIT(0));
+
+		input_mt_slot(input, slot);
+		input_mt_report_slot_state(input, MT_TOOL_FINGER, active);
+		if (!active)
+			continue;
+		input_report_abs(input, ABS_MT_POSITION_X, get_unaligned_le16(point));
+		input_report_abs(input, ABS_MT_POSITION_Y, get_unaligned_le16(point + 2));
+		input_report_abs(input, ABS_MT_TOUCH_MAJOR, point[4]);
+	}
+	input_mt_sync_frame(input);
+	input_sync(input);
+	return;
+malformed:
+	atomic64_inc(&pogo->touchpad_bad_packets);
+	samsung_pogo_release_touchpad(pogo);
+	dev_warn_ratelimited(&pogo->client->dev, "invalid touchpad frame (%zu bytes)\n", len);
 }
 
 static int samsung_pogo_register_input(struct samsung_pogo *pogo,
@@ -800,6 +948,10 @@ static void samsung_pogo_unregister_input(struct samsung_pogo *pogo)
 		return;
 
 	samsung_pogo_release_keys(pogo);
+	if (pogo->touchpad) {
+		input_unregister_device(pogo->touchpad);
+		pogo->touchpad = NULL;
+	}
 	pogo->input = NULL;
 	input_unregister_device(input);
 }
@@ -918,6 +1070,9 @@ static int samsung_pogo_read_event(struct samsung_pogo *pogo)
 					 "%s protocol confirmed; input enabled\n",
 					 model_name);
 			}
+			ret = samsung_pogo_register_touchpad(pogo);
+			if (ret)
+				dev_warn(&pogo->client->dev, "touchpad registration failed: %d\n", ret);
 		}
 		return 0;
 	}
@@ -929,9 +1084,7 @@ static int samsung_pogo_read_event(struct samsung_pogo *pogo)
 
 	switch (header[2]) {
 	case POGO_EVENT_TOUCHPAD:
-		/* EF-DX920 is the Slim cover and has no touchpad. */
-		dev_dbg(&pogo->client->dev, "ignored touchpad packet (%zu bytes)\n",
-			payload_len);
+		samsung_pogo_report_touchpad(pogo, payload, payload_len);
 		break;
 	case POGO_EVENT_KEYPAD:
 		samsung_pogo_report_keys(pogo, payload, payload_len);
@@ -1138,7 +1291,7 @@ static ssize_t diagnostics_show(struct device *dev,
 	 * a cat instead of grepping a boot-time dmesg line that rotates away.
 	 */
 	return sysfs_emit(buf,
-		"attached=%u model=%#04x connected=%d data_ready=%d caps=%u data_irq=%lld data_irq_deasserted=%lld connection_high=%lld connection_low=%lld manual_polls=%lld key_events=%lld last_key=%#06x keys_down=%u recoveries=%lld read_retry_releases=%lld bootloader=%u flash_version=%*phN\n",
+		"driver_revision=2 attached=%u model=%#04x connected=%d data_ready=%d caps=%u data_irq=%lld data_irq_deasserted=%lld connection_high=%lld connection_low=%lld manual_polls=%lld key_events=%lld last_key=%#06x keys_down=%u recoveries=%lld read_retry_releases=%lld bootloader=%u flash_version=%*phN app_version=%*phN init_attempts=%lld last_init_error=%d touchpad=%u touchpad_packets=%lld touchpad_bad_packets=%lld\n",
 		pogo->attached, pogo->model,
 		gpiod_get_value_cansleep(pogo->connected),
 		gpiod_get_value_cansleep(pogo->data_ready),
@@ -1154,7 +1307,11 @@ static ssize_t diagnostics_show(struct device *dev,
 		atomic64_read(&pogo->recovery_count),
 		atomic64_read(&pogo->read_retry_release_count),
 		pogo->bootloader_reachable,
-		(int)sizeof(pogo->flash_version), pogo->flash_version);
+		(int)sizeof(pogo->flash_version), pogo->flash_version,
+		(int)sizeof(pogo->app_version), pogo->app_version,
+		atomic64_read(&pogo->init_attempts), pogo->last_init_error,
+		pogo->touchpad != NULL, atomic64_read(&pogo->touchpad_packets),
+		atomic64_read(&pogo->touchpad_bad_packets));
 }
 static DEVICE_ATTR_RO(diagnostics);
 
