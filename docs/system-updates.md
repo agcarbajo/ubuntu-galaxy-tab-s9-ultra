@@ -36,17 +36,19 @@ their first update.
 
 ## Older installations without the Updates page
 
-Release v1.1.0 includes `gts9u-update.pyz` alongside the ZIP. It is a standalone
-Python updater using the same backend as the app; it needs no prior Companion
-upgrade. From an existing Ubuntu installation:
+The repository script `scripts/update-to-latest.py` works on the original
+release and later versions, without a prior Companion upgrade. It loads the
+current updater backend from one pinned repository revision and selects the
+latest published stable release. Run:
 
 ```sh
-d=$(mktemp -d) && curl -fL https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/releases/latest/download/gts9u-update.pyz -o "$d/gts9u-update.pyz" && sudo python3 "$d/gts9u-update.pyz" --latest
+d=$(mktemp -d) && curl -fL https://raw.githubusercontent.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/main/scripts/update-to-latest.py -o "$d/update.py" && sudo python3 "$d/update.py"
 ```
 
-Once preparation succeeds, save your work and run `systemctl reboot`.
-For a private build, use `--zip /path/to/build.zip` instead of `--latest`.
-The ZIP must have been built with the update payload introduced in v1.1.0.
+Save your work before confirming with `y`. The script prepares the update
+and restarts automatically only after successful preparation. Any other answer
+cancels; an already-current installation does not restart. This script is
+maintained in the repository, not attached to releases.
 
 After upgrading, the installed command is:
 
@@ -96,10 +98,12 @@ another update; the updater does not silently discard that failure.
 
 ## Building and publishing
 
-`build-release.sh` now produces both the normal installation ZIP and
-`gts9u-update.pyz`. Upload both, plus the generated manifest, to the matching
-`v<RELEASE_VERSION>` GitHub release. Never replace an existing version's assets
-with a different build. The app selects the latest non-prerelease GitHub
+`build-release.sh` produces the installation ZIP and a local validation
+manifest. Publish only the installation ZIP, the dual-boot APK and the split
+ZIP. Put their SHA-256 checksums in the release notes, together with the hidden
+compatibility marker `<!-- gts9u-update-format: 1 -->`. The updater script lives
+in `scripts/update-to-latest.py`. Do not routinely replace published builds;
+use a new version when distributing subsequent changes. The app selects the latest non-prerelease GitHub
 release, selects only the SM-X910 ZIP, and validates GitHub's SHA-256 digest.
 For local ZIPs, internal hashes detect corruption, not an untrusted author:
 local packages must come from a trusted build of this port.

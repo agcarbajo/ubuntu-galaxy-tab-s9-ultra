@@ -77,7 +77,7 @@ INITRAMFS_OVERLAY_DIR="$initramfs_overlay" \
 step "6/7 TWRP ZIP"
 mkdir -p "$artifacts"
 python3 "$repo/scripts/build-update-payload.py" --base "$base" --version "$version" \
-	--bootstrap "$artifacts/gts9u-update.pyz"
+	--bootstrap "$base/out/gts9u-update.pyz"
 python3 "$repo/scripts/make-twrp-zip.py" "$bundle" "$zip" \
 	--project "$repo" \
 	--update-payload "$base/out/update-payload" \
@@ -103,7 +103,6 @@ python3 "$repo/scripts/validate-update-zip.py" "$zip"
 	printf 'rootfs_image_bytes: %s\n' "$(stat -c %s "$image")"
 	printf '\n'
 	( cd "$artifacts" && sha256sum "${zip##*/}" )
-	( cd "$artifacts" && sha256sum gts9u-update.pyz )
 	printf '\n'
 	cat "$bundle/SHA256SUMS"
 } > "$artifacts/MANIFEST-v$version.txt"

@@ -70,11 +70,12 @@ def release(tag=None):
         raise ValueError("Invalid release ZIP size")
     return {"tag": data["tag_name"], "name": asset["name"],
             "url": asset["browser_download_url"], "size": asset["size"],
-            "sha256": digest[7:], "notes": data.get("body", ""),
-            # New releases publish the bootstrap alongside the update-enabled
-            # ZIP. This is a discovery gate; inspect() still verifies the ZIP.
-            "supports_updates": any(a.get("name") == "gts9u-update.pyz"
-                                    for a in data.get("assets", []))}
+            "sha256": digest[7:], "notes": re.sub(r"<!--.*?-->", "", data.get("body") or "", flags=re.S).strip(),
+            # Release notes advertise the payload format without an extra asset.
+            # Accept the original bootstrap marker for already-published builds.
+            # inspect() still validates the complete downloaded ZIP independently.
+            "supports_updates": "<!-- gts9u-update-format: 1 -->" in (data.get("body") or "")
+                or any(a.get("name") == "gts9u-update.pyz" for a in data.get("assets", []))}
 
 
 def release_state(info):

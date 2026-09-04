@@ -181,6 +181,14 @@ class PayloadTests(unittest.TestCase):
 
 
 class ReleaseTests(unittest.TestCase):
+    def test_three_asset_release_uses_notes_format_marker(self):
+        data = self.release_data()
+        data['body'] = '<!-- gts9u-update-format: 1 -->'
+        with patch.object(b, 'request', return_value=self.response(data)):
+            info = b.release()
+        self.assertTrue(info['supports_updates'])
+        self.assertEqual(info['notes'], '')
+
     def test_legacy_release_is_not_an_update(self):
         with patch.object(b, "request", return_value=self.response(self.release_data())):
             info = b.release()

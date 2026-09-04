@@ -18,6 +18,9 @@
   <launchable type="desktop-id">io.github.agcarbajo.TabCompanion.desktop</launchable>
   <url type="homepage">https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra</url>
   <releases>
+    <release version="1.3.9" date="2026-09-04">
+      <description><p>Recognizes update-enabled releases without a separate updater asset.</p></description>
+    </release>
     <release version="1.3.8" date="2026-09-04">
       <description><p>Saves diagnostic reports reliably and adds explicit, time-limited cover keystroke capture.</p></description>
     </release>

@@ -164,9 +164,10 @@ Starting with v1.1.0, open **Tab Companion → Updates** to update the complete
 port. For v1.0.0 installations without the updater, run:
 
 ```sh
-d=$(mktemp -d) && curl -fL https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/releases/latest/download/gts9u-update.pyz -o "$d/gts9u-update.pyz" && sudo python3 "$d/gts9u-update.pyz" --latest
+d=$(mktemp -d) && curl -fL https://raw.githubusercontent.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/main/scripts/update-to-latest.py -o "$d/update.py" && sudo python3 "$d/update.py"
 ```
 
-After preparation succeeds, save your work and run `systemctl reboot`.
+Save your work first. Type `y` when asked; the script prepares the latest
+release and restarts automatically to install it.
 Updates preserve your data and settings. See [system updates](docs/system-updates.md)
 for local ZIP installation, repair and troubleshooting.
