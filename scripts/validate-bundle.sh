@@ -11,6 +11,11 @@ base=${UBUNTU_WORKDIR:-/root/ubuntu-gts9u}
 bundle=${BUNDLE_OUT_DIR:-$base/out/bundle}
 zip=${1:-}
 kernel_out=${KERNEL_OUT_DIR:-$base/out/kernel-gts9uwifi}
+dtb=${KERNEL_DTB:-$kernel_out/sm8550-samsung-gts9uwifi.dtb}
+runtime_dtbo=$(sed -n 's/^runtime_dtbo=//p' "$bundle/BUILD-METADATA.txt" 2>/dev/null)
+runtime_dtbo=${runtime_dtbo:-0}
+tmp=$(mktemp -d)
+trap 'rm -rf -- "$tmp"' EXIT
 
 failures=0
 pass() { printf 'PASS  %s\n' "$1"; }
@@ -43,10 +48,10 @@ else
 fi
 # ABL only takes the appended-DTB fallback when it finds an FDT after the gzip
 # payload.  Verify the DTB we built is present inside boot.img.
-if [ -f "$kernel_out/sm8550-samsung-gts9uwifi.dtb" ]; then
-	if grep -qc "$(head -c 4 "$kernel_out/sm8550-samsung-gts9uwifi.dtb" | \
+if [ -f "$dtb" ]; then
+	if grep -qc "$(head -c 4 "$dtb" | \
 		od -An -tx1 | tr -d ' \n')" /dev/null 2>/dev/null; then :; fi
-	if python3 - "$bundle/boot.img" "$kernel_out/sm8550-samsung-gts9uwifi.dtb" <<'PY'
+	if python3 - "$bundle/boot.img" "$dtb" <<'PY'
 import sys, pathlib
 boot = pathlib.Path(sys.argv[1]).read_bytes()
 dtb = pathlib.Path(sys.argv[2]).read_bytes()
@@ -73,12 +78,63 @@ else
 fi
 
 echo
-echo '=== dtbo.img: deliberately not an Android DT table ==='
-if head -c 4 "$bundle/dtbo.img" 2>/dev/null | \
-	od -An -tx1 | tr -d ' \n' | grep -q '^d7b7ab1e$'; then
-	fail 'dtbo.img is a DT table; ABL will take the ufdt path and reject the DTB'
+if [ "$runtime_dtbo" = 1 ]; then
+	echo '=== dtbo.img: Gunyah runtime-overlay route ==='
+	if python3 - "$bundle/dtbo.img" <<'PY'
+import pathlib, struct, sys
+data = pathlib.Path(sys.argv[1]).read_bytes()
+if len(data) < 96:
+    raise SystemExit(1)
+magic, total, hdr, ent, count, off, page, version = struct.unpack_from(">8I", data)
+raise SystemExit(0 if (magic == 0xd7b7ab1e and hdr == 32 and ent == 32
+                       and count == 2 and off == 32 and total <= len(data)) else 1)
+PY
+	then
+		pass 'dtbo.img is a two-entry Android DT table for ABL runtime overlays'
+	else
+		fail 'dtbo.img is not the expected two-entry Android DT table'
+	fi
+	base_sha=$(sha256sum "$dtb" | cut -d' ' -f1)
+	if [ "$base_sha" = 613b3bb7729d55d1c60aaeda348a098163b79aed1efbf24cdcc582ff0d58ccc4 ]; then
+		pass 'the base DTB is byte-identical to the physically booted tree'
+	else
+		fail "the base DTB changed (SHA-256 $base_sha); ABL rejects structural mutations"
+	fi
+	python3 - "$bundle/dtbo.img" "$tmp/board0.dtbo" <<'PY'
+import pathlib, struct, sys
+data = pathlib.Path(sys.argv[1]).read_bytes()
+_, _, _, ent_size, _, ent_off, _, _ = struct.unpack_from(">8I", data)
+size, off = struct.unpack_from(">2I", data, ent_off)
+pathlib.Path(sys.argv[2]).write_bytes(data[off:off + size])
+PY
+	if fdtoverlay -i "$dtb" -o "$tmp/base-plus-board.dtb" "$tmp/board0.dtbo" &&
+	   fdtget -t s "$tmp/base-plus-board.dtb" /__symbols__ arch_timer >/dev/null 2>&1 &&
+	   fdtget -t x "$tmp/base-plus-board.dtb" /timer phandle >/dev/null 2>&1 &&
+	   fdtget -p "$tmp/base-plus-board.dtb" /soc/qcom,wdt@17410000 >/dev/null 2>&1 &&
+	   fdtget -p "$tmp/base-plus-board.dtb" /soc/kryo-erp >/dev/null 2>&1 &&
+	   fdtget -p "$tmp/base-plus-board.dtb" /firmware/qcom_scm >/dev/null 2>&1; then
+		pass 'the board DTBO supplies every anchor required by the next overlay'
+	else
+		fail 'the board DTBO does not supply all Gunyah overlay anchors'
+	fi
+	hyp_dtbo=${GUNYAH_HYP_DTBO:-$repo/artifacts/gts9u-hyp-current.dtbo}
+	if [ -f "$hyp_dtbo" ]; then
+		if fdtoverlay -i "$tmp/base-plus-board.dtb" \
+			-o "$tmp/base-plus-board-plus-hyp.dtb" "$hyp_dtbo" &&
+		   fdtget -p "$tmp/base-plus-board-plus-hyp.dtb" /hypervisor >/dev/null 2>&1; then
+			pass 'the recovered physical Gunyah DTBO applies after the board DTBO'
+		else
+			fail 'the recovered physical Gunyah DTBO fails in the two-stage overlay sequence'
+		fi
+	fi
 else
-	pass 'dtbo.img is not a DT table, so ABL uses the appended-DTB fallback'
+	echo '=== dtbo.img: deliberately not an Android DT table ==='
+	if head -c 4 "$bundle/dtbo.img" 2>/dev/null | \
+		od -An -tx1 | tr -d ' \n' | grep -q '^d7b7ab1e$'; then
+		fail 'dtbo.img is a DT table; fallback bundle would enter the ufdt path'
+	else
+		pass 'dtbo.img is not a DT table, so ABL uses the appended-DTB fallback'
+	fi
 fi
 
 echo
@@ -95,7 +151,7 @@ echo
 echo '=== vendor_boot.img: DTB, cmdline and bootconfig ==='
 python3 - "$bundle/vendor_boot.img" "$repo/configs/vendor_boot/cmdline.txt" \
 	"$repo/configs/vendor_boot/bootconfig.txt" \
-	"$kernel_out/sm8550-samsung-gts9uwifi.dtb" <<'PY'
+	"$dtb" <<'PY'
 import hashlib, pathlib, struct, sys
 
 img, cmdline_src, bootconfig_src, dtb_src = (pathlib.Path(p) for p in sys.argv[1:5])

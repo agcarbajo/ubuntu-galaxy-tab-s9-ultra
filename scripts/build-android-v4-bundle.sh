@@ -17,6 +17,7 @@ kernel_out=${KERNEL_OUT_DIR:-$base/out/kernel-gts9uwifi}
 out_dir=${BUNDLE_OUT_DIR:-$base/out/bundle}
 initramfs=${INITRAMFS:?set INITRAMFS to the Ubuntu initramfs to package}
 initramfs_overlay=${INITRAMFS_OVERLAY_DIR:-}
+runtime_dtbo=${ENABLE_RUNTIME_DTBO:-0}
 
 boot_size=100663296
 init_boot_size=8388608
@@ -31,10 +32,22 @@ dtb=${KERNEL_DTB:-$kernel_out/sm8550-samsung-gts9uwifi.dtb}
 cmdline_file=$repo/configs/vendor_boot/cmdline.txt
 bootconfig=$repo/configs/vendor_boot/bootconfig.txt
 
+case "$runtime_dtbo" in
+	0|1) ;;
+	*) echo 'ENABLE_RUNTIME_DTBO must be 0 or 1' >&2; exit 1 ;;
+esac
+
 for file in "$mkbootimg" "$avbtool" "$image" "$dtb" "$initramfs" \
 	"$cmdline_file" "$bootconfig"; do
 	test -f "$file" || { echo "missing input: $file" >&2; exit 1; }
 done
+if [ "$runtime_dtbo" = 1 ]; then
+	for file in "$repo/scripts/make-android-dtbo.py" \
+		"$repo/configs/dtbo/gts9uwifi-board00-noop.dts" \
+		"$repo/configs/dtbo/gts9uwifi-board03-noop.dts"; do
+		test -f "$file" || { echo "missing input: $file" >&2; exit 1; }
+	done
+fi
 if [ -n "$initramfs_overlay" ]; then
 	test -d "$initramfs_overlay" || {
 		echo "missing initramfs overlay: $initramfs_overlay" >&2
@@ -140,11 +153,25 @@ python3 "$mkbootimg" \
 	--vendor_bootconfig "$bootconfig"
 add_hash_footer "$out_dir/vendor_boot.img" vendor_boot "$vendor_boot_size"
 
-# Qualcomm ABL falls back to the appended kernel DTB when dtbo is not an
-# Android DT table.  The zero prefix is deliberate; AVB still authenticates the
-# full partition-sized image below.
+# The validated compatibility route deliberately keeps dtbo invalid so ABL
+# uses the appended-DTB fallback. ENABLE_RUNTIME_DTBO=1 is retained only for
+# offline analysis: this tablet's ABL rejected the selector overlays during
+# physical tests. Gunyah now imports the firmware-generated RM fragment from
+# Linux after boot, so a deployable bundle must leave this option at zero.
 rm -f "$out_dir/dtbo.img"
-truncate -s 4096 "$out_dir/dtbo.img"
+if [ "$runtime_dtbo" = 1 ]; then
+	dtc -@ -I dts -O dtb \
+		-o "$tmp/gts9uwifi-board00-noop.dtbo" \
+		"$repo/configs/dtbo/gts9uwifi-board00-noop.dts"
+	dtc -@ -I dts -O dtb \
+		-o "$tmp/gts9uwifi-board03-noop.dtbo" \
+		"$repo/configs/dtbo/gts9uwifi-board03-noop.dts"
+	python3 "$repo/scripts/make-android-dtbo.py" "$out_dir/dtbo.img" \
+		"$tmp/gts9uwifi-board00-noop.dtbo" \
+		"$tmp/gts9uwifi-board03-noop.dtbo"
+else
+	truncate -s 4096 "$out_dir/dtbo.img"
+fi
 add_hash_footer "$out_dir/dtbo.img" dtbo "$dtbo_size"
 
 python3 "$avbtool" make_vbmeta_image \
@@ -177,6 +204,7 @@ done
 	printf 'kernel_config_sha256=%s\n' \
 		"$(sha256sum "$kernel_out/config" | cut -d' ' -f1)"
 	printf 'kernel_dtb_sha256=%s\n' "$(sha256sum "$dtb" | cut -d' ' -f1)"
+	printf 'runtime_dtbo=%s\n' "$runtime_dtbo"
 	printf 'initramfs_source_sha256=%s\n' \
 		"$(sha256sum "$initramfs" | cut -d' ' -f1)"
 	printf 'initramfs_packaged_sha256=%s\n' \

@@ -1,0 +1,52 @@
+diff --git a/arch/arm64/boot/dts/qcom/sm8550.dtsi b/arch/arm64/boot/dts/qcom/sm8550.dtsi
+--- a/arch/arm64/boot/dts/qcom/sm8550.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8550.dtsi
+@@ -386,7 +386,7 @@
+ 	};
+ 
+ 	firmware {
+-		scm: scm {
++		scm: qcom_scm {
+ 			compatible = "qcom,scm-sm8550", "qcom,scm";
+ 			qcom,dload-mode = <&tcsr 0x19000>;
+ 			interconnects = <&aggre2_noc MASTER_CRYPTO QCOM_ICC_TAG_ALWAYS
+@@ -1172,14 +1172,29 @@
+ 		};
+ 	};
+ 
+-	soc: soc@0 {
++	soc: soc {
+ 		compatible = "simple-bus";
+ 		ranges = <0 0 0 0 0x10 0>;
+ 		dma-ranges = <0 0 0 0 0x10 0>;
+ 
+ 		#address-cells = <2>;
+ 		#size-cells = <2>;
+ 
++		/*
++		 * Qualcomm's boot-time Gunyah overlay disables these downstream
++		 * nodes by path.  They are inert compatibility anchors on mainline;
++		 * retaining the names lets ABL apply the dynamically generated
++		 * overlay that also carries this boot's randomized RM capabilities.
++		 */
++		qcom_wdt_legacy: qcom,wdt@17410000 {
++			reg = <0 0x17410000 0 0x1000>;
++			status = "disabled";
++		};
++
++		kryo-erp {
++			status = "disabled";
++		};
++
+ 		gcc: clock-controller@100000 {
+ 			compatible = "qcom,sm8550-gcc";
+ 			reg = <0 0x00100000 0 0x1f4200>;
+@@ -7172,7 +7187,7 @@
+ 		};
+ 	};
+ 
+-	timer {
++	arch_timer: timer {
+ 		compatible = "arm,armv8-timer";
+ 		interrupts = <GIC_PPI 13 IRQ_TYPE_LEVEL_LOW 0>,
+ 			     <GIC_PPI 14 IRQ_TYPE_LEVEL_LOW 0>,

@@ -78,6 +78,8 @@ test -d "$kernel_src/.git" || {
 test -f "$dts/sm8550-samsung-gts9uwifi.dts"
 test -f "$cfg/config-mainline.aarch64"
 test -f "$cfg/config-gts9uwifi.fragment"
+test -f "$pat/gunyah-host-vm-manager.patch"
+test -f "$pat/gunyah-qcom-runtime-overlay.patch"
 test -f "$repo/packaging/v4l2loopback/patches/0001-backward-compatible-client-usage-event.patch"
 test -f "$repo/packaging/v4l2loopback/patches/0002-fix-buffer-queue-management.patch"
 test -f "$repo/packaging/v4l2loopback/patches/0003-preserve-output-queue-for-capture.patch"
@@ -139,6 +141,16 @@ apply_unless() {
 		patch -d "$kernel_tree" -p1 < "$pat/$patch"
 	fi
 }
+
+# Linux 7.2-rc3 only contains the Gunyah watchdog. Import the host-side
+# Resource Manager and VM-manager stack before enabling it below. The source
+# snapshot and the small 7.2 API adaptations are recorded in PROVENANCE.md.
+if [ ! -f "$kernel_tree/drivers/virt/gunyah/rsc_mgr.c" ]; then
+	patch -d "$kernel_tree" -p1 < "$pat/gunyah-host-vm-manager.patch"
+fi
+if [ ! -f "$kernel_tree/drivers/virt/gunyah/qcom_bootinfo.c" ]; then
+	patch -d "$kernel_tree" -p1 < "$pat/gunyah-qcom-runtime-overlay.patch"
+fi
 
 if [ ! -f "$kernel_tree/drivers/soc/qcom/samsung-gts9uwifi-sec-log.c" ]; then
 	patch -d "$kernel_tree" -p1 < "$pat/add-samsung-sec-log-console.patch"

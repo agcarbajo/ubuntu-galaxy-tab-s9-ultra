@@ -1,0 +1,193 @@
+diff --git a/drivers/virt/gunyah/Makefile b/drivers/virt/gunyah/Makefile
+--- a/drivers/virt/gunyah/Makefile
++++ b/drivers/virt/gunyah/Makefile
+@@ -3,7 +3,7 @@
+ obj-$(CONFIG_GUNYAH_PLATFORM_HOOKS) += gunyah_platform_hooks.o
+ obj-$(CONFIG_GUNYAH_QCOM_PLATFORM) += gunyah_qcom.o
+ 
+-gunyah-y += rsc_mgr.o rsc_mgr_rpc.o vm_mgr.o vm_mgr_mm.o
++gunyah-y += qcom_bootinfo.o rsc_mgr.o rsc_mgr_rpc.o vm_mgr.o vm_mgr_mm.o
+ obj-$(CONFIG_GUNYAH) += gunyah.o
+ 
+ obj-$(CONFIG_GUNYAH_VCPU) += gunyah_vcpu.o
+diff --git a/drivers/virt/gunyah/qcom_bootinfo.c b/drivers/virt/gunyah/qcom_bootinfo.c
+new file mode 100644
+--- /dev/null
++++ b/drivers/virt/gunyah/qcom_bootinfo.c
+@@ -0,0 +1,176 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Recover Qualcomm's per-boot Gunyah DT overlay after firmware handoff.
++ *
++ * Samsung ABL rejects a structurally modified mainline base DTB and also
++ * fails when asked to chain a synthetic board DTBO with the hypervisor DTBO.
++ * The legacy Qualcomm SMC used by ABL remains available to the primary VM,
++ * so Linux can retrieve the authoritative overlay after it has booted. Only
++ * fragment@0 is needed by the upstream host driver: it creates /hypervisor
++ * and the Resource Manager node containing this boot's randomized capIDs.
++ */
++
++#include <linux/arm-smccc.h>
++#include <linux/init.h>
++#include <linux/io.h>
++#include <linux/libfdt.h>
++#include <linux/of.h>
++#include <linux/of_platform.h>
++#include <linux/slab.h>
++#include <linux/uaccess.h>
++
++#define QCOM_HYP_INFO_GET_DTB_ADDRESS	0x02000609U
++#define QCOM_HYP_BOOTINFO_MAGIC		0xc06b0071U
++#define QCOM_HYP_MAX_DTBOS		4
++#define QCOM_HYP_MAX_DTBO_SIZE		SZ_1M
++
++struct qcom_hyp_bootinfo {
++	u32 magic;
++	u32 version;
++	u32 size;
++	u32 pil_enable;
++	u32 vm_type;
++	u32 num_dtbos;
++	struct {
++		u64 base;
++		u64 size;
++	} dtbo[QCOM_HYP_MAX_DTBOS];
++} __packed;
++
++static int qcom_hyp_read(phys_addr_t phys, void *dst, size_t size)
++{
++	void __iomem *mapping;
++	int ret;
++
++	mapping = ioremap(phys, size);
++	if (!mapping)
++		return -ENOMEM;
++	ret = copy_from_kernel_nofault(dst, (const void __force *)mapping, size);
++	iounmap(mapping);
++	return ret;
++}
++
++static int qcom_hyp_keep_rm_fragment(void *fdt)
++{
++	static const char * const discard[] = {
++		"/__local_fixups__", "/__fixups__", "/fragment@4",
++		"/fragment@3", "/fragment@2", "/fragment@1",
++	};
++	const fdt32_t *old_interrupts;
++	fdt32_t interrupts[8];
++	unsigned int i;
++	int len;
++	int node, ret;
++
++	for (i = 0; i < ARRAY_SIZE(discard); i++) {
++		node = fdt_path_offset(fdt, discard[i]);
++		if (node < 0) {
++			if (node == -FDT_ERR_NOTFOUND)
++				continue;
++			return node;
++		}
++		ret = fdt_del_node(fdt, node);
++		if (ret)
++			return ret;
++	}
++
++	node = fdt_path_offset(fdt, "/fragment@0/__overlay__/hypervisor");
++	if (node < 0)
++		return node;
++	node = fdt_node_offset_by_compatible(fdt, node,
++					    "qcom,resource-manager-1-0");
++	if (node < 0)
++		return node;
++	old_interrupts = fdt_getprop(fdt, node, "interrupts", &len);
++	if (!old_interrupts || len != 6 * sizeof(*old_interrupts))
++		return -EINVAL;
++	/* Qualcomm firmware describes the GIC with the legacy three-cell
++	 * binding. Mainline SM8550 uses the optional fourth PPI-partition cell;
++	 * SPI interrupts must set that extra cell to zero.
++	 */
++	for (i = 0; i < 2; i++) {
++		memcpy(&interrupts[i * 4], &old_interrupts[i * 3],
++		       3 * sizeof(*old_interrupts));
++		interrupts[i * 4 + 3] = cpu_to_fdt32(0);
++	}
++	ret = fdt_setprop(fdt, node, "interrupts", interrupts,
++			  sizeof(interrupts));
++	if (ret)
++		return ret;
++	return fdt_pack(fdt);
++}
++
++static int qcom_hyp_apply_dtbo(phys_addr_t phys, size_t allocation)
++{
++	struct device_node *hypervisor;
++	void *fdt;
++	u32 total;
++	int overlay_id, ret;
++
++	if (!phys || allocation < sizeof(struct fdt_header) ||
++	    allocation > QCOM_HYP_MAX_DTBO_SIZE)
++		return -EINVAL;
++	fdt = kmalloc(allocation, GFP_KERNEL);
++	if (!fdt)
++		return -ENOMEM;
++	ret = qcom_hyp_read(phys, fdt, allocation);
++	if (ret)
++		goto out;
++	ret = fdt_check_header(fdt);
++	if (ret)
++		goto out;
++	total = fdt_totalsize(fdt);
++	if (total > allocation) {
++		ret = -EOVERFLOW;
++		goto out;
++	}
++	ret = qcom_hyp_keep_rm_fragment(fdt);
++	if (ret)
++		goto out;
++	ret = of_overlay_fdt_apply(fdt, fdt_totalsize(fdt), &overlay_id, NULL);
++	if (!ret) {
++		hypervisor = of_find_node_by_path("/hypervisor");
++		if (hypervisor)
++			ret = of_platform_populate(hypervisor, NULL, NULL, NULL);
++		pr_info("Gunyah: applied Qualcomm runtime RM overlay id=%d (%s, populate=%d)\n",
++			overlay_id, hypervisor ? "present" : "missing", ret);
++		of_node_put(hypervisor);
++	}
++out:
++	kfree(fdt);
++	return ret;
++}
++
++static int __init qcom_hyp_bootinfo_init(void)
++{
++	struct qcom_hyp_bootinfo info = {};
++	struct arm_smccc_res res = {};
++	struct device_node *hypervisor;
++	unsigned int i, count;
++	int ret = -ENODEV;
++
++	hypervisor = of_find_node_by_path("/hypervisor");
++	if (hypervisor) {
++		of_node_put(hypervisor);
++		return 0;
++	}
++	arm_smccc_1_1_smc(QCOM_HYP_INFO_GET_DTB_ADDRESS, &res);
++	if (res.a0 || !res.a1)
++		return -ENODEV;
++	ret = qcom_hyp_read(res.a1, &info, sizeof(info));
++	if (ret)
++		return ret;
++	if (info.magic != QCOM_HYP_BOOTINFO_MAGIC ||
++	    info.size < offsetofend(struct qcom_hyp_bootinfo, num_dtbos))
++		return -EINVAL;
++
++	count = min_t(unsigned int, info.num_dtbos, QCOM_HYP_MAX_DTBOS);
++	for (i = 0; i < count; i++) {
++		ret = qcom_hyp_apply_dtbo(info.dtbo[i].base, info.dtbo[i].size);
++		if (!ret)
++			return 0;
++	}
++	pr_err("Gunyah: Qualcomm runtime RM overlay failed: %d\n", ret);
++	return ret;
++}
++subsys_initcall(qcom_hyp_bootinfo_init);

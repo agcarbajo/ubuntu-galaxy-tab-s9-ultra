@@ -252,6 +252,19 @@ CONFIG_TYPEC_DP_ALTMODE=y
 CONFIG_TYPEC_MUX_GPIO_SBU=y
 CONFIG_TYPEC_MUX_PS5169=y
 
+# Qualcomm Gunyah host support. Samsung's SM8550 firmware starts HLOS as the
+# primary VM and supplies the Resource Manager node at boot. Keep the complete
+# host interface built-in because this port does not install the generic kernel
+# module tree: /dev/gunyah, vCPUs, memory sharing, irqfd and ioeventfd must all
+# be available to a userspace VMM without module autoloading.
+CONFIG_VIRT_DRIVERS=y
+CONFIG_GUNYAH=y
+CONFIG_GUNYAH_PLATFORM_HOOKS=y
+CONFIG_GUNYAH_QCOM_PLATFORM=y
+CONFIG_GUNYAH_VCPU=y
+CONFIG_GUNYAH_IRQFD=y
+CONFIG_GUNYAH_IOEVENTFD=y
+
 # Rust is not needed for the bring-up kernel and would couple the build to a
 # newer toolchain than Ubuntu 24.04 currently ships.
 # CONFIG_RUST is not set

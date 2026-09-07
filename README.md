@@ -35,7 +35,8 @@ Ubuntu 24.04 LTS arm64 for the Samsung Galaxy Tab S9 Ultra Wi-Fi
 | Cameras and flash | ✅ | Four cameras, autofocus and flashlight work; colour tuning remains a future improvement |
 | Fingerprint reader | ✅ | Working for login and enrolment in Ubuntu Settings or Tab Companion |
 | Ambient light sensor | ❌ | Currently not working |
-| NPU | ❌ | Currently not working |
+| NPU | ⚠️ | Generic GGUF/ONNX inference, models through 14B, Whisper and multimodal IA local app verified; experimental power workaround ([status](docs/npu-status.md)) |
+| Virtual machines | ⚠️ | Gunyah host stack and Resource Manager physically validated; `/dev/gunyah` is available for userspace VMM development ([status](docs/gunyah.md)) |
 | Waydroid | ❓ | Not tested |
 
 ✅ working on the physical tablet · 🟡 experimental or partially validated ·
@@ -126,6 +127,7 @@ EF-DX925 are untested as I don't have them, so they might not work.
 | [System updates](docs/system-updates.md) | GitHub and local ZIP updates, current-build repair and the updater for older installations |
 | [Ubuntu userspace](docs/ubuntu-userspace.md) | Root filesystem and desktop integration |
 | [Fingerprint reader](docs/fingerprint-reader.md) | Working EL721/UDFPS integration, validation evidence and maintenance constraints |
+| [Gunyah virtual machines](docs/gunyah.md) | Host-driver architecture, current validation and tablet test procedure |
 | [Development notes](docs/development-notes.md) | Durable technical conclusions and rejected approaches |
 | [Porting log](docs/porting-log.md) | Chronological engineering history |
 

@@ -1,0 +1,49 @@
+#!/bin/sh
+# Read-only Gunyah host diagnostics for the SM-X910.
+set -eu
+
+dt=/sys/firmware/devicetree/base
+
+show_config() {
+	config=/proc/config.gz
+	if [ -r "$config" ]; then
+		zcat "$config"
+	elif [ -r "/boot/config-$(uname -r)" ]; then
+		cat "/boot/config-$(uname -r)"
+	else
+		return 1
+	fi
+}
+
+echo "kernel: $(uname -r)"
+if config=$(show_config 2>/dev/null); then
+	printf '%s\n' "$config" | grep -E \
+		'^(CONFIG_(VIRT_DRIVERS|GUNYAH|GUNYAH_PLATFORM_HOOKS|GUNYAH_QCOM_PLATFORM|GUNYAH_VCPU|GUNYAH_IRQFD|GUNYAH_IOEVENTFD)=|# CONFIG_GUNYAH)' || true
+else
+	echo 'kernel config: unavailable'
+fi
+
+echo 'live device-tree matches:'
+if [ -d "$dt" ]; then
+	find "$dt" -type f \( -name compatible -o -name name \) -print0 2>/dev/null |
+		xargs -0 grep -aHilE 'gunyah|resource-manager' 2>/dev/null || true
+else
+	echo '  live device tree is unavailable'
+fi
+
+if [ -c /dev/gunyah ]; then
+	ls -l /dev/gunyah
+	echo 'result: Gunyah Resource Manager device is ready'
+	exit 0
+fi
+
+echo '/dev/gunyah: absent'
+echo 'kernel log:'
+log=$(dmesg 2>/dev/null | grep -iE 'gunyah|gh_rsc_mgr|resource.manager' | tail -100 || true)
+if [ -n "$log" ]; then
+	printf '%s\n' "$log"
+else
+	echo '  unavailable or no Gunyah messages'
+fi
+echo 'result: Gunyah host is not ready; preserve this report for diagnosis'
+exit 1

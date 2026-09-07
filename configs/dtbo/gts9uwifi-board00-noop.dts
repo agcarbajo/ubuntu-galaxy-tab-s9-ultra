@@ -14,7 +14,47 @@
 		target-path = "/";
 
 		__overlay__ {
-			postmarketos,noop;
+			/*
+			 * Qualcomm's per-boot Gunyah overlay is applied immediately after
+			 * this board overlay.  Give it the downstream path anchors it
+			 * expects without changing the boot-tested mainline base DTB.
+			 */
+			soc {
+				qcom,wdt@17410000 {
+					status = "disabled";
+				};
+
+				kryo-erp {
+					status = "disabled";
+				};
+			};
+		};
+	};
+
+	fragment@1 {
+		target-path = "/firmware";
+
+		__overlay__ {
+			qcom_scm {
+				status = "disabled";
+			};
+		};
+	};
+
+	fragment@2 {
+		target-path = "/__symbols__";
+
+		__overlay__ {
+			arch_timer = "/timer";
+		};
+	};
+
+	fragment@3 {
+		target-path = "/timer";
+
+		__overlay__ {
+			/* Required for the next overlay's arch_timer phandle fixup. */
+			phandle = <0x400>;
 		};
 	};
 };

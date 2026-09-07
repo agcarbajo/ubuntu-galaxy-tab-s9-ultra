@@ -14,7 +14,42 @@
 		target-path = "/";
 
 		__overlay__ {
-			postmarketos,noop;
+			/* See the board-id 00 overlay for why these inert anchors live here. */
+			soc {
+				qcom,wdt@17410000 {
+					status = "disabled";
+				};
+
+				kryo-erp {
+					status = "disabled";
+				};
+			};
+		};
+	};
+
+	fragment@1 {
+		target-path = "/firmware";
+
+		__overlay__ {
+			qcom_scm {
+				status = "disabled";
+			};
+		};
+	};
+
+	fragment@2 {
+		target-path = "/__symbols__";
+
+		__overlay__ {
+			arch_timer = "/timer";
+		};
+	};
+
+	fragment@3 {
+		target-path = "/timer";
+
+		__overlay__ {
+			phandle = <0x400>;
 		};
 	};
 };
