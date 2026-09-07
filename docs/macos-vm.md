@@ -106,3 +106,14 @@ The reference TCG implementation does not validate the implementation-defined
 pointer-authentication cipher. Its reported headless success must not be
 mistaken for full guest hardening or production readiness. This limitation
 must remain explicit in any personal deployment using that implementation.
+
+### Release isolation checks
+
+The release rootfs sanitizer rejects personal files under `/home`, including
+`macos-vm-lab`, before creating a shipping image. It also rejects the reserved
+personal namespaces `/opt/ubuntu-gts9u-macos`, `/var/lib/ubuntu-gts9u-macos` and
+`/var/lib/gts9u-project-archive` (including empty directories or dangling links).
+The last location may contain recoverable archives of completed experiments on
+the owner's tablet; it is never a source for a release. Generic QEMU, Gunyah and
+Turnip package contents remain allowed. These checks do not install macOS or
+turn a live personal installation into a distributable rootfs.

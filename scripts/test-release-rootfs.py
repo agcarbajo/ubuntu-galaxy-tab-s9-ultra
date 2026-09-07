@@ -45,6 +45,41 @@ class ShippingRootTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'generation unit'):
             module.sanitize(self.root)
 
+    def test_rejects_personal_vm_in_home_before_modifying_image(self):
+        path = self.root / 'home/owner/macos-vm-lab/guest.qcow2'
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b'private disk fixture')
+        with self.assertRaisesRegex(ValueError, 'personal data in home'):
+            module.sanitize(self.root)
+        self.assertTrue((self.root / 'etc/ssh/ssh_host_ed25519_key').exists())
+
+    def test_rejects_reserved_personal_namespaces(self):
+        for name in ('var/lib/gts9u-project-archive', 'opt/ubuntu-gts9u-macos',
+                     'var/lib/ubuntu-gts9u-macos'):
+            with self.subTest(name=name):
+                path = self.root / name
+                path.mkdir(parents=True)
+                with self.assertRaisesRegex(ValueError, 'personal deployment or archive'):
+                    module.sanitize(self.root)
+                self.assertTrue((self.root / 'etc/ssh/ssh_host_ed25519_key').exists())
+                path.rmdir()
+
+    def test_rejects_dangling_personal_namespace_link(self):
+        path = self.root / 'opt/ubuntu-gts9u-macos'
+        path.parent.mkdir()
+        path.symlink_to('/nonexistent-private-macos-installation')
+        with self.assertRaisesRegex(ValueError, 'personal deployment or archive'):
+            module.sanitize(self.root)
+
+    def test_allows_generic_virtualization_packages(self):
+        for name in ('usr/bin/qemu-system-aarch64',
+                     'usr/share/doc/gunyah/README',
+                     'usr/share/vulkan/icd.d/freedreno_icd.aarch64.json'):
+            path = self.root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('generic package fixture', encoding='utf-8')
+        module.sanitize(self.root)
+
     def test_first_start_generates_unique_keys_and_preserves_existing(self):
         module.sanitize(self.root)
         command = ['ssh-keygen', '-A', '-f', str(self.root)]

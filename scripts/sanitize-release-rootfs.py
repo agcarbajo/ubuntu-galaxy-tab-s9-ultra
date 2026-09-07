@@ -25,6 +25,14 @@ def sanitize(root):
     for name in ('root/.bash_history', 'root/.python_history', 'root/.git-credentials'):
         if (root / name).exists():
             issues.append('private history in ' + name)
+    # Reserved personal deployment/archive namespaces must never enter a build,
+    # even when empty or represented by a dangling symlink. Generic QEMU,
+    # Gunyah and graphics packages remain valid release contents.
+    for name in ('var/lib/gts9u-project-archive', 'opt/ubuntu-gts9u-macos',
+                 'var/lib/ubuntu-gts9u-macos'):
+        path = root / name
+        if path.exists() or path.is_symlink():
+            issues.append('personal deployment or archive in ' + name)
     for name in ('etc/machine-id', 'var/lib/dbus/machine-id'):
         path = root / name
         if path.is_file() and not path.is_symlink() and path.read_bytes().strip():
