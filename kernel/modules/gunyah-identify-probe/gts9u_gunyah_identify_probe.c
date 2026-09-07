@@ -127,6 +127,31 @@ static void log_result(const char *call, const struct arm_smccc_res *res)
 		res->a0, res->a1, res->a2, res->a3);
 }
 
+/*
+ * Qualcomm's legacy-v1 ABI predates the SMCCC vendor-hypervisor convention.
+ * It encodes the call number in the HVC instruction immediate and starts the
+ * arguments at x0.  hypervisor_identify is read-only and is therefore a safe
+ * way to distinguish that ABI from the newer hvc #0 / SMCCC form.
+ */
+static void legacy_hyp_identify(struct arm_smccc_res *res)
+{
+	register unsigned long x0 asm("x0") = 0;
+	register unsigned long x1 asm("x1") = 0;
+	register unsigned long x2 asm("x2") = 0;
+	register unsigned long x3 asm("x3") = 0;
+
+	asm volatile("hvc #0x6000"
+		     : "+r" (x0), "+r" (x1), "+r" (x2), "+r" (x3)
+		     :
+		     : "x4", "x5", "x6", "x7", "x8", "x9", "x10",
+		       "x11", "x12", "x13", "x14", "x15", "x16", "x17",
+		       "cc", "memory");
+	res->a0 = x0;
+	res->a1 = x1;
+	res->a2 = x2;
+	res->a3 = x3;
+}
+
 static int __init gts9u_gunyah_identify_init(void)
 {
 	struct gh_hypercall_hyp_identify_resp identity = {};
@@ -148,6 +173,9 @@ static int __init gts9u_gunyah_identify_init(void)
 	memset(&res, 0, sizeof(res));
 	arm_smccc_1_1_hvc(GTS9U_GUNYAH_HYP_IDENTIFY, &res);
 	log_result("identify-hvc", &res);
+	memset(&res, 0, sizeof(res));
+	legacy_hyp_identify(&res);
+	log_result("identify-legacy-hvc", &res);
 	memset(&res, 0, sizeof(res));
 	arm_smccc_1_1_hvc(GTS9U_GUNYAH_ADDRSPACE_FIND_INFO_AREA, 0, &res);
 	log_result("find-info-area-hvc", &res);

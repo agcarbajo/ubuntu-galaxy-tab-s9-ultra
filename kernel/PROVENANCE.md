@@ -27,6 +27,35 @@ repositorio.
 
 ## Inventario
 
+### Actualización Gunyah de 2026-09-07
+
+Los hashes del inventario original describen la importación inicial. Para los
+parches Gunyah modificados durante las pruebas runtime7–runtime9, prevalecen
+estos hashes SHA-256 de los ficheros actuales:
+
+- `gunyah-host-vm-manager.patch`:
+  `eac355b714c94bf918416ebb1c6d278521842b28c4968c7379f878e97872c3f4`.
+  Añade el ABI HVC inmediato legacy, la detección de UUID Qualcomm y la lectura
+  del VMID primario desde el DT de firmware. Las colas RM y la asignación de
+  memoria se han ejercitado físicamente; la ejecución de vCPU sigue pendiente.
+- `gunyah-qtvm-auth.patch`:
+  `99ab15300cbaa08de7881b320ea3ae1664e7f6c61265a37730e639041ad0b979`.
+  Adapta los descriptores de autenticación QTVM y RPC correspondientes de
+  Android Common al gestor de VMs legacy. La aceptación del descriptor está
+  probada; no se ha autenticado ni arrancado un guest QTVM.
+- `gunyah-qtvm-cma.patch`:
+  `256edea6dd5956d5143ecab21ffcad2a89f7c526c5f4300d502b3e3e0abbd932`.
+  Adaptación GPL-2.0-only de la interfaz CMA de Android Common
+  `65994b7471f1fd37242ff4a5032a812f5c168ae6`, con referencias de fichero/dispositivo,
+  exclusión mutua, validación de rangos, puesta a cero y pool diagnóstico opt-in
+  que reutiliza el CMA existente sin modificar el DTB de arranque.
+
+Fuentes: [CMA de Android Common](https://android.googlesource.com/kernel/common/+/65994b7471f1fd37242ff4a5032a812f5c168ae6/drivers/virt/gunyah/vm_mgr_cma_mem.c)
+y [parser legacy del Resource Manager](https://github.com/quic/gunyah-resource-manager/blob/0accef9/src/vm_config/vm_config_parser.c).
+Las pruebas y límites de runtime9 están en `docs/virtualization.md`.
+
+### Importación inicial
+
 Se completa a medida que se importa cada fichero, con el hash SHA-256 de la
 copia de origen para poder detectar divergencias futuras.
 

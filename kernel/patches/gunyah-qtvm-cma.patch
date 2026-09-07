@@ -1,0 +1,672 @@
+diff --git a/drivers/virt/gunyah/Makefile b/drivers/virt/gunyah/Makefile
+index 1cf5b06..63e7af7 100644
+--- a/drivers/virt/gunyah/Makefile
++++ b/drivers/virt/gunyah/Makefile
+@@ -4,6 +4,7 @@ obj-$(CONFIG_GUNYAH_PLATFORM_HOOKS) += gunyah_platform_hooks.o
+ obj-$(CONFIG_GUNYAH_QCOM_PLATFORM) += gunyah_qcom.o
+ 
+ gunyah-y += qcom_bootinfo.o rsc_mgr.o rsc_mgr_rpc.o vm_mgr.o vm_mgr_mm.o
++gunyah-$(CONFIG_DMA_CMA) += vm_mgr_cma_mem.o
+ obj-$(CONFIG_GUNYAH) += gunyah.o
+ 
+ obj-$(CONFIG_GUNYAH_VCPU) += gunyah_vcpu.o
+diff --git a/drivers/virt/gunyah/rsc_mgr.c b/drivers/virt/gunyah/rsc_mgr.c
+index 066a339..83cc1e2 100644
+--- a/drivers/virt/gunyah/rsc_mgr.c
++++ b/drivers/virt/gunyah/rsc_mgr.c
+@@ -957,7 +957,27 @@ static struct platform_driver gh_rm_driver = {
+ 		.of_match_table = gh_rm_of_match,
+ 	},
+ };
+-module_platform_driver(gh_rm_driver);
++static int __init gh_rm_init(void)
++{
++	int ret;
++
++	ret = gh_cma_mem_init();
++	if (ret)
++		return ret;
++	ret = platform_driver_register(&gh_rm_driver);
++	if (ret)
++		gh_cma_mem_exit();
++	return ret;
++}
++
++static void __exit gh_rm_exit(void)
++{
++	platform_driver_unregister(&gh_rm_driver);
++	gh_cma_mem_exit();
++}
++
++module_init(gh_rm_init);
++module_exit(gh_rm_exit);
+ 
+ MODULE_LICENSE("GPL");
+ MODULE_DESCRIPTION("Gunyah Resource Manager Driver");
+diff --git a/drivers/virt/gunyah/vm_mgr.c b/drivers/virt/gunyah/vm_mgr.c
+index 6306427..301a292 100644
+--- a/drivers/virt/gunyah/vm_mgr.c
++++ b/drivers/virt/gunyah/vm_mgr.c
+@@ -708,6 +708,21 @@ static long gh_vm_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+ 		r = 0;
+ 		break;
+ 	}
++	case GH_VM_ANDROID_MAP_CMA_MEM: {
++		struct gunyah_map_cma_mem_args region;
++
++		if (ghvm->mm != current->mm)
++			return -EPERM;
++		if (copy_from_user(&region, argp, sizeof(region)))
++			return -EFAULT;
++		down_read(&ghvm->status_lock);
++		if (ghvm->vm_status != GH_RM_VM_STATUS_NO_STATE)
++			r = -EBUSY;
++		else
++			r = gh_vm_mem_alloc_cma(ghvm, &region);
++		up_read(&ghvm->status_lock);
++		break;
++	}
+ 	case GH_VM_ANDROID_SET_AUTH_TYPE: {
+ 		struct gunyah_qtvm_auth_arg qtvm;
+ 		struct gunyah_auth_desc desc;
+diff --git a/drivers/virt/gunyah/vm_mgr.h b/drivers/virt/gunyah/vm_mgr.h
+index f81c2df..888dd4f 100644
+--- a/drivers/virt/gunyah/vm_mgr.h
++++ b/drivers/virt/gunyah/vm_mgr.h
+@@ -17,6 +17,9 @@
+ 
+ #include <uapi/linux/gunyah.h>
+ 
++struct file;
++struct page;
++
+ long gh_dev_vm_mgr_ioctl(struct gh_rm *rm, unsigned int cmd, unsigned long arg);
+ 
+ enum gh_vm_mem_share_type {
+@@ -32,6 +35,8 @@ struct gh_vm_mem {
+ 	__u64 guest_phys_addr;
+ 	struct page **pages;
+ 	unsigned long npages;
++	struct file *cma_file;
++	bool cma_backed;
+ };
+ 
+ struct gh_vm {
+@@ -69,9 +74,25 @@ struct gh_vm {
+ };
+ 
+ int gh_vm_mem_alloc(struct gh_vm *ghvm, struct gh_userspace_memory_region *region, bool lend);
++int gh_vm_mem_alloc_cma(struct gh_vm *ghvm, struct gunyah_map_cma_mem_args *region);
+ void gh_vm_mem_reclaim(struct gh_vm *ghvm);
+ struct gh_vm_mem *gh_vm_mem_find_by_addr(struct gh_vm *ghvm, u64 guest_phys_addr, u32 size);
+ 
++#if IS_ENABLED(CONFIG_DMA_CMA)
++int gh_cma_file_get(int fd, u64 offset, u64 size, struct file **file_out,
++		    struct page **page_out);
++int gh_cma_mem_init(void);
++void gh_cma_mem_exit(void);
++#else
++static inline int gh_cma_file_get(int fd, u64 offset, u64 size,
++				  struct file **file_out, struct page **page_out)
++{
++	return -EOPNOTSUPP;
++}
++static inline int gh_cma_mem_init(void) { return 0; }
++static inline void gh_cma_mem_exit(void) { }
++#endif
++
+ int gh_vm_mmio_write(struct gh_vm *ghvm, u64 addr, u32 len, u64 data);
+ 
+ #endif
+diff --git a/drivers/virt/gunyah/vm_mgr_cma_mem.c b/drivers/virt/gunyah/vm_mgr_cma_mem.c
+new file mode 100755
+index 0000000..f7ad9fe
+--- /dev/null
++++ b/drivers/virt/gunyah/vm_mgr_cma_mem.c
+@@ -0,0 +1,385 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Copyright (c) 2025 Qualcomm Innovation Center, Inc. All rights reserved.
++ * Adapted for the legacy Gunyah VM manager, with lifetime/bounds hardening.
++ */
++#define pr_fmt(fmt) "gh_vm_mgr_cma_mem: " fmt
++
++#include <linux/anon_inodes.h>
++#include <linux/cma.h>
++#include <linux/dma-map-ops.h>
++#include <linux/file.h>
++#include <linux/miscdevice.h>
++#include <linux/highmem.h>
++#include <linux/mutex.h>
++#include <linux/of_reserved_mem.h>
++#include <linux/platform_device.h>
++#include <linux/sizes.h>
++#include "vm_mgr.h"
++
++struct gh_cma_pool {
++	struct device dev;
++	struct mutex lock;
++	bool removed;
++	struct file *file;
++	struct page *page;
++	unsigned long allocated_pages;
++	struct miscdevice miscdev;
++	struct list_head list;
++	unsigned long size;
++};
++
++struct gh_cma_parent { struct list_head pools; };
++
++static int gh_cma_alloc(struct gh_cma_pool *pool, loff_t len)
++{
++	unsigned long pagecount = PAGE_ALIGN(len) >> PAGE_SHIFT;
++	unsigned long align = min_t(unsigned long, get_order(len), CONFIG_CMA_ALIGNMENT);
++
++	if (pool->page || len > pool->size)
++		return -EINVAL;
++	pool->page = cma_alloc(pool->dev.cma_area, pagecount, align, false);
++	if (!pool->page)
++		return -ENOMEM;
++	pool->allocated_pages = pagecount;
++	/* CMA pages may contain data from previous allocations. */
++	for (unsigned long i = 0; i < pagecount; i++)
++		clear_highpage(pfn_to_page(page_to_pfn(pool->page) + i));
++	return 0;
++}
++
++static int gh_cma_release(struct inode *inode, struct file *file)
++{
++	struct gh_cma_pool *pool = file->private_data;
++
++	mutex_lock(&pool->lock);
++	if (pool->page) {
++		cma_release(pool->dev.cma_area, pool->page, pool->allocated_pages);
++		pool->page = NULL;
++		pool->allocated_pages = 0;
++	}
++	pool->file = NULL;
++	mutex_unlock(&pool->lock);
++	put_device(&pool->dev);
++	return 0;
++}
++
++static int gh_cma_mmap(struct file *file, struct vm_area_struct *vma)
++{
++	struct gh_cma_pool *pool = file->private_data;
++	unsigned long len = vma->vm_end - vma->vm_start;
++	int nr_pages = PAGE_ALIGN(len) >> PAGE_SHIFT;
++	struct page **pages;
++	int ret, i;
++
++	if (!(vma->vm_flags & VM_SHARED) || vma->vm_pgoff || !len ||
++	    len > pool->size)
++		return -EINVAL;
++	pages = kvmalloc_array(nr_pages, sizeof(*pages), GFP_KERNEL);
++	if (!pages)
++		return -ENOMEM;
++	mutex_lock(&pool->lock);
++	ret = pool->removed ? -ENODEV : gh_cma_alloc(pool, len);
++	if (ret)
++		goto out;
++	for (i = 0; i < nr_pages; i++)
++		pages[i] = pfn_to_page(page_to_pfn(pool->page) + i);
++	ret = vm_map_pages_zero(vma, pages, nr_pages);
++	/* Keep pages until file release, including after a partial mapping failure. */
++out:
++	mutex_unlock(&pool->lock);
++	kvfree(pages);
++	return ret;
++}
++
++static const struct file_operations gh_cma_fops = {
++	.owner = THIS_MODULE,
++	.llseek = generic_file_llseek,
++	.mmap = gh_cma_mmap,
++	.open = generic_file_open,
++	.release = gh_cma_release,
++};
++
++int gh_cma_file_get(int fd, u64 offset, u64 size, struct file **file_out,
++		    struct page **page_out)
++{
++	struct gh_cma_pool *pool;
++	struct file *file = fget(fd);
++
++	if (!file)
++		return -EBADF;
++	if (file->f_op != &gh_cma_fops) {
++		fput(file);
++		return -EINVAL;
++	}
++	pool = file->private_data;
++	mutex_lock(&pool->lock);
++	if (pool->removed || !pool->page || !size || !PAGE_ALIGNED(offset) ||
++	    !PAGE_ALIGNED(size) || offset > (pool->allocated_pages << PAGE_SHIFT) ||
++	    size > (pool->allocated_pages << PAGE_SHIFT) - offset) {
++		mutex_unlock(&pool->lock);
++		fput(file);
++		return -EINVAL;
++	}
++	*file_out = file;
++	*page_out = pfn_to_page(page_to_pfn(pool->page) + (offset >> PAGE_SHIFT));
++	mutex_unlock(&pool->lock);
++	return 0;
++}
++
++static long gh_cma_create_mem_fd(struct gh_cma_pool *pool)
++{
++	struct inode *inode;
++	struct file *file;
++	int fd, err;
++
++	if (pool->file || pool->page)
++		return -EBUSY;
++	fd = get_unused_fd_flags(O_CLOEXEC);
++	if (fd < 0)
++		return fd;
++	file = anon_inode_create_getfile("[gunyah-cma]", &gh_cma_fops, pool, O_RDWR, NULL);
++	if (IS_ERR(file)) {
++		err = PTR_ERR(file);
++		goto err_fd;
++	}
++	inode = file_inode(file);
++	inode->i_mode |= S_IFREG;
++	i_size_write(inode, pool->size);
++	file->f_flags |= O_LARGEFILE;
++	file->f_mapping = inode->i_mapping;
++	pool->file = file;
++	get_device(&pool->dev);
++	fd_install(fd, file);
++	return fd;
++err_fd:
++	put_unused_fd(fd);
++	return err;
++}
++
++static long gh_cma_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
++{
++	struct miscdevice *miscdev = file->private_data;
++	struct gh_cma_pool *pool = container_of(miscdev, struct gh_cma_pool, miscdev);
++
++	long ret;
++
++	if (cmd != GH_ANDROID_CREATE_CMA_MEM_FD)
++		return -ENOTTY;
++	mutex_lock(&pool->lock);
++	ret = pool->removed ? -ENODEV : gh_cma_create_mem_fd(pool);
++	mutex_unlock(&pool->lock);
++	return ret;
++}
++
++static int gh_cma_dev_open(struct inode *inode, struct file *file)
++{
++	struct miscdevice *miscdev = file->private_data;
++	struct gh_cma_pool *pool = container_of(miscdev, struct gh_cma_pool, miscdev);
++
++	get_device(&pool->dev);
++	return 0;
++}
++
++static int gh_cma_dev_release(struct inode *inode, struct file *file)
++{
++	struct miscdevice *miscdev = file->private_data;
++	struct gh_cma_pool *pool = container_of(miscdev, struct gh_cma_pool, miscdev);
++
++	put_device(&pool->dev);
++	return 0;
++}
++
++static const struct file_operations gh_cma_dev_fops = {
++	.owner = THIS_MODULE,
++	.open = gh_cma_dev_open,
++	.release = gh_cma_dev_release,
++	.unlocked_ioctl = gh_cma_ioctl,
++	.compat_ioctl = compat_ptr_ioctl,
++	.llseek = noop_llseek,
++};
++
++static void gh_cma_device_release(struct device *dev)
++{
++	of_reserved_mem_device_release(dev);
++	put_device(dev->parent);
++	kfree(container_of(dev, struct gh_cma_pool, dev));
++}
++
++/* Lab-only opt-in for machines whose bootloader requires an unchanged DTB.
++ * Uses the existing default CMA area; never carves out or reassigns firmware
++ * reservations. No allocation occurs until userspace mmaps the returned fd.
++ */
++static DEFINE_MUTEX(gh_cma_test_lock);
++static struct gh_cma_pool *gh_cma_test_pool;
++static unsigned int gh_cma_test_mib;
++static bool gh_cma_ready;
++
++static int gh_cma_test_set(const char *val, const struct kernel_param *kp)
++{
++	struct gh_cma_pool *pool;
++	struct cma *area;
++	unsigned int mib;
++	int ret;
++
++	ret = kstrtouint(val, 0, &mib);
++	if (ret)
++		return ret;
++	if (!mib || mib > 32)
++		return -EINVAL;
++	mutex_lock(&gh_cma_test_lock);
++	if (!gh_cma_ready || gh_cma_test_pool) {
++		ret = -EBUSY;
++		goto unlock;
++	}
++	area = dev_get_cma_area(NULL);
++	if (!area || (unsigned long)mib * SZ_1M > cma_get_size(area)) {
++		ret = -ENOMEM;
++		goto unlock;
++	}
++	pool = kzalloc(sizeof(*pool), GFP_KERNEL);
++	if (!pool) {
++		ret = -ENOMEM;
++		goto unlock;
++	}
++	mutex_init(&pool->lock);
++	device_initialize(&pool->dev);
++	pool->dev.release = gh_cma_device_release;
++	pool->dev.init_name = "gunyah-cma-test";
++	pool->dev.cma_area = area;
++	pool->size = (unsigned long)mib * SZ_1M;
++	pool->miscdev.name = "gunyah-vm-cma";
++	pool->miscdev.minor = MISC_DYNAMIC_MINOR;
++	pool->miscdev.fops = &gh_cma_dev_fops;
++	pool->miscdev.mode = 0600;
++	ret = misc_register(&pool->miscdev);
++	if (ret) {
++		put_device(&pool->dev);
++		goto unlock;
++	}
++	gh_cma_test_pool = pool;
++	*(unsigned int *)kp->arg = mib;
++	pr_info("opt-in default CMA test pool: %u MiB\n", mib);
++unlock:
++	mutex_unlock(&gh_cma_test_lock);
++	return ret;
++}
++
++static const struct kernel_param_ops gh_cma_test_ops = {
++	.set = gh_cma_test_set,
++	.get = param_get_uint,
++};
++module_param_cb(cma_test_pool_mib, &gh_cma_test_ops, &gh_cma_test_mib, 0600);
++MODULE_PARM_DESC(cma_test_pool_mib, "Opt-in default CMA test pool (1-32 MiB, once after boot)");
++
++static int gh_cma_probe(struct platform_device *pdev)
++{
++	struct device_node *node = pdev->dev.of_node;
++	struct gh_cma_parent *parent;
++	int count, i, ret;
++
++	count = of_property_count_strings(node, "memory-region-names");
++	if (count <= 0)
++		return -EINVAL;
++	parent = devm_kzalloc(&pdev->dev, sizeof(*parent), GFP_KERNEL);
++	if (!parent)
++		return -ENOMEM;
++	INIT_LIST_HEAD(&parent->pools);
++
++	for (i = 0; i < count; i++) {
++		struct reserved_mem *rmem;
++		struct device_node *mem_node;
++		struct gh_cma_pool *pool;
++		const char *name;
++
++		ret = of_property_read_string_index(node, "memory-region-names", i, &name);
++		if (ret)
++			continue;
++		pool = kzalloc(sizeof(*pool), GFP_KERNEL);
++		if (!pool)
++			continue;
++		pool->miscdev.parent = &pdev->dev;
++		pool->miscdev.name = name;
++		pool->miscdev.minor = MISC_DYNAMIC_MINOR;
++		pool->miscdev.fops = &gh_cma_dev_fops;
++		pool->miscdev.mode = 0600;
++		mutex_init(&pool->lock);
++		device_initialize(&pool->dev);
++		pool->dev.parent = get_device(&pdev->dev);
++		pool->dev.release = gh_cma_device_release;
++		pool->dev.init_name = name;
++		ret = of_reserved_mem_device_init_by_name(&pool->dev, node, name);
++		if (ret)
++			goto put_pool;
++		mem_node = of_parse_phandle(node, "memory-region", i);
++		rmem = mem_node ? of_reserved_mem_lookup(mem_node) : NULL;
++		of_node_put(mem_node);
++		if (!rmem || !pool->dev.cma_area) {
++			ret = -ENODEV;
++			goto put_pool;
++		}
++		pool->size = rmem->size;
++		ret = misc_register(&pool->miscdev);
++		if (ret)
++			goto put_pool;
++		list_add_tail(&pool->list, &parent->pools);
++		dev_info(&pdev->dev, "CMA pool %s ready: %lu bytes\n", name, pool->size);
++		continue;
++put_pool:
++		put_device(&pool->dev);
++		continue;
++	}
++	platform_set_drvdata(pdev, parent);
++	return 0;
++}
++
++static void gh_cma_remove(struct platform_device *pdev)
++{
++	struct gh_cma_parent *parent = platform_get_drvdata(pdev);
++	struct gh_cma_pool *pool, *tmp;
++
++	list_for_each_entry_safe(pool, tmp, &parent->pools, list) {
++		list_del(&pool->list);
++		misc_deregister(&pool->miscdev);
++		mutex_lock(&pool->lock);
++		pool->removed = true;
++		mutex_unlock(&pool->lock);
++		put_device(&pool->dev);
++	}
++}
++
++static const struct of_device_id gh_cma_match[] = {
++	{ .compatible = "gunyah-cma-vm-mem" },
++	{}
++};
++
++static struct platform_driver gh_cma_driver = {
++	.probe = gh_cma_probe,
++	.remove = gh_cma_remove,
++	.driver = { .name = "gunyah-cma-vm-mem", .of_match_table = gh_cma_match },
++};
++
++int gh_cma_mem_init(void)
++{
++	int ret = platform_driver_register(&gh_cma_driver);
++
++	if (!ret)
++		gh_cma_ready = true;
++	return ret;
++}
++
++void gh_cma_mem_exit(void)
++{
++	mutex_lock(&gh_cma_test_lock);
++	gh_cma_ready = false;
++	if (gh_cma_test_pool) {
++		misc_deregister(&gh_cma_test_pool->miscdev);
++		mutex_lock(&gh_cma_test_pool->lock);
++		gh_cma_test_pool->removed = true;
++		mutex_unlock(&gh_cma_test_pool->lock);
++		put_device(&gh_cma_test_pool->dev);
++		gh_cma_test_pool = NULL;
++	}
++	mutex_unlock(&gh_cma_test_lock);
++	platform_driver_unregister(&gh_cma_driver);
++}
+diff --git a/drivers/virt/gunyah/vm_mgr_mm.c b/drivers/virt/gunyah/vm_mgr_mm.c
+index f7ddfd8..a6f4716 100644
+--- a/drivers/virt/gunyah/vm_mgr_mm.c
++++ b/drivers/virt/gunyah/vm_mgr_mm.c
+@@ -6,6 +6,7 @@
+ #define pr_fmt(fmt) "gh_vm_mgr: " fmt
+ 
+ #include <linux/gunyah_rsc_mgr.h>
++#include <linux/file.h>
+ #include <linux/mm.h>
+ 
+ #include <uapi/linux/gunyah.h>
+@@ -49,7 +50,9 @@ static void gh_vm_mem_reclaim_mapping(struct gh_vm *ghvm, struct gh_vm_mem *mapp
+ 				mapping->parcel.label, ret);
+ 	}
+ 
+-	if (!ret) {
++	if (!ret && mapping->cma_backed) {
++		fput(mapping->cma_file);
++	} else if (!ret) {
+ 		unpin_user_pages(mapping->pages, mapping->npages);
+ 		account_locked_vm(ghvm->mm, mapping->npages, false);
+ 	}
+@@ -257,3 +260,104 @@ unlock:
+ 	mutex_unlock(&ghvm->mm_lock);
+ 	return ret;
+ }
++
++int gh_vm_mem_alloc_cma(struct gh_vm *ghvm, struct gunyah_map_cma_mem_args *region)
++{
++	struct gh_vm_mem *mapping, *tmp_mapping;
++	struct gh_rm_mem_parcel *parcel;
++	struct page *first_page;
++	struct file *cma_file;
++	bool lend;
++	u16 vmid;
++	int ret;
++
++	if (!region->size || !PAGE_ALIGNED(region->size) ||
++	    !PAGE_ALIGNED(region->offset) || !PAGE_ALIGNED(region->guest_addr))
++		return -EINVAL;
++	if (region->size > U64_MAX - region->guest_addr ||
++	    region->size > U64_MAX - region->offset)
++		return -EOVERFLOW;
++	if (region->flags & ~(GUNYAH_MEM_ALLOW_READ | GUNYAH_MEM_ALLOW_WRITE |
++			      GUNYAH_MEM_ALLOW_EXEC | GUNYAH_MEM_FORCE_LEND |
++			      GUNYAH_MEM_FORCE_SHARE))
++		return -EINVAL;
++	if ((region->flags & GUNYAH_MEM_FORCE_LEND) &&
++	    (region->flags & GUNYAH_MEM_FORCE_SHARE))
++		return -EINVAL;
++
++	ret = gh_cma_file_get(region->guest_mem_fd, region->offset, region->size,
++			      &cma_file, &first_page);
++	if (ret)
++		return ret;
++	ret = mutex_lock_interruptible(&ghvm->mm_lock);
++	if (ret)
++		goto put_file;
++	if (__gh_vm_mem_find_by_label(ghvm, region->label)) {
++		ret = -EEXIST;
++		goto unlock;
++	}
++	list_for_each_entry(tmp_mapping, &ghvm->memory_mappings, list) {
++		if (gh_vm_mem_overlap(tmp_mapping, region->guest_addr, region->size)) {
++			ret = -EEXIST;
++			goto unlock;
++		}
++	}
++
++	mapping = kzalloc(sizeof(*mapping), GFP_KERNEL_ACCOUNT);
++	if (!mapping) {
++		ret = -ENOMEM;
++		goto unlock;
++	}
++	mapping->guest_phys_addr = region->guest_addr;
++	mapping->npages = region->size >> PAGE_SHIFT;
++	mapping->cma_file = cma_file;
++	mapping->cma_backed = true;
++	lend = region->flags & GUNYAH_MEM_FORCE_LEND;
++	mapping->share_type = lend ? VM_MEM_LEND : VM_MEM_SHARE;
++
++	parcel = &mapping->parcel;
++	parcel->label = region->label;
++	parcel->mem_handle = GH_MEM_HANDLE_INVAL;
++	parcel->mem_type = GH_RM_MEM_TYPE_NORMAL;
++	parcel->n_acl_entries = lend ? 1 : 2;
++	parcel->acl_entries = kcalloc(parcel->n_acl_entries,
++				      sizeof(*parcel->acl_entries), GFP_KERNEL);
++	if (!parcel->acl_entries) {
++		ret = -ENOMEM;
++		goto free_mapping;
++	}
++	if (region->flags & GUNYAH_MEM_ALLOW_READ)
++		parcel->acl_entries[0].perms |= GH_RM_ACL_R;
++	if (region->flags & GUNYAH_MEM_ALLOW_WRITE)
++		parcel->acl_entries[0].perms |= GH_RM_ACL_W;
++	if (region->flags & GUNYAH_MEM_ALLOW_EXEC)
++		parcel->acl_entries[0].perms |= GH_RM_ACL_X;
++	if (!lend) {
++		ret = gh_rm_get_vmid(ghvm->rm, &vmid);
++		if (ret)
++			goto free_acl;
++		parcel->acl_entries[1].vmid = cpu_to_le16(vmid);
++		parcel->acl_entries[1].perms = GH_RM_ACL_R | GH_RM_ACL_W | GH_RM_ACL_X;
++	}
++	parcel->n_mem_entries = 1;
++	parcel->mem_entries = kcalloc(1, sizeof(*parcel->mem_entries), GFP_KERNEL_ACCOUNT);
++	if (!parcel->mem_entries) {
++		ret = -ENOMEM;
++		goto free_acl;
++	}
++	parcel->mem_entries[0].phys_addr = cpu_to_le64(page_to_phys(first_page));
++	parcel->mem_entries[0].size = cpu_to_le64(region->size);
++	list_add(&mapping->list, &ghvm->memory_mappings);
++	mutex_unlock(&ghvm->mm_lock);
++	return 0;
++
++free_acl:
++	kfree(parcel->acl_entries);
++free_mapping:
++	kfree(mapping);
++unlock:
++	mutex_unlock(&ghvm->mm_lock);
++put_file:
++	fput(cma_file);
++	return ret;
++}
+diff --git a/include/uapi/linux/gunyah.h b/include/uapi/linux/gunyah.h
+index c01a8c9..f494512 100644
+--- a/include/uapi/linux/gunyah.h
++++ b/include/uapi/linux/gunyah.h
+@@ -308,6 +308,28 @@ struct gh_vm_firmware_config {
+ #define GH_VM_ANDROID_SET_FW_CONFIG	_IOW(GH_ANDROID_IOCTL_TYPE, 0x12, \
+ 						struct gh_vm_firmware_config)
+ 
++enum gunyah_map_flags {
++	GUNYAH_MEM_ALLOW_READ = 1UL << 0,
++	GUNYAH_MEM_ALLOW_WRITE = 1UL << 1,
++	GUNYAH_MEM_ALLOW_EXEC = 1UL << 2,
++	GUNYAH_MEM_FORCE_LEND = 0x10,
++	GUNYAH_MEM_FORCE_SHARE = 0x20,
++};
++
++#define GH_ANDROID_CREATE_CMA_MEM_FD _IO(GH_ANDROID_IOCTL_TYPE, 0x14)
++
++struct gunyah_map_cma_mem_args {
++	__u32 label;
++	__u64 guest_addr;
++	__u32 flags;
++	__u32 guest_mem_fd;
++	__u64 offset;
++	__u64 size;
++};
++
++#define GH_VM_ANDROID_MAP_CMA_MEM	_IOW(GH_ANDROID_IOCTL_TYPE, 0x15, \
++						struct gunyah_map_cma_mem_args)
++
+ enum gunyah_auth_type {
+ 	GUNYAH_ANDROID_PVM_TYPE = 0,
+ 	GUNYAH_QCOM_TRUSTED_VM_TYPE = 1,

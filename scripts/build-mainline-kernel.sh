@@ -22,6 +22,7 @@ fingerprint_panel=${FINGERPRINT_PANEL_FOD:-$enable_fingerprint}
 fingerprint_touch=${FINGERPRINT_TOUCH_FOD:-$enable_fingerprint}
 fingerprint_sensor=${FINGERPRINT_EL721:-$enable_fingerprint}
 qtee_admin_null_credentials=${QCOMTEE_ADMIN_NULL_CREDENTIALS:-0}
+enable_gunyah_cma=${ENABLE_GUNYAH_CMA:-0}
 
 validate_bool() {
 	case "$2" in
@@ -35,6 +36,7 @@ validate_bool FINGERPRINT_PANEL_FOD "$fingerprint_panel"
 validate_bool FINGERPRINT_TOUCH_FOD "$fingerprint_touch"
 validate_bool FINGERPRINT_EL721 "$fingerprint_sensor"
 validate_bool QCOMTEE_ADMIN_NULL_CREDENTIALS "$qtee_admin_null_credentials"
+validate_bool ENABLE_GUNYAH_CMA "$enable_gunyah_cma"
 
 # Linux 7.2 requires Clang >= 17.  Prefer the versioned LLVM toolchain when it
 # is installed (the imported baseline was generated with LLVM 22), while still
@@ -79,6 +81,7 @@ test -f "$dts/sm8550-samsung-gts9uwifi.dts"
 test -f "$cfg/config-mainline.aarch64"
 test -f "$cfg/config-gts9uwifi.fragment"
 test -f "$pat/gunyah-host-vm-manager.patch"
+test -f "$pat/gunyah-qtvm-auth.patch"
 test -f "$pat/gunyah-qcom-runtime-overlay.patch"
 test -f "$repo/packaging/v4l2loopback/patches/0001-backward-compatible-client-usage-event.patch"
 test -f "$repo/packaging/v4l2loopback/patches/0002-fix-buffer-queue-management.patch"
@@ -148,8 +151,20 @@ apply_unless() {
 if [ ! -f "$kernel_tree/drivers/virt/gunyah/rsc_mgr.c" ]; then
 	patch -d "$kernel_tree" -p1 < "$pat/gunyah-host-vm-manager.patch"
 fi
+if ! grep -q 'GH_VM_ANDROID_SET_AUTH_TYPE' \
+	"$kernel_tree/include/uapi/linux/gunyah.h"; then
+	git -C "$kernel_tree" apply --recount "$pat/gunyah-qtvm-auth.patch"
+fi
 if [ ! -f "$kernel_tree/drivers/virt/gunyah/qcom_bootinfo.c" ]; then
 	patch -d "$kernel_tree" -p1 < "$pat/gunyah-qcom-runtime-overlay.patch"
+fi
+if [ "$enable_gunyah_cma" = 1 ]; then
+	if [ ! -f "$kernel_tree/drivers/virt/gunyah/vm_mgr_cma_mem.c" ]; then
+		git -C "$kernel_tree" apply --recount "$pat/gunyah-qtvm-cma.patch"
+	fi
+elif [ -f "$kernel_tree/drivers/virt/gunyah/vm_mgr_cma_mem.c" ]; then
+	echo 'CMA experiment remains in this source tree; use a fresh KERNEL_WORKTREE/KERNEL_BUILD_DIR for a default build.' >&2
+	exit 1
 fi
 
 if [ ! -f "$kernel_tree/drivers/soc/qcom/samsung-gts9uwifi-sec-log.c" ]; then

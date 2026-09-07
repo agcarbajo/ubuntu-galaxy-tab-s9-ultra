@@ -24,7 +24,7 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..e178b5a0f691752ffde8f3cb619f000e0b26ca06
 --- /dev/null
 +++ b/arch/arm64/gunyah/gunyah_hypercall.c
-@@ -0,0 +1,162 @@
+@@ -0,0 +1,249 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
@@ -88,6 +88,65 @@ index 0000000000000000000000000000000000000000..e178b5a0f691752ffde8f3cb619f000e
 +#define GH_HYPERCALL_MSGQ_RECV			GH_HYPERCALL(0x801C)
 +#define GH_HYPERCALL_VCPU_RUN			GH_HYPERCALL(0x8065)
 +
++/*
++ * Shipping Qualcomm Gunyah v1 predates the SMCCC vendor-hypervisor calling
++ * convention.  It puts the call number in the HVC immediate (0x60xx) and
++ * starts arguments at x0.  Newer builds use hvc #0 with the SMCCC function
++ * identifier in x0.  HYP_IDENTIFY is issued first and selects the ABI once.
++ */
++static bool gh_use_legacy_hvc;
++
++#define GH_LEGACY_HVC_0(_imm, _res) do {				\
++	register unsigned long __x0 asm("x0") = 0;			\
++	register unsigned long __x1 asm("x1") = 0;			\
++	register unsigned long __x2 asm("x2") = 0;			\
++	register unsigned long __x3 asm("x3") = 0;			\
++	asm volatile("hvc #" #_imm					\
++		     : "+r" (__x0), "+r" (__x1), "+r" (__x2),	\
++		       "+r" (__x3) : : "x4", "x5", "x6", "x7", "x8",\
++		       "x9", "x10", "x11", "x12", "x13", "x14", "x15",\
++		       "x16", "x17", "cc", "memory");			\
++	(_res)->a0 = __x0;						\
++	(_res)->a1 = __x1;						\
++	(_res)->a2 = __x2;						\
++	(_res)->a3 = __x3;						\
++} while (0)
++
++#define GH_LEGACY_HVC_5(_imm, _a0, _a1, _a2, _a3, _a4, _res) do { \
++	register unsigned long __x0 asm("x0") = (_a0);		\
++	register unsigned long __x1 asm("x1") = (_a1);		\
++	register unsigned long __x2 asm("x2") = (_a2);		\
++	register unsigned long __x3 asm("x3") = (_a3);		\
++	register unsigned long __x4 asm("x4") = (_a4);		\
++	asm volatile("hvc #" #_imm					\
++		     : "+r" (__x0), "+r" (__x1), "+r" (__x2),	\
++		       "+r" (__x3), "+r" (__x4) : : "x5", "x6", "x7",\
++		       "x8", "x9", "x10", "x11", "x12", "x13", "x14",\
++		       "x15", "x16", "x17", "cc", "memory");		\
++	(_res)->a0 = __x0;						\
++	(_res)->a1 = __x1;						\
++	(_res)->a2 = __x2;						\
++	(_res)->a3 = __x3;						\
++} while (0)
++
++#define GH_LEGACY_HVC_VCPU_RUN(_capid, _resume_data, _res) do { \
++	register unsigned long __x0 asm("x0") = (_capid);		\
++	register unsigned long __x1 asm("x1") = (_resume_data)[0];	\
++	register unsigned long __x2 asm("x2") = (_resume_data)[1];	\
++	register unsigned long __x3 asm("x3") = (_resume_data)[2];	\
++	register unsigned long __x4 asm("x4") = 0;			\
++	asm volatile("hvc #0x6065"					\
++		     : "+r" (__x0), "+r" (__x1), "+r" (__x2),	\
++		       "+r" (__x3), "+r" (__x4) : : "x5", "x6", "x7",\
++		       "x8", "x9", "x10", "x11", "x12", "x13", "x14",\
++		       "x15", "x16", "x17", "cc", "memory");		\
++	(_res)->a0 = __x0;						\
++	(_res)->a1 = __x1;						\
++	(_res)->a2 = __x2;						\
++	(_res)->a3 = __x3;						\
++	(_res)->a4 = __x4;						\
++} while (0)
++
 +/**
 + * gh_hypercall_hyp_identify() - Returns build information and feature flags
 + *                               supported by Gunyah.
@@ -98,6 +157,11 @@ index 0000000000000000000000000000000000000000..e178b5a0f691752ffde8f3cb619f000e
 +	struct arm_smccc_res res = {};
 +
 +	arm_smccc_1_1_hvc(GH_HYPERCALL_HYP_IDENTIFY, &res);
++	if (res.a0 == GH_ERROR_UNIMPLEMENTED) {
++		GH_LEGACY_HVC_0(0x6000, &res);
++		if (FIELD_GET(GH_API_INFO_API_VERSION_MASK, res.a0) == GH_API_V1)
++			WRITE_ONCE(gh_use_legacy_hvc, true);
++	}
 +
 +	hyp_identity->api_info = res.a0;
 +	hyp_identity->flags[0] = res.a1;
@@ -108,9 +172,13 @@ index 0000000000000000000000000000000000000000..e178b5a0f691752ffde8f3cb619f000e
 +
 +enum gh_error gh_hypercall_bell_send(u64 capid, u64 new_flags, u64 *old_flags)
 +{
-+	struct arm_smccc_res res;
++	struct arm_smccc_res res = {};
 +
-+	arm_smccc_1_1_hvc(GH_HYPERCALL_BELL_SEND, capid, new_flags, 0, &res);
++	if (READ_ONCE(gh_use_legacy_hvc))
++		GH_LEGACY_HVC_5(0x6012, capid, new_flags, 0, 0, 0, &res);
++	else
++		arm_smccc_1_1_hvc(GH_HYPERCALL_BELL_SEND, capid,
++				    new_flags, 0, &res);
 +
 +	if (res.a0 == GH_ERROR_OK && old_flags)
 +		*old_flags = res.a1;
@@ -121,9 +189,14 @@ index 0000000000000000000000000000000000000000..e178b5a0f691752ffde8f3cb619f000e
 +
 +enum gh_error gh_hypercall_bell_set_mask(u64 capid, u64 enable_mask, u64 ack_mask)
 +{
-+	struct arm_smccc_res res;
++	struct arm_smccc_res res = {};
 +
-+	arm_smccc_1_1_hvc(GH_HYPERCALL_BELL_SET_MASK, capid, enable_mask, ack_mask, 0, &res);
++	if (READ_ONCE(gh_use_legacy_hvc))
++		GH_LEGACY_HVC_5(0x6015, capid, enable_mask, ack_mask,
++				0, 0, &res);
++	else
++		arm_smccc_1_1_hvc(GH_HYPERCALL_BELL_SET_MASK, capid,
++				    enable_mask, ack_mask, 0, &res);
 +
 +	return res.a0;
 +}
@@ -131,9 +204,14 @@ index 0000000000000000000000000000000000000000..e178b5a0f691752ffde8f3cb619f000e
 +
 +enum gh_error gh_hypercall_msgq_send(u64 capid, size_t size, void *buff, u64 tx_flags, bool *ready)
 +{
-+	struct arm_smccc_res res;
++	struct arm_smccc_res res = {};
 +
-+	arm_smccc_1_1_hvc(GH_HYPERCALL_MSGQ_SEND, capid, size, (uintptr_t)buff, tx_flags, 0, &res);
++	if (READ_ONCE(gh_use_legacy_hvc))
++		GH_LEGACY_HVC_5(0x601b, capid, size, (uintptr_t)buff,
++				tx_flags, 0, &res);
++	else
++		arm_smccc_1_1_hvc(GH_HYPERCALL_MSGQ_SEND, capid, size,
++				    (uintptr_t)buff, tx_flags, 0, &res);
 +
 +	if (res.a0 == GH_ERROR_OK)
 +		*ready = !!res.a1;
@@ -145,9 +223,14 @@ index 0000000000000000000000000000000000000000..e178b5a0f691752ffde8f3cb619f000e
 +enum gh_error gh_hypercall_msgq_recv(u64 capid, void *buff, size_t size, size_t *recv_size,
 +					bool *ready)
 +{
-+	struct arm_smccc_res res;
++	struct arm_smccc_res res = {};
 +
-+	arm_smccc_1_1_hvc(GH_HYPERCALL_MSGQ_RECV, capid, (uintptr_t)buff, size, 0, &res);
++	if (READ_ONCE(gh_use_legacy_hvc))
++		GH_LEGACY_HVC_5(0x601c, capid, (uintptr_t)buff, size,
++				0, 0, &res);
++	else
++		arm_smccc_1_1_hvc(GH_HYPERCALL_MSGQ_RECV, capid,
++				    (uintptr_t)buff, size, 0, &res);
 +
 +	if (res.a0 == GH_ERROR_OK) {
 +		*recv_size = res.a1;
@@ -170,9 +253,13 @@ index 0000000000000000000000000000000000000000..e178b5a0f691752ffde8f3cb619f000e
 +		/* C language says this will be implictly zero. Gunyah requires 0, so be explicit */
 +		.a5 = 0,
 +	};
-+	struct arm_smccc_1_2_regs res;
++	struct arm_smccc_1_2_regs res = {};
 +
-+	arm_smccc_1_2_hvc(&args, &res);
++	if (READ_ONCE(gh_use_legacy_hvc)) {
++		GH_LEGACY_HVC_VCPU_RUN(capid, resume_data, &res);
++	} else {
++		arm_smccc_1_2_hvc(&args, &res);
++	}
 +
 +	if (res.a0 == GH_ERROR_OK) {
 +		resp->sized_state = res.a1;
@@ -969,7 +1056,7 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..3eb697a4d5151a341807ff83cf2e34f75fe1d190
 --- /dev/null
 +++ b/drivers/virt/gunyah/gunyah_qcom.c
-@@ -0,0 +1,153 @@
+@@ -0,0 +1,167 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
@@ -1089,21 +1176,36 @@ index 0000000000000000000000000000000000000000..3eb697a4d5151a341807ff83cf2e34f7
 +#define GH_QCOM_EXT_CALL_UUID_ID	ARM_SMCCC_CALL_VAL(ARM_SMCCC_FAST_CALL, ARM_SMCCC_SMC_32, \
 +							   ARM_SMCCC_OWNER_VENDOR_HYP, 0x3f01)
 +
-+static bool gh_has_qcom_extensions(void)
++static bool gh_qcom_uuid_matches(const struct arm_smccc_res *res)
 +{
-+	struct arm_smccc_res res;
 +	uuid_t uuid;
 +	u32 *up;
 +
-+	arm_smccc_1_1_smc(GH_QCOM_EXT_CALL_UUID_ID, &res);
++	if (lower_32_bits(res->a0) == 0x19bd54bd &&
++	    lower_32_bits(res->a1) == 0x0b37571b &&
++	    lower_32_bits(res->a2) == 0x946f609b &&
++	    lower_32_bits(res->a3) == 0x54539de6)
++		return true;
 +
 +	up = (u32 *)&uuid.b[0];
-+	up[0] = lower_32_bits(res.a0);
-+	up[1] = lower_32_bits(res.a1);
-+	up[2] = lower_32_bits(res.a2);
-+	up[3] = lower_32_bits(res.a3);
++	up[0] = lower_32_bits(res->a0);
++	up[1] = lower_32_bits(res->a1);
++	up[2] = lower_32_bits(res->a2);
++	up[3] = lower_32_bits(res->a3);
 +
 +	return uuid_equal(&uuid, &QCOM_EXT_UUID);
++}
++
++static bool gh_has_qcom_extensions(void)
++{
++	struct arm_smccc_res res;
++
++	arm_smccc_1_1_smc(ARM_SMCCC_VENDOR_HYP_CALL_UID_FUNC_ID, &res);
++	if (gh_qcom_uuid_matches(&res))
++		return true;
++
++	arm_smccc_1_1_smc(GH_QCOM_EXT_CALL_UUID_ID, &res);
++	return gh_qcom_uuid_matches(&res);
 +}
 +
 +static int __init qcom_gh_platform_hooks_register(void)
@@ -2598,13 +2700,14 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..3deb2e4568662dc055b81f97c48a5a006a46d234
 --- /dev/null
 +++ b/drivers/virt/gunyah/rsc_mgr_rpc.c
-@@ -0,0 +1,532 @@
+@@ -0,0 +1,551 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
 + */
 +
 +#include <linux/gunyah_rsc_mgr.h>
++#include <linux/of.h>
 +#include "rsc_mgr.h"
 +
 +/* Message IDs: Memory Management */
@@ -3112,6 +3215,8 @@ index 0000000000000000000000000000000000000000..3deb2e4568662dc055b81f97c48a5a00
 +int gh_rm_get_vmid(struct gh_rm *rm, u16 *vmid)
 +{
 +	static u16 cached_vmid = GH_VMID_INVAL;
++	struct device_node *vm_node;
++	u32 dt_vmid;
 +	size_t resp_size;
 +	__le32 *resp;
 +	int ret;
@@ -3119,6 +3224,22 @@ index 0000000000000000000000000000000000000000..3deb2e4568662dc055b81f97c48a5a00
 +	if (cached_vmid != GH_VMID_INVAL) {
 +		*vmid = cached_vmid;
 +		return 0;
++	}
++
++	/* Qualcomm's shipping RM predates VM_GET_VMID and returns
++	 * GH_RM_ERROR_UNIMPLEMENTED. Firmware already publishes the current
++	 * primary VM's ID in the same authoritative per-boot hypervisor DT.
++	 */
++	vm_node = of_find_compatible_node(NULL, NULL, "qcom,gunyah-vm-id-1.0");
++	if (!vm_node)
++		vm_node = of_find_compatible_node(NULL, NULL, "qcom,gunyah-vm-id");
++	if (vm_node) {
++		ret = of_property_read_u32(vm_node, "qcom,vmid", &dt_vmid);
++		of_node_put(vm_node);
++		if (!ret && dt_vmid < GH_VMID_INVAL) {
++			*vmid = cached_vmid = dt_vmid;
++			return 0;
++		}
 +	}
 +
 +	ret = gh_rm_call(rm, GH_RM_RPC_VM_GET_VMID, NULL, 0, (void **)&resp, &resp_size);

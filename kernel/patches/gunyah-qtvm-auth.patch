@@ -1,0 +1,226 @@
+diff --git a/include/uapi/linux/gunyah.h b/include/uapi/linux/gunyah.h
+--- a/include/uapi/linux/gunyah.h
++++ b/include/uapi/linux/gunyah.h
+@@ -309,4 +309,27 @@ struct gh_vm_firmware_config {
+ #define GH_VM_ANDROID_SET_FW_CONFIG	_IOW(GH_ANDROID_IOCTL_TYPE, 0x12, \
+ 						struct gh_vm_firmware_config)
+ 
++enum gunyah_auth_type {
++	GUNYAH_ANDROID_PVM_TYPE = 0,
++	GUNYAH_QCOM_TRUSTED_VM_TYPE = 1,
++};
++
++struct gunyah_qtvm_auth_arg {
++	__u16 vm_id;
++	__u32 peripheral_id;
++	__u64 guest_phys_addr;
++	__u64 size;
++};
++
++struct gunyah_auth_desc {
++	__u32 type;
++	__u32 arg_size;
++	__u64 arg;
++};
++
++#define GH_VM_ANDROID_SET_AUTH_TYPE	_IOW(GH_ANDROID_IOCTL_TYPE, 0x16, \
++						struct gunyah_auth_desc)
++
+ #endif
+diff --git a/include/linux/gunyah_rsc_mgr.h b/include/linux/gunyah_rsc_mgr.h
+--- a/include/linux/gunyah_rsc_mgr.h
++++ b/include/linux/gunyah_rsc_mgr.h
+@@ -118,6 +118,15 @@ enum gh_rm_vm_auth_mechanism {
+ 	GH_RM_VM_AUTH_QCOM_ANDROID_PVM	= 2,
+ };
+ 
++#define GH_VM_AUTH_PARAM_PAS_ID	0
++
++struct gh_rm_vm_authenticate_param_entry {
++	__le32 param_type;
++	__le32 param;
++} __packed;
++
++int gh_rm_vm_authenticate(struct gh_rm *rm, u16 vmid, size_t n_entries,
++			  const struct gh_rm_vm_authenticate_param_entry *entries);
+ int gh_rm_vm_configure(struct gh_rm *rm, u16 vmid, enum gh_rm_vm_auth_mechanism auth_mechanism,
+ 			u32 mem_handle, u64 image_offset, u64 image_size,
+ 			u64 dtb_offset, u64 dtb_size);
+diff --git a/drivers/virt/gunyah/rsc_mgr_rpc.c b/drivers/virt/gunyah/rsc_mgr_rpc.c
+--- a/drivers/virt/gunyah/rsc_mgr_rpc.c
++++ b/drivers/virt/gunyah/rsc_mgr_rpc.c
+@@ -18,6 +18,7 @@
+ #define GH_RM_RPC_VM_STOP			0x56000005
+ #define GH_RM_RPC_VM_RESET			0x56000006
+ #define GH_RM_RPC_VM_CONFIG_IMAGE		0x56000009
++#define GH_RM_RPC_VM_AUTH_IMAGE			0x5600000A
+ #define GH_RM_RPC_VM_INIT			0x5600000B
+ #define GH_RM_RPC_VM_GET_HYP_RESOURCES		0x56000020
+ #define GH_RM_RPC_VM_GET_VMID			0x56000024
+@@ -90,6 +91,11 @@ struct gh_rm_vm_stop_req {
+ 	__le32 stop_reason;
+ } __packed;
+ 
++struct gh_rm_vm_authenticate_req_header {
++	__le16 vmid;
++	__le16 n_params;
++} __packed;
++
+ /* Call: VM_CONFIG_IMAGE */
+ struct gh_rm_vm_config_image_req {
+ 	__le16 vmid;
+@@ -425,6 +431,43 @@ int gh_rm_vm_stop(struct gh_rm *rm, u16 vmid)
+ 	return gh_rm_call(rm, GH_RM_RPC_VM_STOP, &req_payload, sizeof(req_payload), NULL, NULL);
+ }
+ 
++int gh_rm_vm_authenticate(struct gh_rm *rm, u16 vmid, size_t n_entries,
++			  const struct gh_rm_vm_authenticate_param_entry *entries)
++{
++	struct gh_rm_vm_authenticate_req_header *header;
++	size_t request_size, response_size = 0;
++	void *request, *response = NULL;
++	int ret;
++
++	if (n_entries > U16_MAX)
++		return -EINVAL;
++	if (check_mul_overflow(n_entries, sizeof(*entries), &request_size) ||
++	    check_add_overflow(request_size, sizeof(*header), &request_size))
++		return -EOVERFLOW;
++
++	request = kzalloc(request_size, GFP_KERNEL);
++	if (!request)
++		return -ENOMEM;
++
++	header = request;
++	header->vmid = cpu_to_le16(vmid);
++	header->n_params = cpu_to_le16(n_entries);
++	memcpy(header + 1, entries, n_entries * sizeof(*entries));
++
++	ret = gh_rm_call(rm, GH_RM_RPC_VM_AUTH_IMAGE, request, request_size,
++			 &response, &response_size);
++	if (!ret && response_size)
++		ret = -EINVAL;
++
++	kfree(response);
++	kfree(request);
++	return ret;
++}
++EXPORT_SYMBOL_GPL(gh_rm_vm_authenticate);
++
+ /**
+diff --git a/drivers/virt/gunyah/vm_mgr.h b/drivers/virt/gunyah/vm_mgr.h
+--- a/drivers/virt/gunyah/vm_mgr.h
++++ b/drivers/virt/gunyah/vm_mgr.h
+@@ -41,6 +41,11 @@ struct gh_vm {
+ 	enum gh_rm_vm_auth_mechanism auth;
+ 	struct gh_vm_dtb_config dtb_config;
+ 	struct gh_vm_firmware_config fw_config;
++	struct {
++		u16 vmid;
++		u32 pas_id;
++		u64 guest_phys_addr;
++		u64 size;
++	} qtvm;
+ 
+ 	struct notifier_block nb;
+ 	enum gh_rm_vm_status vm_status;
+diff --git a/drivers/virt/gunyah/vm_mgr.c b/drivers/virt/gunyah/vm_mgr.c
+--- a/drivers/virt/gunyah/vm_mgr.c
++++ b/drivers/virt/gunyah/vm_mgr.c
+@@ -479,9 +479,11 @@ static int gh_vm_start(struct gh_vm *ghvm)
+ {
+ 	struct gh_vm_mem *mapping;
++	struct gh_vm_mem *image_mapping;
+ 	struct gh_rm_hyp_resources *resources;
+ 	struct gh_resource *ghrsc;
+ 	u64 dtb_offset;
+ 	u32 mem_handle;
+ 	int ret, i, n;
++	struct gh_rm_vm_authenticate_param_entry auth_entry;
+ 
+ 	down_write(&ghvm->status_lock);
+ 	if (ghvm->vm_status != GH_RM_VM_STATUS_NO_STATE) {
+@@ -496,7 +498,8 @@ static int gh_vm_start(struct gh_vm *ghvm)
+ 	if (ret)
+ 		goto err;
+ 
+-	ret = gh_rm_alloc_vmid(ghvm->rm, 0);
++	ret = gh_rm_alloc_vmid(ghvm->rm,
++		ghvm->auth == GH_RM_VM_AUTH_QCOM_PIL_ELF ? ghvm->qtvm.vmid : 0);
+ 	if (ret < 0) {
+ 		gh_rm_notifier_unregister(ghvm->rm, &ghvm->nb);
+ 		goto err;
+@@ -541,12 +544,37 @@ static int gh_vm_start(struct gh_vm *ghvm)
+ 	mem_handle = mapping->parcel.mem_handle;
+ 	dtb_offset = ghvm->dtb_config.guest_phys_addr - mapping->guest_phys_addr;
+ 
+-	ret = gh_rm_vm_configure(ghvm->rm, ghvm->vmid, ghvm->auth, mem_handle,
+-				0, 0, dtb_offset, ghvm->dtb_config.size);
++	if (ghvm->auth == GH_RM_VM_AUTH_QCOM_PIL_ELF) {
++		image_mapping = gh_vm_mem_find_by_addr(ghvm,
++				ghvm->qtvm.guest_phys_addr, ghvm->qtvm.size);
++		if (!image_mapping || image_mapping != mapping) {
++			dev_warn(ghvm->parent,
++				 "Trusted VM image and DTB must share one memory parcel\n");
++			ret = -EINVAL;
++			goto err;
++		}
++
++		ret = gh_rm_vm_configure(ghvm->rm, ghvm->vmid, ghvm->auth,
++				mem_handle,
++				ghvm->qtvm.guest_phys_addr - mapping->guest_phys_addr,
++				SZ_8K, dtb_offset, ghvm->dtb_config.size);
++	} else {
++		ret = gh_rm_vm_configure(ghvm->rm, ghvm->vmid, ghvm->auth,
++				mem_handle, 0, 0, dtb_offset, ghvm->dtb_config.size);
++	}
+ 	if (ret) {
+ 		dev_warn(ghvm->parent, "Failed to configure VM: %d\n", ret);
+ 		goto err;
+ 	}
+ 
++	if (ghvm->auth == GH_RM_VM_AUTH_QCOM_PIL_ELF) {
++		auth_entry.param_type = cpu_to_le32(GH_VM_AUTH_PARAM_PAS_ID);
++		auth_entry.param = cpu_to_le32(ghvm->qtvm.pas_id);
++		ret = gh_rm_vm_authenticate(ghvm->rm, ghvm->vmid, 1, &auth_entry);
++		if (ret) {
++			dev_warn(ghvm->parent, "Failed to authenticate trusted VM: %d\n", ret);
++			goto err;
++		}
++	}
++
+ 	if (ghvm->auth == GH_RM_VM_AUTH_QCOM_ANDROID_PVM) {
+ 		mapping = gh_vm_mem_find_by_addr(ghvm, ghvm->fw_config.guest_phys_addr,
+ 						ghvm->fw_config.size);
+@@ -681,6 +709,34 @@ static long gh_vm_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+ 		r = 0;
+ 		break;
+ 	}
++	case GH_VM_ANDROID_SET_AUTH_TYPE: {
++		struct gunyah_qtvm_auth_arg qtvm;
++		struct gunyah_auth_desc desc;
++
++		if (ghvm->vm_status != GH_RM_VM_STATUS_NO_STATE)
++			return -EBUSY;
++		if (copy_from_user(&desc, argp, sizeof(desc)))
++			return -EFAULT;
++		if (desc.type != GUNYAH_QCOM_TRUSTED_VM_TYPE ||
++		    desc.arg_size != sizeof(qtvm))
++			return -EINVAL;
++		if (copy_from_user(&qtvm, u64_to_user_ptr(desc.arg), sizeof(qtvm)))
++			return -EFAULT;
++		if (!qtvm.vm_id || !qtvm.size ||
++		    overflows_type(qtvm.guest_phys_addr + qtvm.size, u64))
++			return -EINVAL;
++
++		ghvm->qtvm.vmid = qtvm.vm_id;
++		ghvm->qtvm.pas_id = qtvm.peripheral_id;
++		ghvm->qtvm.guest_phys_addr = qtvm.guest_phys_addr;
++		ghvm->qtvm.size = qtvm.size;
++		ghvm->auth = GH_RM_VM_AUTH_QCOM_PIL_ELF;
++		r = 0;
++		break;
++	}
+ 	case GH_VM_START: {
+ 		r = gh_vm_ensure_started(ghvm);
+ 		break;
