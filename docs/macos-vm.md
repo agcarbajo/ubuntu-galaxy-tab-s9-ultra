@@ -195,5 +195,50 @@ Thus CLI exit status is insufficient: the harness must reject nonzero DFU
 status bytes and must not invent successful replies when firmware responses
 are empty or time out. The local strict transport retries empty status
 responses, then fails rather than synthesizing download-idle or wait-reset.
-The iBSS transfer is **not successful**; XNU, installation and GPU acceleration
-remain unverified.
+That first transfer was **not successful**. The following checkpoint fixes its
+transport cause; XNU, installation and GPU acceleration remain unverified.
+
+### iBSS / iBootStage1 Recovery on the physical tablet (2026-09-08)
+
+The private USB bridge now sends control OUT as one type-1 packet containing
+the eight-byte USB SETUP followed by its data. The inner payload length includes
+both; a 2,048-byte DFU block therefore has inner length 2,056 and a 2,062-byte
+packet including the six-byte transport header. Its actual acknowledgement is
+type 1, status zero. Sending SETUP separately followed by type 3 was incorrect:
+only eight bytes reached the control-data receiver. Tests with zeroes and
+nonuniform data reproduced this independently of image signatures. A deliberately
+wrong combined length also reproduced the real status-9 rejection.
+
+With correct framing, all 112 blocks transferred: 229,273 image bytes plus the
+16-byte DFU suffix. Actual GETSTATUS responses progressed through states
+5, 6, 7 and 8 with status zero, without synthesizing any reply. The type-2
+transport event, acknowledged as type 4, forwards the USB reset once real
+WAIT_RESET has been observed. Type 0 is not a valid reset event for this
+transport and caused a firmware panic in a disposable test.
+
+A second missing contract was USB channel control at register offset `0x404`:
+stopping the channel must acknowledge zero and retire the outstanding RX DMA
+buffer. Without it, the firmware waited indefinitely at channel shutdown.
+The private QEMU checkpoint `1685f5e` implements this and extends the
+repository-owned, non-Apple smoke fixture to check enable/stop readback.
+The updated native ARM64 binary has SHA-256
+`bc4f7bfa32a264e8382e2a2f596e182b7c027da68bb7efffd096ed170028b643`.
+
+Both the disposable PC VM and the physical SM-X910's native ARM64 QEMU then
+produced an iBootStage1 UART banner and entered its recovery command prompt.
+The unmodified USB client independently reported Recovery, and the real USB
+descriptor changed from `05ac:1227` to `05ac:1281`. **This proves iBSS execution,
+not an XNU boot or a macOS installation.**
+Two independent physical runs reproduced it. The bounded harness now requires
+both the Recovery USB query and the iBootStage1 UART marker; an exit code or a
+completed download alone cannot pass. Nine host-only bridge tests cover packet
+framing, length/direction checks, real error preservation, empty/timeout rejection
+and reset gating on actual WAIT_RESET. The extended non-Apple channel-control
+fixture also passes with the native tablet binary.
+
+For the physical test, QEMU ran as the tablet owner using fresh private AUX/ROOT
+files. USB and monitor sockets listened only on tablet loopback; the WSL
+restore client reached them through host-key-pinned SSH forwarding. Thus the
+tablet needed neither USB/IP kernel support nor a host reboot. Owned processes
+were terminated after the bounded test; logs and temporary disks stay inside
+the personal lab, outside all normal builds.
