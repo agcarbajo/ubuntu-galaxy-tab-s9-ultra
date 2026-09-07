@@ -117,3 +117,40 @@ The last location may contain recoverable archives of completed experiments on
 the owner's tablet; it is never a source for a release. Generic QEMU, Gunyah and
 Turnip package contents remain allowed. These checks do not install macOS or
 turn a live personal installation into a distributable rootfs.
+
+### Obtaining the Ventura VM firmware without a Mac (verified on the tablet)
+
+On 2026-09-08 the personal tablet downloaded the official
+[Ventura 13.6 / 22G120 restore image](https://updates.cdn-apple.com/2023FallFCS/fullrestores/042-55833/C0830847-A2F8-458F-B680-967991820931/UniversalMac_13.6_22G120_Restore.ipsw)
+and verified its SHA-256:
+`9bf095739b8b2d5ebd20f7e8de938f10bc449f9843de21c4a41ae54d73526728`
+(12,893,555,341 bytes). Keep the download and all extractions private, outside
+the release rootfs. Allow at least 31 GB for the IPSW plus both intermediate
+images; provisioning a guest needs additional space.
+
+The verified extraction chain was:
+
+1. Extract only `097-48281-025.dmg` from the IPSW (7,482,223,922 bytes).
+2. Extract only `4.apfs` from that DMG (9,544,138,752 bytes).
+3. From the APFS image, extract
+   `System/Library/Frameworks/Virtualization.framework/Versions/A/Resources/AVPBooter.vmapple2.bin`.
+
+The distribution's 7-Zip 23.01 could extract the intermediate images and list
+the firmware, but failed to decode that firmware with `Data Error`.
+[Upstream 7-Zip 26.03 for Linux ARM64](https://github.com/ip7z/7zip/releases/download/26.03/7z2603-linux-arm64.tar.xz),
+run from a private directory without replacing the system tool, successfully
+extracted it. The downloaded tool archive's observed SHA-256 was
+`2389ba20e4d8295e8709c20b6263b69bd1ec4972fe38a04ad7a1badbf595b996`.
+
+The successfully extracted firmware is 214,904 bytes with SHA-256
+`e562cb7eb497903df23a58a61fe3809c1ffd9e5c9b4b32d2e98be80e13651318`.
+This is Ventura's firmware, not the later 304,352-byte firmware used by the
+public Asahi experiment. No Apple firmware is committed or shipped in builds.
+
+A bounded, disk-isolated native ARM64 TCG test with this firmware, one vCPU,
+4 GiB RAM, `run-installer=on` and fresh 16 KiB dummy AUX/ROOT files executed
+firmware code, then produced QMP `SHUTDOWN` with `guest=true` and
+`reason=guest-reset`. Its UART log was empty. QEMU exited zero because
+`-no-reboot` terminates the emulator on a guest reset: **this is not a successful
+macOS boot or a proven DFU session**. Only the emulator exited; the tablet's
+host boot was untouched. Real guest provisioning and graphics remain open.
