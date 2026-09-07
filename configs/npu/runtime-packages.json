@@ -1,0 +1,41 @@
+{
+  "base_url": "https://ppa.launchpadcontent.net/ubuntu-qcom-iot/qcom-ppa/ubuntu/",
+  "packages": [
+    {
+      "Package": "qairt-dsp-binaries",
+      "Version": "2.46.0-0ubuntu1~bpo24.04.1",
+      "Filename": "pool/main/q/qairt-sdk/qairt-dsp-binaries_2.46.0-0ubuntu1~bpo24.04.1_arm64.deb",
+      "SHA256": "d70cc9d15930621ee00a7e16bfcd4832b10325d32ea7cc35fd815a519212760c"
+    },
+    {
+      "Package": "qairt-headers",
+      "Version": "2.46.0-0ubuntu1~bpo24.04.1",
+      "Filename": "pool/main/q/qairt-sdk/qairt-headers_2.46.0-0ubuntu1~bpo24.04.1_arm64.deb",
+      "SHA256": "053780406f9ecd1271828504267b0b7e6bff7d604afd19756fe5955d798c171e"
+    },
+    {
+      "Package": "qairt-libs",
+      "Version": "2.46.0-0ubuntu1~bpo24.04.1",
+      "Filename": "pool/main/q/qairt-sdk/qairt-libs_2.46.0-0ubuntu1~bpo24.04.1_arm64.deb",
+      "SHA256": "081101e5ab2dd1b1719814ed9f6257ea51f1f3a45e75129567fb3363aef1edf9"
+    },
+    {
+      "Package": "qairt-tools",
+      "Version": "2.46.0-0ubuntu1~bpo24.04.1",
+      "Filename": "pool/main/q/qairt-sdk/qairt-tools_2.46.0-0ubuntu1~bpo24.04.1_arm64.deb",
+      "SHA256": "6d8fe3ab0ed726a6701ead41c9b257112a36e9ebc06b62a87213881b54d76fe9"
+    },
+    {
+      "Package": "qcom-fastrpc1",
+      "Version": "1.0.15+repack2",
+      "Filename": "pool/main/q/qcom-fastrpc/qcom-fastrpc1_1.0.15+repack2_arm64.deb",
+      "SHA256": "0d104565b8a1c591564fe0ee3ede2a5ff285179d9d71517efbca97fd00d48a60"
+    },
+    {
+      "Package": "qcom-libdmabufheap",
+      "Version": "1.1.0+250131+rel1.0+nmu1",
+      "Filename": "pool/main/q/qcom-libdmabufheap/qcom-libdmabufheap_1.1.0+250131+rel1.0+nmu1_arm64.deb",
+      "SHA256": "2bf23257aadf8bd31ed6ab283966ed5fb363f084a76b1f7ffcb9035cd88e5bed"
+    }
+  ]
+}

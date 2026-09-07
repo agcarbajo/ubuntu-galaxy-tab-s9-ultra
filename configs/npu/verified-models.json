@@ -1,0 +1,113 @@
+{
+  "schema": 1,
+  "device": "Samsung Galaxy Tab S9 Ultra SM-X910",
+  "soc": "Qualcomm Snapdragon 8 Gen 2 (SM8550)",
+  "measured": "2026-09-05",
+  "llama_cpp_revision": "427291b5b34cd914a31b3fd3b61a68f6184f4b9f",
+  "notes": [
+    "Token rates are short, deterministic functional checks, not broad quality benchmarks.",
+    "Reference classes compare parameter/usage tiers, not intelligence or benchmark equivalence.",
+    "CPU performs tokenization and orchestration even when every transformer layer is offloaded."
+  ],
+  "models": [
+    {
+      "model": "Qwen3 1.7B",
+      "quant": "Q8_0",
+      "size_gib": 1.71,
+      "reference_class": "small assistant; below Phi-3 Mini",
+      "recommended": "NPU",
+      "verified": "29/29 layers on Hexagon",
+      "generation_tokens_per_second": "15–16",
+      "status": "pass"
+    },
+    {
+      "model": "Qwen3.5 2B",
+      "quant": "Q4_K_M",
+      "size_gib": 1.19,
+      "reference_class": "small assistant; below Phi-3 Mini",
+      "recommended": "NPU",
+      "verified": "25/25 layers on Hexagon",
+      "prompt_tokens_per_second": 25.38,
+      "generation_tokens_per_second": 6.44,
+      "status": "pass_with_quality_caveat",
+      "observation": "The functional answer completed but included a factual wording error."
+    },
+    {
+      "model": "Qwen3 4B Instruct 2507",
+      "quant": "Q4_0",
+      "size_gib": 2.21,
+      "reference_class": "Gemma 3 4B / Phi-3 Mini tier",
+      "recommended": "NPU",
+      "verified": "37/37 layers on Hexagon",
+      "prompt_tokens_per_second": 132.89,
+      "generation_tokens_per_second": 11.03,
+      "gpu_generation_tokens_per_second": 9.13,
+      "cpu_generation_tokens_per_second": 6.69,
+      "status": "pass_best_balance"
+    },
+    {
+      "model": "Gemma 3 4B IT",
+      "quant": "Q4_K_M",
+      "size_gib": 2.32,
+      "reference_class": "Gemma 3 4B multimodal tier",
+      "recommended": "NPU for text; CPU for image understanding",
+      "verified": "text 35/35 layers on Hexagon; VLM correctly identified the dog on CPU",
+      "prompt_tokens_per_second": 11.10,
+      "generation_tokens_per_second": 3.35,
+      "vlm_cpu_generation_tokens_per_second": 7.05,
+      "status": "pass_split_by_modality",
+      "observation": "Hexagon image encoding stalled; Vulkan image encoding lost the device."
+    },
+    {
+      "model": "Qwen3.5 9B",
+      "quant": "Q4_0",
+      "size_gib": 5.01,
+      "reference_class": "Llama 3 8B tier",
+      "recommended": "NPU dynamic memory window",
+      "verified": "33/33 layers on Hexagon",
+      "prompt_tokens_per_second": "17–20",
+      "generation_tokens_per_second": "3.56–4.16",
+      "gpu_prompt_tokens_per_second": 8.64,
+      "gpu_generation_tokens_per_second": 3.04,
+      "status": "pass"
+    },
+    {
+      "model": "Qwen3 14B",
+      "quant": "Q3_K_M",
+      "size_gib": 6.82,
+      "reference_class": "Phi-4 14B / Qwen 14B tier",
+      "recommended": "16 NPU layers + 25 CPU layers with dynamic memory window",
+      "verified": "41/41 NPU and 16/41 hybrid both completed with zero retained DMA references",
+      "full_npu_prompt_tokens_per_second": 2.70,
+      "full_npu_generation_tokens_per_second": 1.46,
+      "hybrid_generation_tokens_per_second": 1.69,
+      "status": "pass_slow",
+      "observation": "Full Vulkan did not become ready in 180 seconds; CPU generated at 2.16 tok/s but returned invalid HTTP output in this check."
+    }
+  ],
+  "other_pipelines": [
+    {"model": "MobileNetV2", "runtime": "ONNX Runtime + QNN HTP", "mean_ms": 1.289, "status": "pass"},
+    {"model": "ResNet18", "runtime": "ONNX Runtime + QNN HTP", "mean_ms": 2.541, "status": "pass"},
+    {
+      "model": "OpenAI CLIP ViT-B/16",
+      "quant": "w8a16",
+      "runtime": "ONNX Runtime + QNN HTP",
+      "inputs": "image uint16 [1,3,224,224]; text int32 [1,5,77]",
+      "outputs": 2,
+      "mean_ms": 38.968,
+      "verification": "Zero-shot dog image ranked dog above person, cat, tablet and car",
+      "status": "pass"
+    },
+    {
+      "model": "Dynamic multi-tensor validation graph",
+      "runtime": "ONNX Runtime + QNN HTP",
+      "inputs": 2,
+      "outputs": 2,
+      "dynamic_symbols": ["batch"],
+      "mean_ms": 0.537,
+      "verification": "Add and multiply outputs matched the reference within FP16 tolerance",
+      "status": "pass"
+    },
+    {"model": "Whisper tiny multilingual", "runtime": "whisper.cpp + Hexagon HTP", "clip_seconds": 11, "elapsed_seconds": 0.851, "status": "pass"}
+  ]
+}

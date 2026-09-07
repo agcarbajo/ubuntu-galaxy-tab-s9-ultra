@@ -1,0 +1,94 @@
+Subject: [PATCH] misc: fastrpc: initialize sessions before exposing misc devices
+
+An application waiting for /dev/fastrpc-cdsp can open it while the channel
+locks and session table are still being initialized. In physical testing,
+an application preloaded before CDSP boot encountered an absent session;
+waiting for fastrpc_cb_probe to complete avoided that initial error.
+
+Initialize channel state and populate context banks before registering the
+misc devices. Depopulate children on subsequent registration failure.
+This addresses early opening only, not the separate CDSP sleep failure.
+
+--- a/drivers/misc/fastrpc.c
++++ b/drivers/misc/fastrpc.c
+@@ -2428,33 +2428,6 @@
+ 	data->secure = secure_dsp;
+ 	data->soc_data = soc_data;
+ 
+-	switch (domain_id) {
+-	case ADSP_DOMAIN_ID:
+-	case MDSP_DOMAIN_ID:
+-	case SDSP_DOMAIN_ID:
+-		/* Unsigned PD offloading is only supported on CDSP and GDSP */
+-		data->unsigned_support = false;
+-		err = fastrpc_device_register(rdev, data, secure_dsp, domain);
+-		if (err)
+-			goto err_free_data;
+-		break;
+-	case CDSP_DOMAIN_ID:
+-	case GDSP_DOMAIN_ID:
+-		data->unsigned_support = true;
+-		/* Create both device nodes so that we can allow both Signed and Unsigned PD */
+-		err = fastrpc_device_register(rdev, data, true, domain);
+-		if (err)
+-			goto err_free_data;
+-
+-		err = fastrpc_device_register(rdev, data, false, domain);
+-		if (err)
+-			goto err_deregister_fdev;
+-		break;
+-	default:
+-		err = -EINVAL;
+-		goto err_free_data;
+-	}
+-
+ 	kref_init(&data->refcount);
+ 
+ 	rdev->dma_mask = &data->dma_mask;
+@@ -2469,7 +2442,35 @@
+ 
+ 	err = of_platform_populate(rdev->of_node, NULL, NULL, rdev);
+ 	if (err)
+-		goto err_deregister_fdev;
++		goto err_depopulate;
++
++	/* Users may open the misc device as soon as it is registered. */
++	switch (domain_id) {
++	case ADSP_DOMAIN_ID:
++	case MDSP_DOMAIN_ID:
++	case SDSP_DOMAIN_ID:
++		/* Unsigned PD offloading is only supported on CDSP and GDSP */
++		data->unsigned_support = false;
++		err = fastrpc_device_register(rdev, data, secure_dsp, domain);
++		if (err)
++			goto err_depopulate;
++		break;
++	case CDSP_DOMAIN_ID:
++	case GDSP_DOMAIN_ID:
++		data->unsigned_support = true;
++		/* Create both device nodes so that we can allow both Signed and Unsigned PD */
++		err = fastrpc_device_register(rdev, data, true, domain);
++		if (err)
++			goto err_depopulate;
++
++		err = fastrpc_device_register(rdev, data, false, domain);
++		if (err)
++			goto err_deregister_fdev;
++		break;
++	default:
++		err = -EINVAL;
++		goto err_depopulate;
++	}
+ 
+ 	return 0;
+ 
+@@ -2478,6 +2479,9 @@
+ 		misc_deregister(&data->fdevice->miscdev);
+ 	if (data->secure_fdevice)
+ 		misc_deregister(&data->secure_fdevice->miscdev);
++err_depopulate:
++	of_platform_depopulate(rdev);
++	dev_set_drvdata(rdev, NULL);
+ 
+ err_free_data:
+ 	kfree(data);

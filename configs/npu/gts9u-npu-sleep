@@ -1,0 +1,26 @@
+#!/bin/sh
+# Do not tear CDSP down before PSCI: doing so poisons AOSS wake state on this
+# firmware. Deep suspend nevertheless resets the FastRPC/QNN transport. Once
+# the machine has resumed, recycle a session that was active and start its
+# existing delayed recovery asynchronously.
+set -eu
+marker=/run/gts9u-npu-was-active
+case "${1:-}/${2:-}" in
+    pre/suspend|pre/hibernate|pre/hybrid-sleep|pre/suspend-then-hibernate)
+        if systemctl is-active --quiet gts9u-npu.service; then
+            : > "$marker"
+        else
+            rm -f "$marker"
+        fi
+        ;;
+    post/suspend|post/hibernate|post/hybrid-sleep|post/suspend-then-hibernate)
+        if [ -e "$marker" ]; then
+            rm -f "$marker"
+            systemctl stop gts9u-npu.service
+            # run-npu-session enforces the empirically required teardown
+            # settling interval. Starting without waiting here lets the rest
+            # of resume, including the lock screen, proceed immediately.
+            systemctl start --no-block gts9u-npu.service
+        fi
+        ;;
+esac

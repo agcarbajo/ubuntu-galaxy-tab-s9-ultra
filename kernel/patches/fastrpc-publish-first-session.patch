@@ -1,0 +1,70 @@
+Subject: [PATCH] misc: fastrpc: optionally publish after the first session
+
+Some CDSP firmware reaches its first power collapse only a few milliseconds
+after opening the FastRPC GLINK channel.  Populating every compute context
+bank before publishing the misc devices misses that window even when a daemon
+is already waiting for the device node.
+
+For an opt-in domain, create and bind the first compute context bank, publish
+the misc devices once that usable session exists, and then populate the
+remaining children.  The session list is already protected by the channel
+lock, so opens can proceed while later context banks are added.  The default
+ordering is unchanged.
+
+--- a/drivers/misc/fastrpc.c
++++ b/drivers/misc/fastrpc.c
+@@ -2365,9 +2365,12 @@
+ {
+ 	struct device *rdev = &rpdev->dev;
+ 	struct fastrpc_channel_ctx *data;
++	struct device_node *child;
++	struct platform_device *session_pdev;
+ 	int i, err, domain_id = -1, vmcount;
+ 	const char *domain;
+ 	bool secure_dsp;
++	bool early_publish = false;
+ 	unsigned int vmids[FASTRPC_MAX_VMIDS];
+ 	const struct fastrpc_soc_data *soc_data;
+ 
+@@ -2440,9 +2443,40 @@
+ 	data->rpdev = rpdev;
+ 	dev_set_drvdata(&rpdev->dev, data);
+ 
++	if (domain_id == CDSP_DOMAIN_ID &&
++	    of_property_read_bool(rdev->of_node,
++				  "qcom,publish-after-first-session")) {
++		for_each_available_child_of_node(rdev->of_node, child) {
++			if (of_device_is_compatible(child,
++						    "qcom,fastrpc-compute-cb"))
++				break;
++		}
++		if (!child) {
++			err = -ENODEV;
++			goto err_depopulate;
++		}
++		session_pdev = of_platform_device_create(child, NULL, rdev);
++		of_node_put(child);
++		if (!session_pdev || !data->sesscount) {
++			err = -ENODEV;
++			goto err_depopulate;
++		}
++		data->unsigned_support = true;
++		err = fastrpc_device_register(rdev, data, true, domain);
++		if (err)
++			goto err_depopulate;
++		err = fastrpc_device_register(rdev, data, false, domain);
++		if (err)
++			goto err_deregister_fdev;
++		early_publish = true;
++	}
++
+ 	err = of_platform_populate(rdev->of_node, NULL, NULL, rdev);
+ 	if (err)
+-		goto err_depopulate;
++		goto err_deregister_fdev;
++
++	if (early_publish)
++		return 0;
+ 
+ 	/* Users may open the misc device as soon as it is registered. */
+ 	switch (domain_id) {

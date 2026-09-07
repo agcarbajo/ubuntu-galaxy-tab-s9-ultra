@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=IA local
+Comment=Chat multimodal y agentes locales con NPU, GPU y CPU
+Exec=/usr/local/bin/gts9u-ai-studio
+Icon=applications-science
+Terminal=false
+Categories=Utility;

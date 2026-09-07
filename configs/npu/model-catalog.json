@@ -1,0 +1,92 @@
+{
+  "schema": 1,
+  "updated": "2026-09-05",
+  "models": [
+    {
+      "name": "Qwen 3.5 2B",
+      "file": "Qwen3.5-2B-Q4_K_M.gguf",
+      "size": 1280835840,
+      "sha256": "aaf42c8b7c3cab2bf3d69c355048d4a0ee9973d48f16c731c0520ee914699223",
+      "url": "https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/main/Qwen3.5-2B-Q4_K_M.gguf",
+      "page": "https://huggingface.co/unsloth/Qwen3.5-2B-GGUF",
+      "mode": "npu",
+      "kind": "chat",
+      "class": "asistente compacto, por debajo de Phi-3 Mini",
+      "status": "tested",
+      "performance": "6.44 tok/s generación; 25.38 tok/s prompt; 25/25 capas NPU"
+    },
+    {
+      "name": "Qwen 3 4B Instruct 2507",
+      "file": "Qwen3-4B-Instruct-2507-Q4_0.gguf",
+      "size": 2375773280,
+      "sha256": "e0ba675d86ab277c61701c6793659b2ae801d95e3be791464c321e6fbf613be2",
+      "url": "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_0.gguf",
+      "page": "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF",
+      "mode": "npu",
+      "kind": "chat",
+      "class": "clase Gemma 3 4B / Phi-3 Mini",
+      "status": "tested",
+      "performance": "9.2–11.0 tok/s generación; 37/37 capas NPU"
+    },
+    {
+      "name": "Gemma 3 4B IT",
+      "file": "gemma-3-4b-it-Q4_K_M.gguf",
+      "size": 2489757856,
+      "sha256": "882e8d2db44dc554fb0ea5077cb7e4bc49e7342a1f0da57901c0802ea21a0863",
+      "url": "https://huggingface.co/ggml-org/gemma-3-4b-it-GGUF/resolve/main/gemma-3-4b-it-Q4_K_M.gguf",
+      "page": "https://huggingface.co/ggml-org/gemma-3-4b-it-GGUF",
+      "mode": "cpu",
+      "kind": "vision",
+      "class": "clase Gemma 3 4B; VLM con proyector aparte",
+      "status": "tested",
+      "performance": "texto: 3.35 tok/s en NPU; visión: 7.05 tok/s de salida en CPU",
+      "mmproj_file": "gemma-3-4b-it-mmproj-f16.gguf",
+      "mmproj_size": 851251104,
+      "mmproj_sha256": "8c0fb064b019a6972856aaae2c7e4792858af3ca4561be2dbf649123ba6c40cb",
+      "mmproj_url": "https://huggingface.co/ggml-org/gemma-3-4b-it-GGUF/resolve/main/mmproj-model-f16.gguf"
+    },
+    {
+      "name": "Qwen 2.5 7B Instruct",
+      "file": "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+      "size": 4683074240,
+      "sha256": "65b8fcd92af6b4fefa935c625d1ac27ea29dcb6ee14589c55a8f115ceaaa1423",
+      "url": "https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF/resolve/main/Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+      "page": "https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF",
+      "mode": "window",
+      "kind": "chat",
+      "class": "clase Mistral 7B / Llama 3 8B",
+      "status": "candidate"
+    },
+    {
+      "name": "Qwen 3.5 9B",
+      "file": "Qwen3.5-9B-Q4_0.gguf",
+      "size": 5379417312,
+      "sha256": "17670346b4260ddcb0173965145155885024f3c9a4a24389a3370751edbcde24",
+      "url": "https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/main/Qwen3.5-9B-Q4_0.gguf",
+      "page": "https://huggingface.co/unsloth/Qwen3.5-9B-GGUF",
+      "mode": "window",
+      "kind": "vision",
+      "class": "clase Llama 3 8B, con capacidad visual usando mmproj",
+      "status": "tested",
+      "performance": "3.2–4.2 tok/s generación; 17–20 tok/s prompt; 33/33 capas NPU",
+      "mmproj_file": "Qwen3.5-9B-mmproj-F16.gguf",
+      "mmproj_size": 918166080,
+      "mmproj_sha256": "f70dc3509053962b0d0d3ee8a7eacebf5d60aa560cad78254ae8698516ae029f",
+      "mmproj_url": "https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/main/mmproj-F16.gguf"
+    },
+    {
+      "name": "Qwen 3 14B",
+      "file": "Qwen3-14B-Q3_K_M.gguf",
+      "size": 7321313664,
+      "sha256": "9694f1db203d5a18bea6f19a36be01b2d2c79bf9b7f8df553a4cc5cff870b47e",
+      "url": "https://huggingface.co/unsloth/Qwen3-14B-GGUF/resolve/main/Qwen3-14B-Q3_K_M.gguf",
+      "page": "https://huggingface.co/unsloth/Qwen3-14B-GGUF",
+      "mode": "hybrid",
+      "recommended_layers": 16,
+      "kind": "chat",
+      "class": "clase Phi-4 14B / Qwen 14B",
+      "status": "tested",
+      "performance": "1.69 tok/s con 16 capas NPU + CPU; 1.46 tok/s con 41/41 en NPU"
+    }
+  ]
+}

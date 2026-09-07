@@ -1,0 +1,17 @@
+Subject: [PATCH] Honor the DSP library search path when opening the shell
+
+Use the same environment-aware search as other DSP files before falling back
+to the configured and vendor paths. Isolated Bionic runtimes on Ubuntu do not
+have Android's /vendor directories or the optional YAML path parser.
+
+--- a/src/fastrpc_apps_user.c
++++ b/src/fastrpc_apps_user.c
+@@ -3244,6 +3244,10 @@
+   strlcpy(shell_absName, shell_name, shell_absNameLen);
+   strlcat(shell_absName, domain_str, shell_absNameLen);
++  nErr = apps_std_fopen_with_env(ADSP_LIBRARY_PATH, ";", shell_absName, "r", fh);
++  if (!nErr)
++    goto bail;
++
+   strlcpy(dir_list, DSP_LIBS_LOCATION, sizeof(dir_list));
+   nErr = fopen_from_dirlist(dir_list, ";", "r", shell_absName, fh);

@@ -1,0 +1,3 @@
+# Installed only on the SM-X910 by install-npu-session.sh.
+SUBSYSTEM=="misc", KERNEL=="fastrpc-cdsp", OWNER="root", GROUP="render", MODE="0660"
+SUBSYSTEM=="dma_heap", KERNEL=="system", OWNER="root", GROUP="render", MODE="0660"

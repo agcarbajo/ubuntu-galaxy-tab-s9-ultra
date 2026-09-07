@@ -1,0 +1,37 @@
+From: Ubuntu gts9u port
+Subject: [PATCH] remoteproc: qcom: add optional PAS handover grace period
+
+Some downstream firmware boots the RPMSG transport before userspace can open
+its persistent FastRPC endpoint. Keep the remoteproc proxy resources and ICC
+vote for an opt-in grace period so the listener can attach before the first
+firmware power collapse. Platforms without the property are unchanged.
+
+--- a/drivers/remoteproc/qcom_q6v5_pas.c
++++ b/drivers/remoteproc/qcom_q6v5_pas.c
+@@ -88,6 +88,7 @@ struct qcom_pas {
+ 	unsigned int smem_host_id;
+ 	bool decrypt_shutdown;
+ 	const char *info_name;
++	u32 handover_delay_ms;
+ 
+ 	const struct firmware *firmware;
+ 	const struct firmware *dtb_firmware;
+@@ -384,6 +385,9 @@ static void qcom_pas_handover(struct qcom_q6v5 *q6v5)
+ {
+ 	struct qcom_pas *pas = container_of(q6v5, struct qcom_pas, q6v5);
+ 
++	if (pas->handover_delay_ms)
++		msleep(pas->handover_delay_ms);
++
+ 	if (pas->px_supply)
+ 		regulator_disable(pas->px_supply);
+ 	if (pas->cx_supply)
+@@ -784,6 +788,8 @@ static int qcom_pas_probe(struct platform_device *pdev)
+ 	pas->info_name = desc->sysmon_name;
+ 	pas->smem_host_id = desc->smem_host_id;
+ 	pas->decrypt_shutdown = desc->decrypt_shutdown;
++	of_property_read_u32(pdev->dev.of_node, "qcom,handover-delay-ms",
++			     &pas->handover_delay_ms);
+ 	pas->region_assign_idx = desc->region_assign_idx;
+ 	pas->region_assign_count = min_t(int, MAX_ASSIGN_COUNT, desc->region_assign_count);
+ 	pas->region_assign_vmid = desc->region_assign_vmid;

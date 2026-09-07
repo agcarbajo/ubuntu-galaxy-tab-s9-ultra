@@ -1,0 +1,4 @@
+#!/bin/sh
+# Compatibility name for old local installations. The canonical system-sleep
+# helper is gts9u-npu-sleep and handles both its pre and post invocations.
+exec /usr/lib/systemd/system-sleep/gts9u-npu-sleep "$@"

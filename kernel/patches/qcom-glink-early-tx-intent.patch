@@ -1,0 +1,49 @@
+Subject: [PATCH] rpmsg: qcom_glink: allow an early remote intent request
+
+Some downstream CDSP firmware enters its first power collapse while the
+FastRPC driver is still probing its IOMMU context banks.  Such firmware does
+not publish an unsolicited FastRPC receive intent, so the first transmission
+then has to request one after the DSP is already asleep.
+
+Allow an opt-in channel property to request one remote receive intent as soon
+as the two-sided GLINK channel is open, before the rpmsg driver's probe runs.
+The ordinary send path consumes the cached intent later.  Boards without the
+property retain the existing behaviour.
+
+--- a/drivers/rpmsg/qcom_glink_native.c
++++ b/drivers/rpmsg/qcom_glink_native.c
+@@ -222,6 +222,9 @@
+ #define NATIVE_CTS_SIG			BIT(30)
+ 
+ static void qcom_glink_rx_done_work(struct work_struct *work);
++static int qcom_glink_request_intent(struct qcom_glink *glink,
++				     struct glink_channel *channel,
++				     size_t size);
+ 
+ static struct glink_channel *qcom_glink_alloc_channel(struct qcom_glink *glink,
+ 						      const char *name)
+@@ -1326,6 +1329,7 @@ static struct rpmsg_endpoint *qcom_glink_create_ept(struct rpmsg_device *rpdev,
+ 	struct rpmsg_endpoint *ept;
+ 	const char *name = chinfo.name;
+ 	int cid;
++	u32 early_intent_size;
+ 	int ret;
+ 	unsigned long flags;
+ 
+@@ -1347,6 +1351,16 @@ static struct rpmsg_endpoint *qcom_glink_create_ept(struct rpmsg_device *rpdev,
+ 			return NULL;
+ 	}
+ 
++	if (!glink->intentless &&
++	    !of_property_read_u32(rpdev->dev.of_node,
++				  "qcom,early-tx-intent", &early_intent_size)) {
++		ret = qcom_glink_request_intent(glink, channel,
++						 early_intent_size);
++		if (ret)
++			dev_warn(&rpdev->dev,
++				 "early remote intent request failed: %d\n", ret);
++	}
++
+ 	ept = &channel->ept;
+ 	ept->rpdev = rpdev;
+ 	ept->cb = cb;

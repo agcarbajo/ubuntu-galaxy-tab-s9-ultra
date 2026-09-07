@@ -1,0 +1,24 @@
+Subject: [PATCH] mailbox: qcom-ipcc: reserve channels for SM-X910 runtime DSPs
+
+The SM-X910 port creates some DSP endpoints after IPCC has probed, because
+changing the boot DTB layout breaks Samsung ABL. Counting only clients
+present at probe reserves seven channels; ADSP, CDSP, SPSS and MPSS need
+eight when combined with SMP2P and AOSS. MPSS plus CDSP then fails with
+-EBUSY even though the requested client/signal pair is unused.
+
+On this board reserve at least the 48 channels used by Samsung's downstream
+IPCC driver. This changes allocation capacity only, not interrupt routing.
+
+--- a/drivers/mailbox/qcom-ipcc.c
++++ b/drivers/mailbox/qcom-ipcc.c
+@@ -234,6 +234,10 @@ static int qcom_ipcc_setup_mbox(struct qcom_ipcc *ipcc,
+ 		}
+ 	}
+ 
++	/* Late-created SM-X910 DSP endpoints are absent from the initial DT. */
++	if (of_machine_is_compatible("samsung,gts9uwifi"))
++		ipcc->num_chans = max(ipcc->num_chans, 48);
++
+ 	/* If no clients are found, skip registering as a mbox controller */
+ 	if (!ipcc->num_chans)
+ 		return 0;

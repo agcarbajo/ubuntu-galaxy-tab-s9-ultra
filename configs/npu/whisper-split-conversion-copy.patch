@@ -1,0 +1,69 @@
+diff --git a/src/whisper.cpp b/src/whisper.cpp
+index f4f7ac3..da6e381 100644
+--- a/src/whisper.cpp
++++ b/src/whisper.cpp
+@@ -2005,6 +2005,17 @@ static bool whisper_cross_external(const whisper_state & wstate) {
+     return use_vitisai_cross;
+ }
+ 
++// Hexagon cannot combine reshape and FP16/FP32 conversion in one CPY.
++// Convert a contiguous source first, then preserve the original copy layout.
++static struct ggml_tensor * whisper_graph_copy(struct ggml_context * ctx,
++        struct ggml_tensor * src, struct ggml_tensor * dst) {
++    if (src->type != dst->type) {
++        if (!ggml_is_contiguous(src)) src = ggml_cont(ctx, src);
++        src = ggml_cast(ctx, src, dst->type);
++    }
++    return ggml_cpy(ctx, src, dst);
++}
++
+ static struct ggml_cgraph * whisper_build_graph_conv(
+         whisper_context & wctx,
+           whisper_state & wstate) {
+@@ -2171,8 +2182,8 @@ static struct ggml_cgraph * whisper_build_graph_encoder(
+                         0, 2, 1, 3);
+ 
+             if (wctx.params.flash_attn) {
+-                ggml_build_forward_expand(gf, ggml_cpy(ctx0, Kcur, ggml_view_1d(ctx0, kv_pad.k, n_ctx*n_state, 0)));
+-                ggml_build_forward_expand(gf, ggml_cpy(ctx0, Vcur, ggml_view_1d(ctx0, kv_pad.v, n_ctx*n_state, 0)));
++                ggml_build_forward_expand(gf, whisper_graph_copy(ctx0, Kcur, ggml_view_1d(ctx0, kv_pad.k, n_ctx*n_state, 0)));
++                ggml_build_forward_expand(gf, whisper_graph_copy(ctx0, Vcur, ggml_view_1d(ctx0, kv_pad.v, n_ctx*n_state, 0)));
+ 
+                 struct ggml_tensor * K =
+                     ggml_view_3d(ctx0, kv_pad.k,
+@@ -2368,8 +2379,8 @@ static struct ggml_cgraph * whisper_build_graph_cross(
+                     (il*n_ctx)*ggml_element_size(wstate.kv_cross.v)*n_state);
+         }
+ 
+-        ggml_build_forward_expand(gf, ggml_cpy(ctx0, Kcross, k));
+-        ggml_build_forward_expand(gf, ggml_cpy(ctx0, Vcross, v));
++        ggml_build_forward_expand(gf, whisper_graph_copy(ctx0, Kcross, k));
++        ggml_build_forward_expand(gf, whisper_graph_copy(ctx0, Vcross, v));
+     }
+ 
+     //ggml_graph_print(gf);
+@@ -2635,8 +2646,8 @@ static struct ggml_cgraph * whisper_build_graph_decoder(
+                             (il*n_ctx)*ggml_element_size(kv_self.v)*n_state + kv_head*ggml_element_size(kv_self.v));
+                 }
+ 
+-                ggml_build_forward_expand(gf, ggml_cpy(ctx0, Kcur, k));
+-                ggml_build_forward_expand(gf, ggml_cpy(ctx0, Vcur, v));
++                ggml_build_forward_expand(gf, whisper_graph_copy(ctx0, Kcur, k));
++                ggml_build_forward_expand(gf, whisper_graph_copy(ctx0, Vcur, v));
+             }
+ 
+             // ------
+@@ -4713,11 +4724,11 @@ static ggml_tensor * whisper_vad_build_lstm_layer(ggml_context * ctx0,
+     struct ggml_tensor * c_out = ggml_add(ctx0,
+         ggml_mul(ctx0, f_t, vctx.c_state),
+         ggml_mul(ctx0, i_t, g_t));
+-    ggml_build_forward_expand(gf, ggml_cpy(ctx0, c_out, vctx.c_state));
++    ggml_build_forward_expand(gf, whisper_graph_copy(ctx0, c_out, vctx.c_state));
+ 
+     // Update hidden state
+     struct ggml_tensor * out = ggml_mul(ctx0, o_t, ggml_tanh(ctx0, c_out));
+-    ggml_build_forward_expand(gf, ggml_cpy(ctx0, out,   vctx.h_state));
++    ggml_build_forward_expand(gf, whisper_graph_copy(ctx0, out,   vctx.h_state));
+ 
+     return out;
+ }

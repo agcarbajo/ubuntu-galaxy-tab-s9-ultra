@@ -1,0 +1,214 @@
+Subject: [PATCH] remoteproc: qcom: optionally prepare GLINK before boot
+
+Split allocation from protocol start for opt-in CDSP. Preserve the native
+GLINK probe ABI used by separately built SPSS fingerprint modules.
+
+--- a/drivers/remoteproc/qcom_common.c
++++ b/drivers/remoteproc/qcom_common.c
+@@ -213,11 +213,26 @@
+ }
+ EXPORT_SYMBOL_GPL(qcom_minidump);
+ 
++static int glink_subdev_prepare(struct rproc_subdev *subdev)
++{
++	struct qcom_rproc_glink *glink = to_glink_subdev(subdev);
++
++	if (!of_property_read_bool(glink->dev->parent->of_node, "qcom,early-glink"))
++		return 0;
++
++	glink->edge = qcom_glink_smem_register(glink->dev, glink->node, true);
++
++	return PTR_ERR_OR_ZERO(glink->edge);
++}
++
+ static int glink_subdev_start(struct rproc_subdev *subdev)
+ {
+ 	struct qcom_rproc_glink *glink = to_glink_subdev(subdev);
+ 
+-	glink->edge = qcom_glink_smem_register(glink->dev, glink->node);
++	if (glink->edge)
++		return qcom_glink_smem_start(glink->edge);
++
++	glink->edge = qcom_glink_smem_register(glink->dev, glink->node, false);
+ 
+ 	return PTR_ERR_OR_ZERO(glink->edge);
+ }
+@@ -233,6 +248,11 @@
+ static void glink_subdev_unprepare(struct rproc_subdev *subdev)
+ {
+ 	struct qcom_rproc_glink *glink = to_glink_subdev(subdev);
++
++	if (glink->edge) {
++		qcom_glink_smem_unregister(glink->edge);
++		glink->edge = NULL;
++	}
+ 
+ 	qcom_glink_ssr_notify(glink->ssr_name);
+ }
+@@ -257,6 +277,7 @@
+ 		return;
+ 
+ 	glink->dev = dev;
++	glink->subdev.prepare = glink_subdev_prepare;
+ 	glink->subdev.start = glink_subdev_start;
+ 	glink->subdev.stop = glink_subdev_stop;
+ 	glink->subdev.unprepare = glink_subdev_unprepare;
+--- a/include/linux/rpmsg/qcom_glink.h
++++ b/include/linux/rpmsg/qcom_glink.h
+@@ -16,16 +16,22 @@
+ #if IS_ENABLED(CONFIG_RPMSG_QCOM_GLINK_SMEM)
+ 
+ struct qcom_glink_smem *qcom_glink_smem_register(struct device *parent,
+-						 struct device_node *node);
++						 struct device_node *node, bool defer_start);
++int qcom_glink_smem_start(struct qcom_glink_smem *smem);
+ void qcom_glink_smem_unregister(struct qcom_glink_smem *glink);
+ 
+ #else
+ 
+ static inline struct qcom_glink_smem *
+ qcom_glink_smem_register(struct device *parent,
+-			 struct device_node *node)
++			 struct device_node *node, bool defer_start)
+ {
+ 	return NULL;
++}
++
++static inline int qcom_glink_smem_start(struct qcom_glink_smem *smem)
++{
++	return 0;
+ }
+ 
+ static inline void qcom_glink_smem_unregister(struct qcom_glink_smem *glink) {}
+--- a/drivers/rpmsg/qcom_glink_native.h
++++ b/drivers/rpmsg/qcom_glink_native.h
+@@ -35,6 +35,12 @@
+ 					   struct qcom_glink_pipe *rx,
+ 					   struct qcom_glink_pipe *tx,
+ 					   bool intentless);
++struct qcom_glink *qcom_glink_native_probe_deferred(struct device *dev,
++					   unsigned long features,
++					   struct qcom_glink_pipe *rx,
++					   struct qcom_glink_pipe *tx,
++					   bool intentless, bool defer_start);
++int qcom_glink_native_start(struct qcom_glink *glink);
+ void qcom_glink_native_remove(struct qcom_glink *glink);
+ void qcom_glink_native_rx(struct qcom_glink *glink);
+ 
+--- a/drivers/rpmsg/qcom_glink_native.c
++++ b/drivers/rpmsg/qcom_glink_native.c
+@@ -1902,11 +1902,11 @@
+ 	return rpmsg_ctrldev_register_device(rpdev);
+ }
+ 
+-struct qcom_glink *qcom_glink_native_probe(struct device *dev,
++struct qcom_glink *qcom_glink_native_probe_deferred(struct device *dev,
+ 					   unsigned long features,
+ 					   struct qcom_glink_pipe *rx,
+ 					   struct qcom_glink_pipe *tx,
+-					   bool intentless)
++					   bool intentless, bool defer_start)
+ {
+ 	int ret;
+ 	struct qcom_glink *glink;
+@@ -1942,17 +1942,43 @@
+ 	if (ret)
+ 		dev_err(dev, "failed to add groups\n");
+ 
++	if (!defer_start) {
++		ret = qcom_glink_native_start(glink);
++		if (ret)
++			return ERR_PTR(ret);
++	}
++
++	return glink;
++}
++EXPORT_SYMBOL_GPL(qcom_glink_native_probe_deferred);
++
++/* Keep the exported ABI used by separately built SPSS modules. */
++struct qcom_glink *qcom_glink_native_probe(struct device *dev,
++                                           unsigned long features,
++                                           struct qcom_glink_pipe *rx,
++                                           struct qcom_glink_pipe *tx,
++                                           bool intentless)
++{
++        return qcom_glink_native_probe_deferred(dev, features, rx, tx,
++                                               intentless, false);
++}
++EXPORT_SYMBOL_GPL(qcom_glink_native_probe);
++
++int qcom_glink_native_start(struct qcom_glink *glink)
++{
++	int ret;
++
+ 	ret = qcom_glink_send_version(glink);
+ 	if (ret)
+-		return ERR_PTR(ret);
++		return ret;
+ 
+ 	ret = qcom_glink_create_chrdev(glink);
+ 	if (ret)
+ 		dev_err(glink->dev, "failed to register chrdev\n");
+ 
+-	return glink;
+-}
+-EXPORT_SYMBOL_GPL(qcom_glink_native_probe);
++	return 0;
++}
++EXPORT_SYMBOL_GPL(qcom_glink_native_start);
+ 
+ static int qcom_glink_remove_device(struct device *dev, void *data)
+ {
+--- a/drivers/rpmsg/qcom_glink_smem.c
++++ b/drivers/rpmsg/qcom_glink_smem.c
+@@ -218,7 +218,7 @@
+ }
+ 
+ struct qcom_glink_smem *qcom_glink_smem_register(struct device *parent,
+-						 struct device_node *node)
++						 struct device_node *node, bool defer_start)
+ {
+ 	struct glink_smem_pipe *rx_pipe;
+ 	struct glink_smem_pipe *tx_pipe;
+@@ -335,10 +335,10 @@
+ 	*rx_pipe->tail = 0;
+ 	*tx_pipe->head = 0;
+ 
+-	glink = qcom_glink_native_probe(dev,
++	glink = qcom_glink_native_probe_deferred(dev,
+ 					GLINK_FEATURE_INTENT_REUSE,
+ 					&rx_pipe->native, &tx_pipe->native,
+-					false);
++					false, defer_start);
+ 	if (IS_ERR(glink)) {
+ 		ret = PTR_ERR(glink);
+ 		goto err_free_mbox;
+@@ -346,7 +346,8 @@
+ 
+ 	smem->glink = glink;
+ 
+-	enable_irq(smem->irq);
++	if (!defer_start)
++		enable_irq(smem->irq);
+ 
+ 	return smem;
+ 
+@@ -359,6 +360,18 @@
+ 	return ERR_PTR(ret);
+ }
+ EXPORT_SYMBOL_GPL(qcom_glink_smem_register);
++
++int qcom_glink_smem_start(struct qcom_glink_smem *smem)
++{
++	int ret;
++
++	enable_irq(smem->irq);
++	ret = qcom_glink_native_start(smem->glink);
++	if (ret)
++		disable_irq(smem->irq);
++	return ret;
++}
++EXPORT_SYMBOL_GPL(qcom_glink_smem_start);
+ 
+ void qcom_glink_smem_unregister(struct qcom_glink_smem *smem)
+ {

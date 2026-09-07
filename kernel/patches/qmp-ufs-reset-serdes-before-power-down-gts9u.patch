@@ -1,0 +1,68 @@
+diff --git a/drivers/phy/qualcomm/phy-qcom-qmp-ufs.c b/drivers/phy/qualcomm/phy-qcom-qmp-ufs.c
+index 0f4ad24aa..a9b921497 100644
+--- a/drivers/phy/qualcomm/phy-qcom-qmp-ufs.c
++++ b/drivers/phy/qualcomm/phy-qcom-qmp-ufs.c
+@@ -1177,6 +1177,9 @@ struct qmp_phy_cfg {
+ 	/* true, if PCS block has no separate SW_RESET register */
+ 	bool no_pcs_sw_reset;
++
++	/* Apply the Qualcomm Kalama RX clock-edge state around PHY collapse. */
++	bool has_tx_pull_down;
+ };
+ 
+ struct qmp_ufs {
+@@ -1772,6 +1775,7 @@ static const struct qmp_phy_cfg sm8550_ufsphy_cfg = {
+ 	.vreg_list		= sm8550_ufsphy_vreg_l,
+ 	.num_vregs		= ARRAY_SIZE(sm8550_ufsphy_vreg_l),
+ 	.regs			= ufsphy_v6_regs_layout,
++	.has_tx_pull_down	= true,
+ };
+ 
+ static const struct qmp_phy_cfg sm8650_ufsphy_cfg = {
+@@ -1922,6 +1926,31 @@ static void qmp_ufs_init_registers(struct qmp_ufs *qmp, const struct qmp_phy_cfg
+ 		qmp_ufs_init_all(qmp, &cfg->tbls_hs_b);
+ }
+ 
++/*
++ * Kalama changes RX_INTERFACE_MODE before the analog rail collapses.  This
++ * makes the UFS TX lines pull down while the PHY is off and is cleared after
++ * its clocks are restored.
++ */
++static void qmp_ufs_tx_pull_down_ctrl(struct qmp_ufs *qmp, bool enable)
++{
++	const struct qmp_phy_cfg *cfg = qmp->cfg;
++
++	if (!cfg->has_tx_pull_down)
++		return;
++
++	if (enable) {
++		qphy_setbits(qmp->rx, QSERDES_UFS_V6_RX_INTERFACE_MODE, BIT(6));
++		if (cfg->lanes >= 2)
++			qphy_setbits(qmp->rx2, QSERDES_UFS_V6_RX_INTERFACE_MODE,
++				     BIT(6));
++	} else {
++		qphy_clrbits(qmp->rx, QSERDES_UFS_V6_RX_INTERFACE_MODE, BIT(6));
++		if (cfg->lanes >= 2)
++			qphy_clrbits(qmp->rx2, QSERDES_UFS_V6_RX_INTERFACE_MODE,
++				     BIT(6));
++	}
++}
++
+ static int qmp_ufs_power_on(struct phy *phy)
+ {
+ 	struct qmp_ufs *qmp = phy_get_drvdata(phy);
+@@ -1939,6 +1968,7 @@ static int qmp_ufs_power_on(struct phy *phy)
+ 	if (ret)
+ 		goto err_disable_regulators;
+ 
++	qmp_ufs_tx_pull_down_ctrl(qmp, false);
+ 	qphy_setbits(pcs, cfg->regs[QPHY_PCS_POWER_DOWN_CONTROL], SW_PWRDN);
+ 	return 0;
+ 
+@@ -1992,6 +2022,7 @@ static int qmp_ufs_power_off(struct phy *phy)
+ 	/* Put PHY into POWER DOWN state: active low */
+ 	qphy_clrbits(qmp->pcs, cfg->regs[QPHY_PCS_POWER_DOWN_CONTROL],
+ 			SW_PWRDN);
++	qmp_ufs_tx_pull_down_ctrl(qmp, true);
+ 
+ 	clk_bulk_disable_unprepare(qmp->num_clks, qmp->clks);

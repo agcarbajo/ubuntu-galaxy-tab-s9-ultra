@@ -1,0 +1,612 @@
+--- a/gts9u_fastrpc_prepared.c
++++ b/gts9u_fastrpc_prepared.c
+@@ -17,12 +17,23 @@
+ #include <linux/sort.h>
+ #include <linux/of_platform.h>
+ #include <linux/rpmsg.h>
++#include <linux/rwsem.h>
+ #include <linux/scatterlist.h>
+ #include <linux/slab.h>
+ #include <linux/firmware/qcom/qcom_scm.h>
+ #include <uapi/misc/fastrpc.h>
+ #include <linux/of_reserved_mem.h>
+ #include <linux/bits.h>
++
++static struct device *prepared_owner;
++static struct workqueue_struct *prepared_put_wq;
++/* Keep the transport alive during concurrent sleeping sends. */
++static DECLARE_RWSEM(prepared_transport_lock);
++static bool prepared_published;
++static bool prepared_consumed, prepared_ready, prepared_failed;
++static DECLARE_WAIT_QUEUE_HEAD(prepared_wait);
++static DECLARE_WAIT_QUEUE_HEAD(prepared_ctx_wait);
++static atomic_t prepared_ctx_freed = ATOMIC_INIT(0);
+ #define ADSP_DOMAIN_ID (0)
+ #define MDSP_DOMAIN_ID (1)
+@@ -240,6 +251,7 @@
+ 	struct list_head node; /* list of ctxs */
+ 	struct completion work;
+ 	struct work_struct put_work;
++	bool response_pending; /* remote reference, protected by cctx->lock */
+ 	struct fastrpc_msg msg;
+ 	struct fastrpc_user *fl;
+ 	union fastrpc_remote_arg *rpra;
+@@ -481,7 +493,7 @@
+ static int fastrpc_remote_heap_alloc(struct fastrpc_user *fl, struct device *dev,
+ 				     u64 size, struct fastrpc_buf **obuf)
+ {
+-	struct device *rdev = &fl->cctx->rpdev->dev;
++	struct device *rdev = prepared_owner;
+ 
+ 	return  __fastrpc_buf_alloc(fl, rdev, size, obuf);
+ }
+@@ -566,6 +578,8 @@
+ 	spin_lock_irqsave(&cctx->lock, flags);
+ 	idr_remove(&cctx->ctx_idr, ctx->ctxid >> 4);
+ 	spin_unlock_irqrestore(&cctx->lock, flags);
++	atomic_inc(&prepared_ctx_freed);
++	wake_up_all(&prepared_ctx_wait);
+ 
+ 	kfree(ctx->maps);
+ 	kfree(ctx->olaps);
+@@ -695,15 +709,32 @@
+ 	list_add_tail(&ctx->node, &user->pending);
+ 	spin_unlock(&user->lock);
+ 
+-	spin_lock_irqsave(&cctx->lock, flags);
+-	ret = idr_alloc_cyclic(&cctx->ctx_idr, ctx, 1,
+-			       FASTRPC_CTX_MAX, GFP_ATOMIC);
+-	if (ret < 0) {
+-		spin_unlock_irqrestore(&cctx->lock, flags);
+-		goto err_idr;
+-	}
+-	ctx->ctxid = ret << 4;
+-	spin_unlock_irqrestore(&cctx->lock, flags);
++        for (;;) {
++                int freed = atomic_read(&prepared_ctx_freed);
++                if (READ_ONCE(prepared_failed)) {
++                        ret = -EPIPE;
++                        goto err_idr;
++                }
++                spin_lock_irqsave(&cctx->lock, flags);
++                ret = idr_alloc_cyclic(&cctx->ctx_idr, ctx, 1,
++                                      FASTRPC_CTX_MAX, GFP_ATOMIC);
++                if (ret >= 0)
++                        ctx->ctxid = ret << 4;
++                spin_unlock_irqrestore(&cctx->lock, flags);
++                if (ret >= 0)
++                        break;
++                if (ret != -ENOSPC)
++                        goto err_idr;
++                /* Replies can outpace deferred DMA cleanup during bootstrap.
++                 * Wait for an ID instead of failing an unrelated QNN client. */
++                ret = wait_event_interruptible_timeout(prepared_ctx_wait,
++                        atomic_read(&prepared_ctx_freed) != freed ||
++                        READ_ONCE(prepared_failed), 5 * HZ);
++                if (ret <= 0) {
++                        ret = ret ? ret : -ETIMEDOUT;
++                        goto err_idr;
++                }
++        }
+ 
+ 	kref_init(&ctx->refcount);
+ 
+@@ -1227,12 +1258,36 @@
+ 	msg->sc = ctx->sc;
+ 	msg->addr = ctx->buf ? ctx->buf->dma_addr : 0;
+ 	msg->size = roundup(ctx->msg_sz, PAGE_SIZE);
+-	fastrpc_context_get(ctx);
+-
+-	ret = rpmsg_send(cctx->rpdev->ept, (void *)msg, sizeof(*msg));
+-
+-	if (ret)
+-		fastrpc_context_put(ctx);
++
++        if (!prepared_ready) {
++                dev_info(prepared_owner, "First request prepared handle=%u sc=%#x; waiting for transport\n", handle, ctx->sc);
++                ret = wait_event_interruptible_timeout(prepared_wait,
++                                prepared_ready || prepared_failed, 15 * HZ);
++                if (ret <= 0)
++                        return ret ? ret : -ETIMEDOUT;
++        }
++        down_read(&prepared_transport_lock);
++        if (prepared_failed || !cctx->rpdev) {
++                up_read(&prepared_transport_lock);
++                return -EPIPE;
++        }
++        spin_lock_irq(&cctx->lock);
++        ctx->response_pending = true;
++        fastrpc_context_get(ctx);
++        spin_unlock_irq(&cctx->lock);
++
++        ret = rpmsg_send(cctx->rpdev->ept, (void *)msg, sizeof(*msg));
++        up_read(&prepared_transport_lock);
++
++        if (ret) {
++                bool drop;
++                spin_lock_irq(&cctx->lock);
++                drop = ctx->response_pending;
++                ctx->response_pending = false;
++                spin_unlock_irq(&cctx->lock);
++                if (drop)
++                        fastrpc_context_put(ctx);
++        }
+ 
+ 	return ret;
+ 
+@@ -1250,7 +1305,7 @@
+ 	if (!fl->sctx)
+ 		return -EINVAL;
+ 
+-	if (!fl->cctx->rpdev)
++	if (prepared_failed)
+ 		return -EPIPE;
+ 
+ 	if (handle == FASTRPC_INIT_HANDLE && !kernel) {
+@@ -1308,6 +1363,7 @@
+ 		list_for_each_entry_safe(buf, b, &fl->mmaps, node) {
+ 			list_del(&buf->node);
+ 			list_add_tail(&buf->node, &fl->cctx->invoke_interrupted_mmaps);
++                        fastrpc_user_get(fl); /* owns buf->fl until DSP shutdown */
+ 		}
+ 	}
+ 
+@@ -1327,7 +1383,7 @@
+ 		 * that does not support unsigned PD offload
+ 		 */
+ 		if (!fl->cctx->unsigned_support || !unsigned_pd_request) {
+-			dev_err(&fl->cctx->rpdev->dev, "Error: Untrusted application trying to offload to signed PD\n");
++			dev_err(prepared_owner, "Error: Untrusted application trying to offload to signed PD\n");
+ 			return true;
+ 		}
+ 	}
+@@ -1625,9 +1681,18 @@
+ {
+ 	struct fastrpc_user *fl = (struct fastrpc_user *)file->private_data;
+ 	struct fastrpc_channel_ctx *cctx = fl->cctx;
++        struct fastrpc_invoke_ctx *ctx, *next;
+ 	unsigned long flags;
+ 
+ 	fastrpc_release_current_dsp_process(fl);
++        /* Last file reference: no ioctl can still own a pending host request.
++         * Interrupted/timed-out requests retain a host ref and a user ref;
++         * waiting for user_free to drop them creates a reference cycle.
++         * The separate remote ref keeps DMA alive until response or shutdown. */
++        list_for_each_entry_safe(ctx, next, &fl->pending, node) {
++                list_del(&ctx->node);
++                fastrpc_context_put(ctx);
++        }
+ 
+ 	spin_lock_irqsave(&cctx->lock, flags);
+ 	list_del(&fl->user);
+@@ -1670,7 +1735,7 @@
+ 
+ 	fl->sctx = fastrpc_session_alloc(fl);
+ 	if (!fl->sctx) {
+-		dev_err(&cctx->rpdev->dev, "No session available\n");
++		dev_err(prepared_owner, "No session available\n");
+ 		mutex_destroy(&fl->mutex);
+ 		kfree(fl);
+ 
+@@ -1823,12 +1888,12 @@
+ 
+ 	err = fastrpc_get_info_from_dsp(fl, dsp_attributes, FASTRPC_MAX_DSP_ATTRIBUTES);
+ 	if (err == DSP_UNSUPPORTED_API) {
+-		dev_info(&cctx->rpdev->dev,
++		dev_info(prepared_owner,
+ 			 "Warning: DSP capabilities not supported\n");
+ 		kfree(dsp_attributes);
+ 		return -EOPNOTSUPP;
+ 	} else if (err) {
+-		dev_err(&cctx->rpdev->dev, "Error: dsp information is incorrect err: %d\n", err);
++		dev_err(prepared_owner, "Error: dsp information is incorrect err: %d\n", err);
+ 		kfree(dsp_attributes);
+ 		return err;
+ 	}
+@@ -1854,7 +1919,7 @@
+ 	cap.capability = 0;
+ 
+ 	if (cap.attribute_id >= FASTRPC_MAX_DSP_ATTRIBUTES) {
+-		dev_err(&fl->cctx->rpdev->dev, "Error: invalid attribute: %d, err: %d\n",
++		dev_err(prepared_owner, "Error: invalid attribute: %d, err: %d\n",
+ 			cap.attribute_id, err);
+ 		return -EOVERFLOW;
+ 	}
+@@ -2210,6 +2275,7 @@
+ }
+ 
+ static const struct file_operations fastrpc_fops = {
++	.owner = THIS_MODULE,
+ 	.open = fastrpc_device_open,
+ 	.release = fastrpc_device_release,
+ 	.unlocked_ioctl = fastrpc_device_ioctl,
+@@ -2289,7 +2355,7 @@
+ }
+ 
+ static const struct of_device_id fastrpc_match_table[] = {
+-	{ .compatible = "qcom,fastrpc-compute-cb", },
++	{ .compatible = "qcom,gts9u-fastrpc-prepared-cb", },
+ 	{}
+ };
+ 
+@@ -2297,7 +2363,7 @@
+ 	.probe = fastrpc_cb_probe,
+ 	.remove = fastrpc_cb_remove,
+ 	.driver = {
+-		.name = "qcom,fastrpc-cb",
++		.name = "qcom,gts9u-fastrpc-prepared-cb",
+ 		.of_match_table = fastrpc_match_table,
+ 		.suppress_bind_attrs = true,
+ 	},
+@@ -2361,9 +2427,8 @@
+ 	.dma_addr_bits_default = 32,
+ };
+ 
+-static int fastrpc_rpmsg_probe(struct rpmsg_device *rpdev)
+-{
+-	struct device *rdev = &rpdev->dev;
++static int fastrpc_prepare_contexts(struct device *rdev)
++{
+ 	struct fastrpc_channel_ctx *data;
+ 	int i, err, domain_id = -1, vmcount;
+ 	const char *domain;
+@@ -2371,7 +2436,7 @@
+ 	unsigned int vmids[FASTRPC_MAX_VMIDS];
+ 	const struct fastrpc_soc_data *soc_data;
+ 
+-	soc_data = device_get_match_data(rdev);
++	soc_data = &default_soc_data;
+ 
+ 	err = of_property_read_string(rdev->of_node, "label", &domain);
+ 	if (err) {
+@@ -2437,55 +2502,68 @@
+ 	spin_lock_init(&data->lock);
+ 	idr_init(&data->ctx_idr);
+ 	data->domain_id = domain_id;
+-	data->rpdev = rpdev;
+-	dev_set_drvdata(&rpdev->dev, data);
++	data->rpdev = NULL;
++	dev_set_drvdata(rdev, data);
+ 
+ 	err = of_platform_populate(rdev->of_node, NULL, NULL, rdev);
+ 	if (err)
+ 		goto err_depopulate;
+ 
+-	/* Users may open the misc device as soon as it is registered. */
+-	switch (domain_id) {
+-	case ADSP_DOMAIN_ID:
+-	case MDSP_DOMAIN_ID:
+-	case SDSP_DOMAIN_ID:
+-		/* Unsigned PD offloading is only supported on CDSP and GDSP */
+-		data->unsigned_support = false;
+-		err = fastrpc_device_register(rdev, data, secure_dsp, domain);
+-		if (err)
+-			goto err_depopulate;
+-		break;
+-	case CDSP_DOMAIN_ID:
+-	case GDSP_DOMAIN_ID:
+-		data->unsigned_support = true;
+-		/* Create both device nodes so that we can allow both Signed and Unsigned PD */
+-		err = fastrpc_device_register(rdev, data, true, domain);
+-		if (err)
+-			goto err_depopulate;
+-
+-		err = fastrpc_device_register(rdev, data, false, domain);
+-		if (err)
+-			goto err_deregister_fdev;
+-		break;
+-	default:
+-		err = -EINVAL;
+-		goto err_depopulate;
+-	}
+-
+-	return 0;
+-
+-err_deregister_fdev:
+-	if (data->fdevice)
+-		misc_deregister(&data->fdevice->miscdev);
+-	if (data->secure_fdevice)
+-		misc_deregister(&data->secure_fdevice->miscdev);
++
++        if (!data->sesscount) {
++                err = -ENODEV;
++                goto err_depopulate;
++        }
++        data->unsigned_support = true;
++        dev_info(rdev, "Preallocated %u FastRPC sessions before CDSP start\n", data->sesscount);
++        return 0;
+ err_depopulate:
+-	of_platform_depopulate(rdev);
+-	dev_set_drvdata(rdev, NULL);
+-
++        of_platform_depopulate(rdev);
++        dev_set_drvdata(rdev, NULL);
+ err_free_data:
+-	kfree(data);
+-	return err;
++        kfree(data);
++        return err;
++}
++
++static struct of_changeset prepared_changes;
++
++static int fastrpc_rpmsg_probe(struct rpmsg_device *rpdev)
++{
++        struct fastrpc_channel_ctx *data = dev_get_drvdata(prepared_owner);
++        int ret;
++        if (prepared_consumed || !data)
++                return -ENODEV;
++        prepared_failed = false;
++        data->rpdev = rpdev;
++        dev_set_drvdata(&rpdev->dev, data);
++        rpdev->dev.dma_mask = &data->dma_mask;
++        ret = dma_set_mask_and_coherent(&rpdev->dev, DMA_BIT_MASK(32));
++        if (ret)
++                goto fail;
++        prepared_consumed = true;
++        prepared_ready = true;
++        /* A system-resume recovery unbinds only this RPMsg driver. Restore
++         * the existing misc devices without reallocating DMA sessions. */
++        if (!prepared_published && data->secure_fdevice && data->fdevice) {
++                ret = misc_register(&data->secure_fdevice->miscdev);
++                if (ret)
++                        goto fail;
++                ret = misc_register(&data->fdevice->miscdev);
++                if (ret) {
++                        misc_deregister(&data->secure_fdevice->miscdev);
++                        goto fail;
++                }
++                prepared_published = true;
++        }
++        wake_up_all(&prepared_wait);
++        return 0;
++fail:
++        prepared_consumed = false;
++        prepared_ready = false;
++        prepared_failed = true;
++        data->rpdev = NULL;
++        dev_set_drvdata(&rpdev->dev, NULL);
++        return ret;
+ }
+ 
+ static void fastrpc_notify_users(struct fastrpc_user *user)
+@@ -2500,35 +2578,48 @@
+ 	spin_unlock(&user->lock);
+ }
+ 
++static void prepared_unpublish(struct fastrpc_channel_ctx *data)
++{
++        if (!prepared_published)
++                return;
++        misc_deregister(&data->fdevice->miscdev);
++        misc_deregister(&data->secure_fdevice->miscdev);
++        prepared_published = false;
++}
++
+ static void fastrpc_rpmsg_remove(struct rpmsg_device *rpdev)
+ {
+-	struct fastrpc_channel_ctx *cctx = dev_get_drvdata(&rpdev->dev);
+-	struct fastrpc_buf *buf, *b;
+-	struct fastrpc_user *user;
+-	unsigned long flags;
+-
+-	/* No invocations past this point */
+-	spin_lock_irqsave(&cctx->lock, flags);
+-	cctx->rpdev = NULL;
+-	list_for_each_entry(user, &cctx->users, user)
+-		fastrpc_notify_users(user);
+-	spin_unlock_irqrestore(&cctx->lock, flags);
+-
+-	if (cctx->fdevice)
+-		misc_deregister(&cctx->fdevice->miscdev);
+-
+-	if (cctx->secure_fdevice)
+-		misc_deregister(&cctx->secure_fdevice->miscdev);
+-
+-	list_for_each_entry_safe(buf, b, &cctx->invoke_interrupted_mmaps, node)
+-		list_del(&buf->node);
+-
+-	if (cctx->remote_heap)
+-		fastrpc_buf_free(cctx->remote_heap);
+-
+-	of_platform_depopulate(&rpdev->dev);
+-
+-	fastrpc_channel_ctx_put(cctx);
++        struct fastrpc_channel_ctx *cctx = dev_get_drvdata(&rpdev->dev);
++        struct fastrpc_user *user;
++        struct fastrpc_invoke_ctx *ctx;
++        unsigned long flags;
++        int id;
++
++        down_write(&prepared_transport_lock);
++        spin_lock_irqsave(&cctx->lock, flags);
++        cctx->rpdev = NULL;
++        prepared_consumed = false;
++        prepared_failed = true;
++        prepared_ready = false;
++        wake_up_all(&prepared_wait);
++        list_for_each_entry(user, &cctx->users, user)
++                fastrpc_notify_users(user);
++        /* Include requests from already-closed files, not just live users.
++         * Callback and removal transfer the remote ref exactly once. */
++        idr_for_each_entry(&cctx->ctx_idr, ctx, id) {
++                if (!ctx->response_pending)
++                        continue;
++                ctx->response_pending = false;
++                ctx->retval = -EPIPE;
++                complete(&ctx->work);
++                queue_work(prepared_put_wq, &ctx->put_work);
++        }
++        spin_unlock_irqrestore(&cctx->lock, flags);
++        up_write(&prepared_transport_lock);
++        wake_up_all(&prepared_ctx_wait);
++        prepared_unpublish(cctx);
++        /* Keep DMA devices alive until all open files have released them.
++         * fops.owner prevents module_exit before the last file closes. */
+ }
+ 
+ static int fastrpc_rpmsg_callback(struct rpmsg_device *rpdev, void *data,
+@@ -2550,6 +2641,10 @@
+ 
+ 	spin_lock_irqsave(&cctx->lock, flags);
+ 	ctx = idr_find(&cctx->ctx_idr, ctxid);
++        if (ctx && ctx->response_pending)
++                ctx->response_pending = false;
++        else
++                ctx = NULL;
+ 	spin_unlock_irqrestore(&cctx->lock, flags);
+ 
+ 	if (!ctx) {
+@@ -2565,14 +2660,14 @@
+ 	 * interrupt context so schedule it through a worker thread to
+ 	 * avoid a kernel BUG.
+ 	 */
+-	schedule_work(&ctx->put_work);
++	queue_work(prepared_put_wq, &ctx->put_work);
+ 
+ 	return 0;
+ }
+ 
+ static const struct of_device_id fastrpc_rpmsg_of_match[] = {
+ 	{ .compatible = "qcom,kaanapali-fastrpc", .data = &kaanapali_soc_data },
+-	{ .compatible = "qcom,fastrpc", .data = &default_soc_data },
++	{ .compatible = "qcom,gts9u-fastrpc-prepared", .data = &default_soc_data },
+ 	{ },
+ };
+ MODULE_DEVICE_TABLE(of, fastrpc_rpmsg_of_match);
+@@ -2582,36 +2677,117 @@
+ 	.remove = fastrpc_rpmsg_remove,
+ 	.callback = fastrpc_rpmsg_callback,
+ 	.drv = {
+-		.name = "qcom,fastrpc",
++		.name = "qcom,gts9u-fastrpc-prepared",
+ 		.of_match_table = fastrpc_rpmsg_of_match,
+ 	},
+ };
+ 
++
+ static int fastrpc_init(void)
+ {
+-	int ret;
+-
+-	ret = platform_driver_register(&fastrpc_cb_driver);
+-	if (ret < 0) {
+-		pr_err("fastrpc: failed to register cb driver\n");
+-		return ret;
+-	}
+-
+-	ret = register_rpmsg_driver(&fastrpc_driver);
+-	if (ret < 0) {
+-		pr_err("fastrpc: failed to register rpmsg driver\n");
+-		platform_driver_unregister(&fastrpc_cb_driver);
+-		return ret;
+-	}
+-
+-	return 0;
++        struct device_node *np, *child;
++        int ret;
++        if (!of_machine_is_compatible("samsung,gts9uwifi"))
++                return -ENODEV;
++        np = of_find_node_by_path("/soc@0/remoteproc@32300000/glink-edge/fastrpc");
++        if (!np)
++                return -ENODEV;
++        prepared_owner = root_device_register("gts9u-fastrpc-prepared");
++        if (IS_ERR(prepared_owner)) {
++                ret = PTR_ERR(prepared_owner);
++                of_node_put(np);
++                return ret;
++        }
++        prepared_put_wq = alloc_workqueue("gts9u-fastrpc-put", WQ_UNBOUND | WQ_MEM_RECLAIM | WQ_HIGHPRI, 0);
++        if (!prepared_put_wq) {
++                root_device_unregister(prepared_owner);
++                of_node_put(np);
++                return -ENOMEM;
++        }
++        prepared_owner->of_node = np;
++        of_changeset_init(&prepared_changes);
++        ret = of_changeset_update_prop_string(&prepared_changes, np,
++                        "compatible", "qcom,gts9u-fastrpc-prepared");
++        if (ret)
++                goto destroy;
++        for_each_available_child_of_node(np, child) {
++                if (!of_device_is_compatible(child, "qcom,fastrpc-compute-cb"))
++                        continue;
++                ret = of_changeset_update_prop_string(&prepared_changes, child,
++                                "compatible", "qcom,gts9u-fastrpc-prepared-cb");
++                if (ret) {
++                        of_node_put(child);
++                        goto destroy;
++                }
++        }
++        ret = of_changeset_apply(&prepared_changes);
++        if (ret)
++                goto destroy;
++        ret = platform_driver_register(&fastrpc_cb_driver);
++        if (ret)
++                goto revert;
++        ret = fastrpc_prepare_contexts(prepared_owner);
++        if (ret)
++                goto unregister_cb;
++        ret = register_rpmsg_driver(&fastrpc_driver);
++        if (!ret) {
++                struct fastrpc_channel_ctx *data = dev_get_drvdata(prepared_owner);
++                ret = fastrpc_device_register(prepared_owner, data, true, "cdsp");
++                if (!ret) {
++                        ret = fastrpc_device_register(prepared_owner, data, false, "cdsp");
++                        if (!ret) {
++                                prepared_published = true;
++                                return 0;
++                        }
++                        misc_deregister(&data->secure_fdevice->miscdev);
++                        data->secure_fdevice = NULL;
++                }
++                unregister_rpmsg_driver(&fastrpc_driver);
++        }
++        of_platform_depopulate(prepared_owner);
++        fastrpc_channel_ctx_put(dev_get_drvdata(prepared_owner));
++unregister_cb:
++        platform_driver_unregister(&fastrpc_cb_driver);
++revert:
++        of_changeset_revert(&prepared_changes);
++destroy:
++        destroy_workqueue(prepared_put_wq);
++        of_changeset_destroy(&prepared_changes);
++        prepared_owner->of_node = NULL;
++        of_node_put(np);
++        root_device_unregister(prepared_owner);
++        return ret;
+ }
+ module_init(fastrpc_init);
+ 
+ static void fastrpc_exit(void)
+ {
+-	platform_driver_unregister(&fastrpc_cb_driver);
+-	unregister_rpmsg_driver(&fastrpc_driver);
++        struct fastrpc_channel_ctx *data;
++        struct fastrpc_buf *buf, *next;
++
++        unregister_rpmsg_driver(&fastrpc_driver);
++        /* No callbacks or open files can enqueue work after this point. */
++        destroy_workqueue(prepared_put_wq);
++        data = dev_get_drvdata(prepared_owner);
++        if (data) {
++                prepared_unpublish(data);
++                list_for_each_entry_safe(buf, next, &data->invoke_interrupted_mmaps, node) {
++                        struct fastrpc_user *owner = buf->fl;
++                        list_del(&buf->node);
++                        fastrpc_buf_free(buf);
++                        fastrpc_user_put(owner);
++                }
++                if (data->remote_heap)
++                        fastrpc_buf_free(data->remote_heap);
++                of_platform_depopulate(prepared_owner);
++                fastrpc_channel_ctx_put(data);
++        }
++        platform_driver_unregister(&fastrpc_cb_driver);
++        of_changeset_revert(&prepared_changes);
++        of_changeset_destroy(&prepared_changes);
++        of_node_put(prepared_owner->of_node);
++        prepared_owner->of_node = NULL;
++        root_device_unregister(prepared_owner);
+ }
+ module_exit(fastrpc_exit);

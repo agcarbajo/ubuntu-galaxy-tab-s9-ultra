@@ -1,0 +1,42 @@
+{
+  "ort.aar": {
+    "url": "https://repo.maven.apache.org/maven2/com/microsoft/onnxruntime/onnxruntime-android/1.26.0/onnxruntime-android-1.26.0.aar",
+    "sha256": "09c0780ae8d734ef2774bdf498b624729a855e6f9a8e488a0e7398a4e7396032"
+  },
+  "qnn-ep.aar": {
+    "url": "https://repo.maven.apache.org/maven2/com/qualcomm/qti/onnxruntime-android-qnn/2.5.0/onnxruntime-android-qnn-2.5.0.aar",
+    "sha256": "da496414c0c8374cefede14c9a8c433d331b9ba06b5b02ff0bf4a510a26fc772"
+  },
+  "qnn.aar": {
+    "url": "https://repo.maven.apache.org/maven2/com/qualcomm/qti/qnn-runtime/2.49.0/qnn-runtime-2.49.0.aar",
+    "sha256": "fbb55c5680da8c44398fd78dfbaa50473b17a1cb35a10126d85fd93ea47787b0"
+  },
+  "onnxruntime_c_api.h": {
+    "url": "https://raw.githubusercontent.com/microsoft/onnxruntime/v1.26.0/include/onnxruntime/core/session/onnxruntime_c_api.h",
+    "sha256": "f09c0d8584aae94dced9bb05cff8579f4f6c5c4a2271413ea8ab27bd0bbf46aa"
+  },
+  "mobilenetv2-12.onnx": {
+    "url": "https://media.githubusercontent.com/media/onnx/models/main/validated/vision/classification/mobilenet/model/mobilenetv2-12.onnx",
+    "sha256": "c0c3f76d93fa3fd6580652a45618618a220fced18babf65774ed169de0432ad5"
+  },
+  "onnxruntime_ep_c_api.h": {
+    "url": "https://raw.githubusercontent.com/microsoft/onnxruntime/v1.26.0/include/onnxruntime/core/session/onnxruntime_ep_c_api.h",
+    "sha256": "27538eefe8c720ed2034fe778316e32e72f225daf8b659efe252af4f47e015ed"
+  },
+  "imagenet_classes.txt": {
+    "url": "https://raw.githubusercontent.com/pytorch/hub/master/imagenet_classes.txt",
+    "sha256": "1f386e0d1cb6e28b9c2dac651c3dea6801e98ad1b41a14ce6bb1a093d72069f5"
+  },
+  "onnxruntime-LICENSE": {
+    "url": "https://raw.githubusercontent.com/microsoft/onnxruntime/v1.26.0/LICENSE",
+    "sha256": "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c"
+  },
+  "qnn-ep-LICENSE": {
+    "url": "https://raw.githubusercontent.com/onnxruntime/onnxruntime-qnn/v2.5.0/LICENSE",
+    "sha256": "f11e754f932564a0d8a9ad2c233bf671253dde137d3e2ef3082448bbe83e1764"
+  },
+  "onnx-models-LICENSE": {
+    "url": "https://raw.githubusercontent.com/onnx/models/main/LICENSE",
+    "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+  }
+}

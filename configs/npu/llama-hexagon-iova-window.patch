@@ -1,0 +1,187 @@
+--- a/ggml/src/ggml-hexagon/ggml-hexagon.cpp
++++ b/ggml/src/ggml-hexagon/ggml-hexagon.cpp
+@@ -83,6 +83,7 @@
+ static size_t opt_nhvx    = 0; // use all
+ static int    opt_nhmx    = 1; // when set, enable HMX; when 0, use HVX only
+ static size_t opt_vmem    = HTP_OP_MAX_VMEM_DEFAULT;  // max available va space for buffer mappings
++static size_t opt_iova_window = 0; // optional host FastRPC mapping window, bytes
+ static size_t opt_mbuf    = 1ul * 1024 * 1024 * 1024; // max buffer size
+ static int    opt_etm     = 0;
+ static int    opt_verbose = 0;
+@@ -394,6 +395,9 @@
+     size_t   max_vmem    = 0;
+     size_t   max_bufsize = 0;
+     uint32_t fence_seq;
++    std::unordered_set<ggml_hexagon_shared_buffer *> iova_buffers;
++    uint64_t iova_maps = 0, iova_evictions = 0, iova_report = 0;
++    size_t iova_peak = 0, allocation_peak = 0;
+     uint64_t                cached_uid = 0;
+     std::vector<htp_opnode> cached_nodes;
+@@ -416,6 +420,7 @@
+     void flush(bool all = true);
+     void flush_pending(bool all = false);
+     void flush_batch(size_t min_ops = 1);
++    void prepare_iova_window();
+ 
+     uint64_t record_event();
+     void     wait_event(uint64_t seq);
+@@ -536,6 +541,7 @@
+                 sess->c_name(), (void *) base(), size(), fd(), pinned);
+ 
+         this->mapped = true;
++        if (opt_iova_window && !pinned) sess->iova_maps++;
+     }
+ 
+     void unmap() {
+@@ -543,11 +549,13 @@
+ 
+         if (!this->pinned && mem) {
+             // HTP might still hold a reference, tell it drop it
+-            htp_iface_munmap(sess->handle, fd());
++            int err = htp_iface_munmap(sess->handle, fd());
++            if (opt_iova_window && err) GGML_ABORT("ggml-hex: DSP window unmap failed: %x", err);
+         }
+ 
+         if (mem) {
+-            fastrpc_munmap(sess->domain_id, fd(), (void *) base(), size());
++            int err = fastrpc_munmap(sess->domain_id, fd(), (void *) base(), size());
++            if (opt_iova_window && err) GGML_ABORT("ggml-hex: FastRPC window unmap failed: %x", err);
+         }
+ 
+         HEX_VERBOSE("ggml-hex: %s unmapped buffer: base %p size %zu fd %d\n", sess->c_name(),
+@@ -563,11 +571,13 @@
+ 
+         HEX_VERBOSE("ggml-hex: %s allocated buffer: base %p size %zu fd %d pinned %d\n", sess->c_name(),
+                     (void *) base(), this->size(), fd(), (int) pinned);
+-        mmap();
++        if (!opt_iova_window || pinned) mmap();
++        if (opt_iova_window && !pinned) sess->iova_buffers.insert(this);
+     }
+ 
+     void free() {
+         unmap();
++        sess->iova_buffers.erase(this);
+         // The memory is freed when the shared_ptr refcount drops to 0.
+         HEX_VERBOSE("ggml-hex: %s release ref on buffer: base %p size %zu fd %d\n", sess->c_name(),
+                     (void *) base(), size(), fd());
+@@ -1627,6 +1637,7 @@
+ 
+     std::vector<htp_opnode>          ops;       // htp_opnode of ops
+ 
++    std::vector<ggml_hexagon_shared_buffer *> buffers; // live buffers used by this batch
+     std::vector<htp_buf_desc>        h_bufs;    // htp buffer descriptors
+     std::vector<htp_tensor>          h_tens;    // htp tensor descriptors
+     std::vector<htp_op_desc>         h_ops;     // htp op descriptors
+@@ -1651,6 +1662,7 @@
+         n_ops  = 0;
+         b_vmem = 0;
+ 
++        buffers.clear();
+         b_map.clear();
+         t_map.clear();
+         d_map.clear();
+@@ -1695,6 +1707,7 @@
+         GGML_ASSERT(n_bufs < HTP_OP_MAX_BUFS);
+ 
+         b_map.insert({sbuf->fd(), bi});
++        buffers.push_back(sbuf);
+ 
+         htp_buf_desc &b = h_bufs[bi];
+         b.base = (uint64_t) sbuf->base();
+@@ -2752,8 +2765,49 @@
+     }
+ }
+ 
++// The DSP's delayed mappings still occupy host IOVA space in mainline FastRPC.
++// Register only the current working set. Drain all queued work before evicting
++// a buffer, then release DSP references before unmapping it from FastRPC.
++void ggml_hexagon_session::prepare_iova_window() {
++    if (!opt_iova_window) return;
++    size_t mapped = 0, extra = 0, allocated = 0;
++    for (auto * b : iova_buffers) {
++        allocated += b->size();
++        if (b->mapped) mapped += b->size();
++    }
++    allocation_peak = std::max(allocation_peak, allocated);
++    for (auto * b : op_batch->buffers) if (!b->mapped) extra += b->size();
++    if (mapped + extra > max_vmem) {
++        flush_pending(true);
++        for (auto * b : iova_buffers) {
++            if (b->mapped && !op_batch->b_map.count(b->fd())) {
++                b->unmap();
++                mapped -= b->size();
++                iova_evictions++;
++            }
++        }
++    }
++    if (mapped + extra > max_vmem) GGML_ABORT("ggml-hex: operation exceeds IOVA window");
++    try {
++        for (auto * b : op_batch->buffers) if (!b->mapped) b->mmap();
++    } catch (const std::runtime_error &) {
++        // IOVA allocation may require alignment gaps not counted in byte totals.
++        // Retry once from a drained, empty window to remove fragmentation.
++        flush_pending(true);
++        for (auto * b : iova_buffers) if (b->mapped) {
++            b->unmap();
++            iova_evictions++;
++        }
++        mapped = 0;
++        extra = op_batch->b_vmem;
++        for (auto * b : op_batch->buffers) b->mmap();
++    }
++    iova_peak = std::max(iova_peak, mapped + extra);
++}
++
+ void ggml_hexagon_session::flush_batch(size_t min_ops) {
+     if (op_batch->n_ops < min_ops) { return; }
++    prepare_iova_window();
+ 
+     htp_opbatch_req req {};
+     dspqueue_buffer dbuf{};
+@@ -2778,6 +2832,11 @@
+     flush_sync_peers();
+     flush_batch();
+     flush_pending(all);
++    if (opt_iova_window && opt_verbose && iova_maps > iova_report + 64) {
++        fprintf(stderr, "ggml-hex: IOVA statistics allocated=%zu peak-mapped=%zu maps=%llu evictions=%llu\n",
++            allocation_peak, iova_peak, (unsigned long long)iova_maps, (unsigned long long)iova_evictions);
++        iova_report = iova_maps;
++    }
+ }
+ 
+ void ggml_hexagon_session::enqueue_op(const htp_opnode & node) {
+@@ -3252,6 +3311,7 @@
+     const size_t shm_size = this->op_queue->shm_size();
+     this->max_vmem = (opt_vmem > shm_size) ? (opt_vmem - shm_size) : opt_vmem;
+ 
++    if (opt_iova_window) this->max_vmem = std::min(this->max_vmem, opt_iova_window - shm_size);
+     this->op_batch = new ggml_hexagon_opbatch(this, opt_opbatch, this->max_vmem);
+ 
+     // Start dspqueue/opbatch processing
+@@ -3274,6 +3334,8 @@
+ }
+ 
+ void ggml_hexagon_session::release() noexcept(true) {
++    if (opt_iova_window) GGML_LOG_INFO("ggml-hex: %s IOVA window: allocated-peak=%zu mapped-peak=%zu maps=%llu evictions=%llu\n",
++        c_name(), allocation_peak, iova_peak, (unsigned long long)iova_maps, (unsigned long long)iova_evictions);
+     GGML_LOG_INFO("ggml-hex: releasing session: %s\n", this->name.c_str());
+ 
+     int err;
+@@ -6469,6 +6531,18 @@
+     }
+ #endif
+ 
++    const char * window = getenv("GGML_HEXAGON_IOVA_WINDOW");
++    if (window) {
++        size_t mib = strtoul(window, nullptr, 10);
++        if (mib < 1024 || mib > 2800 || opt_ndev != 1) {
++            GGML_ABORT("ggml-hex: IOVA window requires 1024..2800 MiB and one device");
++        }
++        opt_iova_window = mib * MiB;
++        // Smaller allocations avoid excessive alignment holes in 32-bit IOVA.
++        opt_mbuf = std::min(opt_mbuf, 256 * MiB);
++        GGML_LOG_INFO("ggml-hex: enabling FastRPC IOVA window: %zu MiB\n", mib);
++    }
++
+     // Resolve domain info for all configured devices
+     ggml_hexagon_discover_devices();

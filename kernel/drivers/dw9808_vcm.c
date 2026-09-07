@@ -192,10 +192,8 @@ disable:
 	return ret;
 }
 
-static const struct dev_pm_ops dw9808_pm_ops = {
-	SET_SYSTEM_SLEEP_PM_OPS(pm_runtime_force_suspend, pm_runtime_force_resume)
-	SET_RUNTIME_PM_OPS(dw9808_suspend, dw9808_resume, NULL)
-};
+static DEFINE_RUNTIME_DEV_PM_OPS(dw9808_pm_ops, dw9808_suspend,
+				 dw9808_resume, NULL);
 
 static int dw9808_probe(struct i2c_client *client)
 {
@@ -267,7 +265,7 @@ static struct i2c_driver dw9808_driver = {
 	.driver = {
 		.name = "dw9808-vcm",
 		.of_match_table = dw9808_of_match,
-		.pm = &dw9808_pm_ops,
+		.pm = pm_ptr(&dw9808_pm_ops),
 	},
 	.probe = dw9808_probe,
 	.remove = dw9808_remove,

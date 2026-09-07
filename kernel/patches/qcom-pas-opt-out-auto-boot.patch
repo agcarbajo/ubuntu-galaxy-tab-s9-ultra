@@ -1,0 +1,21 @@
+Subject: [PATCH] remoteproc: qcom: allow firmware nodes to opt out of auto boot
+
+Some systems expose a remote processor dynamically after userspace has
+installed its firmware and runtime dependencies.  Starting it asynchronously
+from rproc_add() races those dependencies and can leave an extra power
+reference when userspace also requests a start.
+
+Honor an opt-in qcom,no-auto-boot property while keeping every existing
+platform descriptor unchanged by default.
+
+--- a/drivers/remoteproc/qcom_q6v5_pas.c
++++ b/drivers/remoteproc/qcom_q6v5_pas.c
+@@ -772,6 +772,8 @@ static int adsp_probe(struct platform_device *pdev)
+ 
+ 	rproc->has_iommu = of_property_present(pdev->dev.of_node, "iommus");
+ 	rproc->auto_boot = desc->auto_boot;
++	if (of_property_read_bool(pdev->dev.of_node, "qcom,no-auto-boot"))
++		rproc->auto_boot = false;
+ 	rproc_coredump_set_elf_info(rproc, ELFCLASS32, EM_NONE);
+ 
+ 	pas = rproc->priv;

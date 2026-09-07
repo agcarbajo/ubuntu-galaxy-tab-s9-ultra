@@ -161,6 +161,23 @@ fi
 
 apply_unless 'Match Samsung SM8550 sequencing' \
 	drivers/phy/phy-snps-eusb2.c match-samsung-sm8550-eusb2-phy-init.patch
+apply_unless 'Qualcomm Kalama RX clock-edge state around PHY collapse' \
+	drivers/phy/qualcomm/phy-qcom-qmp-ufs.c \
+	qmp-ufs-reset-serdes-before-power-down-gts9u.patch
+apply_unless 'Late-created SM-X910 DSP endpoints' \
+	drivers/mailbox/qcom-ipcc.c ipcc-reserve-gts9u-runtime-channels.patch
+apply_unless 'Mask IPCC DSP traffic during SM-X910 system suspend' \
+	drivers/mailbox/qcom-ipcc.c ipcc-mask-summary-during-suspend-gts9u.patch
+apply_unless 'Users may open the misc device as soon as it is registered' \
+	drivers/misc/fastrpc.c fastrpc-publish-after-session-init.patch
+apply_unless 'qcom,early-tx-intent' \
+	drivers/rpmsg/qcom_glink_native.c qcom-glink-early-tx-intent.patch
+apply_unless 'qcom,early-glink' \
+	drivers/remoteproc/qcom_common.c qcom-early-glink-prepare.patch
+apply_unless 'qcom,no-auto-boot' \
+	drivers/remoteproc/qcom_q6v5_pas.c qcom-pas-opt-out-auto-boot.patch
+apply_unless 'qcom,handover-delay-ms' \
+	drivers/remoteproc/qcom_q6v5_pas.c qcom-pas-handover-grace.patch
 apply_unless 'PTN3222_MAX_INIT_CELLS' \
 	drivers/phy/phy-nxp-ptn3222.c configure-nxp-ptn3222-from-dt.patch
 apply_unless 'pwrseq_qcom_wcn_program_wlan_pdc' \

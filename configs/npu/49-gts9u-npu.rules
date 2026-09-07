@@ -1,0 +1,14 @@
+// The render group may operate only the NPU session service and hold a sleep
+// block while an inference process is actively using that hardware.
+polkit.addRule(function(action, subject) {
+    if (action.id === "org.freedesktop.systemd1.manage-units" &&
+        action.lookup("unit") === "gts9u-npu.service" &&
+        (action.lookup("verb") === "start" || action.lookup("verb") === "stop") &&
+        subject.isInGroup("render")) {
+        return polkit.Result.YES;
+    }
+    if (action.id === "org.freedesktop.login1.inhibit-block-sleep" &&
+        subject.isInGroup("render")) {
+        return polkit.Result.YES;
+    }
+});
