@@ -154,3 +154,46 @@ firmware code, then produced QMP `SHUTDOWN` with `guest=true` and
 `-no-reboot` terminates the emulator on a guest reset: **this is not a successful
 macOS boot or a proven DFU session**. Only the emulator exited; the tablet's
 host boot was untouched. Real guest provisioning and graphics remain open.
+
+### DFU transport and signing checkpoint (2026-09-08)
+
+The reset above was traced to the missing virtual USB transport: the booter
+read the USB configuration register and received the generic block-device
+configuration. Importing the public Asahi experiment's
+`vmapple-usb-chardev.patch` into the **personal** TCG build allowed the same
+Ventura firmware to remain in DFU and exchange actual USB control requests.
+The updated native ARM64 binary's SHA-256 is
+`a58b981d25dc3e0357152e2214ae735eee10412365d7ec49cb0451725197e64a`.
+The repository-owned VMApple fixture still passes after this change.
+
+The physical tablet answered device/configuration descriptor requests,
+SET_ADDRESS, SET_CONFIGURATION and DFU GETSTATE, with VID/PID `05ac:1227`
+and actual state `02`. This is firmware DFU, not the macOS installer.
+
+The tablet kernel does not enable `CONFIG_USBIP_CORE`. A separate disposable
+TCG instance in WSL was therefore used to test the complete USB/IP/VHCI path
+without altering the tablet kernel. The unmodified `irecovery` client at
+`1c495c5aa1ba7fd82cd22f054092fde7979d8532` identified `VirtualMac2,1`,
+`vma2macosap`, CPID `0xfe00`, BDID `0x20`, DFU mode and `iBoot-8422.141.2`.
+The owned emulator/bridge processes were stopped and their VHCI port released
+after each bounded test; no physical USB restore target was used.
+
+Apple TSS returned signing tickets for the disposable VM and Ventura 13.6.
+The private restore client is based on
+`45145e9fdc8458022c61a4b87bd029b866d5bcdc`, with a narrowly scoped change that
+skips payload-file presence checks **only for `--shsh`/ticket-only requests**.
+This avoids copying the whole IPSW just to request signatures. A real restore
+against the incomplete payload tree was separately verified to fail its
+original required-component checks. Tickets and personalized images remain
+private and are not release assets.
+
+The next test wrapped the original iBSS payload with the returned IMG4 ticket
+and attempted transfer. The first 2,048-byte block was followed by an actual
+six-byte DFU status `09 32 00 00 0a 00` (nonzero status, state 10). No second
+DNLOAD block was sent. Despite that, the `irecovery -f` command exited zero.
+Thus CLI exit status is insufficient: the harness must reject nonzero DFU
+status bytes and must not invent successful replies when firmware responses
+are empty or time out. The local strict transport retries empty status
+responses, then fails rather than synthesizing download-idle or wait-reset.
+The iBSS transfer is **not successful**; XNU, installation and GPU acceleration
+remain unverified.
