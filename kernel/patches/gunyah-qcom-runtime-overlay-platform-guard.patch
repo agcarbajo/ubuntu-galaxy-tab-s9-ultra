@@ -1,0 +1,16 @@
+--- a/drivers/virt/gunyah/qcom_bootinfo.c
++++ b/drivers/virt/gunyah/qcom_bootinfo.c
+@@ -149,6 +149,13 @@
+ 	unsigned int i, count;
+ 	int ret = -ENODEV;
+ 
++	/* This legacy firmware call is verified only on the SM-X910. An
++	 * unconditional SMC may trap in generic guests (for example QEMU virt).
++	 * Do not probe unrelated machines with a vendor-private call.
++	 */
++	if (!of_machine_is_compatible("samsung,gts9uwifi"))
++		return 0;
++
+ 	hypervisor = of_find_node_by_path("/hypervisor");
+ 	if (hypervisor) {
+ 		of_node_put(hypervisor);

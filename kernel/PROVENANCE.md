@@ -54,6 +54,19 @@ Fuentes: [CMA de Android Common](https://android.googlesource.com/kernel/common/
 y [parser legacy del Resource Manager](https://github.com/quic/gunyah-resource-manager/blob/0accef9/src/vm_config/vm_config_parser.c).
 Las pruebas y límites de runtime9 están en `docs/virtualization.md`.
 
+Correcciones propias de aislamiento de plataforma, validadas el 2026-09-08:
+
+- `gunyah-qcom-runtime-overlay-platform-guard.patch`:
+  `d7436eb1762f29d441bfa40f414c33192a9a3476878e258b9b3e32c11c6c1784`.
+  Limita la llamada privada de descubrimiento al compatible SM-X910 probado;
+  evita una instrucción indefinida al arrancar el kernel como guest QEMU virt.
+- `gunyah-qcom-platform-scm-guard.patch`:
+  `c86deb6ea558899ca44aae45bc4cde6b9b332810224cf8a01374b3d2bd4341d7`.
+  Exige un proveedor SCM inicializado antes de consultar el UUID privado.
+  El hook protegido carga en la tablet y pasa la prueba no destructiva de
+  VM/memoria/vCPU. Ambos guards permiten llegar a shell y apagar un guest
+  Linux TCG en la tablet, sin cambiar el kernel host instalado.
+
 ### Importación inicial
 
 Se completa a medida que se importa cada fichero, con el hash SHA-256 de la

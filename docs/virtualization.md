@@ -161,8 +161,7 @@ Generic CMA LEND with the padded classic-affinity DTB also reaches VM_INIT and
 returns raw error 6, so the tested SHARE/LEND choice is not sufficient to fix
 initialization. A guest DTB adding the legacy parser's CPU `config`,
 `enable-method`, and interrupt-node metadata also returned error 6.
-The next investigation must resolve VM_INIT's legacy configuration contract;
-do not count repeated successful memory transfers as successful VM execution.
+Do not count repeated successful memory transfers as successful VM execution.
 
 The installed stock firmware was inspected from a local copy of
 `hypvm.mbn` (SHA-256
@@ -171,6 +170,92 @@ Its diagnostic strings include the older mandatory CPU fields found in the
 public Resource Manager revision `0accef9`, unlike the 2026 parser which
 ignores some of those fields. This comparison guides further tests; it does
 not establish that the public revision exactly matches Samsung's binary.
+
+### Shipping RM policy restriction (2026-09-08)
+
+An argument-level kprobe/kretprobe run, with the padded legacy DTB, recorded:
+
+```text
+gh_rm_alloc_vmid(request=0) -> 45
+gh_rm_vm_configure(vmid=45, auth=0, handle=0,
+                  image_offset=0, image_size=0,
+                  dtb_offset=8388608, dtb_size=2097152) -> success
+gh_rm_vm_init(vmid=45) -> raw RM 6 / Linux -EINVAL
+```
+
+A separate allocation-only test requested VMID 64 and received raw RM error 2
+(`-ENODEV`), without assigning RAM or starting a VM. Both tests were followed
+by a reboot and host health validation. Local evidence is
+`cma-route-share-legacy-args-ftrace.log` and the corresponding kernel log.
+
+Read-only disassembly of the **same hash-pinned Samsung firmware**, not an
+assumed public RM revision, explains this combination. Its RM is a nested ELF
+at file offset `0x1145c0` within `hypvm.mbn`. Relative to that embedded ELF:
+
+- The allocation handler at `0x39288` rejects VMIDs above 63; automatic
+  allocation selects from a 64-bit platform bitmap.
+- Image configuration stores the requested authentication mechanism at VM
+  structure offset `0x100` (instruction `0x46a24`).
+- Platform initialization checks that field at `0x4703c`. Mechanism 1 takes
+  the authenticated-image path; other mechanisms enter the path at `0x470fc`.
+- That non-authenticated path rejects VMIDs below 64 at `0x47100`–`0x47104`,
+  eventually returning raw RM error 6 at `0x47324`.
+
+Thus the tested public allocation/configuration route cannot simultaneously
+satisfy this firmware's allocation and unsigned-image initialization policies.
+This is not a remaining DTB-padding or physical-contiguity issue. It does not
+prove that every possible firmware interface is unusable; the authenticated
+QTVM route is separate and has not passed SCM assignment/authentication.
+Changing the Linux UAPI or implementing a KVM facade would not remove this
+firmware check. Firmware replacement, flashing Qualcomm partitions and disabling
+security policy are not part of the permitted recovery strategy.
+
+The public RM log request (`0x00000005`) also returns raw error -1
+(`-EOPNOTSUPP`) on this firmware. Do not rely on it for diagnostics.
+
+QEMU TCG remains a non-destructive alternative for Linux guest/device-model
+bring-up while the hardware-virtualization restriction is investigated. TCG
+emulates the guest CPU; a TCG boot must not be reported as Gunyah or KVM success.
+
+### Guard private firmware discovery on generic guests
+
+Running the port kernel as a QEMU `virt` guest exposed an unconditional SMC in
+`qcom_hyp_bootinfo_init()`: the guest panicked with an undefined instruction
+before reaching init. The host tablet remained unaffected.
+`gunyah-qcom-runtime-overlay-platform-guard.patch` restricts that private
+firmware-discovery call to the verified `samsung,gts9uwifi` machine compatible.
+The build script applies the guard to both fresh and reused source trees.
+This correction is generic port hygiene, not a macOS-only workaround.
+
+The next boot exposed the same issue in the Qualcomm platform-hook UUID query.
+`gunyah-qcom-platform-scm-guard.patch` requires a probed SCM provider before
+issuing that SMC. SCM initializes at the subsystem initcall level, before the
+platform-hook module/device initcall. The guarded hook was also loaded and
+unloaded on the real tablet, and the VM/memory/vCPU non-starting smoke passed.
+
+With both guards, the port kernel booted to the Ubuntu initramfs BusyBox shell
+under QEMU 8.2.2 TCG on the physical tablet. The shell reported `aarch64`,
+mounted procfs, printed the guest kernel version and powered down through PSCI.
+One CPU and 512 MiB RAM completed the full process in 5.61 seconds; this is a
+smoke-test duration, not a macOS performance prediction. No host disk, network
+interface or hardware passthrough was attached. The host kernel/boot partition
+was not replaced for these tests.
+
+Guest Image SHA-256 (both guards, exact host configuration retained):
+`19fabe5c5e34e6e8137a21736446fd7ac7cf3528134f2055e6b7cf91fb9a4b84`.
+
+The bounded regression harness is `scripts/test-qemu-tcg-linux.py`. Run it as
+an ordinary user with an ARM64 Linux Image and Ubuntu initramfs containing
+BusyBox `/bin/sh`, the usual shell utilities, and `/usr/bin/poweroff`:
+
+```sh
+python3 scripts/test-qemu-tcg-linux.py --kernel /path/to/Image \
+  --initrd /path/to/initrd --log /path/to/new-test.log
+```
+
+The log must not already exist. Success requires guest-produced markers,
+`aarch64`, successful procfs commands and guest poweroff, not merely QEMU exit
+code zero (which also occurs with `-no-reboot` after a guest panic).
 
 Runtime9 boot SHA-256:
 `c0f3d7bd8066acb688ea0bb6224b90d011b71a5bf64fe36edd1394d5aa4ee23a`.

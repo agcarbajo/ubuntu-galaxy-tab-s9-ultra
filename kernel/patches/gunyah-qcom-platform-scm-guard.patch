@@ -1,0 +1,14 @@
+--- a/drivers/virt/gunyah/gunyah_qcom.c
++++ b/drivers/virt/gunyah/gunyah_qcom.c
+@@ -151,7 +151,11 @@
+ 
+ static int __init qcom_gh_platform_hooks_register(void)
+ {
++	/* Never issue a private SMC without a probed SCM provider. */
++	if (!qcom_scm_is_available())
++		return -ENODEV;
++
+ 	if (!gh_has_qcom_extensions())
+ 		return -ENODEV;
+ 
+ 	return gh_rm_register_platform_ops(&qcom_scm_gh_rm_platform_ops);

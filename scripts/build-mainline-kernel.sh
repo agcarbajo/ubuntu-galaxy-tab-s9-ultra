@@ -158,6 +158,10 @@ fi
 if [ ! -f "$kernel_tree/drivers/virt/gunyah/qcom_bootinfo.c" ]; then
 	patch -d "$kernel_tree" -p1 < "$pat/gunyah-qcom-runtime-overlay.patch"
 fi
+apply_unless 'This legacy firmware call is verified only on the SM-X910' \
+	drivers/virt/gunyah/qcom_bootinfo.c gunyah-qcom-runtime-overlay-platform-guard.patch
+apply_unless 'Never issue a private SMC without a probed SCM provider' \
+	drivers/virt/gunyah/gunyah_qcom.c gunyah-qcom-platform-scm-guard.patch
 if [ "$enable_gunyah_cma" = 1 ]; then
 	if [ ! -f "$kernel_tree/drivers/virt/gunyah/vm_mgr_cma_mem.c" ]; then
 		git -C "$kernel_tree" apply --recount "$pat/gunyah-qtvm-cma.patch"
