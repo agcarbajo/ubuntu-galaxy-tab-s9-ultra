@@ -1,0 +1,81 @@
+diff --git a/include/libcamera/internal/egl.h b/include/libcamera/internal/egl.h
+index 7ef1ca0..5680fe0 100644
+--- a/include/libcamera/internal/egl.h
++++ b/include/libcamera/internal/egl.h
+@@ -103,6 +103,7 @@ public:
+ 	~eGL();
+ 
+ 	int initEGLContext();
++	void releaseContext();
+ 	static EGLDisplay probeDisplay();
+ 
+ 	int createInputDMABufTexture2D(eGLImage &eglImage, int fd);
+diff --git a/src/libcamera/egl.cpp b/src/libcamera/egl.cpp
+index 01e51cd..cea232f 100644
+--- a/src/libcamera/egl.cpp
++++ b/src/libcamera/egl.cpp
+@@ -82,11 +82,28 @@ eGL::eGL(EGLDisplay display)
+  */
+ eGL::~eGL()
+ {
+-	if (context_ != EGL_NO_CONTEXT)
++	releaseContext();
++}
++
++/**
++ * \brief Release per-stream EGL resources before the ISP worker exits
++ *
++ * Called after deleting GL objects on the rendering thread. Do not terminate
++ * the display: other cameras and clients can share it. Safe to call twice.
++ */
++void eGL::releaseContext()
++{
++	if (context_ != EGL_NO_CONTEXT) {
++		if (eglGetCurrentContext() == context_)
++			eglMakeCurrent(display_, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+ 		eglDestroyContext(display_, context_);
++		context_ = EGL_NO_CONTEXT;
++	}
+ 
+-	if (surface_ != EGL_NO_SURFACE)
++	if (surface_ != EGL_NO_SURFACE) {
+ 		eglDestroySurface(display_, surface_);
++		surface_ = EGL_NO_SURFACE;
++	}
+ }
+ 
+ /**
+diff --git a/src/libcamera/software_isp/debayer_egl.cpp b/src/libcamera/software_isp/debayer_egl.cpp
+index 659a5cf..0989a73 100644
+--- a/src/libcamera/software_isp/debayer_egl.cpp
++++ b/src/libcamera/software_isp/debayer_egl.cpp
+@@ -671,8 +671,10 @@ int DebayerEGL::start()
+ 
+ 	LOG(Debayer, Debug) << "Available fragment shader texture units " << maxTextureImageUnits;
+ 
+-	if (initBayerShaders(inputPixelFormat_, outputPixelFormat_))
++	if (initBayerShaders(inputPixelFormat_, outputPixelFormat_)) {
++		stop();
+ 		return -EINVAL;
++	}
+ 
+ 	return 0;
+ }
+@@ -682,8 +684,16 @@ void DebayerEGL::stop()
+ 	eglImageOutCache_.clear();
+ 	eglImageInCache_.clear();
+ 
+-	if (programId_)
++	if (programId_) {
++		glUseProgram(0);
+ 		glDeleteProgram(programId_);
++		programId_ = 0;
++	}
++
++	/* The worker exits after stop(). A later start creates a new context. */
++	egl_.releaseContext();
++	vertexShaderId_ = 0;
++	fragmentShaderId_ = 0;
+ }
+ 
+ SizeRange DebayerEGL::sizes(PixelFormat inputFormat, const Size &inputSize)

@@ -1,8 +1,9 @@
 #!/bin/bash
 # Build the camera userspace that Noble does not provide at a usable version.
 #
-# The SM8550 CAMSS graph needs libcamera's current simple pipeline and CPU
-# software ISP.  Noble's libcamera 0.2 predates that support.  PipeWire 1.0.5
+# The SM8550 CAMSS graph needs libcamera's current simple pipeline and software
+# ISP. Enable its GPU backend with the full-field-of-view and lifetime fixes.
+# Noble's libcamera 0.2 predates that support. PipeWire 1.0.5
 # also needs seven small backports so its SPA plugin can consume libcamera 0.7
 # controls, packed RGB buffers and the safe request-reuse lifecycle.
 set -euo pipefail
@@ -15,7 +16,7 @@ suite=${UBUNTU_SUITE:-noble}
 mirror=${UBUNTU_MIRROR:-http://ports.ubuntu.com/ubuntu-ports}
 
 libcamera_commit=62d4bfc450798cbd57722fa349a245b93b11d1cd
-libcamera_version=0.7.2+53.g62d4bfc-gts9u7
+libcamera_version=0.7.2+53.g62d4bfc-gts9u8
 pipewire_commit=a2287be601710eea0d073261223ec34b92384c8a
 pipewire_version=1.0.5-gts9u10
 skip_build=${SKIP_CAMERA_BUILD:-0}
@@ -50,7 +51,7 @@ step() { printf '\n########## %s\n' "$1"; }
 build_deps='build-essential meson ninja-build pkg-config git ca-certificates
 python3 python3-jinja2 python3-yaml python3-ply
 libgnutls28-dev libudev-dev libyaml-dev libdrm-dev libjpeg-dev libtiff-dev
-libevent-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
+libevent-dev libegl-dev libgles-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
 libboost-dev libdw-dev libpipewire-0.3-dev'
 
 step 'throwaway arm64 build chroot'
@@ -148,7 +149,8 @@ git apply \
 	/build/camera-inputs/libcamera/0001-libipa-add-hynix-hi1337-hi847-gain-helpers.patch \
 	/build/camera-inputs/libcamera/0002-simple-software-autofocus.patch \
 	/build/camera-inputs/libcamera/0003-software-isp-preserve-full-field-of-view.patch \
-	/build/camera-inputs/libcamera/0004-simple-reset-qcom-camss-links-before-configure.patch
+	/build/camera-inputs/libcamera/0004-simple-reset-qcom-camss-links-before-configure.patch \
+	/build/camera-inputs/libcamera/0005-release-gpu-context-on-camera-stop.patch
 meson setup build \
 	--buildtype=release \
 	--prefix=/usr \
@@ -166,7 +168,7 @@ meson setup build \
 	-Dpycamera=disabled \
 	-Dv4l2=false \
 	-Dtracing=disabled \
-	-Dsoftisp-gpu=disabled
+	-Dsoftisp-gpu=enabled
 meson compile -C build
 DESTDIR=/build/stage-libcamera meson install --no-rebuild -C build
 install -Dm644 /build/camera-inputs/tuning/hi1337-gts9u.yaml \
@@ -198,7 +200,7 @@ exit 0
 POSTRM
 
 package_tree /build/stage-libcamera libcamera-gts9u "$libcamera_version" \
-	'libc6, libstdc++6, libgnutls30t64, libudev1, libyaml-0-2, libevent-2.1-7t64, libevent-pthreads-2.1-7t64, libtiff6, libdw1t64, libunwind8, libgstreamer1.0-0, libgstreamer-plugins-base1.0-0' \
+	'libc6, libstdc++6, libgnutls30t64, libudev1, libyaml-0-2, libegl1, libgles2, libevent-2.1-7t64, libevent-pthreads-2.1-7t64, libtiff6, libdw1t64, libunwind8, libgstreamer1.0-0, libgstreamer-plugins-base1.0-0' \
 	'libcamera simple pipeline and software ISP for the Galaxy Tab S9 Ultra' \
 	"$buildroot/build/stage-libcamera-DEBIAN"
 
