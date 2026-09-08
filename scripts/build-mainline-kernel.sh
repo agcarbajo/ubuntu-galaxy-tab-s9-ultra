@@ -322,6 +322,9 @@ if [ "$fingerprint_touch" = 1 ]; then
 	apply_unless 'failed to disable FOD mode at suspend' \
 		drivers/input/touchscreen/goodix_berlin_core.c \
 		cleanup-goodix-fod-on-suspend.patch
+	apply_unless 'Keep suppressed contacts until their coordinate RELEASE' \
+		drivers/input/touchscreen/goodix_berlin_core.c \
+		retain-goodix-fod-contact-until-release.patch
 fi
 
 # Xorg only creates a PRIME GPU screen when MODE_GETRESOURCES succeeds.  Keep

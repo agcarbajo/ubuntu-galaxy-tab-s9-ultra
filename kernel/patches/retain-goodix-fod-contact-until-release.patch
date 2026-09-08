@@ -1,0 +1,62 @@
+Subject: input: goodix: retain FOD contacts until physical release
+
+Disabling the optical reader after authentication must not turn a still-held
+finger into a new desktop touch. Keep suppressed coordinate slots across FOD
+disable, process their RELEASE even while disabled, and suppress their MOVE
+packets until then. Do not publish FOD events for an already closed session.
+A new PRESS resets a stale slot if the firmware omitted an earlier RELEASE.
+Suspend cleanup continues to clear all slots after input is quiesced.
+
+--- a/drivers/input/touchscreen/goodix_berlin_core.c
++++ b/drivers/input/touchscreen/goodix_berlin_core.c
+@@ -5,12 +5,9 @@
+ 	bool notify = false;
+ 
+ 	mutex_lock(&cd->fod_lock);
+-	if (!cd->fod_enabled)
+-		goto out;
+-
+ 	if (action == GOODIX_BERLIN_SAMSUNG_ACTION_RELEASE) {
+ 		suppress = test_and_clear_bit(id, &cd->fod_suppressed_slots);
+-		if (suppress) {
++		if (suppress && cd->fod_enabled) {
+ 			cd->fod_state = GOODIX_BERLIN_FOD_RELEASED;
+ 			cd->fod_x = x;
+ 			cd->fod_y = y;
+@@ -20,6 +17,15 @@
+ 		goto out;
+ 	}
+ 
++	/* A retained FOD contact belongs to the reader until physical release,
++	 * even if userspace has already disabled FOD after a successful match.
++	 * A fresh PRESS starts a new contact if firmware missed the old RELEASE. */
++	if (action == GOODIX_BERLIN_SAMSUNG_ACTION_PRESS)
++		clear_bit(id, &cd->fod_suppressed_slots);
++	suppress = test_bit(id, &cd->fod_suppressed_slots);
++	if (!cd->fod_enabled)
++		goto out;
++
+ 	if (action == GOODIX_BERLIN_SAMSUNG_ACTION_PRESS &&
+ 	    cd->fod_rect_valid && x >= cd->fod_rect[0] &&
+ 	    x <= cd->fod_rect[2] && y >= cd->fod_rect[1] &&
+@@ -52,10 +58,10 @@
+ 
+ 	disable_irq(cd->irq);
+ 	mutex_lock(&cd->fod_lock);
++	cd->fod_suppressed_slots = 0;
+ 	if (cd->fod_enabled) {
+ 		error = goodix_berlin_set_fod_mode_locked(cd, false);
+ 		cd->fod_enabled = false;
+-		cd->fod_suppressed_slots = 0;
+ 		cd->fod_state = GOODIX_BERLIN_FOD_IDLE;
+ 		cd->fod_x = 0;
+ 		cd->fod_y = 0;
+@@ -96,7 +102,7 @@
+ 	if (!error) {
+ 		cd->fod_enabled = enable;
+ 		if (!enable) {
+-			cd->fod_suppressed_slots = 0;
++			/* Keep suppressed contacts until their coordinate RELEASE. */
+ 			cd->fod_state = GOODIX_BERLIN_FOD_IDLE;
+ 			cd->fod_x = 0;
+ 			cd->fod_y = 0;
