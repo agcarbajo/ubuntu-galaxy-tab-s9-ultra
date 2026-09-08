@@ -2,11 +2,14 @@
 
 ## Scope
 
-The reusable virtualization path is Qualcomm Gunyah, not KVM. Samsung's
+The current reusable virtualization path targets Qualcomm Gunyah, not native
+ARM KVM. Samsung's
 firmware already owns EL2 and runs Ubuntu as the primary VM, so Linux correctly
 reports that KVM hyp mode is unavailable. The port exposes the firmware
 Resource Manager through `/dev/gunyah` and builds the VM, vCPU, memory,
-ioeventfd and irqfd interfaces into the kernel.
+ioeventfd and irqfd interfaces into the kernel. A separate KVM-on-Gunyah RFC
+can delegate from EL1, but its firmware requirements are not met here; see
+the source and dispatcher audit below.
 
 This document covers only generic host functionality. macOS-specific firmware,
 machine identities, restore images, vmapple changes and Apple virtual devices
@@ -292,6 +295,96 @@ or an accepted QTVM boot chain capable of launching the intended payload.
 Neither is presently available. Replacing Qualcomm firmware, changing system
 VM roles, or assuming another manufacturer's image is interchangeable is not
 a validated recovery plan. TCG results cannot satisfy this stop condition.
+
+### KVM-on-Gunyah RFC and community reports (2026-09-08)
+
+Linaro's [KVM-on-Gunyah RFC](https://www.spinics.net/lists/kvm/msg375545.html)
+is a real hardware-backed design: KVM runs at EL1 and delegates guest execution
+to Gunyah. It does not require Linux to own EL2. The inspected
+[source revision](https://github.com/karim-manaouil/linux-next/commit/81e88bfca90c73cb2d754672b4b538e7e09edea8)
+is pinned, not an assumption that any ordinary KVM build can do this.
+Its VM setup requires RM boot-context (`0x56000031`), demand-paging
+(`0x56000033`) and address-layout (`0x56000034`) messages as well as VM_INIT.
+
+An offline ARM64 dispatcher test using Unicorn 2.1.4 executed unmodified
+loadable RM code from both hash-pinned firmware inputs described above.
+ALLOC and TIME_BASE reached their expected handlers (stopped before their
+bodies). Each of the three RFC messages and pvmfw's `0x56000032` reached
+the unsupported reply with raw error -1. All six cases passed on each input.
+The test starts after the PAC prologue, stubs only diagnostic printf and
+intercepts the reply call; it neither runs the full RM nor sends live RPCs.
+This corroborates the dispatch restriction, not successful hardware execution.
+Porting this RFC unchanged would therefore not resolve this installation's
+firmware contract. A legacy adaptation would still need to resolve VM_INIT.
+
+The user's [Tab S9 Ultra issue](https://github.com/quic/gunyah-hypervisor/issues/24)
+was checked including all 24 comments available on this date. It contains
+failed Tab S9 VM creation reports, not a confirmed working configuration.
+Qualcomm's comment also distinguishes its public hypervisor source from
+firmware deployable on commercial devices. A failed `cat /dev/gunyah` is not
+a meaningful VM test: the device is controlled through ioctls.
+
+The pvmfw guide's author explicitly says in the
+[OnePlus 11 discussion](https://github.com/polygraphene/gunyah-on-sd-guide/issues/1#issuecomment-3015616428)
+that they had not tested an 8 Gen 2 device. Later comments identify an older
+ioctl interface on those devices. This is distinct from our post-CONFIG RM
+failure; fixing a userspace ioctl mismatch does not supply absent RM handlers.
+
+There is a more relevant positive [Galaxy S24 / SM8650 report](https://github.com/polygraphene/gunyah-on-sd-guide/issues/5)
+with linked source, but not evidence for SM8550. Its inspected changes are
+[vmalloc fallback for large auxiliary arrays](https://github.com/Andy312432/android_kernel_samsung_sm8650_gunyah/commit/3d8767092fa186b77dfcbc5fd14b53ae17b04bb2)
+and [SCM VMID handling](https://github.com/Andy312432/android_kernel_samsung_sm8650_gunyah/commit/b2ffff284b1f8b6cd79c280fb746b27fb6f0cbae).
+The latter derives the share source from the caller's RM VMID and retains
+HLOS as reclaim destination. These changes do not add RM firmware handlers or
+change VM authentication policy. Our small contiguous generic test already
+passes memory transfer and CONFIG before failing INIT. Do not substitute S24
+firmware, change system VM roles, or copy its memory-pressure workarounds into
+release defaults on the strength of that report. None of these reports
+demonstrates macOS ARM or a macOS accelerated graphics driver.
+
+### One UI firmware provenance and lifecycle-gate audit
+
+The locally retained hybrid One UI 8 package
+`BL_X910XXS5DZA1_con_abl_de_CYG1.tar` has SHA-256
+`99cb28f6bc323111ebb38d287d3394e0638ed4cf8ac5ace653b524dc70d1fdce`.
+Its extracted, decompressed `hypvm.mbn` matches the live 10 MiB partition copy
+**exactly**, SHA-256 `dc03857f02055531c221476fa68e6e76006797c20b8e884a1ebd01cee3043b52`.
+The preserved older ABL and the current hypervisor are therefore distinct:
+the host is not simply waiting for that available One UI 8 hypervisor update.
+Preserve the working hybrid boot chain used for the unlocked installation.
+This comparison was entirely offline; the package was not flashed.
+
+Additional private Unicorn tests exercise 26 narrowly bounded gate cases on
+each pinned input (52 passing cases total):
+
+- Auto allocation with synthetic single-free-bit pools selects 45 or 63,
+  while explicit 64, 65 and 65535 are rejected; empty pools reject allocation.
+- The successful-CONFIG tail selects state 1 for auth 0, but state 6 for auth
+  1 or 2. The INIT state gate accepts only state 1 in the tested lifecycle.
+- The unsigned platform gate rejects VMID 45 and 63; synthetic VMID 64
+  reaches the next unsigned branch. Auth 1 selects the authenticated branch.
+
+These tests use synthetic allocator/VM data, stop before constructor,
+notification or platform-initialization bodies, and stub diagnostic printf.
+They do not allocate live VMIDs, authenticate an image, or start a guest.
+Together with the existing live failure, they show why choosing a different
+unsigned VMID or merely enabling QTVM authentication is not a demonstrated fix.
+No claim is made that synthetic state 1 proves an authenticated image exists.
+
+The newer [DroidVM project](https://github.com/Droid-VM/DroidVM) documents
+Qualcomm support starting at SM8650; its
+[UEFI guest firmware](https://github.com/Droid-VM/edk2-gunyah/blob/droidvm/README.md)
+lists SM8750 and SM8850 as tested SoCs. These are useful later-stage VMM/guest
+references, not evidence that they replace the incompatible SM8550 RM contract.
+
+Further physical testing of a **different hypervisor firmware** would require
+writing outside the ordinary Ubuntu boot image, notably the `hyp` partition.
+That is outside the user's current unattended-flashing authorization. No
+compatible replacement has been validated; this is not a recommendation to
+flash another model's firmware or to upgrade the complete BL package.
+An owner-usable authenticated QTVM boot chain would be an alternative, but
+none has been identified in the audited inputs. The hardware CPU and GPU
+acceptance criteria remain unmet.
 
 ### Guard private firmware discovery on generic guests
 
