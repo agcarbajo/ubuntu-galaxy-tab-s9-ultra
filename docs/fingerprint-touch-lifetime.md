@@ -105,3 +105,32 @@ Post-build comparisons verified that config, signing key and certificate,
 Module.symvers, and the recorded Gunyah driver files did not change. The
 original and fixed driver-logic tests were also rerun successfully locally.
 This is build/logic validation, not physical fingerprint or VM validation.
+
+## Candidate boot image prepared, not installed
+
+After returning to the same LAN, Tailscale connected directly to PC-ARTURO
+and the interrupted transfer completed. The full Image hash matched the
+build host. No private signing material was transferred.
+
+`scripts/prepare-fod-kernel8-boot.py` prepares the candidate from the audited
+boot #7 image and kernel #8 Image. It pins both input hashes and the build
+host's AOSP avbtool 1.2.0 hash, rejects existing output paths, preserves the
+original boot-v4 header except for kernel size, and preserves the exact
+appended DTB. The baseline has no boot ramdisk or boot signature. Its existing
+unsigned AVB SHA-256 footer is regenerated using the same salt, partition
+name/size, flags and rollback index; this does not add or remove AVB signing.
+
+```sh
+python3 scripts/prepare-fod-kernel8-boot.py \
+  --baseline /home/agcar/performance-lab/runtime-boost-limit-boot.img \
+  --image /home/agcar/performance-lab/fod-contact-kernel8.Image \
+  --output /home/agcar/performance-lab/fod-contact-kernel8-boot.img \
+  --avbtool /home/agcar/performance-lab/fod-avbtool.py
+```
+
+Candidate SHA-256:
+`a48a7d1b81e27641683fc930b5f9c712990e3748121b09b1cc82bd33e5d9ac8f`.
+Size: 100663296 bytes. AVB footer/hash verification, decompressed Image
+identity, appended DTB identity, header preservation, and driver logic tests
+passed. The tablet still runs #7: no partitions or saved boot sets have been
+written. Physical fingerprint validation requires an owner-approved reboot.
