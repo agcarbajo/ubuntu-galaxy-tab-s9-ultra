@@ -217,6 +217,45 @@ QEMU TCG remains a non-destructive alternative for Linux guest/device-model
 bring-up while the hardware-virtualization restriction is investigated. TCG
 emulates the guest CPU; a TCG boot must not be reported as Gunyah or KVM success.
 
+### Android protected-VM alternative and live image verification
+
+The [Snapdragon pvmfw guide](https://github.com/polygraphene/gunyah-on-sd-guide/blob/main/PVMFW.md)
+describes a protected guest boot path distinct from QTVM. Its published test
+environment is a Lenovo Snapdragon 8 Elite tablet; its recommendation for
+earlier Snapdragon generations is not proof of compatibility with this Samsung.
+Qualcomm likewise distinguishes Android firmware-verified guests from
+[QTVMs authenticated by TrustZone](https://www.qualcomm.com/developer/blog/2024/08/learn-about-gunyah--qualcomm-s-open-source--lightweight-hypervis).
+
+The port's `GH_VM_ANDROID_SET_FW_CONFIG` selects authentication mechanism 2.
+Before VM initialization it requires RM `VM_SET_FIRMWARE_MEM` (`0x56000032`).
+Read-only inspection of this Samsung RM's nonzero-client dispatch follows that
+message to the unsupported-message response, raw RM -1. This is **static
+evidence**, not a newly issued live RPC. The private hash-gated policy checker
+now verifies 35 instruction checkpoints, including this dispatch path. An
+in-guest `pvmfw` rebuild or different guest AVB signatures cannot supply a
+missing host RM message handler.
+
+A fresh read of the first 10 MiB of `/dev/disk/by-partlabel/hyp` on 2026-09-08
+produced SHA-256
+`dc03857f02055531c221476fa68e6e76006797c20b8e884a1ebd01cee3043b52`,
+not the archive hash quoted above. This difference was investigated before
+reusing the analysis: all outer ELF and embedded RM `PT_LOAD` bytes are
+identical, and the 981 differing bytes are outside those loadable segments.
+All 35 checkpoints pass against **both** complete, hash-pinned inputs.
+This verifies the current partition copy, not an independent dump of EL2 RAM.
+The firmware bytes and inspection artifacts remain private.
+
+The same live read-only inventory found `/dev/gunyah`, no `/dev/kvm`, and no
+`pvmfw`-named DT node/property or partition in the inspected inventories.
+That absence alone would not establish impossibility; the missing RM handler
+is the more specific obstacle. No partition, kernel, module or service was
+changed for this audit, and the host health/boot-image checks passed.
+
+The remaining authenticated QTVM branch must be investigated separately:
+the existing VMID 45/PAS 28 test fails SCM memory assignment and has never
+reached successful guest authentication. Neither this branch nor a
+KVM-compatible API is a demonstrated hardware execution backend yet.
+
 ### Guard private firmware discovery on generic guests
 
 Running the port kernel as a QEMU `virt` guest exposed an unconditional SMC in
