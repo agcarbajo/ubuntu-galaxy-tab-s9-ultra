@@ -1,0 +1,22 @@
+[Unit]
+Description=Galaxy CPU boost with the desktop power profile
+After=power-profiles-daemon.service
+ConditionPathExists=/sys/devices/system/cpu/cpufreq/policy7/scaling_boost_frequencies
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/ubuntu-gts9u-cpu-boost
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+ReadWritePaths=/sys/devices/system/cpu/cpufreq/boost
+
+[Install]
+# PPD can be ordered after multi-user.target; avoid a cycle through our After.
+WantedBy=graphical.target

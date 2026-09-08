@@ -1,0 +1,93 @@
+#!/usr/bin/python3
+"""Make the firmware's Galaxy CPU boost available in GNOME's balanced profile.
+
+Only the generic cpufreq boost switch is owned here. The scheduler continues to
+choose frequencies, with the existing idle states and thermal limits in force.
+Power Saver disables boost. D-Bus signals avoid a background polling loop.
+"""
+from pathlib import Path
+import signal
+import sys
+
+from gi.repository import Gio, GLib
+
+BOOST = Path('/sys/devices/system/cpu/cpufreq/boost')
+PRIME_BOOST = Path('/sys/devices/system/cpu/cpufreq/policy7/scaling_boost_frequencies')
+NAME = 'net.hadess.PowerProfiles'
+OBJECT = '/net/hadess/PowerProfiles'
+
+
+def desired_boost(profile):
+    # Unknown/missing properties must not silently cancel a Power Saver choice.
+    if profile == 'power-saver':
+        return '0'
+    if profile in ('balanced', 'performance'):
+        return '1'
+    return None
+
+
+def main():
+    compatible = Path('/proc/device-tree/compatible').read_bytes().split(b'\0')
+    if b'samsung,gts9uwifi' not in compatible:
+        return 0
+    # Older kernels reject boost writes because the Galaxy OPP is missing.
+    if not PRIME_BOOST.exists() or '3360000' not in PRIME_BOOST.read_text().split():
+        print('Galaxy CPU boost OPP unavailable; leaving the existing policy unchanged', flush=True)
+        return 0
+
+    original = BOOST.read_text().strip()
+    last_written = None
+    failed = False
+    loop = GLib.MainLoop()
+
+    def apply(profile):
+        nonlocal last_written
+        value = desired_boost(profile)
+        if value is None:
+            return
+        if BOOST.read_text().strip() != value:
+            BOOST.write_text(value + '\n')
+        last_written = value
+        print(f'CPU boost={value}, power profile={profile}', flush=True)
+
+    def refresh(proxy, *_args):
+        nonlocal failed
+        value = proxy.get_cached_property('ActiveProfile')
+        if value is not None:
+            try:
+                apply(value.unpack())
+            except OSError as exc:
+                print(f'Cannot apply CPU boost: {exc}', file=sys.stderr, flush=True)
+                failed = True
+                loop.quit()
+
+    proxy = Gio.DBusProxy.new_for_bus_sync(
+        Gio.BusType.SYSTEM, Gio.DBusProxyFlags.NONE, None, NAME, OBJECT, NAME, None)
+    proxy.connect('g-properties-changed', refresh)
+    proxy.connect('notify::g-name-owner', refresh)
+    # With no PPD installed there is no Power Saver selection to respect.
+    # If it later appears, notify::g-name-owner and PropertiesChanged resync us.
+    if proxy.get_name_owner() is None:
+        apply('balanced')
+    else:
+        refresh(proxy)
+    if failed:
+        return 1
+
+    def stop():
+        # Restore our initial setting only if nobody has subsequently changed it.
+        try:
+            if last_written is not None and BOOST.read_text().strip() == last_written:
+                BOOST.write_text(original + '\n')
+        finally:
+            loop.quit()
+        return GLib.SOURCE_REMOVE
+
+    GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGTERM, stop)
+    GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGINT, stop)
+    loop.run()
+    return 1 if failed else 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
