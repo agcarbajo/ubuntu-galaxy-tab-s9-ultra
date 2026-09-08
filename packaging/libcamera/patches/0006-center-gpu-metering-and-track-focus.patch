@@ -1,0 +1,143 @@
+diff --git a/src/ipa/simple/soft_simple.cpp b/src/ipa/simple/soft_simple.cpp
+index 0d9d7e4..d736e63 100644
+--- a/src/ipa/simple/soft_simple.cpp
++++ b/src/ipa/simple/soft_simple.cpp
+@@ -90,6 +90,7 @@ private:
+ 		Idle,
+ 		Coarse,
+ 		Fine,
++		Probe,
+ 		Locked,
+ 	};
+ 	bool hasFocus_ = false;
+@@ -106,6 +107,8 @@ private:
+ 	int32_t afBestPosition_ = 512;
+ 	uint64_t afBestScore_ = 0;
+ 	uint64_t afLockedScore_ = 0;
++	int32_t afProbePosition_ = 512;
++	uint64_t afProbeScore_ = 0;
+ 
+ 	/* Local parameter storage */
+ 	struct IPAContext context_;
+@@ -430,14 +433,39 @@ std::optional<int32_t> IPASoftSimple::processFocusStats(uint64_t score)
+ 		return std::nullopt;
+ 
+ 	if (afPhase_ == AfPhase::Locked) {
++		/* A single-shot AF request must remain locked until retriggered. */
++		if (afMode_ != controls::AfModeContinuous)
++			return std::nullopt;
++		if (afSettleStats_) {
++			afSettleStats_--;
++			return std::nullopt;
++		}
+ 		afLockedStats_++;
+-		if (afLockedScore_ && score * 10 < afLockedScore_ * 7)
++		/* Contrast can rise as well as fall after a scene change. */
++		if (afLockedScore_ &&
++		    (score * 4 < afLockedScore_ * 3 ||
++		     score * 4 > afLockedScore_ * 5))
+ 			afDropStats_++;
+ 		else
+ 			afDropStats_ = 0;
+ 
+-		if (afLockedStats_ >= 450 || afDropStats_ >= 5)
++		if (afDropStats_ >= 3)
+ 			startFocusScan();
++		else if (afLockedStats_ >= 45) {
++			/* Periodically check nearby focus without a full-range hunt.
++			 * This also detects depth changes with similar scene contrast.
++			 * Statistics arrive only while capture is running.
++			 */
++			afPhase_ = AfPhase::Probe;
++			afProbePosition_ = afPosition_;
++			afPositions_[0] = afPosition_;
++			afPositions_[1] = std::max(afPosition_ - 48, 0);
++			afPositions_[2] = std::min(afPosition_ + 48, 1023);
++			afPositionCount_ = 3;
++			afPositionIndex_ = 0;
++			afBestScore_ = 0;
++			afBestPosition_ = afPosition_;
++		}
+ 		else
+ 			return std::nullopt;
+ 	}
+@@ -446,11 +474,15 @@ std::optional<int32_t> IPASoftSimple::processFocusStats(uint64_t score)
+ 		afSettleStats_--;
+ 		if (afPosition_ != afPositions_[afPositionIndex_]) {
+ 			afPosition_ = afPositions_[afPositionIndex_];
++			afSettleStats_ = 1;
+ 			return afPosition_;
+ 		}
+ 		return std::nullopt;
+ 	}
+ 
++	if (afPhase_ == AfPhase::Probe && !afPositionIndex_)
++		afProbeScore_ = score;
++
+ 	if (score > afBestScore_) {
+ 		afBestScore_ = score;
+ 		afBestPosition_ = afPosition_;
+@@ -463,6 +495,16 @@ std::optional<int32_t> IPASoftSimple::processFocusStats(uint64_t score)
+ 		return afPosition_;
+ 	}
+ 
++	if (afPhase_ == AfPhase::Probe) {
++		if (afBestScore_ > afProbeScore_ + afProbeScore_ / 10) {
++			startFocusScan();
++			return std::nullopt;
++		}
++		/* No clear improvement: retain the original focus, not noise. */
++		afBestPosition_ = afProbePosition_;
++		afBestScore_ = afProbeScore_;
++	}
++
+ 	if (afPhase_ == AfPhase::Coarse) {
+ 		afPhase_ = AfPhase::Fine;
+ 		afPositionCount_ = 5;
+@@ -478,11 +520,12 @@ std::optional<int32_t> IPASoftSimple::processFocusStats(uint64_t score)
+ 	}
+ 
+ 	afPhase_ = AfPhase::Locked;
+-	afState_ = controls::AfStateFocused;
++	afState_ = afBestScore_ ? controls::AfStateFocused : controls::AfStateFailed;
+ 	afLockedScore_ = afBestScore_;
+ 	afLockedStats_ = 0;
+ 	afDropStats_ = 0;
+ 	afPosition_ = afBestPosition_;
++	afSettleStats_ = 1;
+ 	return afPosition_;
+ }
+ 
+diff --git a/src/libcamera/software_isp/debayer_egl.cpp b/src/libcamera/software_isp/debayer_egl.cpp
+index 0989a73..82d1b80 100644
+--- a/src/libcamera/software_isp/debayer_egl.cpp
++++ b/src/libcamera/software_isp/debayer_egl.cpp
+@@ -319,18 +319,18 @@ int DebayerEGL::configure(const StreamConfiguration &inputCfg,
+ 	outputSize_ = outputCfg.size;
+ 	nativeOutputSize_ = outSizeRange.max;
+ 
+-	window_.x = ((inputCfg.size.width - outputCfg.size.width) / 2) &
++	/* Meter the central third of the sensor, independently of output size.
++	 * Unlike DebayerCpu, process() passes the complete raw buffer to stats.
++	 */
++	window_.width = (inputCfg.size.width / 3) &
++			~(inputConfig_.patternSize.width - 1);
++	window_.height = (inputCfg.size.height / 3) &
++			 ~(inputConfig_.patternSize.height - 1);
++	window_.x = ((inputCfg.size.width - window_.width) / 2) &
+ 		    ~(inputConfig_.patternSize.width - 1);
+-	window_.y = ((inputCfg.size.height - outputCfg.size.height) / 2) &
++	window_.y = ((inputCfg.size.height - window_.height) / 2) &
+ 		    ~(inputConfig_.patternSize.height - 1);
+-	window_.width = outputCfg.size.width;
+-	window_.height = outputCfg.size.height;
+-
+-	/*
+-	 * Don't pass x,y from window_ since process() already adjusts for it.
+-	 * But crop the window to 2/3 of its width and height for speedup.
+-	 */
+-	stats_->setWindow(Rectangle(window_.size()));
++	stats_->setWindow(window_);
+ 
+ 	inputBufferCount_ = inputCfg.bufferCount;
+ 	outputBufferCount_ = outputCfg.bufferCount;

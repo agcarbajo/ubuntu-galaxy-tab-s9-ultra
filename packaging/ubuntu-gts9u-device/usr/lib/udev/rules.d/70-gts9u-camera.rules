@@ -4,9 +4,10 @@
 SUBSYSTEM=="misc", KERNEL=="udmabuf", GROUP="video", MODE="0660", TAG+="uaccess"
 
 # Stable human-readable aliases for the processed cameras. Applications still
-# discover the ordinary /dev/video20-23 nodes; these links are for diagnostics
-# and scripts and never expose the internal Qualcomm ISP endpoints.
-SUBSYSTEM=="video4linux", ATTR{name}=="GTS9U-Front-Ultra-Wide", SYMLINK+="gts9u-camera/front-ultrawide"
-SUBSYSTEM=="video4linux", ATTR{name}=="GTS9U-Front-Main", SYMLINK+="gts9u-camera/front-main"
-SUBSYSTEM=="video4linux", ATTR{name}=="GTS9U-Rear-Main", SYMLINK+="gts9u-camera/rear-main"
-SUBSYSTEM=="video4linux", ATTR{name}=="GTS9U-Rear-Ultra-Wide", SYMLINK+="gts9u-camera/rear-ultrawide"
+# discover the ordinary /dev/video20-23 nodes. Also publish standard by-id
+# aliases so any V4L2 client can save a stable camera identity. These aliases
+# name processed cameras, never the internal Qualcomm ISP endpoints.
+SUBSYSTEM=="video4linux", ATTR{name}=="GTS9U-Front-Ultra-Wide", SYMLINK+="gts9u-camera/front-ultrawide v4l/by-id/platform-gts9u-front-ultrawide-video-index0"
+SUBSYSTEM=="video4linux", ATTR{name}=="GTS9U-Front-Main", SYMLINK+="gts9u-camera/front-main v4l/by-id/platform-gts9u-front-main-video-index0"
+SUBSYSTEM=="video4linux", ATTR{name}=="GTS9U-Rear-Main", SYMLINK+="gts9u-camera/rear-main v4l/by-id/platform-gts9u-rear-main-video-index0"
+SUBSYSTEM=="video4linux", ATTR{name}=="GTS9U-Rear-Ultra-Wide", SYMLINK+="gts9u-camera/rear-ultrawide v4l/by-id/platform-gts9u-rear-ultrawide-video-index0"
