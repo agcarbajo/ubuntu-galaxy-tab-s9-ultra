@@ -80,6 +80,8 @@ explicitly accepted after live validation. No tablet reboot is performed.
 The live-copy transaction does not update dpkg's package revision; the next
 normal package build uses gts9u8.
 
-At the time of preparing this note, installation is awaiting the local polkit
-authorization; the system library remains at its original hash. Do not treat
-the recipe change or staged capture results as proof of live deployment.
+Installation still needs local polkit authorization. The unanswered attempt
+was cancelled before any system-library changes, so it cannot install later
+without supervision. The original library hash and active camera/sensor
+services were verified afterwards. Do not treat the recipe change or staged
+capture results as proof of live deployment.
