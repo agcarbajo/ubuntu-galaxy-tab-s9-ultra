@@ -38,8 +38,8 @@ userspace driver-logic harness, not a full kernel build or a physical test.
 **Not installed on the tablet yet.** The running build #7 has
 `CONFIG_TOUCHSCREEN_GOODIX_BERLIN_CORE=y`, so this fix requires a new kernel
 boot image. Its matching Galaxy/Gunyah runtime9 source/object tree and signing
-material were not found on the tablet; previous records place the build on
-PC-ARTURO. Do not rebuild from an unrelated baseline or replace the working
+material were not found on the tablet; they were subsequently located on
+PC-ARTURO (see below). Do not rebuild from an unrelated baseline or replace the working
 module/signature set just to apply this change.
 
 Continue using an isolated copy of the validated build tree. Preserve its
@@ -50,3 +50,58 @@ clickable control: hold through success, move, release, then make a new tap.
 Only the new tap should reach the underlying UI. Test another simultaneous
 finger and ordinary touches outside the active reader too. Refresh the saved
 Ubuntu boot image only after the new boot has passed validation.
+
+## Existing-tree build audit on PC-ARTURO
+
+The owner authorized an incremental build in place to avoid duplicating the
+source/object trees. Administrative access uses the owner's Windows/WSL
+integration; no password was collected and no sudo policy was changed.
+
+- Source: `/root/ubuntu-gts9u/build/linux-src-performance-20260908`.
+- Objects: `/root/ubuntu-gts9u/build/linux-performance-20260908`.
+- Source HEAD: `5e34b887d2f39ed2c38673d4682b4d30b9112228`, a private snapshot
+  of Gunyah runtime9, not a verified public upstream revision.
+- Config SHA-256: `474a26a731694fb6838f463e21a057ff3e272fe27fc42b3d6b9d3b628070fcb3`,
+  also verified against the tablet's `/proc/config.gz`. The file under `/boot`
+  is stale and must not be used as the reference configuration.
+- Public signing certificate SHA-256:
+  `1735f50edfe85be64a1f76994451526249b153bc8f2e0f4835e68bd320c2f6fd`.
+- Compiler: Ubuntu Clang/LLD 22.1.8 from `/usr/lib/llvm-22/bin`.
+  The default `/usr/bin/clang` is version 14 and must not be used.
+
+The three existing tracked modifications are the two Galaxy cpufreq fixes
+and the Makefile integration of `gts9u-performance.o`, not new unfinished
+Gunyah edits. The performance helper and generated overlay header are
+untracked inputs and are preserved too, together with the pre-existing
+`arch_topology.c.orig` file. No source cleanup or git reset was performed.
+
+A reduced, root-private backup lives on the PC at
+`/root/ubuntu-gts9u/build/pre-fod-contact.Pd4lPH`. It contains the original
+affected sources, existing binary diff/status/HEAD, config, Image, vmlinux,
+System.map, Module.symvers, version metadata and signing material. Private
+keys stay on the PC and must never be committed or transferred to the tablet.
+The backup also records hashes of Gunyah driver files and compilation logs.
+
+After applying commit `5f4b85ac64c1eae585d29d4683e0e61b029c93bd`'s FOD patch
+with zero fuzz, the incremental command is:
+
+```sh
+PATH=/usr/lib/llvm-22/bin:$PATH make \
+  -C /root/ubuntu-gts9u/build/linux-src-performance-20260908 \
+  O=/root/ubuntu-gts9u/build/linux-performance-20260908 \
+  ARCH=arm64 LLVM=1 LOCALVERSION=-dirty KBUILD_BUILD_VERSION=8 -j4 Image
+```
+
+`LOCALVERSION=-dirty` is essential: the first compile without this explicit
+argument generated `7.2.0-rc3+`, which is unsuitable for the installed module
+directory. That intermediate Image was not deployed. This procedure records
+how to repeat the incremental fix against the existing snapshot; it is not
+yet a claim of a complete clean-room build from this public repository.
+
+The corrected build completed as `#8 SMP PREEMPT Tue Sep 8 12:13:08 CEST 2026`
+with release `7.2.0-rc3-dirty`. Image SHA-256:
+`92ec07de1a34bb60f61d7ea05022a5ce4802de83908fe8305d261a50339e0a0d`.
+Post-build comparisons verified that config, signing key and certificate,
+Module.symvers, and the recorded Gunyah driver files did not change. The
+original and fixed driver-logic tests were also rerun successfully locally.
+This is build/logic validation, not physical fingerprint or VM validation.
