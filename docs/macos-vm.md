@@ -6,6 +6,12 @@
 
 ## Target architecture
 
+The final target requires **both hardware-virtualized ARM64 CPU execution and
+real GPU acceleration on the physical tablet**. Gunyah is the current hardware
+backend candidate; KVM is acceptable only if hardware-backed guest execution
+is actually made available. A KVM-shaped userspace API alone is not evidence
+of hardware virtualization. TCG is a diagnostic tool, never a final fallback.
+
 The intended long-term display path is macOS ARM64 using
 `AppleParavirtGPU`, a Reims virtual device, `metal2vulkan`, Vulkan, Mesa Turnip
 and the Adreno 740. Reaching a desktop and proving Turnip GPU work are separate
@@ -64,6 +70,10 @@ unfinished.
 
 ## Required acceptance evidence
 
+- The running macOS ARM64 guest uses a verified hardware CPU backend on the
+  physical tablet: Gunyah vCPU execution, or genuinely available KVM execution.
+  Record the selected backend and successful guest execution through it;
+  reject TCG and silent software fallback, even if the desktop or GPU works.
 - AVPBooter and XNU milestones have timestamped serial logs.
 - The guest disk is snapshot-backed and clean shutdown/restart is repeatable.
 - WindowServer reaches the desktop without modifying the guest driver.
