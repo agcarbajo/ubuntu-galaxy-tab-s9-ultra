@@ -80,8 +80,58 @@ explicitly accepted after live validation. No tablet reboot is performed.
 The live-copy transaction does not update dpkg's package revision; the next
 normal package build uses gts9u8.
 
-Installation still needs local polkit authorization. The unanswered attempt
-was cancelled before any system-library changes, so it cannot install later
-without supervision. The original library hash and active camera/sensor
-services were verified afterwards. Do not treat the recipe change or staged
-capture results as proof of live deployment.
+The first unanswered polkit attempt was cancelled without changes. After the
+user explicitly authorized a retry, the six runtime files were installed and
+the live transaction was accepted on 2026-09-08. Backup:
+`/var/lib/gts9u-camera-backups/gpu-20260908.PXmS9JxE`.
+The seven-minute rollback timer was stopped after validation. The backup and
+its `transaction.sh rollback BACKUP` command are retained. Only the camera/audio
+stack restarted; the tablet was not rebooted by this operation.
+
+## Live acceptance
+
+PipeWire loaded the pinned main library hash above and logged
+`GL_RENDERER: Adreno (TM) 740`. All four normal V4L2 relays passed two sequential
+open/capture/close cycles, with the same PipeWire PID throughout:
+
+| Device | First cycle frames / distinct nonuniform samples | Second cycle |
+| --- | ---: | ---: |
+| video20 | 148 / 139 | 150 / 140 |
+| video21 | 153 / 144 | 146 / 136 |
+| video22 | 148 / 141 | 137 / 124 |
+| video23 | 152 / 141 | 137 / 127 |
+
+The saved last-frame PNGs were inspected locally. Front ultra-wide has the wide
+room view and rear-main includes the monitor plus surrounding desk instead of
+the old central crop. Rear-main sharpness varies between the short captures;
+this is not a formal autofocus or all-lighting quality certification. Output
+remains 640x480 YUY2 through the existing relays. Private images are under
+`/home/agcar/performance-lab/camera-fov.H48RT51d/live-gpu`, not in GitHub.
+
+After closing all test readers, a 20.003-second sample measured:
+
+- PipeWire CPU: 0.0019% of one core (383 microseconds of CPU in the interval).
+- PipeWire DRM client 34 GPU engine counter: 1849065352 ns both before and
+  after, i.e. no added GPU work in the measured interval. Duplicate DRM file
+  descriptors were deduplicated by client ID.
+- PipeWire cgroup memory: stable at 42139648 bytes, down from approximately
+  136 MB while capturing. This short test is not proof of absence of every
+  possible long-term leak.
+- A separate 20-second idle sample: camera relays 0.257% of one core,
+  iio-sensor-proxy 0.719%, sensor FastRPC 0.000%.
+
+The previous no-reader relay patch was not replaced (binary SHA-256 remains
+`9a77b4c889c3a4f84300dfa8c69642b5853d7fa2b0942f55feba58fe0b4b0b93`).
+There is still small supervisor/relay polling overhead: do not describe the
+whole stack as consuming literally zero resources. Neither these counters nor
+the processing benchmarks establish battery-life savings.
+
+Reproduce the counters without changing the workload:
+
+```sh
+python3 scripts/measure-pipewire-camera-idle.py --seconds 20
+python3 scripts/measure-camera-sensor-idle.py --seconds 20
+```
+
+Camera, sensor and fingerprint services remained active; SensorProxy reported
+`normal` orientation and the user service manager had no failed units.
