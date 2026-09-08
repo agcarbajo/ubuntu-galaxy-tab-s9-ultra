@@ -2,8 +2,8 @@
 
 ## Status
 
-Work in progress. The stable-ID rule is prepared but its live installation is
-waiting for PolicyKit authentication. The autofocus candidate is built and tested
+Work in progress. The stable-ID rule is installed and unmodified OBS property
+enumeration now passes. The autofocus candidate is built and tested
 privately, **not installed**. The accepted GPU/idle runtime remains unchanged.
 No reboot, OBS configuration change or OBS binary patch has been performed.
 Private camera images are not included in this repository.
@@ -13,13 +13,13 @@ Private camera images are not included in this repository.
 Installed Ubuntu OBS version: `30.0.2+dfsg-3build1` (arm64).
 `scripts/probe-v4l2-properties.py` creates a disposable private V4L2 source and
 requests its properties through the installed libobs API, without Qt or saved
-scene changes. It reproduces SIGSEGV during device enumeration.
+scene changes. Before the stable-ID rule, it reproduced SIGSEGV during enumeration.
 
 The Ubuntu source package contains
 `debian/patches/linux-v4l2-Save-device-by-id-or-path.patch`. Its directory scanner
 declares an uninitialized `struct dirent **namelist`, calls `scandir()`, then
 unconditionally calls `free(namelist)` even when scanning failed. On this tablet
-`/dev/v4l/by-id` is absent. AddressSanitizer identifies an invalid free in that
+`/dev/v4l/by-id` was absent. AddressSanitizer identified an invalid free in that
 scanner; unsanitized runs can instead corrupt the loader and crash later.
 
 Source: [Ubuntu source package directory](https://archive.ubuntu.com/ubuntu/pool/universe/o/obs-studio/),
@@ -47,7 +47,14 @@ python3 scripts/probe-v4l2-properties.py
 The installer backs up the old rule under
 `/var/lib/gts9u-camera-backups/stable-ids.*`, reloads udev rules and emits change
 events only for video20–23. It does not restart audio or camera services.
-Live, un-interposed property enumeration and normal OBS UI testing remain pending.
+After user authentication, all four by-id aliases resolve to video20–23 as
+expected. Five consecutive property probes pass with the installed, unmodified
+OBS libraries and no diagnostic interposer. Normal OBS UI confirmation remains
+pending; the exact API operation that previously crashed now succeeds.
+Live rule backup: `/var/lib/gts9u-camera-backups/stable-ids.eCEo2cDj`.
+A subsequent relay regression cycle delivered 145, 147, 147 and 144 frames
+from video20–23, respectively, with multiple distinct nonuniform frames on
+every camera. All four captures completed successfully.
 
 ## Experimental autofocus patch 0006
 
