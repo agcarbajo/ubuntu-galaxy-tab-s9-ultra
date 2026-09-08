@@ -159,3 +159,26 @@ sudo systemctl disable --now gts9u-fod-kernel8-rollback.service
 
 Then physically test the reader contact lifetime before refreshing the saved
 Ubuntu boot set or calling the touch fix validated.
+
+## Post-reboot acceptance, 2026-09-08
+
+The owner reported that the tablet booted and the touch fix appears to work.
+Checks confirmed kernel #8, the expected active boot hash and unchanged live
+config hash. GDM, NetworkManager, Tailscale, fprintd, secure fingerprint
+transport/UI, camera relays and the CPU boost service were active. No failed
+system units were listed. `/dev/esfp0` and `/dev/gunyah` exist; the CPU prime
+maximum remains 3360000 kHz and GPU maximum 719000000 Hz.
+
+The rollback service was stopped and disabled after those checks. The saved
+Ubuntu boot image was then synchronized to #8 using the validated helper,
+with the previous saved image retained at
+`/var/lib/gts9u-kernel-backups/pre-saved-ubuntu-boot-sync-6DwAm00u/saved-ubuntu-boot.img`.
+The independent pre-install #7 backup remains available as documented above.
+No vendor_boot, init_boot or module installation was performed.
+
+This records successful boot, basic health checks and the owner's initial
+fingerprint result, not an exhaustive regression pass. Multitouch and
+suspend/resume have logic-harness coverage but were not physically retested
+in this session; no VM workload or camera capture was run. The boot journal
+contains platform/desktop errors; the previous boot journal is unavailable,
+so this check does not establish that each message predates the change.
