@@ -1,5 +1,8 @@
 # Galaxy CPU/GPU frequencies and efficiency
 
+For the post-kernel-#8 sensor audit, four-camera baseline and staged GPU ISP
+experiment, see [camera/sensor efficiency](camera-sensor-efficiency.md).
+
 The SM-X910 uses Snapdragon 8 Gen 2 for Galaxy (SM8550-AC). Its CPU targets are
 2.016 GHz for CPUs 0–2, 2.8032 GHz for CPUs 3–6, and 3.36 GHz for CPU 7. The
 Adreno 740 target is 719 MHz. These are factory operating points, with normal
