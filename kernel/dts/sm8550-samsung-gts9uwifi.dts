@@ -1700,6 +1700,30 @@
 };
 
 /*
+ * SM8550-AC (Snapdragon 8 Gen 2 for Galaxy): the prime CPU's firmware LUT
+ * contains 3.36 GHz. qcom-cpufreq-hw enables only frequencies also described
+ * in DT when interconnect scaling is used; sm8550.dtsi stops at 3.1872 GHz.
+ * Voltages and boost eligibility still come from the hardware LUT. Keep the
+ * same top-end LLCC/DDR/L3 votes as the reference prime OPPs.
+ */
+&cpu7_opp_table {
+	opp-3360000000 {
+		opp-hz = /bits/ 64 <3360000000>;
+		opp-peak-kBps = <(933000 * 16) (3686000 * 4) (1689600 * 32)>;
+	};
+};
+
+/* Samsung X910 stock GPU bin 0: 719 MHz, SVS_L2, DDR level 9, stock ACD. */
+&gpu_opp_table {
+	opp-719000000 {
+		opp-hz = /bits/ 64 <719000000>;
+		opp-level = <RPMH_REGULATOR_LEVEL_SVS_L2>;
+		opp-peak-kBps = <16500000>;
+		qcom,opp-acd-level = <0x882e5ffd>;
+	};
+};
+
+/*
  * Adreno 740 GPU.  gpucc, the GMU and the adreno SMMU are enabled by default in
  * sm8550.dtsi; only the GPU node itself ships disabled.  The zap shader must be
  * signed for this device's TrustZone, so point it at Samsung's stock MDT
