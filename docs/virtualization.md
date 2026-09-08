@@ -256,6 +256,43 @@ the existing VMID 45/PAS 28 test fails SCM memory assignment and has never
 reached successful guest authentication. Neither this branch nor a
 KVM-compatible API is a demonstrated hardware execution backend yet.
 
+### Authenticated input audit and hardware-backend stop condition
+
+The stock Samsung source archive's `gh_secure_vm_loader.c` requests a
+`<vm-name>.mdt`, reads Qualcomm authentication metadata, loads the image
+segments and supplies the metadata's actual offset/length. Its `gh_main.c`
+then invokes `VM_AUTH_IMAGE` with the PAS ID before `VM_INIT`. The earlier
+QTVM probe supplied a raw Linux Image plus an initramfs, not such an
+authenticated image. Its SCM failure must not be described as a failed test
+of an otherwise valid QTVM guest, or as evidence that fixing SCM alone would
+enable arbitrary Linux/macOS execution.
+
+On 2026-09-08 the live firmware-directory/name inventory found no `trustedvm`,
+`cpusys`, `pvmfw` or `qtvm` files. The archived Samsung `NON-HLOS.bin` contains
+`cpusys_vm` components but no `trustedvm`-named entry. The stock DT assigns
+`cpusys_vm` VMID 50/PAS 35 and the reserved `0x80a00000` region; its image
+identifies itself as CPUSYS-VM, not a generic Linux guest image. It was only
+inspected offline and was not loaded, authenticated, started or modified.
+This inventory does not establish the contents of every possible external
+firmware release or an OEM's signing policy.
+
+There is currently **no demonstrated or identified compatible hardware CPU
+route for an owner-supplied guest on this installation**:
+
+| Route | Unresolved requirement or verified restriction |
+| --- | --- |
+| Native KVM | Ubuntu lacks access to EL2; `/dev/kvm` is absent. |
+| Generic Gunyah | The tested VMID allocation and unsigned initialization policies conflict. |
+| Android protected VM | This RM lacks the required firmware-memory RPC handler. |
+| QTVM | SCM assignment fails and no compatible authenticated generic-guest image is available. |
+
+Resuming hardware guest bring-up needs new evidence: for example, a supported
+device-compatible firmware configuration that permits owner-supplied guests,
+or an accepted QTVM boot chain capable of launching the intended payload.
+Neither is presently available. Replacing Qualcomm firmware, changing system
+VM roles, or assuming another manufacturer's image is interchangeable is not
+a validated recovery plan. TCG results cannot satisfy this stop condition.
+
 ### Guard private firmware discovery on generic guests
 
 Running the port kernel as a QEMU `virt` guest exposed an unconditional SMC in
