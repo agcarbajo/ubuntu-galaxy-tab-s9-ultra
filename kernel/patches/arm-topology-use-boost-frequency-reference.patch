@@ -1,0 +1,33 @@
+diff --git a/drivers/base/arch_topology.c b/drivers/base/arch_topology.c
+--- a/drivers/base/arch_topology.c
++++ b/drivers/base/arch_topology.c
+@@ -391,6 +391,8 @@ init_cpu_capacity_callback(struct notifier_block *nb,
+ 			   void *data)
+ {
+ 	struct cpufreq_policy *policy = data;
++	struct cpufreq_frequency_table *entry;
++	unsigned int max_freq = policy->cpuinfo.max_freq;
+ 	int cpu;
+ 
+ 	if (val != CPUFREQ_CREATE_POLICY)
+@@ -403,8 +405,19 @@ init_cpu_capacity_callback(struct notifier_block *nb,
+ 
+ 	cpumask_andnot(cpus_to_visit, cpus_to_visit, policy->related_cpus);
+ 
++	/*
++	 * Use a boost-independent frequency reference. cpuinfo.max_freq may
++	 * exclude boost when the policy is created. Keeping that lower value
++	 * here prevents schedutil from requesting turbo even after userspace
++	 * enables it: utilization is capped at capacity before mapping to Hz.
++	 * Policy/QoS limits still control whether a boost OPP may be selected.
++	 */
++	if (policy->freq_table)
++		cpufreq_for_each_valid_entry(entry, policy->freq_table)
++			max_freq = max(max_freq, entry->frequency);
++
+ 	for_each_cpu(cpu, policy->related_cpus) {
+-		per_cpu(capacity_freq_ref, cpu) = policy->cpuinfo.max_freq;
++		per_cpu(capacity_freq_ref, cpu) = max_freq;
+ 		freq_inv_set_max_ratio(cpu,
+ 				       per_cpu(capacity_freq_ref, cpu) * HZ_PER_KHZ);
+ 	}
