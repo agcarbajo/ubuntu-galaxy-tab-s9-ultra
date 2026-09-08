@@ -1,0 +1,29 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/dts-v1/;
+/plugin/;
+
+/* Applied by Linux before cpufreq/DRM probe, never by Samsung ABL. */
+/ {
+	fragment@0 {
+		target-path = "/opp-table-cpu7";
+		__overlay__ {
+			opp-3360000000 {
+				opp-hz = /bits/ 64 <3360000000>;
+				opp-peak-kBps = <14928000 14744000 54067200>;
+			};
+		};
+	};
+
+	fragment@1 {
+		target-path = "/soc@0/gpu@3d00000/opp-table";
+		__overlay__ {
+			opp-719000000 {
+				opp-hz = /bits/ 64 <719000000>;
+				/* RPMH_REGULATOR_LEVEL_SVS_L2, Samsung X910 bin 0. */
+				opp-level = <224>;
+				opp-peak-kBps = <16500000>;
+				qcom,opp-acd-level = <0x882e5ffd>;
+			};
+		};
+	};
+};
