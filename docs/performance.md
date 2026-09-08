@@ -112,6 +112,11 @@ tests do not establish an energy-per-task or battery-life improvement.
 
 ### Office-use background work, 2026-09-08
 
+The subsequent [Chromium driver-identity correction](chromium-freedreno-identity.md)
+removes a global vendor override that caused missing text and repeated Skia
+shader failures. It preserves GPU acceleration; active applications must be
+reopened before post-change office-use metrics are meaningful.
+
 The owner continued office work with Chrome and ChatGPT during this audit.
 Measurements are active-use samples, not idle battery-life benchmarks. The
 display brightness, refresh rate, power profile, CPU/GPU limits, networking,

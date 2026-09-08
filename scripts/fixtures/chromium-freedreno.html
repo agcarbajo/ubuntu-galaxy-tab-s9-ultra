@@ -1,0 +1,7 @@
+<!doctype html><meta charset="utf-8"><style>body{background:white;color:#123;font:18px sans-serif}p{margin:2px}</style>
+<h1>Prueba local de composición y texto</h1><div id="lines"></div><canvas id="c" width="800" height="400"></canvas><pre id="result"></pre>
+<script>
+for(let i=0;i<100;i++){let p=document.createElement('p');p.textContent='Ofimática — áéíóú — texto de prueba '+i;lines.appendChild(p);}
+let ctx=c.getContext('2d');ctx.fillStyle='white';ctx.fillRect(0,0,800,400);ctx.font='20px sans-serif';ctx.fillStyle='#234';for(let i=0;i<15;i++)ctx.fillText('Texto GPU, transparencias y bordes '+i,10,25+i*24);
+let gl=document.createElement('canvas').getContext('webgl2');let dbg=gl&&gl.getExtension('WEBGL_debug_renderer_info');result.textContent=JSON.stringify({webgl:!!gl,vendor:dbg&&gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL),renderer:dbg&&gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL)});
+</script>
