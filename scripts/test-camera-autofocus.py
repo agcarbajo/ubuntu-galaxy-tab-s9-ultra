@@ -10,7 +10,7 @@ import tempfile
 
 source = Path(sys.argv[1]).read_text()
 fields = source[source.index("\tenum class AfPhase"):source.index("\t/* Local parameter storage */")]
-start = source.index("void IPASoftSimple::startFocusScan()")
+start = source.index("void IPASoftSimple::startFocusScan(")
 methods = source[start:source.index("std::string IPASoftSimple::logPrefix()", start)]
 harness = r'''
 #include <algorithm>
@@ -19,12 +19,13 @@ harness = r'''
 #include <cmath>
 #include <cstdint>
 #include <optional>
+#include <limits>
 namespace controls {
 constexpr int AfModeContinuous=2, AfModeAuto=1;
 constexpr int AfStateIdle=0, AfStateScanning=1, AfStateFocused=2, AfStateFailed=3;
 }
 struct IPASoftSimple {
-void startFocusScan();
+void startFocusScan(bool retry=false);
 std::optional<int32_t> processFocusStats(uint64_t);
 ''' + fields + "};\n" + methods + r'''
 uint64_t curve(int position, int target) {
@@ -74,6 +75,20 @@ int main() {
     af.startFocusScan();
     for (int i=0; i<100; ++i) af.processFocusStats(0);
     assert(af.afState_==controls::AfStateFailed);
+    // A nonzero flat noise floor is not optical focus either. Continuous
+    // retries must be bounded instead of hunting forever on a blank wall.
+    af.afMode_=controls::AfModeContinuous;
+    af.startFocusScan();
+    for (int i=0; i<500; ++i) af.processFocusStats(7000);
+    assert(af.afState_==controls::AfStateFailed && af.afFailedScans_==3);
+    // A scene becomes usable after one ambiguous scan (e.g. a moving hand
+    // becomes stationary). A bounded retry must acquire actual focus.
+    af.startFocusScan();
+    for (int i=0; i<26; ++i) af.processFocusStats(7000);
+    assert(af.afState_==controls::AfStateFailed);
+    for (int i=0; i<100; ++i) af.processFocusStats(curve(af.afPosition_, 550));
+    assert(af.afState_==controls::AfStateFocused);
+    assert(std::abs(af.afPosition_-550)<=32);
 }
 '''
 with tempfile.TemporaryDirectory(prefix="gts9u-af-test-") as temp:
@@ -81,4 +96,4 @@ with tempfile.TemporaryDirectory(prefix="gts9u-af-test-") as temp:
     subprocess.run(["c++", "-std=c++17", "-Wall", "-Wextra", "-Werror",
                     "-x", "c++", "-", "-o", binary], input=harness, text=True, check=True)
     subprocess.run([binary], check=True)
-print("PASS: initial lock, stable-scene probes, near/far reacquisition, single-shot lock, zero-contrast failure")
+print("PASS: initial lock, stable-scene probes, near/far recovery, single-shot lock, ambiguous-curve rejection, bounded retries and recovery")

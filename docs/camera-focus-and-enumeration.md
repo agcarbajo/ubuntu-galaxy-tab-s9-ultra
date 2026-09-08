@@ -2,9 +2,11 @@
 
 ## Status
 
-Work in progress. The stable-ID rule is installed and unmodified OBS property
-enumeration now passes. The autofocus candidate is built and tested
-privately, **not installed**. The accepted GPU/idle runtime remains unchanged.
+Work in progress. The stable-ID rule is installed; the user confirms OBS cameras
+work. The first AF candidate was installed for an optical test, then **rolled
+back** after a false-positive focus result. The revised confidence-check candidate
+is built and tested privately, **not installed**. The accepted GPU/idle runtime
+is restored.
 No reboot, OBS configuration change or OBS binary patch has been performed.
 Private camera images are not included in this repository.
 
@@ -112,3 +114,56 @@ noise and less usable dark-bezel detail than the supplied Android photograph;
 image-quality parity and changed-scene optical reacquisition are **not verified**.
 Do not activate 0006 in the production package recipe or replace the live runtime
 until those checks and regression/idle tests are completed.
+
+## Further optical testing and rollback
+
+The first candidate passed a controlled physical-lens perturbation test:
+after initial focus at lens position 512, a normal V4L2 control moved the lens
+to 768 at frame 240. AF restarted at frame 252 and returned to focused position
+512 at frame 348 (about 3.6 seconds after perturbation). This does not substitute
+for changed-scene testing.
+
+It was installed with a 15-minute rollback timer and tested with a handheld
+remote control. One capture declared Focused with a visibly blurred remote.
+A fresh capture of the same object acquired readable text, demonstrating that
+the first accepted position was not a reliable result. The first scan's contrast
+curve was nearly flat (roughly 6909–7351), consistent with an ambiguous/noisy
+measurement. Hand motion was not measured and must not be asserted as the cause.
+
+The first candidate was rolled back using its saved transaction:
+`/var/lib/gts9u-camera-backups/af-20260908.GsYSL8VN`.
+Rollback completed, its timer is inactive and the restored live libcamera SHA256
+is `c113d774c287cf60d2fcc69449517d8b917cc40926bef149a740269ed0f3a60b`.
+No reboot was needed; PipeWire and camera relays were restarted for each swap.
+
+The revised patch tracks the minimum score over the full scan and requires the
+winning score to exceed it by more than one twelfth (an experimental confidence
+threshold, not a calibrated optical guarantee). Ambiguous results report Failed,
+with at most three immediate full scans separated by 15 valid statistics.
+Normal scene-change checks and periodic local probes remain active afterward.
+Synthetic tests also cover a nonzero flat noise floor, bounded retries, and
+recovery when a previously ambiguous scene becomes usable.
+
+Revised stage: `/home/agcar/performance-lab/camera-af-confidence.Y7NdNmju`;
+remote installation staging directory: `stage-af-confidence` beside the existing
+experimental source. Revised IPA hashes:
+
+```text
+7ff0a5af6149788b8f7ee5d081d94961caf424e425f23af1ebe9fca50958c8f8  ipa_soft_simple.so
+e6609c92e1c4e43738dbbedd98cf306f026c02c382fd606adfe3b22933093142  ipa_soft_simple.so.sign
+```
+
+The library hash remains `eecd58d796e530cb7069110ce448835c55d593c3c6728a84a40892b086c20c78`.
+`scripts/install-camera-autofocus-live.sh` pins this revised candidate and backs
+up the accepted GPU runtime. **Do not invoke it until optical validation passes.**
+
+The revised candidate correctly reported Failed on a low-detail shelf scene.
+A second perturbation run in that scene did not pass (there was no initial focus
+lock); the test now explicitly refuses to perturb unless initial focus exists.
+A 3600-frame staged capture stayed operational while the view moved from the
+shelf to a monitor at the far right edge. It did not obtain a focus lock with
+the text outside the central statistics region. A stationary text target within
+the metering region is needed next, followed by a continuous near/far transition
+without restarting capture. Off-centre target selection also remains a limitation.
+Private snapshots/logs reside in `camera-af-live.iMl2PYl5` and the revised stage;
+subsequent rolling frames were written to user runtime tmpfs, not persistent disk.

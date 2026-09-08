@@ -1,7 +1,16 @@
 diff --git a/src/ipa/simple/soft_simple.cpp b/src/ipa/simple/soft_simple.cpp
-index 0d9d7e4..d736e63 100644
+index 0d9d7e4..71c6167 100644
 --- a/src/ipa/simple/soft_simple.cpp
 +++ b/src/ipa/simple/soft_simple.cpp
+@@ -78,7 +78,7 @@ protected:
+ 
+ private:
+ 	void updateExposure(double exposureMSV);
+-	void startFocusScan();
++	void startFocusScan(bool retry = false);
+ 	std::optional<int32_t> processFocusStats(uint64_t score);
+ 
+ 	DebayerParams *params_;
 @@ -90,6 +90,7 @@ private:
  		Idle,
  		Coarse,
@@ -10,16 +19,38 @@ index 0d9d7e4..d736e63 100644
  		Locked,
  	};
  	bool hasFocus_ = false;
-@@ -106,6 +107,8 @@ private:
+@@ -106,6 +107,10 @@ private:
  	int32_t afBestPosition_ = 512;
  	uint64_t afBestScore_ = 0;
  	uint64_t afLockedScore_ = 0;
 +	int32_t afProbePosition_ = 512;
 +	uint64_t afProbeScore_ = 0;
++	uint64_t afMinScore_ = 0;
++	unsigned int afFailedScans_ = 0;
  
  	/* Local parameter storage */
  	struct IPAContext context_;
-@@ -430,14 +433,39 @@ std::optional<int32_t> IPASoftSimple::processFocusStats(uint64_t score)
+@@ -410,8 +415,10 @@ void IPASoftSimple::processStats(const uint32_t frame,
+ 	setSensorControls.emit(ctrls);
+ }
+ 
+-void IPASoftSimple::startFocusScan()
++void IPASoftSimple::startFocusScan(bool retry)
+ {
++	if (!retry)
++		afFailedScans_ = 0;
+ 	afPhase_ = AfPhase::Coarse;
+ 	afState_ = controls::AfStateScanning;
+ 	afPositions_ = { 128, 256, 384, 512, 640, 768, 896 };
+@@ -422,6 +429,7 @@ void IPASoftSimple::startFocusScan()
+ 	afDropStats_ = 0;
+ 	afBestPosition_ = 512;
+ 	afBestScore_ = 0;
++	afMinScore_ = std::numeric_limits<uint64_t>::max();
+ }
+ 
+ std::optional<int32_t> IPASoftSimple::processFocusStats(uint64_t score)
+@@ -430,14 +438,42 @@ std::optional<int32_t> IPASoftSimple::processFocusStats(uint64_t score)
  		return std::nullopt;
  
  	if (afPhase_ == AfPhase::Locked) {
@@ -41,7 +72,10 @@ index 0d9d7e4..d736e63 100644
  			afDropStats_ = 0;
  
 -		if (afLockedStats_ >= 450 || afDropStats_ >= 5)
-+		if (afDropStats_ >= 3)
++		if (afState_ == controls::AfStateFailed &&
++		    afLockedStats_ >= 15 && afFailedScans_ < 3)
++			startFocusScan(true);
++		else if (afDropStats_ >= 3)
  			startFocusScan();
 +		else if (afLockedStats_ >= 45) {
 +			/* Periodically check nearby focus without a full-range hunt.
@@ -61,7 +95,7 @@ index 0d9d7e4..d736e63 100644
  		else
  			return std::nullopt;
  	}
-@@ -446,11 +474,15 @@ std::optional<int32_t> IPASoftSimple::processFocusStats(uint64_t score)
+@@ -446,11 +482,17 @@ std::optional<int32_t> IPASoftSimple::processFocusStats(uint64_t score)
  		afSettleStats_--;
  		if (afPosition_ != afPositions_[afPositionIndex_]) {
  			afPosition_ = afPositions_[afPositionIndex_];
@@ -73,11 +107,13 @@ index 0d9d7e4..d736e63 100644
  
 +	if (afPhase_ == AfPhase::Probe && !afPositionIndex_)
 +		afProbeScore_ = score;
++	if (afPhase_ != AfPhase::Probe)
++		afMinScore_ = std::min(afMinScore_, score);
 +
  	if (score > afBestScore_) {
  		afBestScore_ = score;
  		afBestPosition_ = afPosition_;
-@@ -463,6 +495,16 @@ std::optional<int32_t> IPASoftSimple::processFocusStats(uint64_t score)
+@@ -463,6 +505,16 @@ std::optional<int32_t> IPASoftSimple::processFocusStats(uint64_t score)
  		return afPosition_;
  	}
  
@@ -94,12 +130,22 @@ index 0d9d7e4..d736e63 100644
  	if (afPhase_ == AfPhase::Coarse) {
  		afPhase_ = AfPhase::Fine;
  		afPositionCount_ = 5;
-@@ -478,11 +520,12 @@ std::optional<int32_t> IPASoftSimple::processFocusStats(uint64_t score)
+@@ -477,12 +529,22 @@ std::optional<int32_t> IPASoftSimple::processFocusStats(uint64_t score)
+ 		return afPosition_;
  	}
  
++	/* A nearly flat contrast curve is not evidence of optical focus.
++	 * Motion or noise can otherwise select an arbitrary lens position and
++	 * keep it indefinitely. Retry uncertain scans, with a bounded budget.
++	 */
++	bool focused = afPhase_ == AfPhase::Probe
++		? afState_ == controls::AfStateFocused
++		: afBestScore_ > afMinScore_ + afMinScore_ / 12;
++	if (afPhase_ != AfPhase::Probe && !focused)
++		afFailedScans_++;
  	afPhase_ = AfPhase::Locked;
 -	afState_ = controls::AfStateFocused;
-+	afState_ = afBestScore_ ? controls::AfStateFocused : controls::AfStateFailed;
++	afState_ = focused ? controls::AfStateFocused : controls::AfStateFailed;
  	afLockedScore_ = afBestScore_;
  	afLockedStats_ = 0;
  	afDropStats_ = 0;
