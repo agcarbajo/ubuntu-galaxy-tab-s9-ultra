@@ -50,6 +50,12 @@ def main():
             bus.add_signal_receiver(self.disconnected, signal_name='NameOwnerChanged',
                                     dbus_interface='org.freedesktop.DBus',
                                     bus_name='org.freedesktop.DBus')
+            bus.add_signal_receiver(self.session_changed, signal_name='PropertiesChanged',
+                                    dbus_interface='org.freedesktop.DBus.Properties',
+                                    bus_name='org.freedesktop.login1')
+            bus.add_signal_receiver(self.session_removed, signal_name='SessionRemoved',
+                                    dbus_interface='org.freedesktop.login1.Manager',
+                                    bus_name='org.freedesktop.login1')
 
         def clear(self):
             self.client = None
@@ -85,10 +91,25 @@ def main():
             self.client = (str(sender), uid, str(session), expires)
 
         def disconnected(self, sender, old_owner, new_owner):
+            if sender == 'org.freedesktop.login1' and old_owner:
+                self.clear()
             if self.client and sender == self.client[0] and old_owner and not new_owner:
                 self.clear()
 
-        def tick(self):
+        def session_removed(self, session, _path):
+            if self.client and session == self.client[2]:
+                self.clear()
+
+        def session_changed(self, interface, changed, invalidated):
+            relevant = {
+                'org.freedesktop.login1.Seat': {'ActiveSession'},
+                'org.freedesktop.login1.Session':
+                    {'Active', 'Remote', 'Type', 'Class', 'Seat', 'User'},
+            }.get(str(interface), set())
+            if relevant.intersection(set(changed) | set(invalidated)):
+                self.revalidate()
+
+        def revalidate(self):
             if self.client:
                 _, uid, session, expires = self.client
                 try:
@@ -97,6 +118,14 @@ def main():
                         self.clear()
                 except dbus.DBusException:
                     self.clear()
+
+        def tick(self):
+            # Pulses still check the sender UID and live logind properties.
+            # Between pulses, logind signals invalidate changed sessions;
+            # this local timer only enforces the unchanged two-second lease.
+            # Do not issue synchronous D-Bus queries four times per second.
+            if self.client and time.monotonic_ns() // 1000 >= self.client[3]:
+                self.clear()
             return GLib.SOURCE_CONTINUE
 
     broker = Broker()
