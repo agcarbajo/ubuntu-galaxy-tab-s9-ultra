@@ -63,6 +63,8 @@ Installed the two runtime packages plus their libevent-core dependency
 (867 kB total, no upgrades/removals). `cam --help`, `cam -l` and captures now
 work. The production package builder declares these dependencies, plus the
 direct TIFF/DW/unwind dependencies visible in `ldd`, as package revision gts9u6.
+Revision gts9u7 additionally selects an optimized release build explicitly;
+the production GPU option remains disabled.
 The installed libcamera package itself is still gts9u5; no library was replaced.
 
 ```sh
@@ -108,3 +110,38 @@ The [upstream ISP benchmark documentation](https://docs.libcamera.org/master/sof
 likewise distinguishes processing time from capture/output time and requires
 separate power measurements. Its suggested isolated laboratory setup is not
 applied automatically to the user's live office session.
+
+## Completed staged CPU/GPU probe
+
+The experimental build completed on PC-ARTURO in
+`/root/ubuntu-gts9u/buildroot/build/camera-gpu-experiment.5clKaeCb` and its stage
+was copied to `/home/agcar/performance-lab/camera-gpu-stage.ZUiZZW12`.
+The candidate libcamera SHA-256 matched on both machines:
+`932322f7b388edc6b72af81dd6532845932c60c5252cb196f146d151e6507732`.
+All four cameras completed 90-frame 1280x720 XRGB8888 captures in both modes:
+
+| Camera | Release CPU ISP us/frame | GPU ISP us/frame | CPU-mode child CPU seconds | GPU-mode child CPU seconds |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 8533 | 6364 | 1.403 | 0.632 |
+| 2 | 7200 | 6100 | 1.089 | 0.651 |
+| 3 | 6900 | 5740 | 1.113 | 0.686 |
+| 4 | 3768 | 2166 | 0.767 | 0.326 |
+
+These single passes were sequential, with live desktop activity and an
+uncontrolled scene. They establish successful captures and promising lower
+CPU cost, not battery savings, repeatability, or equivalent image quality.
+The GPU runs report `GL_RENDERER: Adreno (TM) 740`, OpenGL ES 3.2 Mesa 25.2.8.
+The three hi1337 cameras report input DMA-buf import failure and texture-upload
+fallback: GPU processing works, but this path is not zero-copy. The hi847 run
+did not report that fallback.
+
+An important independent finding: the previous PC build's Meson options are
+`buildtype=debug`, `optimization=0`, `softisp-gpu=disabled`. Merely using
+`release` substantially reduces CPU-mode processing time in these probes.
+The production recipe now selects release explicitly, keeping its CPU backend.
+Do not attribute the entire installed-vs-GPU gap to GPU acceleration.
+
+Neither release libraries nor GPU mode have been deployed to desktop services.
+Before doing so, validate actual pixels, autofocus and full field of view with
+a fixed test scene, then relay/PipeWire compatibility and recovery. Those
+quality checks cannot be inferred from successful frame completion alone.

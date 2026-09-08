@@ -15,7 +15,7 @@ suite=${UBUNTU_SUITE:-noble}
 mirror=${UBUNTU_MIRROR:-http://ports.ubuntu.com/ubuntu-ports}
 
 libcamera_commit=62d4bfc450798cbd57722fa349a245b93b11d1cd
-libcamera_version=0.7.2+53.g62d4bfc-gts9u6
+libcamera_version=0.7.2+53.g62d4bfc-gts9u7
 pipewire_commit=a2287be601710eea0d073261223ec34b92384c8a
 pipewire_version=1.0.5-gts9u10
 skip_build=${SKIP_CAMERA_BUILD:-0}
@@ -150,6 +150,7 @@ git apply \
 	/build/camera-inputs/libcamera/0003-software-isp-preserve-full-field-of-view.patch \
 	/build/camera-inputs/libcamera/0004-simple-reset-qcom-camss-links-before-configure.patch
 meson setup build \
+	--buildtype=release \
 	--prefix=/usr \
 	--libdir=lib/aarch64-linux-gnu \
 	-Dpipelines=simple \
