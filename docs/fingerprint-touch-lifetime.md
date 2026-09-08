@@ -134,3 +134,28 @@ Size: 100663296 bytes. AVB footer/hash verification, decompressed Image
 identity, appended DTB identity, header preservation, and driver logic tests
 passed. The tablet still runs #7: no partitions or saved boot sets have been
 written. Physical fingerprint validation requires an owner-approved reboot.
+
+## Owner-authorized trial deployment
+
+The owner subsequently authorized installation and reboot. The narrow
+`scripts/install-fod-kernel8.sh` installer verified the active boot hash
+against #7, copied and verified it at
+`/var/lib/gts9u-kernel-backups/pre-fod-kernel8-20260908/boot.img`, staged a
+root-owned candidate, and wrote only the `boot` partition. Readback matched
+the candidate hash above. `vendor_boot`, `init_boot`, modules and saved boot
+sets were not changed. Physical validation is still pending.
+
+`gts9u-fod-kernel8-rollback.service` is enabled for the next boot, not started
+in the existing session. After ten minutes it restores #7 and reboots unless
+validation has stopped/disabled it. It checks both the backup hash and active
+candidate hash before restoring; it refuses to overwrite an unrelated boot.
+This userspace safeguard cannot recover a failure before systemd starts.
+
+After confirming the new kernel and basic device health, stop its countdown:
+
+```sh
+sudo systemctl disable --now gts9u-fod-kernel8-rollback.service
+```
+
+Then physically test the reader contact lifetime before refreshing the saved
+Ubuntu boot set or calling the touch fix validated.

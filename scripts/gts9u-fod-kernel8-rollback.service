@@ -1,0 +1,12 @@
+[Unit]
+Description=Restore kernel 7 if fingerprint kernel 8 trial is not confirmed
+After=local-fs.target
+ConditionPathExists=/var/lib/gts9u-kernel-backups/pre-fod-kernel8-20260908/boot.img
+
+[Service]
+Type=simple
+ExecStart=/var/lib/gts9u-kernel-backups/pre-fod-kernel8-20260908/deploy.sh rollback
+TimeoutStopSec=15s
+
+[Install]
+WantedBy=multi-user.target
