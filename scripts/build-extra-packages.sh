@@ -22,7 +22,7 @@ fastfetch_ver=${FASTFETCH_VERSION:-2.66.0}
 # and let an upgrade quietly drop the patch.
 fastfetch_pkgver=${fastfetch_ver}-gts9u1
 v4l2_relayd_commit=80e8f54563f624fe2f80a954af8cce27cc3a9636
-v4l2_relayd_version=0.1.2-gts9u15
+v4l2_relayd_version=0.1.2-gts9u16
 only=${ONLY_EXTRA_PACKAGE:-all}
 
 case "$only" in
@@ -165,6 +165,9 @@ install -m 0644 \
 install -m 0644 \
 	"$repo/packaging/v4l2-relayd/patches/0002-preempt-active-camera-on-handover.patch" \
 	"$buildroot/tmp/v4l2-relayd-handover.patch"
+cp \
+	"$repo/packaging/v4l2-relayd/patches/0003-stop-splash-without-readers.patch" \
+	"$buildroot/tmp/v4l2-relayd-idle.patch"
 run "cd /build
 rm -rf v4l2-relayd-gts9u stage-v4l2-relayd
 git clone --quiet https://git.launchpad.net/ubuntu/+source/v4l2-relayd \
@@ -173,6 +176,7 @@ cd v4l2-relayd-gts9u
 git checkout --quiet $v4l2_relayd_commit
 git apply /tmp/v4l2-relayd-recovery.patch
 git apply /tmp/v4l2-relayd-handover.patch
+git apply /tmp/v4l2-relayd-idle.patch
 # v4l2-relayd is a single C source file. Compiling it directly avoids running
 # architecture-independent autotools generators through slow ARM emulation and
 # keeps unused upstream systemd/modprobe defaults out of this device package.

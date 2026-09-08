@@ -1,0 +1,79 @@
+Subject: relayd: stop producing splash frames without V4L2 readers
+
+Keep the output node streaming and subscribed to client-count events so
+browser enumeration still sees CAPTURE. Prime it at startup, stop only the
+splash producer after the existing close debounce, and restart paced black
+frames while a new or preempted client waits for the shared ISP. Reset the
+splash clock on restart to avoid a catch-up burst after long idle gaps.
+
+diff --git a/src/v4l2-relayd.c b/src/v4l2-relayd.c
+index e98c833..a50dbb1 100644
+--- a/src/v4l2-relayd.c
++++ b/src/v4l2-relayd.c
+@@ -67,6 +67,7 @@ static GstElement *input_pipeline = NULL;
+ static gboolean input_pipeline_enable (gpointer user_data);
+ static GstElement *output_pipeline = NULL;
+ static GstElement *splash_pipeline = NULL;
++static void splash_pipeline_set_active (gboolean active);
+ 
+ static gboolean    backend_pipeline_bus_call (GstBus      *bus,
+                                               GstMessage  *msg,
+@@ -319,6 +320,27 @@ splash_pipeline_get ()
+   return splash_pipeline;
+ }
+ 
++static void
++splash_pipeline_set_active (gboolean active)
++{
++  GstElement *pipeline;
++
++  if (!active) {
++    if (splash_pipeline != NULL)
++      gst_element_set_state (splash_pipeline, GST_STATE_NULL);
++    return;
++  }
++
++  pipeline = splash_pipeline_get ();
++  if (pipeline == NULL)
++    return;
++  /* Restart against the current clock. Reusing the output's old base time
++   * after a long idle gap would make imagefreeze catch up with stale frames.
++   * Output PTS is still assigned by backend_appsink_new_sample(). */
++  gst_element_set_start_time (pipeline, 0);
++  gst_element_set_state (pipeline, GST_STATE_PLAYING);
++}
++
+ static pid_t
+ input_lock_owner ()
+ {
+@@ -401,7 +423,7 @@ input_pipeline_destroy (gpointer user_data G_GNUC_UNUSED)
+     input_lock_held = FALSE;
+   }
+   input_disable_timeout_id = 0;
+-  gst_element_set_state (splash_pipeline_get (), GST_STATE_PLAYING);
++  splash_pipeline_set_active (input_client_active);
+ 
+   return G_SOURCE_REMOVE;
+ }
+@@ -419,6 +441,10 @@ static void
+ input_pipeline_request_enable ()
+ {
+   input_client_active = TRUE;
++  /* Keep the output node open for enumeration, but produce black frames only
++   * while a client waits for the ISP (including a preempted client). */
++  if (input_pipeline == NULL)
++    splash_pipeline_set_active (TRUE);
+   if (input_disable_timeout_id != 0) {
+     g_source_remove (input_disable_timeout_id);
+     input_disable_timeout_id = 0;
+@@ -526,7 +552,8 @@ output_pipeline_bus_call (GstBus     *bus,
+       }
+ 
+       if (old_state == GST_STATE_READY && new_state == GST_STATE_PAUSED)
+-        gst_element_set_state (splash_pipeline_get (), GST_STATE_PLAYING);
++        /* Prime the output before subscribing to the initial client count. */
++        splash_pipeline_set_active (TRUE);
+ 
+       if (new_state != GST_STATE_PLAYING)
+         break;
+

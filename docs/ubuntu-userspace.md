@@ -126,6 +126,12 @@ systemd rebuilds the four cameras as a single set. Version
 the ISP owner's PID. This stops the nodes from staying enumerated but black
 after a boot, an update or a sensor change.
 
+Version `0.1.2-gts9u16` also stops the black-frame producer when the last
+reader closes, while keeping the output device open and its CAPTURE identity
+available. Black frames resume at 30 fps while a reader waits for the shared
+ISP, including during camera handover. Device package 2.48 requires this
+version. The ISP, image processing, format and capture rate are unchanged.
+
 `ubuntu-desktop-minimal` rather than `ubuntu-desktop` leaves out office
 software and desktop snaps that contribute nothing to bring-up. Snap is
 evaluated separately in milestone 5; it is not assumed from the start.
