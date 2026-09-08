@@ -110,6 +110,107 @@ tests do not establish an energy-per-task or battery-life improvement.
 
 ## Reproduce the checks
 
+### Office-use background work, 2026-09-08
+
+The owner continued office work with Chrome and ChatGPT during this audit.
+Measurements are active-use samples, not idle battery-life benchmarks. The
+display brightness, refresh rate, power profile, CPU/GPU limits, networking,
+sensor sampling and memory configuration were not changed.
+
+Two narrowly scoped userspace changes were validated:
+
+- `v4l2-relayd-gts9u 0.1.2-gts9u16` stops its splash producer when no V4L2
+  client is streaming. The output pipeline stays open, so all four devices
+  still advertise CAPTURE. Existing 250 ms open/500 ms close debouncing,
+  shared-ISP locking and camera handover remain in place. A waiting or
+  preempted reader still receives paced black frames. Restarting the splash
+  resets its clock origin to avoid a burst of stale frames after a long gap.
+- The fingerprint availability broker's 250 ms timer now only checks its
+  local two-second lease deadline. It no longer queries logind every tick.
+  Each Pulse still checks the caller UID and current session properties.
+  Trusted logind property changes, session removal and daemon/client loss
+  trigger revalidation or revocation. The secure transport, authentication
+  result handling, panel controls and GNOME extension are unchanged.
+
+The sensors were inspected but not retuned: the accelerometer remained
+available with orientation `normal`. Reducing its sampling rate without
+orientation-latency testing would not meet the requirement to preserve the
+desktop experience. The build still selects `softisp-gpu=disabled`; moving
+image processing to GPU is a separate project requiring image-quality,
+latency and energy validation. This change reduces unused camera work only.
+
+Twenty-second cgroup CPU-time samples with no camera readers gave:
+
+| Service | Original, % of one CPU | Candidate, % of one CPU |
+|---|---:|---:|
+| Four camera relays and supervisor | 6.984 | 0.348 |
+| Fingerprint availability broker | 1.572 | 0.766 |
+
+These short sequential samples show lower background CPU work, not a measured
+battery-life gain. Chrome/ChatGPT activity and repeated graphics-error logging
+varied during the samples; total battery-power samples were not comparable.
+One intermediate measurement overlapped camera testing and was excluded from
+the table. The camera supervisor still checks child/PipeWire liveness once a
+second; its recovery behavior was retained.
+
+Validation included compilation with `-Wall -Werror`, a synthetic GStreamer
+test of priming/no-reader idle/paced reopening/preemption/delayed closing,
+17 fingerprint policy/lifecycle tests, and the existing fingerprint startup,
+overlay, visual-state, keyboard and recovery tests. A live invalid-session
+Pulse was rejected and the desktop's legitimate lease continued renewing.
+No end-to-end biometric login or cold reboot was performed in this audit.
+
+All four physical cameras retained their labels and produced changing frames
+through read-mode V4L2 capture. The final runs observed 45, 43, 46 and 45
+distinct sampled-luminance hashes respectively; no images were stored. The
+first camera also reopened successfully after cycling all four. An initial
+automatic-I/O GStreamer probe returned a single black frame with **both**
+the candidate and restored original binary, so that probe was not treated as
+evidence of a new regression. The successful probe used `io-mode=rw`, paced
+consumption and allowed the existing debounce to complete. Chrome/OBS UI
+camera-switching and concurrent-client behavior were not revalidated live;
+the synthetic test covers the relay's preempted-reader splash state.
+
+Only `/usr/bin/v4l2-relayd` and
+`/usr/libexec/ubuntu-gts9u-fingerprint-ui` were replaced on the tablet and
+their two services restarted. No system reboot was needed. The live files
+were staged directly for validation; dpkg package versions were not changed.
+The repository build integrates the changes as relay gts9u16/device 2.48.
+Both services remain enabled. The five-minute rollback timer was stopped
+after validation. Original files and a recovery script are in:
+
+```text
+/var/lib/gts9u-efficiency-backups/session-Q9e30BY6/
+```
+
+Recovery (restores the two original files and restarts only their services):
+
+```sh
+sudo bash /var/lib/gts9u-efficiency-backups/session-Q9e30BY6/transaction.sh \
+  rollback /var/lib/gts9u-efficiency-backups/session-Q9e30BY6
+```
+
+SHA-256 of the installed candidates:
+
+```text
+9a77b4c889c3a4f84300dfa8c69642b5853d7fa2b0942f55feba58fe0b4b0b93  v4l2-relayd
+dfe93f144a75155b8092de565be8f5e8a2da775a7828ee7a77db3ba224fd195a  ubuntu-gts9u-fingerprint-ui
+```
+
+To reproduce the synthetic relay test with GStreamer development libraries
+and the patched relay source (it does not access physical cameras):
+
+```sh
+cc -O2 -Wall -Werror -DRELAY_SOURCE='"/absolute/path/src/v4l2-relayd.c"' \
+  -DG_LOG_DOMAIN='"v4l2_relayd"' -DV4L2_RELAYD_VERSION='"test"' \
+  scripts/test-relay-idle.c -o /tmp/test-relay-idle \
+  $(pkg-config --cflags --libs gio-unix-2.0 gstreamer-app-1.0 gstreamer-video-1.0)
+/tmp/test-relay-idle
+python3 scripts/test-fingerprint-ui.py
+```
+
+### CPU and GPU checks
+
 On the build host, using a known-good base DTB:
 
 ```sh
