@@ -2,11 +2,12 @@
 
 ## Status
 
-Work in progress. The stable-ID rule is installed; the user confirms OBS cameras
-work. The first AF candidate was installed for an optical test, then **rolled
-back** after a false-positive focus result. The revised confidence-check candidate
-is built and tested privately, **not installed**. The accepted GPU/idle runtime
-is restored.
+The stable-ID rule is installed; the user confirms OBS cameras work. The first
+AF candidate was rolled back after an optical false positive. A third candidate,
+combining confidence checks with a less noise-sensitive metric, passed the
+continuous monitor/remote/monitor optical test and is now installed and accepted.
+Post-install camera, OBS-property and idle checks passed; the safety rollback
+timer is inactive and the previous runtime is retained as a backup.
 No reboot, OBS configuration change or OBS binary patch has been performed.
 Private camera images are not included in this repository.
 
@@ -112,8 +113,8 @@ This confirms actual periodic actuator activity, not just metadata changes.
 The monitor text is legible in both current samples. Linux still has more shadow
 noise and less usable dark-bezel detail than the supplied Android photograph;
 image-quality parity and changed-scene optical reacquisition are **not verified**.
-Do not activate 0006 in the production package recipe or replace the live runtime
-until those checks and regression/idle tests are completed.
+Those early results alone did not justify activation. See the final candidate
+validation below; the production recipe now includes patches 0006 and 0007 together.
 
 ## Further optical testing and rollback
 
@@ -154,8 +155,8 @@ e6609c92e1c4e43738dbbedd98cf306f026c02c382fd606adfe3b22933093142  ipa_soft_simpl
 ```
 
 The library hash remains `eecd58d796e530cb7069110ce448835c55d593c3c6728a84a40892b086c20c78`.
-`scripts/install-camera-autofocus-live.sh` pins this revised candidate and backs
-up the accepted GPU runtime. **Do not invoke it until optical validation passes.**
+This confidence-only candidate was not deployed. The installer was subsequently
+repinned to the final candidate documented below.
 
 The revised candidate correctly reported Failed on a low-detail shelf scene.
 A second perturbation run in that scene did not pass (there was no initial focus
@@ -167,3 +168,72 @@ the metering region is needed next, followed by a continuous near/far transition
 without restarting capture. Off-centre target selection also remains a limitation.
 Private snapshots/logs reside in `camera-af-live.iMl2PYl5` and the revised stage;
 subsequent rolling frames were written to user runtime tmpfs, not persistent disk.
+
+## Noise-resistant metric and continuous optical validation
+
+The confidence-only candidate acquired the repositioned monitor at frame 96 of
+a 450-frame capture, with visibly legible text. In a subsequent continuous capture,
+the remote's labels became legible but the confidence heuristic still reported
+Failed. The original statistic gave too much weight to fine sensor noise in this
+dark scene; a fixed peak-ratio threshold alone was not sufficient.
+
+Patch 0007 averages four horizontal statistics samples before computing the
+second derivative used for focus. It changes only the focus numerator, not the
+RGB sums, luminance total, histogram, Bayer conversion or output pixels. It is
+**not an image denoiser** and does not fix shadow noise in the delivered video.
+`scripts/test-camera-focus-metric.py` compiles the actual production macros and
+checks reduced noise contribution, sharp/blurred separation and unchanged
+colour/exposure statistics. AF state-machine tests also pass.
+
+Final staging directory: `/home/agcar/performance-lab/camera-af-metric.S7yQ2ZAr`.
+Remote stage: `stage-af-metric`, beside the existing experimental source.
+
+```text
+2bebd6e5d819421f1a50778c432ae947bc290de39b9f3fc24d1ac2ec5151779e  libcamera.so.0.7.2
+7ff0a5af6149788b8f7ee5d081d94961caf424e425f23af1ebe9fca50958c8f8  ipa_soft_simple.so
+e6609c92e1c4e43738dbbedd98cf306f026c02c382fd606adfe3b22933093142  ipa_soft_simple.so.sign
+```
+
+The controlled physical-lens perturbation test passed again: frame 240 moved
+512→768, AF restarted at frame 252 and reacquired 512 at frame 348.
+The user then moved a remote into and out of the central field while one capture
+remained open. Both the remote's numbers/labels and the monitor text were
+visibly legible in their respective snapshots, with AfState=Focused. The lens
+was observed at 608 for the remote and 512 after its removal. State transitions:
+0→96, 368→464, 1152→1248 and 2976→3072 (Scanning→Focused; approximately 3.2 seconds
+per scan). No Failed state occurred in this capture. It was deliberately stopped
+after frame 4394 once the check was complete, rather than leaving it capturing.
+Private snapshots: `near.png`, `far.png`; log: `near-far.log` in the final stage.
+This is validation of this scene and distance change, not all lighting conditions
+or Android-quality parity. The central metering-region limitation remains.
+
+Before deployment, all four cameras completed 90/90 staged GPU frames at 640×480.
+Indicative ISP times for cameras 1–4: 5187, 4364, 6341 and 1110 µs/frame. These
+short uncontrolled measurements are not battery comparisons.
+
+Production recipe revision `gts9u9` applies patches 0001–0007 in order, retaining
+release optimization, full-field GPU processing and stop-time GPU context release.
+The live transaction uses the same six-file ABI-compatible replacement and does
+not replace tuning, kernel, relays or camera identities. Its backup is
+`/var/lib/gts9u-camera-backups/af-20260908.nGQtMMKM`.
+Post-install acceptance completed and the 15-minute safety timer is inactive.
+Installed library/IPA hashes match the final stage above. The staged optical
+capture explicitly logged `GL_RENDERER: Adreno (TM) 740`.
+
+Two live relay cycles passed on all four cameras: frame counts were
+142/140/136/134 and 134/142/140/132 for video20–23, with at least 117 distinct
+nonuniform frames per capture. The unchanged OBS V4L2 property probe also passed.
+In the subsequent 20.0027-second idle sample, PipeWire PID 24518 used 327 µs of
+CPU (0.00163% of one core). Its matching DRM client 87 stayed at 1638173705 ns of
+GPU engine time before and after; memory stayed around 42.5 MB. This confirms no
+measurable GPU camera work in that idle sample, not zero whole-system consumption
+or a quantified battery-life improvement. Supervisory relay processes remain.
+
+Rollback, if required, uses the retained root-owned transaction:
+
+```sh
+pkexec bash /var/lib/gts9u-camera-backups/af-20260908.nGQtMMKM/transaction.sh rollback /var/lib/gts9u-camera-backups/af-20260908.nGQtMMKM
+```
+
+This restores the previously accepted GPU runtime and restarts camera/audio
+services. No kernel reboot or change to the OBS/stable-ID fix is involved.

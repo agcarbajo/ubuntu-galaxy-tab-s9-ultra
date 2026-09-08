@@ -60,7 +60,7 @@ This mock test does not replace live PipeWire reopen/idle tests.
 
 ## Candidate and transaction
 
-Recipe revision gts9u8 enables release optimization and EGL/GLES support,
+Recipe revision gts9u8 enabled release optimization and EGL/GLES support,
 declares EGL/GLES dependencies, and applies all five libcamera patches. The
 existing no-reader relay patch remains unchanged. GPU acceleration still uses
 CPU statistics and texture uploads where input DMA-buf import is unsupported;
@@ -78,7 +78,8 @@ restarts the stack. It preserves the tuning files, V4L2 relays, PipeWire plugin,
 kernel and modules. A seven-minute rollback timer restores the old files unless
 explicitly accepted after live validation. No tablet reboot is performed.
 The live-copy transaction does not update dpkg's package revision; the next
-normal package build uses gts9u8.
+normal package build now uses gts9u9, adding the validated autofocus changes
+documented in [camera-focus-and-enumeration.md](camera-focus-and-enumeration.md).
 
 The first unanswered polkit attempt was cancelled without changes. After the
 user explicitly authorized a retry, the six runtime files were installed and

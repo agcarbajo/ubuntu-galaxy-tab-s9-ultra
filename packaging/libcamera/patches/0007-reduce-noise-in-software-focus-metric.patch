@@ -1,0 +1,40 @@
+diff --git a/src/libcamera/software_isp/swstats_cpu.cpp b/src/libcamera/software_isp/swstats_cpu.cpp
+index 3cc2197..3cc5e41 100644
+--- a/src/libcamera/software_isp/swstats_cpu.cpp
++++ b/src/libcamera/software_isp/swstats_cpu.cpp
+@@ -175,6 +175,8 @@ static constexpr unsigned int kBlueYMul = 29; /* 0.114 * 256 */
+ 	pixel_t r, g, g2, b;              \
+ 	uint64_t yVal, yNorm;             \
+ 	uint64_t prevY = 0, prevPrevY = 0; \
++	uint64_t focusBlockY = 0;         \
++	unsigned int focusBlocks = 0;    \
+ 	unsigned int lineSamples = 0;     \
+                                           \
+ 	uint64_t sumR = 0;                \
+@@ -193,12 +195,20 @@ static constexpr unsigned int kBlueYMul = 29; /* 0.114 * 256 */
+ 	yVal += b * kBlueYMul;             \
+ 	yNorm = yVal / (256 * (div));      \
+ 	luminance += yNorm;                \
+-	if (lineSamples >= 2)              \
+-		focus += std::abs(static_cast<int64_t>(prevPrevY) - \
+-				 2 * static_cast<int64_t>(prevY) + \
+-				 static_cast<int64_t>(yNorm)); \
+-	prevPrevY = prevY;                 \
+-	prevY = yNorm;                     \
++	focusBlockY += yNorm;              \
++	/* Average four samples before measuring curvature: sensor noise must \
++	 * not dominate focus in dark scenes. Colour/AE stats stay unchanged. */ \
++	if ((lineSamples & 3) == 3) {      \
++		uint64_t blockY = focusBlockY / 4; \
++		if (focusBlocks >= 2)           \
++			focus += std::abs(static_cast<int64_t>(prevPrevY) - \
++					 2 * static_cast<int64_t>(prevY) + \
++					 static_cast<int64_t>(blockY)); \
++		prevPrevY = prevY;              \
++		prevY = blockY;                \
++		focusBlockY = 0;               \
++		focusBlocks++;                 \
++	}                                 \
+ 	lineSamples++;                     \
+ 	stats.yHistogram[yVal * SwIspStats::kYHistogramSize / (256 * 256 * (div))]++;
+ 
