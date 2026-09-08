@@ -242,3 +242,42 @@ restore client reached them through host-key-pinned SSH forwarding. Thus the
 tablet needed neither USB/IP kernel support nor a host reboot. Owned processes
 were terminated after the bounded test; logs and temporary disks stay inside
 the personal lab, outside all normal builds.
+
+### iBEC / iBootStage2 Recovery on the physical tablet (2026-09-08)
+
+The personal bridge now supports Recovery bulk OUT on endpoint 4. A type-1
+data packet is acknowledged by bytes `01 04`: the second byte identifies the
+endpoint, rather than being a generic success code. A 65,792-byte nonuniform
+probe transferred in three chunks and the unmodified recovery library's
+`getenv` returned `filesize=0x10100`, `loadaddr=0x72e00000` and `boot-stage=1`.
+The bridge regression suite has twelve passing tests, including rejection of
+wrong bulk endpoints, acknowledgements and oversized packets.
+
+Before sending iBEC, the probe requests fresh tickets for the current Recovery
+nonce and sends the empty local policy using its separate TSS signature,
+following the open-source restore client's ordering. Ticket-only supplemental
+exports are private, non-overwriting and owner-readable only; the real restore
+path keeps its payload-presence checks. No signing bypass is used.
+The private restore-client checkpoint is `a840551`; its opt-in
+`GTS9U_TSS_EXTRAS_DIR` exports the already-fetched supplemental tickets only in
+ticket-only mode. An incomplete real restore was re-tested and still rejected.
+
+The stage2-only sequence sends the signed policy (`lpolrestore`), volatile boot
+settings, RestoreLogo and signed iBEC, then the `go` command. The policy, logo
+and iBEC containers measured 3,039, 13,985 and 265,261 bytes respectively in the
+verified runs. `saveenv` returned a real USB stall with the blank disposable AUX
+store, so that command is explicitly omitted from this **nonpersistent probe**.
+Persistent environment storage and complete provisioning remain unverified.
+
+Both the PC reference and native ARM64 QEMU on the physical tablet reached the
+iBootStage2 recovery command prompt. The library independently returned
+`boot-stage=2`; the harness requires both that response and the Stage2 UART
+marker. An early two-second reconnect attempt failed while the CPU was still
+initializing the next stage; allowing ten seconds succeeded. This is progress
+toward restore-kernel loading, **not XNU, an installed macOS system or guest GPU
+acceleration**. The tablet's host kernel and boot images remain unchanged.
+
+The selected Ventura restore ramdisk (`097-48350-027.dmg`) has also been
+extracted privately from the verified IPSW: 155,189,275 bytes, SHA-256
+`11944d3e93773e5ab4bf38d9a452e12726a8e303c2eb2333c3d33347d8e0a045`.
+This prepares the next kernel-loading probe; it is not evidence of kernel boot.
