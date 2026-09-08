@@ -151,6 +151,9 @@ apply_unless() {
 apply_unless 'Use a boost-independent frequency reference' \
 	drivers/base/arch_topology.c arm-topology-use-boost-frequency-reference.patch
 
+apply_unless 'Recompute the software boost limit' \
+	drivers/cpufreq/cpufreq.c cpufreq-recompute-software-boost-limit.patch
+
 # Linux 7.2-rc3 only contains the Gunyah watchdog. Import the host-side
 # Resource Manager and VM-manager stack before enabling it below. The source
 # snapshot and the small 7.2 API adaptations are recorded in PROVENANCE.md.

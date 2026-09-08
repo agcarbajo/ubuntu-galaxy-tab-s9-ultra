@@ -1,0 +1,29 @@
+diff --git a/drivers/cpufreq/cpufreq.c b/drivers/cpufreq/cpufreq.c
+--- a/drivers/cpufreq/cpufreq.c
++++ b/drivers/cpufreq/cpufreq.c
+@@ -2790,14 +2790,24 @@ EXPORT_SYMBOL_GPL(cpufreq_update_limits);
+  *********************************************************************/
+ int cpufreq_boost_set_sw(struct cpufreq_policy *policy, int state)
+ {
++	unsigned int old_max = policy->cpuinfo.max_freq;
+ 	int ret;
+ 
+ 	if (!policy->freq_table)
+ 		return -ENXIO;
+ 
++	/*
++	 * Recompute the software boost limit from the enabled table entries.
++	 * The table helper preserves a pre-existing higher cpuinfo.max_freq;
++	 * retaining the previous boost maximum here would therefore leave
++	 * boost_freq_req uncapped when software boost is disabled again.
++	 */
++	policy->cpuinfo.max_freq = 0;
+ 	ret = cpufreq_frequency_table_cpuinfo(policy);
+-	if (ret)
++	if (ret) {
++		policy->cpuinfo.max_freq = old_max;
+ 		pr_err("%s: Policy frequency update failed\n", __func__);
++	}
+ 
+ 	return ret;
+ }
