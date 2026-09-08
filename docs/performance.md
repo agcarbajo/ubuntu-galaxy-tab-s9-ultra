@@ -146,6 +146,78 @@ original affinity afterwards; sampling on the tested core can fill its idle
 gaps and change the result.
 The readings are cpufreq policy telemetry, not independent clock metrology.
 
+### Interpreting fastfetch after a restart
+
+`fastfetch` reports the maximum currently allowed by cpufreq, not every boost
+OPP registered in the policy. Power Profiles daemon persists the selected
+profile across restarts. Consequently, when the tablet starts in Power Saver,
+the profile bridge correctly disables CPU boost and `fastfetch` reports about
+2.96 GHz; this alone is not evidence that the 3.36 GHz OPP or the new kernel
+has disappeared. Check `scaling_boost_frequencies`, the global `boost` switch,
+`cpuinfo_max_freq`, `scaling_max_freq` and `powerprofilesctl get` together.
+
+When a validated kernel was written directly to the active `boot` partition,
+also refresh the Ubuntu image used by the dual-boot switch. Otherwise a later
+Android → Ubuntu switch can restore the older kernel even though ordinary
+restarts keep the validated one. The refresh helper refuses to proceed unless
+the candidate and active partition have the same caller-supplied SHA-256, and
+it backs up both the active and previously saved images before replacing only
+the saved `boot.img`:
+
+```sh
+pkexec scripts/refresh-saved-ubuntu-boot.sh \
+  /path/to/validated-boot.img EXPECTED_SHA256 --apply
+```
+
+Identify the partition by GPT label and size before running the helper. It
+does not write the active partition, `vendor_boot`, `init_boot`, `dtbo`,
+modules, firmware or any Android data. Its printed backup directory contains
+the previous saved image for recovery.
+
+### Post-restart persistence audit, 2026-09-08
+
+The first restart after the physical validation still ran
+`7.2.0-rc3-dirty` build **#7**, built `Tue Sep 8 04:20:00 CEST 2026`. Power
+Profiles daemon had persisted Power Saver, and the enabled profile bridge's
+boot log showed `CPU boost=0, power profile=power-saver`. The live prime policy
+still registered `3360000` as its boost frequency, while its allowed maximum
+was correctly limited to 2,956,800 kHz. The GPU still exposed 719 MHz. Thus
+fastfetch's 2.96 GHz was the selected power policy, not a kernel regression.
+
+A Balanced → Power Saver → Balanced transition produced, respectively,
+boost/max pairs `1/3360000`, `0/2956800`, and `1/3360000` kHz. The CPU governor
+remained `schedutil`, the GPU governor remained `simple_ondemand`, and a final
+read-only `--require-galaxy-max` audit passed. In Balanced, fastfetch reported
+3.36 GHz again. An exercise attempt made while the tablet was already warm
+aborted before starting workers because it did not cool below 50 C in 30
+seconds; no thermal limit was relaxed and no worker remained.
+
+The GPT metadata identified `/dev/sda21` as Samsung UFS partition `boot`, size
+100,663,296 bytes. The active partition matched the validated build #7 image:
+
+```text
+33643c8c9c4d26da8988d133b1c3b5af8e3999f02cd3e0d40e7fbf12bdfaf811
+```
+
+The dual-boot Ubuntu copy still had the older hash
+`c6dad49b175b8bd9e7b6a7607edd65b51038ba4b6de77856b0202708fd507b8f`.
+Before synchronization, Tab Companion consequently identified the active set
+as `null`: the active kernel did not match the saved Ubuntu set. The helper
+above verified the active and candidate hashes, backed up both boot images,
+and replaced only `/var/lib/gts9u-boot-sets/ubuntu/boot.img`. It did not write
+any partition. The saved Ubuntu image now has the validated hash, and Tab
+Companion identifies the complete active set as `ubuntu`.
+
+The previous saved image is recoverable from:
+
+```text
+/var/lib/gts9u-kernel-backups/pre-saved-ubuntu-boot-sync-wjaFznJJ/saved-ubuntu-boot.img
+```
+
+No QEMU, libvirt, crosvm or Gunyah VM process was active during the audit.
+`/dev/gunyah` remained present, which is recorded only as a health check and
+not as proof that every virtualization feature works.
+
 For an off-screen GPU workload in an existing Wayland session:
 
 ```sh
