@@ -49,10 +49,6 @@
     <string name="progress_write_failed">%1$s konnte nicht geschrieben werden.</string>
     <string name="progress_mismatch">%1$s stimmt beim Zurücklesen nicht überein. Nicht neu starten: erst prüfen.</string>
 
-    <string name="about_what">Wechselt zwischen den auf diesem Galaxy Tab S9 Ultra installierten Systemen, indem die vier Boot-Partitionen ersetzt werden und das Tablet neu startet.</string>
-    <string name="about_checks">Jedes Abbild wird vor dem Schreiben anhand seiner Größe geprüft, und die Partition wird danach zurückgelesen. Stimmt etwas nicht, wird abgebrochen und nichts startet neu.</string>
-    <string name="about_untouched">Die Abbilder werden aus %1$s gelesen. Geschrieben werden nur boot, init_boot, vendor_boot und dtbo; vbmeta und super werden nie angefasst: Ersteres würde die Daten von Android löschen, im Zweiten liegt sein System.</string>
-    <string name="about_project">Teil der Ubuntu-24.04-Portierung für das SM-X910.\ngithub.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra</string>
 
     <string name="tile_unavailable">Kein anderes System</string>
     <string name="tile_confirm_title">In %1$s neu starten?</string>
@@ -60,4 +56,9 @@
     <string name="tile_confirm_ok">Neu starten</string>
     <string name="tile_writing">Boot-Partitionen werden geschrieben…</string>
     <string name="tile_failed">Nicht abgeschlossen. Es wurde nichts neu gestartet.</string>
+    <string name="about_what">Wechsle zwischen Android und Ubuntu auf deinem Galaxy Tab S9 Ultra.</string>
+    <string name="about_creator">Ursprünglicher Entwickler</string>
+    <string name="about_project">Teil der Ubuntu-24.04-Portierung für das Galaxy Tab S9 Ultra.</string>
+    <string name="about_project_link">Projekt auf GitHub ansehen</string>
+    <string name="about_version">Version %1$s</string>
 </resources>

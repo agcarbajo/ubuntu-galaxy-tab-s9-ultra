@@ -70,6 +70,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -641,6 +642,7 @@ private fun AddTileRow() {
 
 @Composable
 private fun AboutDialog(onDismiss: () -> Unit) {
+    val uriHandler = LocalUriHandler.current
     AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = {
@@ -649,26 +651,33 @@ private fun AboutDialog(onDismiss: () -> Unit) {
         icon = { Icon(Icons.Filled.Info, contentDescription = null) },
         title = { Text(stringResource(R.string.app_name)) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
                 Text(
-                    stringResource(R.string.about_what),
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-                Text(
-                    stringResource(R.string.about_checks),
-                    style = MaterialTheme.typography.bodySmall,
+                    stringResource(R.string.about_version, BuildConfig.VERSION_NAME),
+                    style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                Text(stringResource(R.string.about_what))
+                HorizontalDivider()
                 Text(
-                    stringResource(R.string.about_untouched, BootSets.ROOT_DIR),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    stringResource(R.string.about_creator),
+                    style = MaterialTheme.typography.labelLarge,
                 )
+                TextButton(onClick = { uriHandler.openUri("https://github.com/agcarbajo") }) {
+                    Text("@agcarbajo")
+                }
                 Text(
                     stringResource(R.string.about_project),
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                TextButton(onClick = {
+                    uriHandler.openUri("https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra")
+                }) {
+                    Text(stringResource(R.string.about_project_link))
+                }
             }
         },
     )

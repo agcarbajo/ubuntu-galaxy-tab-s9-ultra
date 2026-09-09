@@ -49,10 +49,6 @@
     <string name="progress_write_failed">Impossible d’écrire %1$s.</string>
     <string name="progress_mismatch">%1$s ne correspond pas à la relecture. Ne redémarrez pas : vérifiez d’abord.</string>
 
-    <string name="about_what">Bascule entre les systèmes installés sur cette Galaxy Tab S9 Ultra en remplaçant les quatre partitions de démarrage, puis en redémarrant.</string>
-    <string name="about_checks">Chaque image est vérifiée par sa taille avant d’être écrite, et la partition est relue ensuite. Si quelque chose ne correspond pas, tout s’arrête et rien ne redémarre.</string>
-    <string name="about_untouched">Les images sont lues depuis %1$s. Seules boot, init_boot, vendor_boot et dtbo sont écrites ; vbmeta et super ne sont jamais touchées : la première effacerait les données d’Android et la seconde contient son système.</string>
-    <string name="about_project">Fait partie du portage d’Ubuntu 24.04 pour le SM-X910.\ngithub.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra</string>
 
     <string name="tile_unavailable">Aucun autre système</string>
     <string name="tile_confirm_title">Redémarrer sur %1$s ?</string>
@@ -60,4 +56,9 @@
     <string name="tile_confirm_ok">Redémarrer</string>
     <string name="tile_writing">Écriture des partitions de démarrage…</string>
     <string name="tile_failed">Cela ne s’est pas terminé. Rien n’a redémarré.</string>
+    <string name="about_what">Passez entre Android et Ubuntu sur votre Galaxy Tab S9 Ultra.</string>
+    <string name="about_creator">Créateur original</string>
+    <string name="about_project">Fait partie du portage Ubuntu 24.04 pour la Galaxy Tab S9 Ultra.</string>
+    <string name="about_project_link">Voir le projet sur GitHub</string>
+    <string name="about_version">Version %1$s</string>
 </resources>
