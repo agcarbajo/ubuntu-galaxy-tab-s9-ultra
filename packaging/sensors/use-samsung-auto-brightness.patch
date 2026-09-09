@@ -1,0 +1,55 @@
+Select the light stream that Samsung's SM-X910 HAL actually enables.
+
+Rooted One UI startup tracing shows an on-change request to auto_brightness,
+not ambient_light. The former uses sns_ambient_light.proto and its first
+float is illuminance in lux. On the original Ubuntu firmware it produces
+varying light measurements immediately; ambient_light alone produces none.
+
+Discover the SUID by datatype as usual, and limit the change to this board.
+The DT compatible property is a NUL-separated list: Samsung ABL compatibles
+precede samsung,gts9uwifi, so testing only the first string would miss it.
+
+--- a/src/libssc-sensor-light.c
++++ b/src/libssc-sensor-light.c
+@@ -16,6 +16,7 @@
+  * along with this program. If not, see <https://www.gnu.org/licenses/>.
+  */
+ 
++#include <string.h>
+ #include "libssc-client-private.h"
+ #include "libssc-common-private.h"
+ #include "ssc-common.pb-c.h"
+@@ -265,6 +266,25 @@
+ 	return SSC_SENSOR_LIGHT (sensor);
+ }
+ 
++static const gchar *
++light_data_type (void)
++{
++	g_autofree gchar *compatible = NULL;
++	gsize length = 0;
++	gsize offset;
++
++	if (g_file_get_contents ("/sys/firmware/devicetree/base/compatible",
++	                         &compatible, &length, NULL)) {
++		for (offset = 0; offset < length;
++		     offset += strlen (compatible + offset) + 1) {
++			if (g_str_equal (compatible + offset, "samsung,gts9uwifi"))
++				return "auto_brightness";
++		}
++	}
++
++	return "ambient_light";
++}
++
+ void
+ ssc_sensor_light_new (GCancellable *cancellable, GAsyncReadyCallback callback, gpointer user_data)
+ {
+@@ -274,6 +294,6 @@
+ 			cancellable,
+ 			callback,
+ 			user_data,
+-			SSC_SENSOR_DATA_TYPE, "ambient_light",
++			SSC_SENSOR_DATA_TYPE, light_data_type (),
+ 			NULL);
+ }

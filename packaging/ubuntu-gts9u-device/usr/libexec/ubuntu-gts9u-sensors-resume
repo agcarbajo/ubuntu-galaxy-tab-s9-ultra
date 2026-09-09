@@ -52,12 +52,13 @@ fresh_sensor_proxy() {
 
 handover_count() {
 	awk '/q6v5 handover/ {
-		sum=0
+		found=1
 		for (i=2; i<=NF; i++) {
 			if ($i !~ /^[0-9]+$/) break
 			sum += $i
 		}
-		print sum
+	} END {
+		if (found) print sum
 	}' /proc/interrupts
 }
 

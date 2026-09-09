@@ -32,12 +32,12 @@ EV_KEY = 1
 # deliberate, long enough that nobody triggers it while meaning to suspend.
 LONG_PRESS_MS = 1200
 
-# The press that wakes the tablet must not be read as a command, or a single
-# tap would suspend, wake, and suspend again.  CLOCK_MONOTONIC does not advance
-# across suspend, so the wake press arrives only a moment after the suspend was
-# issued as far as this clock is concerned, however long the tablet was asleep.
-# Anything inside this window is the wake press.
-WAKE_GUARD_S = 3.0
+# A wake press is queued in evdev and reaches us after userspace thaws. Identify
+# it from both the time spent in suspend and the kernel's recorded wake IRQ.
+# A plain monotonic timeout also swallows a second press made while the desktop
+# is still entering suspend.
+MIN_SLEEP_S = 0.05
+PM_WAKEUP_IRQ = "/sys/power/pm_wakeup_irq"
 
 EVENT_FORMAT = "llHHi"
 EVENT_SIZE = struct.calcsize(EVENT_FORMAT)
@@ -94,7 +94,47 @@ def active_session():
 def short_press():
     log("short press: suspending")
     subprocess.Popen(["systemctl", "suspend"])
-    return time.monotonic()
+    return time.monotonic(), time.clock_gettime(time.CLOCK_BOOTTIME)
+
+
+def power_key_irq():
+    """Return the Linux IRQ used by pmic_pwrkey on this boot."""
+    try:
+        with open("/proc/interrupts") as handle:
+            for line in handle:
+                if "pmic_pwrkey" in line:
+                    return int(line.split(":", 1)[0].strip())
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def wake_irq():
+    try:
+        with open(PM_WAKEUP_IRQ) as handle:
+            return int(handle.read().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def slept_since(stamp):
+    monotonic_at, boottime_at = stamp
+    awake_elapsed = time.monotonic() - monotonic_at
+    total_elapsed = time.clock_gettime(time.CLOCK_BOOTTIME) - boottime_at
+    return max(0.0, total_elapsed - awake_elapsed)
+
+
+def suspend_offset():
+    """Time accumulated outside CLOCK_MONOTONIC, including system suspend."""
+    return time.clock_gettime(time.CLOCK_BOOTTIME) - time.monotonic()
+
+
+def cancel_pending_suspend():
+    """Cancel the transaction when power is pressed during suspend entry."""
+    log("power press during suspend entry: cancelling suspend")
+    subprocess.Popen(
+        ["systemctl", "stop", "suspend.target", "systemd-suspend.service"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def long_press():
@@ -122,11 +162,15 @@ def main():
         log("no pmic_pwrkey input device; nothing to do")
         return 1
     log("watching %s (long press at %d ms)" % (path, LONG_PRESS_MS))
+    pwr_irq = power_key_irq()
+    log("pmic power-key wake IRQ is %s" %
+        (pwr_irq if pwr_irq is not None else "unknown"))
 
     with open(path, "rb", buffering=0) as dev:
         pressed_at = None
         fired = False
         suspended_at = None
+        last_suspend_offset = suspend_offset()
         while True:
             # When the key is down, wake up in time to fire the long press
             # without waiting for the release.
@@ -150,14 +194,46 @@ def main():
             if etype != EV_KEY or code != KEY_POWER:
                 continue
 
+            # This also detects a suspend requested by systemd, GNOME or a
+            # diagnostic tool. Without it, the wake press from such a sleep
+            # looks like a fresh short press and tries to suspend once more.
+            current_suspend_offset = suspend_offset()
+            externally_observed_sleep = max(
+                0.0, current_suspend_offset - last_suspend_offset)
+            last_suspend_offset = current_suspend_offset
+
             if value == 1:              # down
                 now = time.monotonic()
-                if suspended_at is not None and now - suspended_at < WAKE_GUARD_S:
-                    log("ignoring the press that woke us")
+                irq = wake_irq()
+                if (externally_observed_sleep >= MIN_SLEEP_S and
+                        irq == pwr_irq):
+                    log("ignoring the press that woke us "
+                        "(observed %.3f s asleep, IRQ %s)" %
+                        (externally_observed_sleep, irq))
                     suspended_at = None
                     pressed_at = None
                     fired = True        # swallow the matching release too
                     continue
+                if suspended_at is not None:
+                    slept = slept_since(suspended_at)
+                    if slept >= MIN_SLEEP_S and irq == pwr_irq:
+                        log("ignoring the press that woke us "
+                            "(slept %.3f s, IRQ %s)" % (slept, irq))
+                        suspended_at = None
+                        pressed_at = None
+                        fired = True    # swallow the matching release too
+                        continue
+                    if slept < MIN_SLEEP_S:
+                        cancel_pending_suspend()
+                        suspended_at = None
+                        pressed_at = None
+                        fired = True    # swallow the matching release too
+                        continue
+                    # The machine woke for another source. This is a fresh
+                    # power-key command even if it follows resume closely.
+                    log("new press after non-key wake (slept %.3f s, IRQ %s)" %
+                        (slept, irq if irq is not None else "unknown"))
+                    suspended_at = None
                 pressed_at = now
                 fired = False
             elif value == 0:            # up

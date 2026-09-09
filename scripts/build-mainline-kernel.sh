@@ -17,7 +17,10 @@ build_dir=${KERNEL_BUILD_DIR:-$base/build/linux-gts9uwifi}
 out_dir=${KERNEL_OUT_DIR:-$base/out/kernel-gts9uwifi}
 v4l2loopback_commit=9ef83fb9bc88e8f841786753c362ac52c580defc
 fingerprint_baseline=5046f92f507d80b13d2e25c53a5d743861ba5a97
-enable_fingerprint=${ENABLE_FINGERPRINT_EXPERIMENTAL:-0}
+# The complete EL721/QTEE path is physically validated for v1.2.0. Keep the
+# old variable as an explicit development opt-out, while release builds enable
+# the working fingerprint stack without relying on an undocumented shell flag.
+enable_fingerprint=${ENABLE_FINGERPRINT_EXPERIMENTAL:-1}
 fingerprint_panel=${FINGERPRINT_PANEL_FOD:-$enable_fingerprint}
 fingerprint_touch=${FINGERPRINT_TOUCH_FOD:-$enable_fingerprint}
 fingerprint_sensor=${FINGERPRINT_EL721:-$enable_fingerprint}
@@ -811,8 +814,38 @@ if [ "${BUILD_WIFI_MODULES:-1}" = 1 ]; then
 	release=$(make -s -C "$kernel_tree" O="$build_dir" ARCH=arm64 LLVM=1 \
 		kernelrelease)
 	release_dir=$modules_root/lib/modules/$release
+	# Containers need the modular NAT/filter stack too, not just ath12k.
+	# Without these modules Waydroid fails before Android starts, with
+	# "can't initialize iptables table filter" from waydroid-net.sh.
+	bash "$repo/scripts/build-netfilter-modules.sh" \
+		"$kernel_tree" "$build_dir" "$release_dir/updates/netfilter"
 	if grep -qx 'CONFIG_QCOM_SPSS=m' "$build_dir/.config" &&
 	   grep -qx 'CONFIG_RPMSG_QCOM_GLINK_SPSS=m' "$build_dir/.config"; then
+		# The fingerprint secure-transport helper also requires the small
+		# board-specific IPCC IRQ bridge.  Keep it in the same signed module
+		# set as the SPSS remoteproc/glink stack so replacing a kernel release
+		# cannot leave fprintd waiting for a module signed by the previous key.
+		spss_irq_module_dir=$base/build/spss-irq-module
+		case "$spss_irq_module_dir" in
+			"$base"/build/spss-irq-module)
+				rm -rf -- "$spss_irq_module_dir"
+				;;
+			*) echo "unsafe SPSS IRQ module path: $spss_irq_module_dir" >&2; exit 1 ;;
+		esac
+		install -d "$spss_irq_module_dir" "$release_dir/updates"
+		install -m 0644 "$repo/kernel/drivers/qcom_spss_irq.c" \
+			"$spss_irq_module_dir/"
+		install -m 0644 "$repo/kernel/modules/spss-irq/Makefile" \
+			"$spss_irq_module_dir/"
+		make -C "$kernel_tree" O="$build_dir" ARCH=arm64 LLVM=1 \
+			-j"$(nproc)" M="$spss_irq_module_dir" modules
+		installed=$release_dir/updates/qcom_spss_irq.ko
+		install -m 0644 "$spss_irq_module_dir/qcom_spss_irq.ko" "$installed"
+		"$build_dir/scripts/sign-file" sha256 \
+			"$build_dir/certs/signing_key.pem" \
+			"$build_dir/certs/signing_key.x509" "$installed"
+		modinfo -F signer "$installed" | grep -q .
+
 		# Build only the two imported objects.  A directory-wide remoteproc
 		# modules build also selects unrelated optional PRU modules, whose
 		# dependencies are deliberately absent from this tablet kernel.

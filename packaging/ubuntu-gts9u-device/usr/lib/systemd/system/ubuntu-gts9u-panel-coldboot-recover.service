@@ -15,7 +15,8 @@ RemainAfterExit=yes
 # only useful once the complete DRM pipeline exists.
 ExecStartPre=/bin/sleep 2
 ExecStart=/usr/libexec/ubuntu-gts9u-panel-coldboot-recover
-TimeoutStartSec=30
+# Allow up to three attempts if the early-boot userspace freezer is aborted.
+TimeoutStartSec=90
 
 [Install]
 # multi-user.target, not graphical.target as in the reference port. That port

@@ -2,7 +2,7 @@ diff --git a/drivers/phy/qualcomm/phy-qcom-qmp-ufs.c b/drivers/phy/qualcomm/phy-
 index 0f4ad24aa..a9b921497 100644
 --- a/drivers/phy/qualcomm/phy-qcom-qmp-ufs.c
 +++ b/drivers/phy/qualcomm/phy-qcom-qmp-ufs.c
-@@ -1177,6 +1177,9 @@ struct qmp_phy_cfg {
+@@ -1177,5 +1177,8 @@ struct qmp_phy_cfg {
  	/* true, if PCS block has no separate SW_RESET register */
  	bool no_pcs_sw_reset;
 +
@@ -59,7 +59,7 @@ index 0f4ad24aa..a9b921497 100644
  	qphy_setbits(pcs, cfg->regs[QPHY_PCS_POWER_DOWN_CONTROL], SW_PWRDN);
  	return 0;
  
-@@ -1992,6 +2022,7 @@ static int qmp_ufs_power_off(struct phy *phy)
+@@ -1992,5 +2022,6 @@ static int qmp_ufs_power_off(struct phy *phy)
  	/* Put PHY into POWER DOWN state: active low */
  	qphy_clrbits(qmp->pcs, cfg->regs[QPHY_PCS_POWER_DOWN_CONTROL],
  			SW_PWRDN);

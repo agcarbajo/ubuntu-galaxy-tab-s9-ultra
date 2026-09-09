@@ -13,7 +13,11 @@ set -euo pipefail
 
 repo=$(cd "$(dirname "$0")/.." && pwd)
 base=${UBUNTU_WORKDIR:-/root/ubuntu-gts9u}
-version=${RELEASE_VERSION:?set RELEASE_VERSION, for example 0.1}
+version=${RELEASE_VERSION:-$(tr -d '[:space:]' < "$repo/VERSION")}
+[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+	echo "invalid release version: $version" >&2
+	exit 2
+}
 profile=${GTS9U_PROFILE:-desktop}
 artifacts=${ARTIFACTS_DIR:-$repo/artifacts}
 

@@ -20,7 +20,7 @@ Ubuntu 24.04 LTS arm64 for the Samsung Galaxy Tab S9 Ultra Wi-Fi
 | Tab Companion | ✅ | S Pen remote modes, behaviour options, haptics, keyboard remapping and fingerprint settings |
 | Keyboard cover | ✅ | Only EF-DX920 tested, not sure if other models will work |
 | Cover switch | ✅ | Closing the cover turns off the display |
-| Power and volume buttons | ✅ | Including suspend from the power button |
+| Power and volume buttons | ✅ | Input works; suspend is subject to the UFS issue below |
 | Wi-Fi | ✅ | WCN7850 / ath12k |
 | Bluetooth | ✅ | Controller, audio and S Pen BLE |
 | Speakers and microphones | ✅ | Four speakers and digital microphones |
@@ -28,16 +28,16 @@ Ubuntu 24.04 LTS arm64 for the Samsung Galaxy Tab S9 Ultra Wi-Fi
 | Motion sensors | ✅ | Rotation, accelerometer, gyroscope and compass |
 | Battery telemetry | ✅ | Charge, voltage, current and temperature |
 | USB-PD/PPS charging | ✅ | Up to 25 W measured into the battery |
-| Suspend / resume | ✅ | Deep suspend |
+| Suspend / resume | ⚠️ | Intermittent UFS resume failure; temporarily disabled on the test tablet ([diagnosis](docs/resume-recovery.md)) |
 | microSD | ✅ | Read and write storage works normally |
 | USB host | ✅ | HID and storage, powered or unpowered |
 | USB-C DisplayPort | ✅ | External video output |
 | Cameras and flash | ✅ | Four cameras, autofocus and flashlight work; colour tuning remains a future improvement |
 | Fingerprint reader | ✅ | Working for login and enrolment in Ubuntu Settings or Tab Companion |
-| Ambient light sensor | ❌ | Currently not working |
+| Ambient light sensor | ✅ | GNOME automatic brightness, using Samsung's light stream ([validation](docs/light-sensor-reference.md)) |
 | NPU | ⚠️ | Generic GGUF/ONNX inference, models through 14B, Whisper and multimodal IA local app verified; experimental power workaround ([status](docs/npu-status.md)) |
 | Virtual machines | ⚠️ | Gunyah host stack and Resource Manager physically validated; `/dev/gunyah` is available for userspace VMM development ([status](docs/gunyah.md)) |
-| Waydroid | ❓ | Not tested |
+| Waydroid | ✅ | Official Android 13 GAPPS, Play Store sign-in screen, Adreno acceleration and Internet validated ([details](docs/waydroid.md)) |
 
 ✅ working on the physical tablet · 🟡 experimental or partially validated ·
 ❌ unavailable · ❓ not tested
@@ -83,7 +83,7 @@ split the UFS first.
 
 ### Ubuntu on the whole tablet
 
-1. From TWRP just flash the installation ZIP (`ubuntu-24.04-sm-x910-v1.1.0.zip`) using a microSD, external USB storage or sideload. **Don't flash it from internal storage** as it will get wiped.
+1. From TWRP just flash the installation ZIP (`ubuntu-24.04-sm-x910-v1.2.0.zip`) using a microSD, external USB storage or sideload. **Don't flash it from internal storage** as it will get wiped.
 2. Reboot and enjoy!
 
 ### Ubuntu beside Android
@@ -96,7 +96,7 @@ split the UFS first.
    keys on its next boot.
 2. Reboot to TWRP (Reboot > Recovery).
 3. Wipe > Format Data.
-4. Flash the installation ZIP (`ubuntu-24.04-sm-x910-v1.1.0.zip`).
+4. Flash the installation ZIP (`ubuntu-24.04-sm-x910-v1.2.0.zip`).
 5. Reboot and enjoy! (see below for how to reboot to Android).
 
 ### Switching systems

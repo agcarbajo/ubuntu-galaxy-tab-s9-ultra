@@ -1176,6 +1176,10 @@ class CompanionWindow(Adw.ApplicationWindow):
             debug_info=debug,
             debug_info_filename="tab-companion-hardware.txt",
         )
+        about.add_credit_section(
+            _("Original port creator"),
+            ["@agcarbajo https://github.com/agcarbajo"],
+        )
         about.add_credit_section(_("Hardware enablement"), [_("Ubuntu gts9uwifi port contributors")])
         about.add_credit_section(
             _("Air pointer inspiration"),

@@ -211,6 +211,9 @@ memory until the next login.
 
 ## Pointer mode credits
 
+About → Credits identifies `@agcarbajo` as the original port creator.
+The credit opens <https://github.com/agcarbajo> when clicked or tapped.
+
 The air-pointer concept is inspired by
 [PenMouse S](https://github.com/jojczak/PenMouseS), created by Jakub J
 (`@jojczak`) and published under GPL-3.0. Tab Companion carries no code from

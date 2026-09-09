@@ -86,6 +86,7 @@ TRANSLATIONS = {
     "Choose an application": ("Elegir una aplicación", "Choisir une application", "Anwendung auswählen", "Scegli un’applicazione", "Escolher uma aplicação"),
     "Search applications": ("Buscar aplicaciones", "Rechercher des applications", "Anwendungen suchen", "Cerca applicazioni", "Pesquisar aplicações"),
     "About": ("Acerca de", "À propos", "Info", "Informazioni", "Acerca"),
+    "Original port creator": ("Creador original del port", "Créateur original du portage", "Ursprünglicher Ersteller der Portierung", "Creatore originale del port", "Criador original do port"),
     "Air pointer inspiration": ("Inspiración del puntero aéreo", "Inspiration du pointeur aérien", "Inspiration für den Luftzeiger", "Ispirazione del puntatore aereo", "Inspiração do ponteiro aéreo"),
     "PenMouse S on GitHub": ("PenMouse S en GitHub", "PenMouse S sur GitHub", "PenMouse S auf GitHub", "PenMouse S su GitHub", "PenMouse S no GitHub"),
     "Cover keyboard": ("Funda con teclado", "Clavier de couverture", "Tastatur-Cover", "Cover con tastiera", "Capa com teclado"),

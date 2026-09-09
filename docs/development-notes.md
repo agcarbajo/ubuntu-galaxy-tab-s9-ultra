@@ -10,6 +10,15 @@ time: repeating those experiments is time wasted.
 
 ## Goal and scope
 
+**2026-09-09 recovery:** automatic brightness now works through Samsung's
+SSC `auto_brightness` stream. A subsequent deep-resume test exposed an
+intermittent UFS PHY failure and emergency read-only root. Offline repair
+and a successful Ubuntu login-screen boot are recorded in
+[resume-recovery.md](resume-recovery.md), together with the temporary local
+suspend safeguard and the separate cold-boot panel freezer-abort retry.
+Do not treat earlier successful sleep cycles as proof that UFS resume is
+reliable, or mistake the safeguard for a validated kernel fix.
+
 An Ubuntu 24.04 LTS arm64 desktop on the same mainline kernel and the same
 hardware postmarketOS v1.71 validated. The root lived on a microSD up to v0.17
 and has lived on the internal UFS since v0.18. In the long run, compatibility
@@ -305,6 +314,15 @@ explain the whole keyboard story: the boot that held 2,046 transitions over
 eight hours also accumulated handovers. Do not turn that correlation into a
 root cause of the pogo transport without the final physical proof.
 ## libssc's synchronous wait was not a wait, it was a loop
+
+**2026-09-09 correction:** the wait fix below remains necessary, but disabling
+SSC light was temporary. Rooted One UI startup tracing proved that Samsung
+enables `auto_brightness`, not `ambient_light`; selecting that datatype gives
+varying lux on Ubuntu's original firmware. See
+[the light reference](light-sensor-reference.md). The historical conclusion
+below that all ALS delivery was blocked was too broad. Likewise, the SUID
+used by factory SSC Core traffic is published as `auto_rotation`; absence of
+a `ssc_core` datatype did not mean there was no recipient.
 
 `ssc_common_wait_sync_context()` in libssc 0.4.4 spins the default GLib context
 with `g_main_context_iteration (..., FALSE)`. With `may_block` at `FALSE`, GLib
@@ -820,9 +838,9 @@ Inherited from postmarketOS; every point cost at least one physical iteration.
 - **[pmOS]** Do not use anonymous `systemd-run --on-active` timers to wake the
   display or to recover SSC: they are delayed by 7 to 16 s and overlap. One
   cancellable unit.
-- **[pmOS]** The STK31610 ALS route is exhausted: registry, rails, streaming
-  modes, the exact Samsung request and the comparison with `persist` produce no
-  lux. Do not instantiate it as `sensortek,stk3310` and do not copy the Xiaomi
+- **[pmOS, corrected 2026-09-09]** Those negative STK31610 tests targeted
+  `ambient_light`; Samsung's `auto_brightness` datatype does deliver lux and
+  now drives GNOME brightness. Do not instantiate it as `sensortek,stk3310` and do not copy the Xiaomi
   Pad 6's configuration. Do not enable the AP's I²C controllers for SE3/SE4:
   those buses belong to the DSP.
 - **[pmOS]** `ACCEL_MOUNT_MATRIX=0,1,0;-1,0,0;0,0,1` is a validated physical
@@ -1414,6 +1432,72 @@ not advance during suspend, so that press arrives — by that clock — barely
 seconds after the suspend was issued, however many hours the machine actually
 slept. Discarding presses inside that window solves the case without having to
 listen to `PrepareForSleep`.
+
+That original three-second monotonic window was later found to be too broad.
+It also discarded a real second press made after the screen had blanked but
+while systemd was still entering suspend, making the power key appear dead for
+a few seconds. The handler now compares `CLOCK_BOOTTIME` with
+`CLOCK_MONOTONIC` to prove that time was actually spent asleep and checks
+`/sys/power/pm_wakeup_irq` against the PMIC key IRQ. Only the press that truly
+woke the machine is swallowed. A press during the entry transaction cancels
+that transaction; a press after a non-key wake remains a new command.
+
+The daemon also tracks the difference between those clocks independently of
+its own suspend requests. This covers suspend initiated by GNOME, systemd or
+a diagnostic tool: the first power-key event after thaw still carries IRQ 21
+and is consumed as a wake event instead of becoming a second suspend request.
+
+### IPCC traffic must not wake the CPU during system suspend
+
+The remaining intermittent bounce was captured with kernel PM diagnostics and
+function tracing. Linux completed device suspend and entered PSCI
+`SYSTEM_SUSPEND`, but firmware returned immediately without setting
+`/sys/power/pm_wakeup_irq`. The first interrupts after `machine_suspend` were
+the IPCC summary IRQ 13 (`ipcc_0`) and then ADSP SMP2P IRQ 16. In a valid
+power-button wake, IRQ 21 (`pmic_pwrkey`) arrived first instead.
+
+An early userspace workaround tried to resuspend after a short IRQ-less return.
+It was removed: this platform does not correct Linux timekeeping across deep
+suspend reliably, so the elapsed-time test could classify a valid long sleep as
+an immediate return. The kernel and device wake-source fixes must make one
+suspend transaction reliable without a userspace retry loop.
+
+The upstream IPCC driver requests its parent summary interrupt with
+`IRQF_NO_SUSPEND`. That lets ordinary DSP mailbox traffic interrupt the suspend
+transaction even though IPCC is not a wake source. The board-specific
+`ipcc-mask-summary-during-suspend-gts9u.patch` omits that flag only for
+`samsung,gts9uwifi`; pending mailbox bits remain latched and are serviced after
+a legitimate resume. Other Qualcomm boards retain the upstream behaviour.
+
+Early one-source-at-a-time tests seemed to implicate TSENS, power supplies,
+Wi-Fi and remote processors. That conclusion was invalid because the firmware
+return was intermittent and could remain latched across tests. The broad udev
+wake policy used for diagnosis was removed. All normal wake sources are enabled
+again. With the IPCC change, traced cycles remained asleep for 112.2 s and
+259.2 s until IRQ 21, and a normal desktop/button cycle remained asleep for
+31.6 s; none showed IPCC before the legitimate wake.
+
+The final resume warning came from the DW9808 camera focus motor at I2C address
+`2-000c`: `pm_runtime_force_resume` returned `-EBUSY` while its CCI parent was
+resuming. The driver now uses `DEFINE_RUNTIME_DEV_PM_OPS`, like the upstream VCM
+drivers, instead of forcing system-sleep runtime transitions. The next hardware
+cycle completed with every suspend/resume failure counter at zero.
+
+### Out-of-tree modules must use the running kernel's build identity
+
+An NPU diagnostic build regenerated `certs/signing_key.pem` in another object
+directory. The next device-package build then silently copied an IRQ bridge
+signed by that new key. It kept working until reboot because the compatible
+copy was already resident, after which kernel lockdown rejected the replacement
+and the fingerprint secure startup failed.
+
+Matching `uname -r` and `vermagic` is insufficient here: a module built from a
+different configuration can also have a different `struct module` layout. The
+device-package builder therefore compares the module signature with the
+certificate generated by the current kernel object tree, compares that tree's
+configuration byte-for-byte with the released kernel artifact, and checks the
+kernel release. This remains valid for later clean builds, whose generated key
+will intentionally differ from v1.2.0.
 
 ### And the charging pen woke it a second later
 

@@ -25,6 +25,7 @@
 #include <linux/mutex.h>
 #include <linux/of.h>
 #include <linux/pm_wakeup.h>
+#include <linux/property.h>
 #include <linux/regulator/consumer.h>
 #include <linux/unaligned.h>
 #include <linux/workqueue.h>
@@ -66,6 +67,15 @@
 #define STM32_FW_SIZE		52132
 #define STM32_FW_VERSION_OFFSET	0x200
 #define STM32_FW_NAME		"keyboard_stm/stm32_gts9family.bin"
+
+/*
+ * GPIO62 can glitch while AOSS enters sleep on the SM-X910.  Keep connection
+ * wake opt-in so attaching the keyboard cannot cause an immediate resume.
+ */
+static bool pogo_connection_wakeup;
+module_param_named(connection_wakeup, pogo_connection_wakeup, bool, 0644);
+MODULE_PARM_DESC(connection_wakeup,
+		 "allow the pogo connection GPIO to wake the system");
 
 struct samsung_pogo {
 	struct i2c_client *client;
@@ -1448,12 +1458,16 @@ static int samsung_pogo_probe(struct i2c_client *client)
 	if (ret)
 		return dev_err_probe(dev, ret, "failed to request connection IRQ\n");
 
-	device_init_wakeup(dev, true);
-	ret = enable_irq_wake(pogo->connection_irq);
-	if (ret) {
-		dev_warn(dev, "connection IRQ cannot wake the tablet: %d\n", ret);
-	} else {
-		pogo->wake_enabled = true;
+	device_init_wakeup(dev, pogo_connection_wakeup &&
+			   device_property_read_bool(dev, "wakeup-source"));
+	if (device_may_wakeup(dev)) {
+		ret = enable_irq_wake(pogo->connection_irq);
+		if (ret) {
+			dev_warn(dev, "connection IRQ cannot wake the tablet: %d\n",
+				 ret);
+		} else {
+			pogo->wake_enabled = true;
+		}
 	}
 	ret = device_create_file(dev, &dev_attr_firmware_update);
 	if (ret)

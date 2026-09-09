@@ -34,9 +34,27 @@ restore_pm_test() {
 }
 trap restore_pm_test EXIT INT TERM
 
-log 'running the automatic platform suspend/resume cycle'
-echo platform > "$PM_TEST"
-echo mem > "$PM_STATE"
+attempt=1
+while :; do
+	freeze_before=$(cat /sys/power/suspend_stats/failed_freeze 2>/dev/null || echo 0)
+	log "running the automatic platform suspend/resume cycle (attempt $attempt)"
+	echo platform > "$PM_TEST"
+	if echo mem > "$PM_STATE"; then
+		break
+	fi
+	restore_pm_test
+	freeze_after=$(cat /sys/power/suspend_stats/failed_freeze 2>/dev/null || echo 0)
+	# A wake event during early boot can abort the userspace freezer before
+	# any device suspend callback runs, leaving the panel untouched. Retry
+	# only that case; a device or UFS resume failure must remain an error.
+	if [ "$freeze_after" -le "$freeze_before" ] || [ "$attempt" -ge 3 ]; then
+		log 'platform cycle failed; no further automatic retry'
+		exit 1
+	fi
+	log 'userspace freeze was aborted; retrying in two seconds'
+	attempt=$((attempt + 1))
+	sleep 2
+done
 log 'platform cycle returned'
 
 # Report what the panel driver saw, so the journal records whether the DDIC

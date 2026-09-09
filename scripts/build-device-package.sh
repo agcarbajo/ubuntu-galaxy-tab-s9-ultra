@@ -32,7 +32,27 @@ irq=$base/out/spss-irq-module/qcom_spss_irq.ko
 test -x "$owner" || { echo 'Run scripts/build-fingerprint-secure-owner.sh first' >&2; exit 1; }
 test -f "$irq" || { echo 'Run scripts/build-spss-irq-module.sh first' >&2; exit 1; }
 release=$(modinfo -F vermagic "$irq" | cut -d' ' -f1)
-test -n "$(modinfo -F signer "$irq")"
+irq_sig_key=$(modinfo -F sig_key "$irq")
+build_dir=$base/build/linux-gts9uwifi
+kernel_out=$base/out/kernel-gts9uwifi
+test -f "$build_dir/certs/signing_key.x509"
+test -f "$kernel_out/config"
+test -f "$kernel_out/kernel.release"
+cert_serial=$(openssl x509 -inform DER -in "$build_dir/certs/signing_key.x509" \
+	-noout -serial | sed 's/^serial=//' | tr '[:lower:]' '[:upper:]')
+module_serial=$(printf '%s' "$irq_sig_key" | tr -d ':' | tr '[:lower:]' '[:upper:]')
+test "$module_serial" = "$cert_serial" || {
+	echo "IRQ module signing key does not match this kernel build" >&2
+	exit 1
+}
+cmp -s "$kernel_out/config" "$build_dir/.config" || {
+	echo "IRQ module object tree does not match the released kernel configuration" >&2
+	exit 1
+}
+test "$release" = "$(cat "$kernel_out/kernel.release")" || {
+	echo "IRQ module release does not match the released kernel" >&2
+	exit 1
+}
 [[ "$release" =~ ^[a-zA-Z0-9.+_-]+$ ]]
 install -m0755 "$owner" "$staging/usr/libexec/"
 install -d "$staging/usr/lib/modules/$release/updates"

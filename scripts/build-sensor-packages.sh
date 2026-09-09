@@ -28,8 +28,8 @@ libssc_ver=${LIBSSC_VERSION:-0.4.4}
 hexagonrpc_ver=${HEXAGONRPC_VERSION:-0.4.0}
 isp_ver=${IIO_SENSOR_PROXY_VERSION:-3.9}
 # Keep patched package versions distinct from the pinned upstream source tags.
-libssc_pkgver=${LIBSSC_PACKAGE_VERSION:-${libssc_ver}-gts9u2}
-isp_pkgver=${IIO_SENSOR_PROXY_PACKAGE_VERSION:-${isp_ver}-gts9u2}
+libssc_pkgver=${LIBSSC_PACKAGE_VERSION:-${libssc_ver}-gts9u3}
+isp_pkgver=${IIO_SENSOR_PROXY_PACKAGE_VERSION:-${isp_ver}-gts9u3}
 
 mkdir -p "$out"
 
@@ -140,6 +140,7 @@ EOF
 step "libssc $libssc_ver"
 mkdir -p "$buildroot/build"
 cp "$patches/fix-ssc-sync-wait-busy-loop.patch" "$buildroot/build/"
+cp "$patches/use-samsung-auto-brightness.patch" "$buildroot/build/"
 run "cd /build 2>/dev/null || mkdir -p /build && cd /build
 rm -rf libssc stage-libssc
 git clone --quiet --depth 1 --branch v$libssc_ver \
@@ -149,6 +150,7 @@ cd libssc
 # is a spin, not a wait: a request the Sensor Core never answers pins a core for
 # the life of the process.  See the patch header for the measurement.
 patch -p1 < /build/fix-ssc-sync-wait-busy-loop.patch
+patch -p1 < /build/use-samsung-auto-brightness.patch
 meson setup output --prefix=/usr --libdir=lib/aarch64-linux-gnu
 meson compile -C output
 DESTDIR=/build/stage-libssc meson install --no-rebuild -C output
@@ -270,7 +272,6 @@ package_tree /build/stage-hexagonrpcd hexagonrpcd "$hexagonrpc_ver" \
 # ---------------------------------------------------------------------------
 step "iio-sensor-proxy $isp_ver with SSC support"
 cp "$patches/fix-early-ssc-claim-race.patch" "$buildroot/build/"
-cp "$patches/disable-broken-ssc-light.patch" "$buildroot/build/"
 run "cd /build
 rm -rf iio-sensor-proxy stage-isp isp.tar.gz
 curl -fsSL -o isp.tar.gz \
@@ -279,7 +280,6 @@ tar xf isp.tar.gz
 mv iio-sensor-proxy-$isp_ver iio-sensor-proxy
 cd iio-sensor-proxy
 patch -p1 < /build/fix-early-ssc-claim-race.patch
-patch -p1 < /build/disable-broken-ssc-light.patch
 meson setup output --prefix=/usr \
 	-Dssc-support=enabled \
 	-Dsystemdsystemunitdir=/usr/lib/systemd/system
@@ -288,7 +288,7 @@ DESTDIR=/build/stage-isp meson install --no-rebuild -C output
 echo 'iio-sensor-proxy built'"
 
 package_tree /build/stage-isp iio-sensor-proxy "$isp_pkgver" \
-	'libc6, dbus, libglib2.0-0t64, libgudev-1.0-0, libssc' \
+	'libc6, dbus, libglib2.0-0t64, libgudev-1.0-0, libssc (>= 0.4.4-gts9u3)' \
 	'IIO sensors to D-Bus proxy, built with Qualcomm SSC support'
 
 step 'results'

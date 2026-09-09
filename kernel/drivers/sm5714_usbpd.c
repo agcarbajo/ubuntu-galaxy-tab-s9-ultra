@@ -16,6 +16,7 @@
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/of.h>
+#include <linux/property.h>
 #include <linux/regmap.h>
 #include <linux/usb/pd.h>
 #include <linux/usb/tcpm.h>
@@ -85,6 +86,17 @@ module_param(otg_rp, uint, 0644);
 MODULE_PARM_DESC(otg_rp,
 		 "Rp advertised while sourcing: 0 stock (default), 1..3 raise it");
 
+/*
+ * The SM5714 interrupt is level-low and this board can leave it asserted
+ * while a charger is attached.  Making it a wake IRQ in that state causes
+ * AOSS to return immediately without Linux observing a wake IRQ.  Keep USB-C
+ * connection wake opt-in; the power key remains the normal wake source.
+ */
+static bool connection_wakeup;
+module_param(connection_wakeup, bool, 0644);
+MODULE_PARM_DESC(connection_wakeup,
+		 "allow USB-C connection events to wake the system");
+
 /* Implemented by the companion charger/fuel-gauge driver on this board. */
 int sm5714_battery_set_pd_contract(unsigned int mv, unsigned int ma);
 int sm5714_battery_set_otg(bool active);
@@ -108,6 +120,8 @@ struct sm5714_usbpd {
 	bool retained_dock_reset;
 	bool irq_saw_attach;
 	bool watch_saw_attach;
+	bool irq_wake_enabled;
+	bool suspended;
 	unsigned int negotiated_mv;
 	unsigned int negotiated_ma;
 };
@@ -137,7 +151,7 @@ static void sm5714_usbpd_cc_resync_work(struct work_struct *work)
 			     cc_resync_work);
 	unsigned int cc;
 
-	if (IS_ERR_OR_NULL(sm->port))
+	if (READ_ONCE(sm->suspended) || IS_ERR_OR_NULL(sm->port))
 		return;
 
 	if (!regmap_read(sm->regmap, SM5714_REG_CC_STATUS, &cc))
@@ -173,6 +187,9 @@ static void sm5714_usbpd_cc_watch_work(struct work_struct *work)
 	unsigned int cc;
 	bool attached;
 
+	if (READ_ONCE(sm->suspended))
+		return;
+
 	if (IS_ERR_OR_NULL(sm->port))
 		goto again;
 
@@ -191,8 +208,9 @@ static void sm5714_usbpd_cc_watch_work(struct work_struct *work)
 	sm->watch_saw_attach = attached;
 
 again:
-	queue_delayed_work(system_dfl_wq, &sm->cc_watch_work,
-			   msecs_to_jiffies(SM5714_CC_WATCH_MS));
+	if (!READ_ONCE(sm->suspended))
+		queue_delayed_work(system_dfl_wq, &sm->cc_watch_work,
+				   msecs_to_jiffies(SM5714_CC_WATCH_MS));
 }
 
 static void sm5714_usbpd_otg_det_work(struct work_struct *work)
@@ -924,8 +942,15 @@ static int sm5714_usbpd_probe(struct i2c_client *client)
 	if (ret)
 		goto unregister_port;
 
-	device_init_wakeup(dev, true);
-	enable_irq_wake(client->irq);
+	device_init_wakeup(dev, connection_wakeup &&
+			   device_property_read_bool(dev, "wakeup-source"));
+	if (device_may_wakeup(dev)) {
+		ret = enable_irq_wake(client->irq);
+		if (ret)
+			dev_warn(dev, "failed to enable wake IRQ: %d\n", ret);
+		else
+			sm->irq_wake_enabled = true;
+	}
 	/*
 	 * CC comparators settle after the autonomous DRP machine is enabled.
 	 * tcpm_register_port() can see Rp before the charger has raised VBUS:
@@ -962,6 +987,31 @@ put_fwnode:
 	return ret;
 }
 
+static int sm5714_usbpd_suspend(struct device *dev)
+{
+	struct sm5714_usbpd *sm = dev_get_drvdata(dev);
+
+	/* No deferred I2C transaction may outlive the parent QUP suspend. */
+	WRITE_ONCE(sm->suspended, true);
+	cancel_delayed_work_sync(&sm->cc_watch_work);
+	cancel_delayed_work_sync(&sm->cc_resync_work);
+	return 0;
+}
+
+static int sm5714_usbpd_resume(struct device *dev)
+{
+	struct sm5714_usbpd *sm = dev_get_drvdata(dev);
+
+	WRITE_ONCE(sm->suspended, false);
+	queue_delayed_work(system_dfl_wq, &sm->cc_watch_work,
+			   msecs_to_jiffies(SM5714_CC_WATCH_MS));
+	return 0;
+}
+
+static DEFINE_SIMPLE_DEV_PM_OPS(sm5714_usbpd_pm_ops,
+				sm5714_usbpd_suspend,
+				sm5714_usbpd_resume);
+
 static void sm5714_usbpd_remove(struct i2c_client *client)
 {
 	struct sm5714_usbpd *sm = i2c_get_clientdata(client);
@@ -971,7 +1021,8 @@ static void sm5714_usbpd_remove(struct i2c_client *client)
 	cancel_delayed_work_sync(&sm->otg_det_work);
 	if (sm->otg_det_gpio)
 		gpiod_set_value_cansleep(sm->otg_det_gpio, 0);
-	disable_irq_wake(client->irq);
+	if (sm->irq_wake_enabled)
+		disable_irq_wake(client->irq);
 	tcpm_unregister_port(sm->port);
 	fwnode_handle_put(sm->connector);
 }
@@ -986,6 +1037,7 @@ static struct i2c_driver sm5714_usbpd_driver = {
 	.driver = {
 		.name = "sm5714-usbpd",
 		.of_match_table = sm5714_usbpd_of_match,
+		.pm = pm_sleep_ptr(&sm5714_usbpd_pm_ops),
 	},
 	.probe = sm5714_usbpd_probe,
 	.remove = sm5714_usbpd_remove,
