@@ -33,8 +33,8 @@ with tempfile.TemporaryDirectory(prefix="gts9u-ufs-test-") as tmp:
     stage = str(repo / "scripts/stage-ufs-resume-experiment.sh")
     env = dict(os.environ, UFS_PCS_RESET_EXPERIMENTAL="0")
     run("bash", stage, tmp, env=env)
-    assert source.read_bytes() == staged, "default build changed PHY"
-    env["UFS_PCS_RESET_EXPERIMENTAL"] = "1"
+    assert source.read_bytes() == staged, "explicit opt-out changed PHY"
+    env.pop("UFS_PCS_RESET_EXPERIMENTAL", None)  # Release default must apply the validated fix.
     run("bash", stage, tmp, env=env)
     candidate = source.read_bytes()
     assert orig.read_bytes() == b"Pre-existing developer backup; preserve it.\n"
@@ -130,4 +130,4 @@ int main(void) {
     exe = tree / "calibrate-test"
     run("cc", "-std=gnu11", "-Wall", "-Wextra", "-Werror", str(test_c), "-o", str(exe))
     run(str(exe))
-    print("PASS: default unchanged, strict patch application, repeat staging, stale-tree refusal")
+    print("PASS: explicit opt-out unchanged, strict patch application, repeat staging, stale-tree refusal")

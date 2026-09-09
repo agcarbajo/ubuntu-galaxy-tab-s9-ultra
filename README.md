@@ -12,15 +12,15 @@ Ubuntu 24.04 LTS arm64 for the Samsung Galaxy Tab S9 Ultra Wi-Fi
 |---|---:|---|
 | Display | ✅ | Native 2960×1848 at 120 Hz |
 | Desktop | ✅ | GNOME 46, Wayland and GDM |
-| GPU | ⚠️ | Adreno 740 acceleration works; a fault-recovery deadlock was captured, with a combined GPU/UFS candidate awaiting hardware tests ([diagnosis](docs/gpu-recovery.md)) |
+| GPU | ✅ | Adreno 740 hardware acceleration, up to 719 MHz |
 | Touchscreen | ✅ | Goodix multitouch |
 | S Pen writing | ✅ | Hover, pressure, tilt, side button and palm rejection |
 | S Pen dock | ✅ | Insertion, orientation and charging |
-| S Pen BLE | ✅ | Pairing, real battery levels, air gestures and pointer mode fully validated |
-| Tab Companion | ✅ | S Pen remote modes, behaviour options, haptics, keyboard remapping and fingerprint settings |
-| Keyboard cover | ✅ | Only EF-DX920 tested, not sure if other models will work |
-| Cover switch | ✅ | Closing the cover turns off the display |
-| Power and volume buttons | ✅ | Input works; suspend is subject to the UFS issue below |
+| S Pen BLE | ✅ | Pairing, battery, air gestures and pointer mode |
+| Tab Companion | ✅ | Device settings, fingerprint, dual boot and system updates |
+| Keyboard cover | ✅ | EF-DX920 tested |
+| Cover switch | ✅ | Suspend on close and wake on open |
+| Power and volume buttons | ✅ | Power, wake and volume controls |
 | Wi-Fi | ✅ | WCN7850 / ath12k |
 | Bluetooth | ✅ | Controller, audio and S Pen BLE |
 | Speakers and microphones | ✅ | Four speakers and digital microphones |
@@ -28,16 +28,16 @@ Ubuntu 24.04 LTS arm64 for the Samsung Galaxy Tab S9 Ultra Wi-Fi
 | Motion sensors | ✅ | Rotation, accelerometer, gyroscope and compass |
 | Battery telemetry | ✅ | Charge, voltage, current and temperature |
 | USB-PD/PPS charging | ✅ | Up to 25 W measured into the battery |
-| Suspend / resume | ⚠️ | Intermittent UFS resume failure; temporarily disabled on the test tablet ([diagnosis](docs/resume-recovery.md)) |
+| Suspend / resume | ✅ | Deep sleep and reliable storage recovery |
 | microSD | ✅ | Read and write storage works normally |
 | USB host | ✅ | HID and storage, powered or unpowered |
 | USB-C DisplayPort | ✅ | External video output |
-| Cameras and flash | ✅ | Four cameras, autofocus and flashlight work; colour tuning remains a future improvement |
-| Fingerprint reader | ✅ | Working for login and enrolment in Ubuntu Settings or Tab Companion |
-| Ambient light sensor | ✅ | GNOME automatic brightness, using Samsung's light stream ([validation](docs/light-sensor-reference.md)) |
-| NPU | ⚠️ | Generic GGUF/ONNX inference, models through 14B, Whisper and multimodal IA local app verified; experimental power workaround ([status](docs/npu-status.md)) |
-| Virtual machines | ⚠️ | Gunyah host stack and Resource Manager physically validated; `/dev/gunyah` is available for userspace VMM development ([status](docs/gunyah.md)) |
-| Waydroid | ✅ | Official Android 13 GAPPS, Play Store sign-in screen, Adreno acceleration and Internet validated ([details](docs/waydroid.md)) |
+| Cameras and flash | ✅ | Four cameras, full field of view, autofocus and flash |
+| Fingerprint reader | ✅ | Login, enrolment and recognition |
+| Ambient light sensor | ✅ | Automatic screen brightness |
+| NPU | ✅ | Hardware acceleration support |
+| Virtual machines | 🟡 | Gunyah host support; guest VMs still in development |
+| Waydroid | ✅ | Android with Google Play, GPU acceleration and Internet |
 
 ✅ working on the physical tablet · 🟡 experimental or partially validated ·
 ❌ unavailable · ❓ not tested
@@ -113,8 +113,7 @@ Liked the project? you might want to [buy me a coffee](https://paypal.me/agcarba
 
 - Regarding the official cover keyboard, as I said, only EF-DX920 cover keyboard has been tested. EF-DX900, EF-DX910, EF-DX915 and
 EF-DX925 are untested as I don't have them, so they might not work.
-- Text might not display correctly in some Chromium-based apps.
-- Front cameras are zoomed in for some reason.
+- Guest virtual machines remain under development; initial Gunyah host support is included.
 
 ## Documentation
 
@@ -169,7 +168,5 @@ port. For v1.0.0 installations without the updater, run:
 d=$(mktemp -d) && curl -fL https://raw.githubusercontent.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/main/scripts/update-to-latest.py -o "$d/update.py" && sudo python3 "$d/update.py"
 ```
 
-Save your work first. Type `y` when asked; the script prepares the latest
-release and restarts automatically to install it.
 Updates preserve your data and settings. See [system updates](docs/system-updates.md)
 for local ZIP installation, repair and troubleshooting.

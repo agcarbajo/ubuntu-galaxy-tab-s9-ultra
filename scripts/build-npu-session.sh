@@ -7,8 +7,10 @@ kernel_tree=${KERNEL_WORKTREE:-$base/build/linux-src-gts9uwifi}
 build_dir=${KERNEL_BUILD_DIR:-$base/build/linux-gts9uwifi}
 module_dir=$base/build/npu-session-module
 out=${NPU_SESSION_OUT:-$base/out/npu-session}
-: "${ANDROID_NDK:?Set ANDROID_NDK to the unpacked r26d directory}"
-: "${QNN_HEADERS:?Set QNN_HEADERS to the compatible QAIRT 2.45 API headers}"
+if [ -z "${NPU_POWER_KEEPER:-}" ]; then
+    : "${ANDROID_NDK:?Set ANDROID_NDK to the unpacked r26d directory}"
+    : "${QNN_HEADERS:?Set QNN_HEADERS to the compatible QAIRT 2.45 API headers}"
+fi
 mkdir -p "$module_dir" "$out/bin" "$out/modules" "$module_dir/uapi/misc"
 test -f "$kernel_tree/drivers/misc/fastrpc.c" || {
     echo "KERNEL_WORKTREE does not contain drivers/misc/fastrpc.c" >&2
@@ -38,9 +40,14 @@ for name in gts9u_fastrpc_prepared gts9u_cdsp_intents_probe; do
     "$build_dir/scripts/sign-file" sha256 "$build_dir/certs/signing_key.pem" \
         "$build_dir/certs/signing_key.x509" "$out/modules/$name.ko"
 done
-cc=$ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android30-clang
-"$cc" -O2 -Wall -Wextra -Werror -I "$QNN_HEADERS" \
-    "$repo/scripts/npu-power-keeper.c" -ldl -o "$out/bin/npu-power-keeper"
+if [ -n "${NPU_POWER_KEEPER:-}" ]; then
+    # Allows the pinned Android SDK build to run on a separate build host.
+    install -m0755 "$NPU_POWER_KEEPER" "$out/bin/npu-power-keeper"
+else
+    cc=$ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android30-clang
+    "$cc" -O2 -Wall -Wextra -Werror -I "$QNN_HEADERS" \
+        "$repo/scripts/npu-power-keeper.c" -ldl -o "$out/bin/npu-power-keeper"
+fi
 cp "$kernel_tree/include/uapi/misc/fastrpc.h" "$module_dir/uapi/misc/"
 aarch64-linux-gnu-gcc -O2 -Wall -Wextra -Werror -static -pthread \
     -I "$module_dir/uapi" "$repo/scripts/npu-bootstrap-traffic.c" \

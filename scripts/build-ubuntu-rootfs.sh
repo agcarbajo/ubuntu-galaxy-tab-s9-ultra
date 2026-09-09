@@ -275,6 +275,21 @@ bash "$repo/scripts/build-fingerprint-secure-owner.sh" >/dev/null
 bash "$repo/scripts/build-spss-irq-module.sh" >/dev/null
 bash "$repo/scripts/build-device-package.sh" >/dev/null
 
+# Ship the same NPU runtime for fresh installs and in the update payload.
+# Proprietary inputs are staged separately and verified by the pinned manifest.
+npu_package=
+if [ "${GTS9U_INCLUDE_NPU:-1}" = 1 ]; then
+    NPU_SESSION_OUT="$base/out/npu-session" bash "$repo/scripts/build-npu-session.sh"
+    python3 "$repo/scripts/build-npu-package.py" \
+        --runtime "${NPU_RUNTIME_DIR:-$base/npu-release-inputs}" \
+        --firmware "${NPU_FIRMWARE_DIR:-$base/npu-release-firmware}" \
+        --session "$base/out/npu-session" \
+        --kernel-build "${KERNEL_BUILD_DIR:-$base/build/linux-gts9uwifi}" \
+        --output "$base/out/packages"
+    npu_package=ubuntu-gts9u-npu
+fi
+
+
 # Companion's one-touch named test needs the additive matched-finger signal.
 # Keep the original fprintd/PAM protocol and libfprint matcher unchanged.
 fprintd_stamp=$base/out/packages/.gts9u-fprintd-inputs.sha256
@@ -379,7 +394,7 @@ for pkg in libssc hexagonrpcd iio-sensor-proxy \
 	libfprint-2-2 $fingerprint_firmware_package \
 	libcamera-gts9u libspa-0.2-libcamera-gts9u \
 	ubuntu-gts9u-device ubuntu-gts9u-companion fastfetch v4l2-relayd-gts9u \
-    gnome-settings-daemon gnome-settings-daemon-common; do
+    gnome-settings-daemon gnome-settings-daemon-common $npu_package; do
 	deb=$(ls -t "$base"/out/packages/${pkg}_*.deb 2>/dev/null | head -1 || true)
 	if [ -z "$deb" ]; then
 		echo "missing local package: $pkg" >&2

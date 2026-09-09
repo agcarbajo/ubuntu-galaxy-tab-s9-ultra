@@ -1,9 +1,10 @@
 #!/bin/bash
+# Enabled by default after kernel #11 hardware validation.
 # Stage only; never changes running devices or sleep policy.
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
 tree=${1:?usage: stage-ufs-resume-experiment.sh KERNEL_TREE}
-enabled=${UFS_PCS_RESET_EXPERIMENTAL:-0}
+enabled=${UFS_PCS_RESET_EXPERIMENTAL:-1}
 source_file=$tree/drivers/phy/qualcomm/phy-qcom-qmp-ufs.c
 patch_file=$repo/kernel/patches/qmp-ufs-assert-pcs-reset-before-calibration-gts9u.patch
 case "$enabled" in

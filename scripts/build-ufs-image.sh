@@ -34,7 +34,8 @@ root_label=${ROOT_LABEL:-UBTS9U_UFS}
 # with less, Android's set is the one that fails, and that is the only one that
 # cannot be rebuilt afterwards.  The cost is small -- empty space compresses to
 # almost nothing, so 256 MiB of slack measured 784 KB in the ZIP.
-max_mb=${UFS_IMAGE_MAX_MB:-4608}
+# NPU runtimes and matching libraries are now included in fresh images.
+max_mb=${UFS_IMAGE_MAX_MB:-8192}
 
 test -d "$rootfs/etc" || { echo "missing rootfs: $rootfs" >&2; exit 1; }
 test -d "$rootfs/usr/lib/modules/$kernel_release" || \

@@ -1,6 +1,6 @@
 --- a/gts9u_fastrpc_prepared.c
 +++ b/gts9u_fastrpc_prepared.c
-@@ -17,12 +17,23 @@
+@@ -17,6 +17,7 @@
  #include <linux/sort.h>
  #include <linux/of_platform.h>
  #include <linux/rpmsg.h>
@@ -8,9 +8,10 @@
  #include <linux/scatterlist.h>
  #include <linux/slab.h>
  #include <linux/firmware/qcom/qcom_scm.h>
- #include <uapi/misc/fastrpc.h>
+@@ -24,6 +25,16 @@
  #include <linux/of_reserved_mem.h>
  #include <linux/bits.h>
+ 
 +
 +static struct device *prepared_owner;
 +static struct workqueue_struct *prepared_put_wq;
@@ -23,6 +24,7 @@
 +static atomic_t prepared_ctx_freed = ATOMIC_INIT(0);
  #define ADSP_DOMAIN_ID (0)
  #define MDSP_DOMAIN_ID (1)
+ #define SDSP_DOMAIN_ID (2)
 @@ -240,6 +251,7 @@
  	struct list_head node; /* list of ctxs */
  	struct completion work;
@@ -474,7 +476,7 @@
  	{ },
  };
  MODULE_DEVICE_TABLE(of, fastrpc_rpmsg_of_match);
-@@ -2582,36 +2677,117 @@
+@@ -2582,37 +2677,118 @@
  	.remove = fastrpc_rpmsg_remove,
  	.callback = fastrpc_rpmsg_callback,
  	.drv = {
@@ -610,3 +612,5 @@
 +        root_device_unregister(prepared_owner);
  }
  module_exit(fastrpc_exit);
+ 
+ MODULE_DESCRIPTION("Qualcomm FastRPC");

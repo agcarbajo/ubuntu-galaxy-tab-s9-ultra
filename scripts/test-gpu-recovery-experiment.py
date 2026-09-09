@@ -30,7 +30,7 @@ with tempfile.TemporaryDirectory(prefix="gts9u-gpu-test-") as temporary:
     run("bash", stage, temporary, env=env)
     for name in names:
         assert (adreno / name).read_bytes() == (original / name).read_bytes()
-    env["GPU_FAULT_WAIT_EXPERIMENTAL"] = "1"
+    env.pop("GPU_FAULT_WAIT_EXPERIMENTAL", None)  # Release default must apply the validated fix.
     run("bash", stage, temporary, env=env)
     staged = [(adreno / name).read_bytes() for name in names]
     run("bash", stage, temporary, env=env)
@@ -98,4 +98,4 @@ int main(void) {
     for enabled in ("0", "1"):
         env["GPU_FAULT_WAIT_EXPERIMENTAL"] = enabled
         assert subprocess.run(["bash", stage, temporary], env=env).returncode != 0
-    print("PASS staging: default, repeated opt-in, stale and partial rejection")
+    print("PASS staging: default-on, repeated staging, stale and partial rejection")

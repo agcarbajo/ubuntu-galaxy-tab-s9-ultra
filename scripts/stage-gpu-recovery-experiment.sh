@@ -1,9 +1,10 @@
 #!/bin/bash
+# Enabled by default after kernel #11 hardware validation.
 # Stage only; never changes running devices or sleep policy.
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
 tree=${1:?usage: stage-gpu-recovery-experiment.sh KERNEL_TREE}
-enabled=${GPU_FAULT_WAIT_EXPERIMENTAL:-0}
+enabled=${GPU_FAULT_WAIT_EXPERIMENTAL:-1}
 source_files=("$tree/drivers/gpu/drm/msm/adreno/a6xx_gmu.c"
               "$tree/drivers/gpu/drm/msm/adreno/a6xx_hfi.c")
 patch_file=$repo/kernel/patches/msm-adreno-bound-fault-coredump-wait-gts9u.patch

@@ -31,6 +31,14 @@ def fields(text):
 
 
 class TranslationTests(unittest.TestCase):
+    def test_core_catalogue_formatting(self):
+        for message, values in i18n.TRANSLATIONS.items():
+            self.assertEqual(len(values), 5, message)
+            for value in values:
+                self.assertTrue(value.strip(), message)
+                self.assertEqual(fields(message), fields(value), message)
+                self.assertNotIn("\ufffd", value)
+
     def test_keyboard_diagnostics_translations(self):
         for message, values in KB.items():
             self.assertEqual(len(values), 5)
@@ -78,7 +86,7 @@ class TranslationTests(unittest.TestCase):
             if isinstance(node, ast.IfExp):
                 return strings(node.body) + strings(node.orelse)
             return []
-        for name in ("update_page.py", "fingerprint_page.py", "keyboard_diagnostics_ui.py"):
+        for name in (p.name for p in SOURCE.glob("*.py")):
             tree = ast.parse((SOURCE / name).read_text(encoding="utf-8"))
             for node in ast.walk(tree):
                 if not isinstance(node, ast.Call):
