@@ -172,3 +172,11 @@ The build tree now contains the experimental PHY source and #9 objects;
 it is no longer an untouched #8 build directory. No boot image was packed,
 flashed or installed, and the tablet still runs #8 with suspend disabled.
 Physical validation and a RAM-root diagnostic boot are still pending.
+
+### Subsequent GPU/UFS combined candidate
+
+The later desktop freeze exposed a GPU recovery deadlock with root still
+writable. Kernel #10 now combines the #9 UFS candidate with a bounded GMU
+fault-capture wait; it is compiled and packed but not installed. See
+[GPU recovery](gpu-recovery.md) for the traces, tests, hashes, preserved #9
+backup and remaining requirements for a combined physical test session.

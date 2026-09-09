@@ -1,0 +1,80 @@
+Bound the GMU wait for fault capture so concurrent GPU recovery can finish.
+
+Experimental: observed GPU worker and SMMU IRQ lock cycle on SM-X910 #8.
+Preserve successful transactions and retry after a completed capture, but
+return the existing timeout error if capture cannot finish within one second.
+Both OOB and HFI paths have the same unbounded completion dependency.
+This is not a claim to fix the initial GPU fault.
+
+--- a/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
+@@ -395,6 +395,7 @@
+ 	struct a6xx_gpu *a6xx_gpu = container_of(gmu, struct a6xx_gpu, gmu);
+ 	struct adreno_gpu *adreno_gpu = &a6xx_gpu->base;
+ 	int ret;
++	bool waited_for_fault = false;
+ 	u32 val;
+ 	int request, ack;
+ 
+@@ -432,14 +433,20 @@
+ 		if (!ret)
+ 			break;
+ 
+-		if (completion_done(&a6xx_gpu->base.fault_coredump_done))
++		if (waited_for_fault ||
++		    completion_done(&a6xx_gpu->base.fault_coredump_done))
+ 			break;
+ 
+-		/* We may timeout because the GMU is temporarily wedged from
+-		 * pending faults from the GPU and we are taking a devcoredump.
+-		 * Wait until the MMU is resumed and try again.
++		/*
++		 * SM-X910 experiment: bound the fault-capture wait. Recovery can
++		 * hold gpu->lock while the fault IRQ waits for that same lock.
++		 * An unbounded completion wait would deadlock both paths.
++		 * Allow one bounded wait and one retry, even if faults recur.
+ 		 */
+-		wait_for_completion(&a6xx_gpu->base.fault_coredump_done);
++		waited_for_fault = true;
++		if (!wait_for_completion_timeout(&a6xx_gpu->base.fault_coredump_done,
++						 msecs_to_jiffies(1000)))
++			break;
+ 	} while (true);
+ 
+ 	if (ret)
+--- a/drivers/gpu/drm/msm/adreno/a6xx_hfi.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_hfi.c
+@@ -111,6 +111,7 @@
+ static int a6xx_hfi_wait_for_msg_interrupt(struct a6xx_gmu *gmu, u32 id, u32 seqnum)
+ {
+ 	int ret;
++	bool waited_for_fault = false;
+ 	u32 val;
+ 	struct a6xx_gpu *a6xx_gpu = container_of(gmu, struct a6xx_gpu, gmu);
+ 
+@@ -122,14 +123,20 @@
+ 		if (!ret)
+ 			break;
+ 
+-		if (completion_done(&a6xx_gpu->base.fault_coredump_done))
++		if (waited_for_fault ||
++		    completion_done(&a6xx_gpu->base.fault_coredump_done))
+ 			break;
+ 
+-		/* We may timeout because the GMU is temporarily wedged from
+-		 * pending faults from the GPU and we are taking a devcoredump.
+-		 * Wait until the MMU is resumed and try again.
++		/*
++		 * SM-X910 experiment: bound the fault-capture wait. Recovery can
++		 * hold gpu->lock while the fault IRQ waits for that same lock.
++		 * An unbounded completion wait would deadlock both paths.
++		 * Allow one bounded wait and one retry, even if faults recur.
+ 		 */
+-		wait_for_completion(&a6xx_gpu->base.fault_coredump_done);
++		waited_for_fault = true;
++		if (!wait_for_completion_timeout(&a6xx_gpu->base.fault_coredump_done,
++						 msecs_to_jiffies(1000)))
++			break;
+ 	} while (true);
+ 
+ 	if (ret) {

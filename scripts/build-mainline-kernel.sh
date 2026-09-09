@@ -208,6 +208,7 @@ apply_unless 'static void qmp_ufs_tx_pull_down_ctrl' \
 	drivers/phy/qualcomm/phy-qcom-qmp-ufs.c \
 	qmp-ufs-reset-serdes-before-power-down-gts9u.patch
 bash "$repo/scripts/stage-ufs-resume-experiment.sh" "$kernel_tree"
+bash "$repo/scripts/stage-gpu-recovery-experiment.sh" "$kernel_tree"
 apply_unless 'Late-created SM-X910 DSP endpoints' \
 	drivers/mailbox/qcom-ipcc.c ipcc-reserve-gts9u-runtime-channels.patch
 apply_unless 'Mask IPCC DSP traffic during SM-X910 system suspend' \

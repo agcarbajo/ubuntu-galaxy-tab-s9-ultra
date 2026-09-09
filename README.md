@@ -12,7 +12,7 @@ Ubuntu 24.04 LTS arm64 for the Samsung Galaxy Tab S9 Ultra Wi-Fi
 |---|---:|---|
 | Display | ✅ | Native 2960×1848 at 120 Hz |
 | Desktop | ✅ | GNOME 46, Wayland and GDM |
-| GPU | ✅ | Adreno 740 with Freedreno/Turnip |
+| GPU | ⚠️ | Adreno 740 acceleration works; a fault-recovery deadlock was captured, with a combined GPU/UFS candidate awaiting hardware tests ([diagnosis](docs/gpu-recovery.md)) |
 | Touchscreen | ✅ | Goodix multitouch |
 | S Pen writing | ✅ | Hover, pressure, tilt, side button and palm rejection |
 | S Pen dock | ✅ | Insertion, orientation and charging |
