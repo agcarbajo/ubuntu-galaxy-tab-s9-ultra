@@ -25,7 +25,11 @@ ubuntu-gts9u-fingerprint-secure.service:multi-user.target
 '
 
 case "$1" in
+	triggered)
+		/usr/libexec/ubuntu-gts9u-chromium-launchers
+		;;
 	configure)
+		/usr/libexec/ubuntu-gts9u-chromium-launchers
 		# Index the signed IRQ bridge for the matching installed kernel. Never
 		# load/unload it or restart the boot-lifetime secure owner on upgrade.
 		for module in /usr/lib/modules/*/updates/qcom_spss_irq.ko; do

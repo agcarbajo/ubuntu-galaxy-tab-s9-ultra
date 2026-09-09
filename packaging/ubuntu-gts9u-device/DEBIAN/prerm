@@ -6,6 +6,7 @@ set -e
 # serve black frames after the matching PipeWire backend is removed.
 case "$1" in
 	remove|deconfigure)
+		/usr/libexec/ubuntu-gts9u-chromium-launchers --remove
 		systemctl stop ubuntu-gts9u-cpu-boost.service >/dev/null 2>&1 || true
 		systemctl stop ubuntu-gts9u-camera-relays.service >/dev/null 2>&1 || true
 		;;

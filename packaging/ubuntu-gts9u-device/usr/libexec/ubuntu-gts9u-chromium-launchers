@@ -1,0 +1,74 @@
+#!/usr/bin/python3
+"""Preserve vendor launch scripts while selecting hardware ANGLE/Vulkan on SM-X910."""
+import argparse
+import os
+from pathlib import Path
+import subprocess
+
+PACKAGE = 'ubuntu-gts9u-device'
+TARGETS = ['/opt/google/chrome/google-chrome', '/usr/lib/chatgpt/codex-launcher']
+MARKER = '# ubuntu-gts9u ANGLE Vulkan launcher'
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--remove', action='store_true')
+args = parser.parse_args()
+for target in TARGETS:
+    path = Path(target)
+    original = Path(target + '.gts9u-original')
+    owner = subprocess.check_output(['dpkg-divert', '--listpackage', target], text=True).strip()
+    if owner and owner != PACKAGE:
+        print(f'Skipping foreign diversion: {target}')
+        continue
+    if args.remove:
+        if owner != PACKAGE:
+            continue
+        if path.exists():
+            if MARKER not in path.read_text():
+                raise RuntimeError(f'Refusing to replace an edited launcher: {target}')
+            path.unlink()
+        subprocess.run(['dpkg-divert', '--package', PACKAGE, '--remove', '--rename',
+                        '--divert', str(original), target], check=True)
+        continue
+    if not owner:
+        if not path.exists():
+            continue
+        if not path.read_bytes().startswith(b'#!'):
+            raise RuntimeError(f'Expected vendor shell launcher: {target}')
+        subprocess.run(['dpkg-divert', '--package', PACKAGE, '--add', '--rename',
+                        '--divert', str(original), target], check=True)
+    elif path.exists() and MARKER not in path.read_text():
+        raise RuntimeError(f'Refusing to overwrite an edited launcher: {target}')
+    if not original.is_file():
+        raise RuntimeError(f'Missing diverted vendor launcher: {original}')
+    # Sourcing retains $0, so vendor wrappers still find their binary and
+    # generate PWA shortcuts pointing at the public (wrapped) launcher.
+    script = '''#!/bin/bash
+''' + MARKER + '''
+if grep -aq 'samsung,gts9uwifi' /sys/firmware/devicetree/base/compatible 2>/dev/null; then
+    gts9u_angle_default=yes
+    for gts9u_arg in "$@"; do
+        case "$gts9u_arg" in --use-angle|--use-angle=*) gts9u_angle_default=no;; esac
+    done
+    if [ "$gts9u_angle_default" = yes ]; then
+        set -- --use-angle=vulkan "$@"
+    fi
+    unset gts9u_arg gts9u_angle_default
+fi
+. "''' + str(original) + '''"
+'''
+    if path.name == 'codex-launcher':
+        wayland = '''if grep -aq 'samsung,gts9uwifi' /sys/firmware/devicetree/base/compatible 2>/dev/null && [ -S "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/${WAYLAND_DISPLAY:-wayland-0}" ]; then
+    gts9u_ozone_default=yes
+    for gts9u_arg in "$@"; do
+        case "$gts9u_arg" in --ozone-platform|--ozone-platform=*) gts9u_ozone_default=no;; esac
+    done
+    if [ "$gts9u_ozone_default" = yes ]; then
+        set -- --ozone-platform=wayland "$@"
+    fi
+    unset gts9u_arg gts9u_ozone_default
+fi
+'''
+        script = script.replace('. "' + str(original) + '"', wayland + '. "' + str(original) + '"')
+    temp = Path(target + '.gts9u-new')
+    temp.write_text(script)
+    temp.chmod(0o755)
+    os.replace(temp, path)

@@ -3,17 +3,15 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 const root=process.argv[3];
 const label=process.argv[2];
-if(!root || !['spoofed','native','vendor-only','installed'].includes(label)) throw Error('Usage: node test-chromium-freedreno.mjs MODE OUTPUT_DIRECTORY');
+if(!root || !['wayland-gl','wayland-vulkan','x11-gl','wayland-native'].includes(label)) throw Error('Usage: node test-chromium-rendering.mjs MODE OUTPUT_DIRECTORY');
 await fs.mkdir(root,{recursive:true});
-await fs.copyFile(new URL('./fixtures/chromium-freedreno.html',import.meta.url),path.join(root,'probe.html'));
+await fs.copyFile(new URL('./fixtures/chromium-rendering.html',import.meta.url),path.join(root,'probe.html'));
 const profile=await fs.mkdtemp(path.join(root,label+'-'));
 let errors='';
 const env={...process.env};
 delete env.force_gl_vendor; delete env.force_gl_renderer;
-if(label==='spoofed'){env.force_gl_vendor='Qualcomm';}
-if(label==='native'){env.force_gl_vendor='freedreno';env.force_gl_renderer='FD740';}
-if(label==='vendor-only'){env.force_gl_vendor='freedreno';}
-const child=spawn(process.env.CHROME_BINARY || '/usr/bin/google-chrome',['--app=file://'+root+'/probe.html','--ozone-platform=x11','--use-angle=gl','--no-first-run','--no-default-browser-check','--disable-background-networking','--remote-debugging-port=0','--user-data-dir='+profile,'--window-size=1000,900'],{env,stdio:['ignore','ignore','pipe']});
+if(label==='wayland-native'){env.force_gl_vendor='freedreno';env.force_gl_renderer='FD740';}
+const child=spawn(process.env.CHROME_BINARY || '/usr/bin/google-chrome',['--app=file://'+root+'/probe.html','--ozone-platform='+(label==='x11-gl'?'x11':'wayland'),'--use-angle='+(label==='wayland-vulkan'?'vulkan':'gl'),'--no-first-run','--no-default-browser-check','--disable-background-networking','--remote-debugging-port=0','--user-data-dir='+profile,'--window-size=1000,900'],{env,stdio:['ignore','ignore','pipe']});
 child.stderr.on('data',b=>errors+=b);
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
 let sockets=[];
@@ -36,7 +34,7 @@ try{
  const target=tabs.find(t=>t.url.includes('probe.html'));
  if(!target)throw Error('No probe target');
  const page=await connect(target.webSocketDebuggerUrl);
- await delay(5000);
+ await delay(12000);
  const dom=await page('Runtime.evaluate',{expression:'document.getElementById("result").textContent',returnByValue:true});
  console.log(label,JSON.stringify(dom));
  const shot=await page('Page.captureScreenshot',{format:'png'});

@@ -110,7 +110,7 @@ pulseaudio-utils,
 libspa-0.2-bluetooth,bluez,alsa-ucm-conf,alsa-utils,
 iio-sensor-proxy,upower,power-profiles-daemon,
 fprintd,libpam-fprintd,
-fonts-ubuntu,language-pack-es,language-pack-gnome-es,
+fonts-ubuntu,fonts-noto-color-emoji,language-pack-es,language-pack-gnome-es,
 locales-all,
 gnome-software,gnome-software-plugin-snap
 '

@@ -44,6 +44,13 @@ Relevant primary sources are the installed Mesa 25.2.8
 The exact failing internal code path was not traced; the controlled identity
 comparison establishes this configuration regression independently.
 
+## Follow-up
+
+The applications have since been restarted and the remaining gradient/canvas
+corruption addressed with hardware ANGLE/Vulkan. See the
+[2026-09-09 validation and deployment](chromium-vulkan-rendering.md).
+The deployment notes below describe the earlier 2.49 intervention.
+
 ## Deployment and recovery
 
 Only `/usr/share/drirc.d/99-gts9u-adreno-name.conf` was updated on the tablet.
