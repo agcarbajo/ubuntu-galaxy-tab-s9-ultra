@@ -2,7 +2,10 @@
 Description=Recover the SM-X910 ANA38407 panel after a cold boot
 Documentation=https://github.com/agcarbajo/postmarketos-galaxy-tab-s9-ultra
 ConditionPathExists=/sys/power/pm_test
-After=local-fs.target systemd-udev-settle.service
+# The pogo firmware writer holds the controller lock while programming flash.
+# Finish it before freezing userspace or suspending the I2C controller.
+Wants=ubuntu-gts9u-pogo-firmware.service
+After=local-fs.target systemd-udev-settle.service ubuntu-gts9u-pogo-firmware.service
 # GDM must not start before the DDIC is alive: the reference port showed the
 # compositor otherwise drives a panel that reports connected and enabled while
 # the OLED stays black.

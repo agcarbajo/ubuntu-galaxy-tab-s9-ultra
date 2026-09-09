@@ -78,3 +78,35 @@ python3 scripts/diagnostics/test-ramroot-lifecycle.py \
   --kernel10 /path/to/boot-gpu-ufs-kernel10-experimental.img \
   --diagnostic-init /path/to/init_boot-kernel10-ramroot-test.img
 ```
+
+### Recovery after the failed diagnostic session
+
+TWRP read-back verified all four original boot partitions (#8 boot,
+init_boot, vendor_boot and DTBO). Offline e2fsck replayed the pending journal;
+a subsequent read-only check reported the Ubuntu filesystem clean.
+
+The recovered persistent journal identifies the last normal boot as kernel
+#8. It ends during the panel recovery helper's second platform PM attempt.
+The pogo firmware service was concurrently programming the STM32 controller
+and had not finished. Thus this black-screen incident must not be reported
+as a kernel #10 suspend test or evidence that the diagnostic ran.
+
+Temporarily masking panel recovery restored SSH on #8. Stopping GDM and
+running the platform test after startup completed succeeded: panel ID changed
+from `00 00 00` to `80 00 04`, GDM restarted, Wi-Fi and HTTPS returned, and
+root remained writable. This isolates the boot-time concurrency as a suspect,
+without proving that it explains all earlier GPU/UFS failures.
+
+The panel unit now explicitly pulls in and orders itself after
+`ubuntu-gts9u-pogo-firmware.service`, so it cannot freeze userspace or suspend
+the controller during that service's firmware write. systemd-analyze verify
+accepted the installed unit and its dependency graph. The ordinary deep-sleep
+safeguard remains enabled; kernel #10 acceptance is still pending.
+
+The subsequent normal reboot passed on kernel #8: the pogo unit finished
+first (V37 already present), then panel recovery returned on its first
+attempt and reported ID `80 00 04`. GDM's greeter session, NetworkManager and
+iio-sensor-proxy were active; HTTPS returned 204 with successful TLS checking,
+root was writable, and no failed units or matching UFS/ext4/GPU fault messages
+were found. This verifies ordinary boot ordering and recovery with existing
+firmware; a fresh firmware-write boot has not yet been repeated.
