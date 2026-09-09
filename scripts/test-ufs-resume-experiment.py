@@ -43,6 +43,18 @@ with tempfile.TemporaryDirectory(prefix="gts9u-ufs-test-") as tmp:
         assert result.returncode != 0, f"accepted unsafe option/tree {value}"
         assert source.read_bytes() == candidate
 
+    # A comment alone must not make a damaged experiment look installed.
+    damaged = candidate.replace(
+        b'\t\tqphy_setbits(pcs, cfg->regs[QPHY_SW_RESET], SW_RESET);',
+        b'\t\tqphy_setbits(pcs, cfg->regs[QPHY_SW_RESET], 0);')
+    assert damaged != candidate
+    source.write_bytes(damaged)
+    env["UFS_PCS_RESET_EXPERIMENTAL"] = "1"
+    result = subprocess.run(["bash", stage, tmp], env=env, capture_output=True)
+    assert result.returncode != 0, "accepted a damaged reset sequence"
+    assert source.read_bytes() == damaged
+    source.write_bytes(candidate)
+
     match = re.search(r"static int qmp_ufs_phy_calibrate\(struct phy \*phy\)\n\{.*?\n\}",
                       candidate.decode(), re.S)
     assert match, "calibration function not found"

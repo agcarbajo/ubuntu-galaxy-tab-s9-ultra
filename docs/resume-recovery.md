@@ -104,7 +104,7 @@ as part of this recovery.
 The pinned upstream source confirms that `qmp_ufs_phy_init()` does not acquire
 the external reset on PHYs with PCS reset. Calibration therefore clears PCS
 reset without explicitly asserting it first. The published
-[Kalama implementation](https://github.com/LineageOS/android_kernel_oneplus_sm8650/blob/lineage-23.2/drivers/phy/qualcomm/phy-qcom-ufs-qmp-v4-kalama.c)
+[Kalama implementation](https://github.com/LineageOS/android_kernel_oneplus_sm8650/blob/638ecc42531912963b2a0d9eddf6b1ae3be9bb37/drivers/phy/qualcomm/phy-qcom-ufs-qmp-v4-kalama.c)
 asserts PCS reset before its tables. Upstream commit
 [`a079b2d71534`](https://github.com/torvalds/linux/commit/a079b2d715340482e425ff136b55810ab8279800)
 deliberately removed reset and SerDes stop from **power-off** according to the
@@ -143,3 +143,32 @@ Before enabling normal suspend, validate repeated real deep cycles and UFS
 reads, then normal-root filesystem writes and existing hardware functions
 under supervision. A platform PM test alone is insufficient. The local sleep
 safeguard remains in place and no reboot is implied by staging or building.
+
+### Build-only result on PC-ARTURO
+
+The existing runtime9 source snapshot (`5e34b887d`, with the validated #8
+performance and fingerprint edits) was built incrementally with only the
+additional PCS reset candidate. Backup and candidate artifacts are under
+`/root/ubuntu-gts9u/build/ufs-resume-20260909.9EDJeS/` on PC-ARTURO:
+
+- `validated-kernel8/` preserves the original Image, vmlinux, System.map,
+  configuration, Module.symvers, PHY source/object and version metadata.
+- `candidate-kernel9/Image` SHA-256:
+  `0bbfe08b67d976044f37ebaaf095665e369da913f3b5f0d8ac37fee85c083a23`.
+- Build identity: `#9 SMP PREEMPT Wed Sep 9 10:46:40 CEST 2026`, release
+  `7.2.0-rc3-dirty`. LLVM 22.1.8, `ARCH=arm64 LLVM=1 LOCALVERSION=-dirty
+  KBUILD_BUILD_VERSION=9 KBUILD_BUILD_TIMESTAMP='Wed Sep 9 10:46:40 CEST 2026'`,
+  target `Image`, eight jobs, existing source and object directories.
+- Configuration SHA-256 remains
+  `474a26a731694fb6838f463e21a057ff3e272fe27fc42b3d6b9d3b628070fcb3`;
+  signing key, certificate and Module.symvers hashes also remained unchanged.
+  No modules were replaced or signing keys regenerated.
+- The first compile omitted `LOCALVERSION=-dirty`, producing an incompatible
+  `7.2.0-rc3+` release. That output is isolated in
+  `rejected-release-mismatch/` and **must not be installed**. The second,
+  matched compile above is the candidate. Both logs are retained locally.
+
+The build tree now contains the experimental PHY source and #9 objects;
+it is no longer an untouched #8 build directory. No boot image was packed,
+flashed or installed, and the tablet still runs #8 with suspend disabled.
+Physical validation and a RAM-root diagnostic boot are still pending.
