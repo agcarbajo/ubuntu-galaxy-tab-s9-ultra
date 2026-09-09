@@ -1,0 +1,130 @@
+#!/bin/sh
+# One-shot initramfs diagnostic, never install in the normal rootfs.
+# It restores kernel8 and the normal init_boot BEFORE attempting real sleep.
+set -eu
+export PATH=/usr/bin:/usr/sbin:/bin:/sbin
+SHA=/gts9u-tools/sha256sum
+DD=/gts9u-tools/dd
+TIMEOUT=/gts9u-tools/timeout
+BASE_SHA=a48a7d1b81e27641683fc930b5f9c712990e3748121b09b1cc82bd33e5d9ac8f
+INIT_SHA=7881d5859f223a2bfdcc6be0fe12edf561b71c02d7c6ab854ab7e14dcf0e1705
+NEW_SHA=b193714fea21c4d0aa926c89d0e9a77403c6cfe5286d37480c958353b4b8a9cc
+WORK=/run/gts9u-ramroot
+ROOT=/dev/sda35
+BOOT=/dev/sda21
+INIT=/dev/sda22
+STAGED=/var/lib/gts9u-diagnostics/kernel10-ramroot
+restored=0
+success=0
+
+log() { echo "gts9u-ramroot: $*" > /dev/kmsg; echo "$*" >> "$WORK/result.txt"; }
+digest() { "$SHA" "$1" | cut -d' ' -f1; }
+verify() { test "$(digest "$1")" = "$2"; }
+write_image() {
+    "$DD" if="$1" of="$2" bs=4M conv=fsync status=none
+    verify "$2" "$3"
+}
+reboot_now() {
+    sync
+    echo b > /proc/sysrq-trigger
+    while :; do sleep 60; done
+}
+finish() {
+    trap - EXIT INT TERM
+    echo none > /sys/power/pm_test 2>/dev/null || true
+    echo 0 > /sys/class/rtc/rtc0/wakealarm 2>/dev/null || true
+    log "EXIT success=$success fallback_restored=$restored"
+    if [ "$restored" = 1 ]; then
+        # Internal filesystems were unmounted throughout the test. On error,
+        # do not remount a potentially failed UFS controller just for a log.
+        umount "$WORK/root" 2>/dev/null || true
+        reboot_now
+    fi
+    log 'Preflight failed before fallback restoration; stop for recovery.'
+    while :; do sleep 60; done
+}
+
+mkdir -p "$WORK/root"
+exec >> "$WORK/console.txt" 2>&1
+trap finish EXIT INT TERM
+test -f /gts9u-ramroot-armed
+uname -v | grep -q '^#10 '
+grep -aq 'samsung,gts9uwifi' /sys/firmware/devicetree/base/compatible
+log 'START kernel10; preparing recovery with Ubuntu read-only'
+udevadm settle --timeout=30
+test "$(blockdev --getsize64 "$BOOT")" = 100663296
+test "$(blockdev --getsize64 "$INIT")" = 8388608
+grep -qx 'PARTNAME=linuxroot' /sys/class/block/sda35/uevent
+verify "$BOOT" "$NEW_SHA"
+
+mount -t ext4 -o ro,noload "$ROOT" "$WORK/root"
+for name in kernel8.img init_boot.img; do
+    cp "$WORK/root$STAGED/$name" "$WORK/$name"
+done
+umount "$WORK/root"
+verify "$WORK/kernel8.img" "$BASE_SHA"
+verify "$WORK/init_boot.img" "$INIT_SHA"
+
+# Restore the ordinary ramdisk and the previous kernel while storage is
+# healthy. A hang or a forced reset during the test therefore boots kernel8.
+write_image "$WORK/init_boot.img" "$INIT" "$INIT_SHA"
+write_image "$WORK/kernel8.img" "$BOOT" "$BASE_SHA"
+restored=1
+log 'Normal init_boot and kernel8 restored and read back before testing'
+
+insmod /gts9u-tools/rtc-pm8xxx.ko
+udevadm settle --timeout=30
+test -r /sys/class/rtc/rtc0/since_epoch
+test "$(cat /sys/class/rtc/rtc0/device/power/wakeup)" = enabled
+udevadm control --exit
+
+# No block-backed filesystem may be mounted during suspend. In addition,
+# mark Ubuntu's partition read-only for the duration of the tests.
+if awk '$1 ~ /^\/dev\// { found=1 } END { exit !found }' /proc/mounts; then
+    log 'Refusing suspend with a block-backed mount'
+    exit 1
+fi
+blockdev --setro "$ROOT"
+test "$(blockdev --getro "$ROOT")" = 1
+echo deep > /sys/power/mem_sleep
+echo none > /sys/power/pm_test
+"$TIMEOUT" 20 "$DD" if="$ROOT" of="$WORK/reference.bin" bs=1M count=8 iflag=direct status=none
+reference=$(digest "$WORK/reference.bin")
+fail_before=$(cat /sys/power/suspend_stats/fail)
+
+for duration in 15 30 60; do
+    log "CYCLE duration=$duration mounts=$(cat /proc/mounts)"
+    before=$(cat /sys/class/rtc/rtc0/since_epoch)
+    echo 0 > /sys/class/rtc/rtc0/wakealarm
+    echo "+$duration" > /sys/class/rtc/rtc0/wakealarm
+    cat /sys/class/rtc/rtc0/wakealarm >> "$WORK/result.txt"
+    echo mem > /sys/power/state
+    after=$(cat /sys/class/rtc/rtc0/since_epoch)
+    echo 0 > /sys/class/rtc/rtc0/wakealarm
+    elapsed=$((after - before))
+    test "$elapsed" -ge "$((duration - 2))"
+    test "$elapsed" -le "$((duration + 20))"
+    test "$(cat /sys/power/suspend_stats/fail)" = "$fail_before"
+    "$TIMEOUT" 20 "$DD" if="$ROOT" of="$WORK/after.bin" bs=1M count=8 iflag=direct status=none
+    verify "$WORK/after.bin" "$reference"
+    dmesg > "$WORK/dmesg.txt"
+    if grep -Eiq 'phy initialization timed-out|Failed to calibrate PHY|I/O error, dev sda|EXT4-fs error|hibern8 exit failed' "$WORK/dmesg.txt"; then
+        log 'Storage error after resume; retaining kernel8 fallback'
+        exit 1
+    fi
+    log "PASS duration=$duration RTC_elapsed=$elapsed direct_read_sha256=$reference"
+done
+
+# Only after all cycles and uncached reads pass may we write Ubuntu results.
+# Retain kernel8 for the return boot so the host can inspect the results
+# before installing kernel10 for normal desktop validation.
+blockdev --setrw "$ROOT"
+mount -t ext4 "$ROOT" "$WORK/root"
+cp "$WORK/result.txt" "$WORK/root$STAGED/result.txt"
+cp "$WORK/dmesg.txt" "$WORK/root$STAGED/dmesg.txt"
+printf 'RAMROOT_PASS\n' > "$WORK/root$STAGED/status"
+sync
+umount "$WORK/root"
+success=1
+log 'All RAM-root cycles passed; rebooting normal Ubuntu kernel8 for inspection'
+exit 0

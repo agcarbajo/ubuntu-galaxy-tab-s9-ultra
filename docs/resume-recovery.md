@@ -177,6 +177,7 @@ Physical validation and a RAM-root diagnostic boot are still pending.
 
 The later desktop freeze exposed a GPU recovery deadlock with root still
 writable. Kernel #10 now combines the #9 UFS candidate with a bounded GMU
-fault-capture wait; it is compiled and packed but not installed. See
+fault-capture wait; it is compiled, packed and staged for a one-shot RAM-root test. Normal
+desktop installation and physical acceptance are still pending. See
 [GPU recovery](gpu-recovery.md) for the traces, tests, hashes, preserved #9
 backup and remaining requirements for a combined physical test session.

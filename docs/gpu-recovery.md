@@ -101,7 +101,9 @@ from the audited #8 boot and #10 Image. It checks both input hashes,
 preserves the appended DTB and all boot header fields except kernel size,
 and verifies the existing unsigned AVB hash-footer format. The output is
 `artifacts/boot-gpu-ufs-kernel10-experimental.img`, 100663296 bytes. It has
-**not been installed** and is not itself a RAM-root diagnostic image.
+been staged for a one-shot RAM-root diagnostic boot; normal desktop installation
+is still pending the physical result. The boot image alone does not supply
+the diagnostic ramdisk. See [RAM-root diagnostic](ramroot-diagnostic.md).
 
 ## Pending physical acceptance
 
