@@ -28,6 +28,8 @@ with tempfile.TemporaryDirectory(prefix="gts9u-ufs-test-") as tmp:
     baseline = repo / "kernel/patches/qmp-ufs-reset-serdes-before-power-down-gts9u.patch"
     run("patch", "--batch", "--fuzz=0", "-d", tmp, "-p1", input=baseline.read_text())
     staged = source.read_bytes()
+    orig = source.with_suffix(".c.orig")
+    orig.write_bytes(b"Pre-existing developer backup; preserve it.\n")
     stage = str(repo / "scripts/stage-ufs-resume-experiment.sh")
     env = dict(os.environ, UFS_PCS_RESET_EXPERIMENTAL="0")
     run("bash", stage, tmp, env=env)
@@ -35,6 +37,7 @@ with tempfile.TemporaryDirectory(prefix="gts9u-ufs-test-") as tmp:
     env["UFS_PCS_RESET_EXPERIMENTAL"] = "1"
     run("bash", stage, tmp, env=env)
     candidate = source.read_bytes()
+    assert orig.read_bytes() == b"Pre-existing developer backup; preserve it.\n"
     run("bash", stage, tmp, env=env)
     assert source.read_bytes() == candidate, "repeat staging is not idempotent"
     for value in ("0", "invalid"):

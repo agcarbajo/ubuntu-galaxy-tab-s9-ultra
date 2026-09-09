@@ -20,5 +20,5 @@ if grep -q 'SM-X910 experiment: assert PCS reset before calibration tables' "$so
     patch --dry-run --reverse --batch --fuzz=0 -d "$tree" -p1 < "$patch_file"
 elif [ "$enabled" = 1 ]; then
     patch --dry-run --forward --batch --fuzz=0 -d "$tree" -p1 < "$patch_file"
-    patch --forward --batch --fuzz=0 -d "$tree" -p1 < "$patch_file"
+    patch --forward --batch --fuzz=0 --no-backup-if-mismatch -d "$tree" -p1 < "$patch_file"
 fi
