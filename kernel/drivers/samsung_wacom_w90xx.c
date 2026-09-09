@@ -33,6 +33,8 @@
 #include <linux/mutex.h>
 #include <linux/of.h>
 #include <linux/power_supply.h>
+#include <linux/pm_wakeup.h>
+#include <linux/pm_wakeirq.h>
 #include <linux/regulator/consumer.h>
 #include <linux/samsung_wacom.h>
 #include <linux/slab.h>
@@ -870,6 +872,14 @@ static void samsung_wacom_cancel_charge_work(void *data)
 	cancel_delayed_work_sync(&wacom->charge_work);
 }
 
+static void samsung_wacom_clear_wake_irq(void *data)
+{
+	struct device *dev = data;
+
+	dev_pm_clear_wake_irq(dev);
+	device_init_wakeup(dev, false);
+}
+
 static int samsung_wacom_probe(struct i2c_client *client)
 {
 	struct device *dev = &client->dev;
@@ -1040,6 +1050,22 @@ static int samsung_wacom_probe(struct i2c_client *client)
 	if (error)
 		return dev_err_probe(dev, error,
 				     "cannot expose S Pen dock state\n");
+
+	/* The keyboard folio's lid notifications arrive through Wacom, not
+	 * GPIO107. Keep its data IRQ able to wake the SoC so the open event
+	 * can be read after resume. The IRQ is routed through the SM8550 PDC.
+	 */
+	error = device_init_wakeup(dev, true);
+	if (error)
+		return error;
+	error = dev_pm_set_wake_irq(dev, client->irq);
+	if (error) {
+		device_init_wakeup(dev, false);
+		return dev_err_probe(dev, error, "cannot configure lid wake IRQ\n");
+	}
+	error = devm_add_action_or_reset(dev, samsung_wacom_clear_wake_irq, dev);
+	if (error)
+		return error;
 
 	samsung_wacom_set_max_rate(wacom);
 	if (wacom->docked)

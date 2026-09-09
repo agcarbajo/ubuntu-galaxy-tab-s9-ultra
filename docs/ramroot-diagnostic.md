@@ -172,3 +172,45 @@ This is an installed experimental kernel, not a new release or evidence of
 long-term reliability. Physical lid/button and extended idle coverage, plus
 actual GPU fault recovery, remain separate acceptance work. Build experiment
 flags remain opt-in.
+
+## Keyboard-folio opening wake-up (kernel #11)
+
+The user confirmed that lid-close suspend and automatic brightness survived
+kernel #10, but opening the folio did not wake it. The journal showed the
+power-key press and the delayed lid-open report at the same resume. GPIO107's
+Book Cover IRQ had no events: that route serves a different cover. This
+keyboard folio sends its lid notifications through the Wacom controller on
+I2C 12-0056, whose GPIO154 has SM8550 PDC wake mapping 53.
+
+The Wacom driver reported SW_LID but did not register a wake IRQ. A temporary,
+signed test module enabled IRQ wake on the live Wacom data interrupt, guarded
+by board compatibility and hardware IRQ154. The user then confirmed that
+opening the cover woke the tablet without pressing the power button. The
+journal recorded lid-close at 19:18:49, suspend at 19:18:50 and lid-open/resume
+at 19:19:17, without a power-key event.
+
+The permanent driver change initializes device wake-up and associates its
+data IRQ with `dev_pm_set_wake_irq()`. A managed cleanup action clears the
+association and wake-up state. This uses the PM core to arm the interrupt
+during suspend and exposes the normal device power/wakeup policy.
+
+Kernel #11 adds only this Wacom change to #10. The build preserved configuration,
+Module.symvers and signing-key hashes. Build artifacts and #10 backup are in
+`/root/ubuntu-gts9u/build/wacom-wake-kernel11.KailU5/`. The packer
+`scripts/prepare-lid-wake-kernel11-boot.py` preserves the #10 DTB and header,
+checks input hashes and verifies the AVB hash footer.
+
+- Image SHA-256: `81c703681cb871449dc3349e5a8f01d4657d2851fd62676f608b8033fa19e063`.
+- boot SHA-256: `2be3ad53a009465458153eaa76e6d89d0466e6127adf5d70b047099490fc0f44`.
+
+The candidate was written and verified, and booted successfully as #11.
+Wacom power/wakeup reports enabled without the test module; GDM, networking
+and light-sensor services are active and root is writable. Post-reboot
+physical lid-opening acceptance passed: the user confirmed automatic wake
+without the power button, and the journal records suspend at 19:23:58 and
+lid-open/resume at 19:24:16. Root stayed writable, HTTPS returned 204 with
+valid TLS, and no systemd units were failed. The saved Ubuntu dualboot boot
+image was updated to the verified #11 image after this check.
+The test module is not installed for automatic loading and does not persist
+across reboot. The #10 boot backup is retained on the tablet under
+`/var/lib/gts9u-diagnostics/kernel11-lid/kernel10.img`.
