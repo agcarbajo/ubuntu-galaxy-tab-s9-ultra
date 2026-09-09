@@ -13,6 +13,7 @@ import kotlinx.coroutines.withContext
 
 data class UiState(
     val loading: Boolean = true,
+    val maintenanceLog: String = "",
     val hasRoot: Boolean = false,
     /** The system this app is running on. */
     val running: BootSets.BootSet? = null,
@@ -59,37 +60,15 @@ class SwitcherViewModel(app: Application) : AndroidViewModel(app) {
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
 
-    init {
-        refresh()
-    }
-
     fun refresh() = viewModelScope.launch {
+        if (_state.value.loading && _state.value.hasRoot || _state.value.busy) return@launch
         _state.update { it.copy(loading = true) }
 
         val context = getApplication<Application>()
         val snapshot = withContext(Dispatchers.IO) {
             if (!Root.available()) return@withContext null
 
-            var shot = BootState.read(context)
-
-            // Only the running system knows its own name, so it writes it down
-            // while it can.  Note this stamps the system we are *in*, not the
-            // one the partitions would boot: after a staged switch those are
-            // different, and naming the wrong set would make both labels lie.
-            shot.running?.let { running ->
-                BootSets.stampRunningName(running)
-
-                // The Linux set cannot name itself from here, so it is asked
-                // directly: root can mount its filesystem read-only.
-                shot.sets.firstOrNull { BootSets.isLinux(it) }?.let { linux ->
-                    if (linux.id != running.id) {
-                        BootSets.linuxSystemName().takeIf { it.isNotBlank() }?.let {
-                            BootSets.writeName(linux, it)
-                        }
-                    }
-                }
-                shot = BootState.read(context)
-            }
+            val shot = BootState.read(context)
             shot to BootSets.storage()
         }
 
@@ -107,6 +86,8 @@ class SwitcherViewModel(app: Application) : AndroidViewModel(app) {
                 running = shot.running,
                 nextBoot = shot.nextBoot,
                 storage = storage,
+                maintenanceLog = BootMaintenance.log(context),
+                hasRun = true,
             )
         }
     }
@@ -137,10 +118,15 @@ class SwitcherViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun apply(set: BootSets.BootSet, thenReboot: Boolean) = viewModelScope.launch {
+        if (_state.value.busy || _state.value.loading) return@launch
         val before = _state.value
 
         if (before.nextBoot?.id == set.id) {
-            if (thenReboot) withContext(Dispatchers.IO) { BootSets.reboot() }
+            if (thenReboot) withContext(Dispatchers.IO) {
+                synchronized(BootSets) {
+                    if (BootMaintenance.beforeSwitch()) BootSets.reboot()
+                }
+            }
             return@launch
         }
 
@@ -191,6 +177,7 @@ class SwitcherViewModel(app: Application) : AndroidViewModel(app) {
                 finished = true,
                 hasRun = true,
                 nextBoot = if (ok) set else it.nextBoot,
+                maintenanceLog = BootMaintenance.log(getApplication()),
             )
         }
 

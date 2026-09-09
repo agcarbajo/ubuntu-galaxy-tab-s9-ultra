@@ -67,6 +67,8 @@ def stamp_running_name(set_id):
     which is metadata-encrypted.  Android returns the favour by mounting
     linuxroot read-only and asking, so both labels end up true.
     """
+    if not any(token in set_id.lower() for token in ("ubuntu", "linux", "debian")):
+        return
     name = running_system_name()
     if not name:
         return

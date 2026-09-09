@@ -123,7 +123,11 @@ class BootSwitchTile : TileService() {
         // Already written from the app: rewriting four identical partitions
         // would only delay the restart.
         if (staged) {
-            withContext(Dispatchers.IO) { BootSets.reboot() }
+            withContext(Dispatchers.IO) {
+                synchronized(BootSets) {
+                    if (BootMaintenance.beforeSwitch()) BootSets.reboot()
+                }
+            }
             return@launch
         }
 

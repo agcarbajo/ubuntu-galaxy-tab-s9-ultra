@@ -51,7 +51,8 @@ object BootSets {
      * The installer seeds the sets inside Ubuntu's own root filesystem, and
      * that partition is plain ext4 that root can mount from here — the app
      * already does it to read Ubuntu's name.  So there is nothing to copy:
-     * Android reads the same images Ubuntu uses.
+     * Android reads the same images Ubuntu uses. BootMaintenance also refreshes
+     * the Android set there after updates, with a verified directory transaction.
      *
      * `/sdcard/BootSets` stays as the place to override or add one by hand.
      * Android cannot be given files there from recovery anyway, because that
@@ -64,8 +65,8 @@ object BootSets {
     /**
      * Mounts Ubuntu's root read-only, if it is not mounted already.
      *
-     * Read-only throughout: this is the other system's filesystem and nothing
-     * here has any business writing to it.  A plain `ro` mount still replays
+     * Discovery stays read-only. BootMaintenance briefly remounts it writable
+     * only for a verified backup transaction. A plain `ro` mount still replays
      * the journal, which fails on a filesystem left dirty by a hard power-off,
      * so `noload` is the fallback — it skips recovery and reads what is there.
      */
@@ -119,54 +120,6 @@ object BootSets {
             return if (minor == 0) "One UI $major" else "One UI $major.$minor"
         }
         return "Android $release"
-    }
-
-    /**
-     * The Linux side's real name, read out of its own root filesystem.
-     *
-     * Each system keeps its own copy of the sets, and neither can write into
-     * the other's: Android's /sdcard is encrypted and Ubuntu never sees it.
-     * But root here can mount linuxroot read-only and simply ask, which beats
-     * showing a name nobody chose.
-     */
-    fun linuxSystemName(): String {
-        val mount = "/mnt/gts9u-linuxroot"
-        val result = Root.run(
-            "mkdir -p $mount",
-            "mount -o ro -t ext4 /dev/block/by-name/linuxroot $mount 2>/dev/null || true",
-            "grep -m1 '^PRETTY_NAME=' $mount/etc/os-release 2>/dev/null || true",
-            "umount $mount 2>/dev/null || true",
-            "rmdir $mount 2>/dev/null || true",
-        )
-        val line = result.output.lineSequence()
-            .firstOrNull { it.startsWith("PRETTY_NAME=") } ?: return ""
-        return line.removePrefix("PRETTY_NAME=").trim().trim('"')
-    }
-
-    /**
-     * Writes the running system's real name into its own set.
-     *
-     * Each system can only name itself, so both labels become true once each
-     * has booted at least once.  Until then the generic fallback is used, which
-     * is vague but never wrong.
-     */
-    fun stampRunningName(set: BootSet) = writeName(set, runningSystemName())
-
-    /**
-     * Records a set's name, leaving it alone when nothing has changed.
-     *
-     * Sets that live on Ubuntu's root are mounted read-only, so this quietly
-     * does nothing for them — and it should: the installer already wrote their
-     * name from the system that owns it, and this app has no business writing
-     * into the other system's filesystem.
-     */
-    fun writeName(set: BootSet, name: String) {
-        if (name.isBlank()) return
-        if (set.dir.startsWith(LINUX_MOUNT)) return
-        val file = "${set.dir}/name.txt"
-        val existing = Root.run("cat \"$file\" 2>/dev/null || true").output.trim()
-        if (existing == name) return
-        Root.run("printf '%s\\n' \"$name\" > \"$file\"")
     }
 
     // -- reading -------------------------------------------------------------
@@ -258,6 +211,29 @@ object BootSets {
         }
     }
 
+    enum class BackupDecision { UNCHANGED, CHANGED, LINUX_STAGED, MIXED, AMBIGUOUS }
+
+    fun backupDecision(sets: List<BootSet>, live: Map<String, String>): BackupDecision {
+        val android = sets.filterNot { isLinux(it) }.singleOrNull()
+            ?: return BackupDecision.AMBIGUOUS
+        if (live.size != PARTITIONS.size) return BackupDecision.AMBIGUOUS
+        val next = identify(live, sets)
+        if (next != null && isLinux(next)) return if (android.complete)
+            BackupDecision.LINUX_STAGED else BackupDecision.AMBIGUOUS
+        if (sets.filter { isLinux(it) }.any { linux ->
+                PARTITIONS.any { part ->
+                    live[part.device] == linux.hashes[linux.file(part)] &&
+                        live[part.device] != android.hashes[android.file(part)]
+                }
+            }) return BackupDecision.MIXED
+        return if (next?.id == android.id) BackupDecision.UNCHANGED else BackupDecision.CHANGED
+    }
+
+    fun runningAndroid(sets: List<BootSet>, name: String): BootSet? {
+        val android = sets.filterNot { isLinux(it) }
+        return (android.singleOrNull() ?: android.firstOrNull { it.label == name })?.copy(label = name)
+    }
+
     // -- storage -------------------------------------------------------------
 
     data class Share(val total: Long, val used: Long, val known: Boolean)
@@ -314,7 +290,18 @@ object BootSets {
      * able to stop, because a tablet with three of four partitions replaced
      * still runs the system it is on — but only until it is restarted.
      */
+    @Synchronized
     fun write(set: BootSet, log: (Progress) -> Unit): Boolean {
+        if (!BootMaintenance.beforeSwitch()) {
+            log(Progress.Failed(R.string.progress_incomplete, set.label,
+                "Android backup refresh failed; see console."))
+            return false
+        }
+        val fresh = discover().firstOrNull { it.id == set.id }
+        if (fresh == null || !fresh.complete || fresh.hashes != set.hashes) {
+            log(Progress.Failed(R.string.progress_incomplete, set.label))
+            return false
+        }
         if (!set.complete) {
             log(Progress.Failed(R.string.progress_incomplete, set.label))
             return false

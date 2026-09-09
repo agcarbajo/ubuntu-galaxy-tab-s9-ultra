@@ -14,8 +14,8 @@ android {
 		// than the One UI 8 it ships with.
 		minSdk = 34
 		targetSdk = 35
-		versionCode = 100
-		versionName = "1.0.0"
+		versionCode = 110
+		versionName = "1.1.0"
 	}
 
 	buildTypes {
@@ -45,6 +45,7 @@ android {
 }
 
 dependencies {
+	testImplementation("junit:junit:4.13.2")
 	implementation(libs.androidx.core.ktx)
 	implementation(libs.androidx.lifecycle.runtime.ktx)
 	implementation(libs.androidx.lifecycle.runtime.compose)

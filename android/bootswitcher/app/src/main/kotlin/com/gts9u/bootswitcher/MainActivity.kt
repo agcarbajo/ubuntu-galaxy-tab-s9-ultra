@@ -73,6 +73,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 
@@ -119,6 +121,7 @@ private fun formatSize(bytes: Long): String {
 @Composable
 fun SwitcherScreen(vm: SwitcherViewModel = viewModel()) {
     val state by vm.state.collectAsStateWithLifecycle()
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.refresh() }
     var showAbout by remember { mutableStateOf(false) }
 
     Scaffold(
@@ -170,7 +173,7 @@ fun SwitcherScreen(vm: SwitcherViewModel = viewModel()) {
 
                 SectionTitle(stringResource(R.string.section_settings))
                 SettingsCard(
-                    enabled = !state.busy,
+                    enabled = !state.busy && !state.loading,
                     canSwitch = state.canSwitch,
                     onRefresh = { vm.refresh() },
                 )
@@ -381,7 +384,7 @@ private fun SystemsCard(
                     // way back, so undoing has to live here.
                     isRunning -> TextButton(
                         onClick = { onStage(set) },
-                        enabled = !state.busy,
+                        enabled = !state.busy && !state.loading,
                     ) { Text(stringResource(R.string.action_cancel)) }
 
                     set.complete -> Row(
@@ -403,13 +406,13 @@ private fun SystemsCard(
                         // again would rewrite four identical partitions.
                         FilledTonalButton(
                             onClick = { onStage(set) },
-                            enabled = !state.busy && !isNext,
+                            enabled = !state.busy && !state.loading && !isNext,
                             shape = RoundedCornerShape(16.dp),
                         ) { Text(stringResource(R.string.action_stage)) }
 
                         Button(
                             onClick = { onReboot(set) },
-                            enabled = !state.busy,
+                            enabled = !state.busy && !state.loading,
                             shape = RoundedCornerShape(16.dp),
                         ) {
                             Icon(
@@ -704,6 +707,7 @@ private fun ConsoleDialog(state: UiState, onDismiss: () -> Unit) {
             Text(
                 stringResource(
                     when {
+                        !state.busy && !state.finished -> R.string.action_console
                         failed -> R.string.progress_failed_title
                         done -> R.string.progress_done_title
                         else -> R.string.progress_title
@@ -713,6 +717,11 @@ private fun ConsoleDialog(state: UiState, onDismiss: () -> Unit) {
         },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (state.maintenanceLog.isNotBlank()) {
+                    Text(state.maintenanceLog, style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.height(160.dp).verticalScroll(rememberScrollState()))
+                }
+                if (state.busy || state.finished) {
                 val fraction = state.written.size / BootSets.PARTITIONS.size.toFloat()
                 LinearProgressIndicator(
                     progress = { fraction },
@@ -756,6 +765,7 @@ private fun ConsoleDialog(state: UiState, onDismiss: () -> Unit) {
                         ),
                         style = MaterialTheme.typography.bodyMedium,
                     )
+                }
                 }
             }
         },
