@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Pack, never flash, the one-shot diagnostic init_boot with an audited base."""
 import argparse
-import gzip
 import hashlib
 from pathlib import Path
 import struct
@@ -20,7 +19,12 @@ assert base[:8] == b"ANDROID!" and len(base) == 8388608
 assert struct.unpack_from("<I", base, 8)[0] == 0
 assert struct.unpack_from("<I", base, 40)[0] == 4
 assert struct.unpack_from("<I", base, 1580)[0] == 0
-archive = gzip.decompress(ramdisk)
+# Preserve the device's original legacy LZ4 format. The gzip diagnostic
+# failed early boot on hardware; do not silently reproduce that artifact.
+if not ramdisk.startswith(b"\x02\x21\x4c\x18"):
+    raise ValueError("Expected the hardware-validated legacy LZ4 ramdisk")
+archive = subprocess.run(["lz4", "-dc", str(a.ramdisk)], check=True,
+                         stdout=subprocess.PIPE).stdout
 assert archive.startswith(b"070701") and b"TRAILER!!!" in archive
 assert b"exec /gts9u-ramroot-test\n" in archive
 assert b"gts9u-ramroot-armed" in archive

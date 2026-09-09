@@ -101,14 +101,15 @@ from the audited #8 boot and #10 Image. It checks both input hashes,
 preserves the appended DTB and all boot header fields except kernel size,
 and verifies the existing unsigned AVB hash-footer format. The output is
 `artifacts/boot-gpu-ufs-kernel10-experimental.img`, 100663296 bytes. It has
-been staged for a one-shot RAM-root diagnostic boot; normal desktop installation
-is still pending the physical result. The boot image alone does not supply
-the diagnostic ramdisk. See [RAM-root diagnostic](ramroot-diagnostic.md).
+been installed for normal desktop validation after three successful RAM-root
+deep-suspend cycles. The boot image alone does not supply the diagnostic ramdisk. See [RAM-root diagnostic](ramroot-diagnostic.md).
 
 ## Pending physical acceptance
 
-Keep ordinary suspend disabled until the combined candidate passes storage
-validation. First establish a recovery path and prepare a diagnostic RAM-root
+The initial storage gate has now passed: three RAM-root deep/RTC cycles and
+normal-root validation are recorded in [RAM-root diagnostic](ramroot-diagnostic.md).
+GPU fault recovery and long-duration lid/idle coverage remain pending.
+For further experiments, establish a recovery path and prepare a diagnostic RAM-root
 with all internal UFS filesystems unmounted. Preserve the current Ubuntu boot
 set and do not repurpose the owner's WINPE microSD. The packed boot above
 alone still uses the installed normal-root ramdisk, so it does not provide

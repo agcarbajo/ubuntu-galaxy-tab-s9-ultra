@@ -1,7 +1,8 @@
 # Kernel #10 RAM-root diagnostic
 
 This is a device-specific engineering diagnostic, not a release ramdisk.
-The ordinary suspend safeguard remains enabled. A successful short test
+The ordinary suspend safeguard was retained during the initial tests. See
+the installed-state section below for its later removal. A successful short test
 would not establish long-duration reliability or GPU fault recovery.
 
 On 2026-09-09, the combined kernel #10 and a diagnostic init_boot were
@@ -110,3 +111,64 @@ iio-sensor-proxy were active; HTTPS returned 204 with successful TLS checking,
 root was writable, and no failed units or matching UFS/ext4/GPU fault messages
 were found. This verifies ordinary boot ordering and recovery with existing
 firmware; a fresh firmware-write boot has not yet been repeated.
+
+### Kernel #10 normal boot and diagnostic preflight
+
+With the verified original init_boot and corrected panel service ordering,
+kernel #10 booted normally. The panel platform cycle passed on the first
+attempt, GDM, networking and the light sensor were available, root remained
+writable, and HTTPS returned 204 with valid TLS. This validates ordinary boot,
+not deep suspend or GPU fault recovery.
+
+The diagnostic packer now requires legacy LZ4, matching the original
+ramdisk format, and rejects the gzip format that failed the earlier boot. A preflight-only variant using LZ4 booted kernel #10,
+restored both original boot partitions, wrote `PREFLIGHT_PASS`, and returned
+to kernel #8. Read-back hashes and the preflight result were verified over
+SSH. That variant exits before loading the RTC module or suspending.
+
+- Preflight LZ4 init_boot SHA-256:
+  `bd2396acca6b1d1a496a2e00d7ea35c90e37108828cef392769797a7e15a7d94`.
+- Full diagnostic LZ4 init_boot SHA-256:
+  `b0d50911ab75dc0a896e626d4abb588501c05410cedd392148eee578b02a09e8`.
+
+The full LZ4 diagnostic passed all three real deep-suspend cycles with no
+block-backed filesystems mounted. RTC elapsed times were 18, 32 and 62 seconds
+for requested sleeps of 15, 30 and 60 seconds. Suspend failure counters did
+not increase. Each uncached 8 MiB read matched SHA-256
+`7b33169e965b2f9ef76b55bf8cfffaac3f8f0db5acd770854cf564e8134cd4e2`.
+`RAMROOT_PASS`, the results and dmesg were retrieved after automatic return
+to kernel #8. The normal kernel #10 was then installed again.
+
+A normal-root 20-second systemd suspend cycle returned after 22 RTC seconds.
+Root remained writable; a 4 MiB probe retained its hash, and post-resume writes
+with fsync succeeded. GDM, NetworkManager and the light sensor stayed available.
+Wi-Fi re-associated after approximately ten seconds; an initial DNS lookup
+failed during reconnection, then retry and a separate HTTPS check succeeded.
+No matching UFS/ext4/GPU errors were detected. Longer normal-root cycles and
+user-triggered lid/button/idle coverage remain to be checked.
+
+The harness must wait for `systemctl start suspend.target`, rather than just
+queueing `systemctl suspend`, before removing its temporary sleep override.
+Two initial harness attempts did not perform a validated sleep because the
+ordinary suspend safeguard was still effective. They are excluded from the
+successful-cycle counts.
+
+### Normal-root validation and installed state
+
+Three validated normal-root systemd suspend cycles (20, 60, 120 seconds)
+returned after 22, 62 and 122 RTC seconds. Each passed the read/hash and
+post-resume write/fsync checks, recovered GDM and the light-sensor service,
+and recovered HTTPS after Wi-Fi re-association. The initial DNS request was
+early enough to catch the roughly ten-second reconnect window; retries
+succeeded. No matching UFS/ext4/GPU fault errors were found.
+
+The live boot partition and saved Ubuntu dualboot `boot.img` now contain
+kernel #10 (`b193714f...b8a9cc`). The original init_boot, vendor_boot and DTBO
+remain unchanged. Kernel #8 and the former sleep safeguard are preserved in
+the root-only diagnostic directory. The temporary local sleep-disable file
+was removed after these checks; login1 now reports `CanSuspend=yes`.
+
+This is an installed experimental kernel, not a new release or evidence of
+long-term reliability. Physical lid/button and extended idle coverage, plus
+actual GPU fault recovery, remain separate acceptance work. Build experiment
+flags remain opt-in.
