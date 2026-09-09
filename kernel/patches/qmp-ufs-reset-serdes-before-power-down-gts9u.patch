@@ -59,10 +59,12 @@ index 0f4ad24aa..a9b921497 100644
  	qphy_setbits(pcs, cfg->regs[QPHY_PCS_POWER_DOWN_CONTROL], SW_PWRDN);
  	return 0;
  
-@@ -1992,5 +2022,6 @@ static int qmp_ufs_power_off(struct phy *phy)
+@@ -1992,7 +2022,8 @@ static int qmp_ufs_power_off(struct phy *phy)
  	/* Put PHY into POWER DOWN state: active low */
  	qphy_clrbits(qmp->pcs, cfg->regs[QPHY_PCS_POWER_DOWN_CONTROL],
  			SW_PWRDN);
 +	qmp_ufs_tx_pull_down_ctrl(qmp, true);
  
  	clk_bulk_disable_unprepare(qmp->num_clks, qmp->clks);
+ 
+ 	regulator_bulk_disable(cfg->num_vregs, qmp->vregs);

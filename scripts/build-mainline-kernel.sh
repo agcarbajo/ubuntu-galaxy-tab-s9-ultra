@@ -204,9 +204,10 @@ fi
 
 apply_unless 'Match Samsung SM8550 sequencing' \
 	drivers/phy/phy-snps-eusb2.c match-samsung-sm8550-eusb2-phy-init.patch
-apply_unless 'Qualcomm Kalama RX clock-edge state around PHY collapse' \
+apply_unless 'static void qmp_ufs_tx_pull_down_ctrl' \
 	drivers/phy/qualcomm/phy-qcom-qmp-ufs.c \
 	qmp-ufs-reset-serdes-before-power-down-gts9u.patch
+bash "$repo/scripts/stage-ufs-resume-experiment.sh" "$kernel_tree"
 apply_unless 'Late-created SM-X910 DSP endpoints' \
 	drivers/mailbox/qcom-ipcc.c ipcc-reserve-gts9u-runtime-channels.patch
 apply_unless 'Mask IPCC DSP traffic during SM-X910 system suspend' \

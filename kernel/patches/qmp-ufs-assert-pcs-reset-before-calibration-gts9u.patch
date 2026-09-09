@@ -1,0 +1,26 @@
+Subject: [EXPERIMENTAL] phy: qcom: qmp-ufs: reset SM-X910 PCS before calibration
+
+The Kalama downstream calibration sequence asserts PCS SW_RESET before
+programming the tables. Mainline clears this reset but no longer asserts
+it on power-off. Test the missing assertion on this board only, without
+changing power-off sequencing, timeouts, tables or other PHY variants.
+
+This is a candidate for the intermittent resume PCS_READY timeout, not a
+validated fix. Keep out of default builds until offline-root resume tests
+pass. qphy_setbits() includes a readback before subsequent table writes.
+
+--- a/drivers/phy/qualcomm/phy-qcom-qmp-ufs.c
++++ b/drivers/phy/qualcomm/phy-qcom-qmp-ufs.c
+@@ -1964,6 +1964,12 @@ static int qmp_ufs_phy_calibrate(struct phy *phy)
+ 	if (ret)
+ 		return ret;
+ 
++	/* SM-X910 experiment: assert PCS reset before calibration tables. */
++	if (cfg == &sm8550_ufsphy_cfg &&
++	    of_machine_is_compatible("samsung,gts9uwifi") &&
++	    !cfg->no_pcs_sw_reset)
++		qphy_setbits(pcs, cfg->regs[QPHY_SW_RESET], SW_RESET);
++
+ 	qmp_ufs_init_registers(qmp, cfg);
+ 
+ 	ret = reset_control_deassert(qmp->ufs_reset);

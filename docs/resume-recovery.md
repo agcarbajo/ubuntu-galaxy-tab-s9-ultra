@@ -98,3 +98,48 @@ backup, and copies of both PHY implementations are under the ignored
 `work/als-oneui-20260909/` directory. No SSH password belongs in this document
 or any published artifact. Release 1.2.0 preparation has not been started
 as part of this recovery.
+
+## PCS reset candidate, 2026-09-09 (not deployed)
+
+The pinned upstream source confirms that `qmp_ufs_phy_init()` does not acquire
+the external reset on PHYs with PCS reset. Calibration therefore clears PCS
+reset without explicitly asserting it first. The published
+[Kalama implementation](https://github.com/LineageOS/android_kernel_oneplus_sm8650/blob/lineage-23.2/drivers/phy/qualcomm/phy-qcom-ufs-qmp-v4-kalama.c)
+asserts PCS reset before its tables. Upstream commit
+[`a079b2d71534`](https://github.com/torvalds/linux/commit/a079b2d715340482e425ff136b55810ab8279800)
+deliberately removed reset and SerDes stop from **power-off** according to the
+hardware programming guide; this candidate does not restore that sequence.
+
+`kernel/patches/qmp-ufs-assert-pcs-reset-before-calibration-gts9u.patch` instead
+asserts PCS reset immediately before calibration tables, only for the SM8550
+PHY on `samsung,gts9uwifi`. The existing readback in `qphy_setbits()` completes
+that write before table programming. No PHY tables, polling timeouts, UFS
+power levels, device tree, wake sources or other drivers are changed.
+The missing assertion is a hypothesis, **not proof of the failure's cause**.
+
+The build recipe enables this only with `UFS_PCS_RESET_EXPERIMENTAL=1`.
+Default builds do not gain an unvalidated storage change. Reusing a tree
+containing the candidate without opting in fails instead of silently keeping
+it. For an already prepared kernel tree, stage it with:
+
+```sh
+UFS_PCS_RESET_EXPERIMENTAL=1 bash scripts/stage-ufs-resume-experiment.sh /path/to/kernel-tree
+```
+
+`scripts/test-ufs-resume-experiment.py PRISTINE_QMP_UFS_C` applies both patches
+with zero fuzz, checks default/no-op and repeated staging, rejects a stale
+experimental tree, and compiles the actual calibration function with mocked
+MMIO. It checks reset-before-tables ordering, platform isolation, repeated
+calibration and error propagation. These tests passed against the pinned
+`a13c140cc289c0b7b3770bce5b3ad42ab35074aa` source; they cannot validate physical
+power sequencing or resume. The baseline RX-state patch also needed a trailing
+context repair for strict application; its build marker now uses the helper
+name rather than a comment changed in the previous commit.
+
+The next physical test must have a recovery path and keep internal UFS
+filesystems unmounted (for example a diagnostic RAM-root boot). Do not format
+the owner's currently inserted WINPE microSD or use it as a disposable root.
+Before enabling normal suspend, validate repeated real deep cycles and UFS
+reads, then normal-root filesystem writes and existing hardware functions
+under supervision. A platform PM test alone is insufficient. The local sleep
+safeguard remains in place and no reboot is implied by staging or building.
