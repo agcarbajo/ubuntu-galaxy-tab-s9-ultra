@@ -1,0 +1,38 @@
+#!/usr/bin/python3
+"""Run a Chromium-family GUI with board-specific hardware rendering defaults."""
+import os
+from pathlib import Path
+import stat
+import sys
+
+
+def defaults(args, board, wayland):
+    flags = []
+    if board:
+        if not any(a == '--use-angle' or a.startswith('--use-angle=') for a in args):
+            flags.append('--use-angle=vulkan')
+        if wayland and not any(a == '--ozone-platform' or a.startswith('--ozone-platform=') for a in args):
+            flags.append('--ozone-platform=wayland')
+    return flags
+
+
+def main():
+    args = sys.argv[1:]
+    if not args:
+        sys.exit('Usage: ubuntu-gts9u-chromium-run APPLICATION [ARGUMENTS...]')
+    try:
+        board = b'samsung,gts9uwifi' in Path('/sys/firmware/devicetree/base/compatible').read_bytes()
+    except OSError:
+        board = False
+    display = Path(os.environ.get('WAYLAND_DISPLAY', 'wayland-0'))
+    if not display.is_absolute():
+        display = Path(os.environ.get('XDG_RUNTIME_DIR', '/run/user/' + str(os.getuid()))) / display
+    try:
+        wayland = stat.S_ISSOCK(display.stat().st_mode)
+    except OSError:
+        wayland = False
+    os.execvp(args[0], [args[0], *defaults(args[1:], board, wayland), *args[1:]])
+
+
+if __name__ == '__main__':
+    main()

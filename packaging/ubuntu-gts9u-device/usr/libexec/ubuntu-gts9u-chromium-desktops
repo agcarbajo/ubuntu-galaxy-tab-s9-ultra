@@ -1,0 +1,113 @@
+#!/usr/bin/python3
+"""Maintain removable desktop overrides for installed native Chromium/Electron apps."""
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shlex
+import shutil
+
+RUNNER = '/usr/libexec/ubuntu-gts9u-chromium-run'
+SOURCE = Path('/usr/share/applications')
+OUTPUT = Path('/usr/local/share/applications')
+STATE = Path('/var/lib/ubuntu-gts9u/chromium-desktops.json')
+BROWSERS = {'google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser',
+            'brave-browser', 'brave-browser-stable', 'microsoft-edge',
+            'microsoft-edge-stable', 'vivaldi', 'vivaldi-stable', 'electron'}
+
+
+def chromium(command):
+    try:
+        executable = shlex.split(command)[0]
+    except (ValueError, IndexError):
+        return False
+    # Shell/env/sandbox commands cannot safely receive browser switches.
+    located = shutil.which(executable)
+    if not located:
+        return False
+    resolved = Path(located).resolve()
+    if Path(executable).name in BROWSERS:
+        return True
+    for parent in (resolved.parent, resolved.parent.parent):
+        if (parent / 'resources/app.asar').is_file():
+            return True
+        if (parent / 'chrome-sandbox').is_file() and (parent / 'icudtl.dat').is_file():
+            return True
+    return False
+
+
+def rewrite(text):
+    if re.search(r'^X-GTS9U-Chromium-Defaults=false\s*$', text, re.M):
+        return None
+    lines = text.splitlines(keepends=True)
+    main = False
+    recognized = False
+    for line in lines:
+        if line.startswith('['):
+            main = line.strip() == '[Desktop Entry]'
+        if main and line.startswith('Exec='):
+            recognized = chromium(line[5:].strip())
+    if not recognized:
+        return None
+    result = []
+    for line in lines:
+        if line.startswith('Exec=') and chromium(line[5:].strip()):
+            line = 'Exec=' + RUNNER + ' ' + line[5:]
+        elif line.strip() == 'DBusActivatable=true':
+            line = 'DBusActivatable=false\n'
+        result.append(line)
+    return ''.join(result)
+
+
+def digest(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def refresh(remove=False):
+    old = json.loads(STATE.read_text()) if STATE.exists() else {}
+    wanted = {}
+    if not remove and SOURCE.exists():
+        for source in sorted(SOURCE.rglob('*.desktop')):
+            name = '-'.join(source.relative_to(SOURCE).parts)
+            try:
+                text = rewrite(source.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError) as error:
+                print(f"Skipping unreadable desktop entry {source}: {error}")
+                continue
+            if text is not None:
+                wanted.setdefault(name, text.encode())
+    state = {}
+    for name in sorted(old.keys() | wanted.keys()):
+        if Path(name).name != name:
+            raise ValueError('Invalid desktop ID in state')
+        dest = OUTPUT / name
+        if dest.exists() and (name not in old or digest(dest.read_bytes()) != old[name]):
+            # Keep administrator changes, never adopt or remove their file.
+            if name in old:
+                state[name] = old[name]
+            continue
+        if name not in wanted:
+            if dest.exists():
+                dest.unlink()
+            continue
+        data = wanted[name]
+        OUTPUT.mkdir(parents=True, exist_ok=True)
+        if not dest.exists() or dest.read_bytes() != data:
+            temp = dest.with_suffix('.gts9u-new')
+            temp.write_bytes(data)
+            temp.chmod(0o644)
+            os.replace(temp, dest)
+        state[name] = digest(data)
+    STATE.parent.mkdir(parents=True, exist_ok=True)
+    temp = STATE.with_suffix('.new')
+    temp.write_text(json.dumps(state, indent=2) + '\n')
+    os.replace(temp, STATE)
+    print('Managed Chromium desktop entries:', len(state))
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--remove', action='store_true')
+    refresh(parser.parse_args().remove)

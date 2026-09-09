@@ -159,6 +159,14 @@ fi
 # ---------------------------------------------------------------------------
 if [ "$only" = all ] || [ "$only" = v4l2-relayd ]; then
 step "v4l2-relayd $v4l2_relayd_commit"
+# Launchpad's Git backend can fail independently of the Ubuntu archive.
+# Keep a checksum-pinned release tarball as a source-only fallback.
+relay_archive=$base/build/v4l2-relayd_0.1.2.orig.tar.xz
+curl -fsSL --retry 2 --max-time 60 \
+  https://archive.ubuntu.com/ubuntu/pool/universe/v/v4l2-relayd/v4l2-relayd_0.1.2.orig.tar.xz \
+  -o "$relay_archive"
+echo "270d64724ae0ec3ead9fd8c0d2f5a3d3c46efe51e63c96eb2fb7bdf78c105d28  $relay_archive" | sha256sum -c -
+install -m0644 "$relay_archive" "$buildroot/tmp/v4l2-relayd-source.tar.xz"
 install -m 0644 \
 	"$repo/packaging/v4l2-relayd/patches/0001-recreate-input-after-stream-error.patch" \
 	"$buildroot/tmp/v4l2-relayd-recovery.patch"
@@ -170,10 +178,17 @@ cp \
 	"$buildroot/tmp/v4l2-relayd-idle.patch"
 run "cd /build
 rm -rf v4l2-relayd-gts9u stage-v4l2-relayd
-git clone --quiet https://git.launchpad.net/ubuntu/+source/v4l2-relayd \
-	v4l2-relayd-gts9u
-cd v4l2-relayd-gts9u
-git checkout --quiet $v4l2_relayd_commit
+if git clone --quiet https://git.launchpad.net/ubuntu/+source/v4l2-relayd \
+	v4l2-relayd-gts9u; then
+    cd v4l2-relayd-gts9u
+    git checkout --quiet $v4l2_relayd_commit
+else
+    echo 'Launchpad Git unavailable; using verified Ubuntu 0.1.2 source archive'
+    rm -rf v4l2-relayd-gts9u
+    mkdir v4l2-relayd-gts9u
+    tar -xJf /tmp/v4l2-relayd-source.tar.xz --strip-components=1 -C v4l2-relayd-gts9u
+    cd v4l2-relayd-gts9u
+fi
 git apply /tmp/v4l2-relayd-recovery.patch
 git apply /tmp/v4l2-relayd-handover.patch
 git apply /tmp/v4l2-relayd-idle.patch

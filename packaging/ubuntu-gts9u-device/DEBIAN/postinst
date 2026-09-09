@@ -6,6 +6,8 @@ set -e
 # unit:target pairs.  The target is where the enablement symlink must appear,
 # which is what the verification below checks.
 UNITS='
+ubuntu-gts9u-chromium-desktops.service:multi-user.target
+ubuntu-gts9u-chromium-desktops.path:multi-user.target
 ubuntu-gts9u-grow-rootfs.service:basic.target
 ubuntu-gts9u-zram.service:basic.target
 ubuntu-gts9u-swapfile.service:multi-user.target
@@ -27,9 +29,11 @@ ubuntu-gts9u-fingerprint-secure.service:multi-user.target
 case "$1" in
 	triggered)
 		/usr/libexec/ubuntu-gts9u-chromium-launchers
+		/usr/libexec/ubuntu-gts9u-chromium-desktops
 		;;
 	configure)
 		/usr/libexec/ubuntu-gts9u-chromium-launchers
+		/usr/libexec/ubuntu-gts9u-chromium-desktops
 		# Index the signed IRQ bridge for the matching installed kernel. Never
 		# load/unload it or restart the boot-lifetime secure owner on upgrade.
 		for module in /usr/lib/modules/*/updates/qcom_spss_irq.ko; do

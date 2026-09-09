@@ -1,0 +1,10 @@
+[Unit]
+Description=Apply SM-X910 rendering defaults to native Chromium app launchers
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/ubuntu-gts9u-chromium-desktops
+
+[Install]
+WantedBy=multi-user.target
