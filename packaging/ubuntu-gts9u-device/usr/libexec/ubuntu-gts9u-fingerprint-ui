@@ -63,12 +63,12 @@ def main():
 
         def active(self):
             seat = dbus.Interface(bus.get_object('org.freedesktop.login1',
-                                  '/org/freedesktop/login1/seat/seat0'),
+                                  '/org/freedesktop/login1/seat/seat0', introspect=False),
                                   'org.freedesktop.DBus.Properties')
             session, path = seat.Get('org.freedesktop.login1.Seat', 'ActiveSession', timeout=1)
             if not session:
                 return '', {}
-            proxy = dbus.Interface(bus.get_object('org.freedesktop.login1', path),
+            proxy = dbus.Interface(bus.get_object('org.freedesktop.login1', path, introspect=False),
                                    'org.freedesktop.DBus.Properties')
             props = dict(proxy.GetAll('org.freedesktop.login1.Session', timeout=1))
             props['Active'] = bool(props.get('Active'))

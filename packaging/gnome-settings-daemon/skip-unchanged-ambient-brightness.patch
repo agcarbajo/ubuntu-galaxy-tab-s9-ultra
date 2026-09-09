@@ -1,0 +1,19 @@
+Subject: power: avoid writing an unchanged ambient brightness target
+
+Keep updating the time-weighted accumulator on every sensor report. Only skip
+an automatic write if its rounded percentage is already the observed value.
+A manual change, dimming, or resumed backlight remains observable through the
+existing backlight getter; this is not a permanent cache of the last request.
+
+--- a/plugins/power/gsd-power-manager.c
++++ b/plugins/power/gsd-power-manager.c
+@@ -3008,7 +3008,8 @@
+                  manager->ambient_accumulator);
+         pc = manager->ambient_accumulator;
+ 
+-        if (manager->backlight)
++        if (manager->backlight &&
++            pc != gsd_backlight_get_brightness (manager->backlight, NULL))
+                 gsd_backlight_set_brightness_async (manager->backlight, pc, NULL, NULL, NULL);
+ 
+         /* Assume setting worked. */

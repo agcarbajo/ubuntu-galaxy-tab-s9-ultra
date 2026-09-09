@@ -621,17 +621,18 @@ class HardwareService:
     def _refresh_bluetooth_powered(self):
         if self.bluez_manager is None:
             self._set_bluetooth_powered(False)
-            return
+            return {}
         try:
             objects = self.bluez_manager.GetManagedObjects()
         except dbus.DBusException:
             self._set_bluetooth_powered(False)
-            return
+            return {}
         self._set_bluetooth_powered(any(
             BLUEZ_ADAPTER in interfaces
             and bool(interfaces[BLUEZ_ADAPTER].get("Powered", False))
             for interfaces in objects.values()
         ))
+        return objects
 
     def _remote_enabled_changed(self, *_args):
         self.remote_synced = None
@@ -758,16 +759,17 @@ class HardwareService:
         services = {str(uuid).lower() for uuid in properties.get("UUIDs", [])}
         return name.startswith("SPEN") and SPEN_SERVICES <= services
 
-    def _refresh_spen_ble(self):
+    def _refresh_spen_ble(self, objects=None):
         if not self._remote_effective():
             return
         if self.bluez_manager is None:
             return
-        try:
-            objects = self.bluez_manager.GetManagedObjects()
-        except dbus.DBusException:
-            self._ble_disconnected()
-            return
+        if objects is None:
+            try:
+                objects = self.bluez_manager.GetManagedObjects()
+            except dbus.DBusException:
+                self._ble_disconnected()
+                return
         match = next(
             (
                 (path, interfaces[BLUEZ_DEVICE])
@@ -1424,11 +1426,11 @@ class HardwareService:
         if self.wacom is None:
             self.wacom = self._find_wacom()
         self._apply_pen_options()
-        self._refresh_bluetooth_powered()
+        objects = self._refresh_bluetooth_powered()
         self._sync_remote_control()
         self._ensure_keyboard_reader()
         self._ensure_pen_reader()
-        self._refresh_spen_ble()
+        self._refresh_spen_ble(objects)
         if not self.haptics.available and int(time.monotonic()) % 5 == 0:
             self.haptics = ForceFeedback()
         docked = self.wacom is not None and read_text(self.wacom / "pen_docked") == "1"

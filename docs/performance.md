@@ -1,5 +1,8 @@
 # Galaxy CPU/GPU frequencies and efficiency
 
+For the subsequent ambient-brightness and D-Bus audit with Chrome/ChatGPT open,
+see [office-use efficiency, 2026-09-09](office-efficiency-20260909.md).
+
 For the post-kernel-#8 sensor audit, four-camera baseline and staged GPU ISP
 experiment, see [camera/sensor efficiency](camera-sensor-efficiency.md).
 

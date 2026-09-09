@@ -258,6 +258,17 @@ if [ "$fingerprint_missing" = 1 ] || \
 	printf '%s\n' "$fingerprint_fingerprint" > "$fingerprint_stamp"
 fi
 
+# Cache the patched GNOME ambient controller by source inputs, not filename.
+power_stamp=$base/out/packages/.gts9u-gnome-power-inputs.sha256
+power_fingerprint=$(sha256sum "$repo/scripts/build-gnome-power-package.sh" \
+    "$repo/packaging/gnome-settings-daemon/skip-unchanged-ambient-brightness.patch" | sha256sum | awk '{print $1}')
+if [ ! -f "$base/out/packages/gnome-settings-daemon_46.0-1ubuntu1.24.04.1+gts9u1_arm64.deb" ] || \
+   [ ! -f "$base/out/packages/gnome-settings-daemon-common_46.0-1ubuntu1.24.04.1+gts9u1_all.deb" ] || \
+   [ "$(cat "$power_stamp" 2>/dev/null || true)" != "$power_fingerprint" ]; then
+    bash "$repo/scripts/build-gnome-power-package.sh" >/dev/null
+    printf '%s\n' "$power_fingerprint" > "$power_stamp"
+fi
+
 # The device package embeds the native boot owner and matching signed IRQ
 # module. Build these after libfprint has provided the pinned QTEE dependencies.
 bash "$repo/scripts/build-fingerprint-secure-owner.sh" >/dev/null
@@ -367,7 +378,8 @@ mkdir -p "$stage_debs"
 for pkg in libssc hexagonrpcd iio-sensor-proxy \
 	libfprint-2-2 $fingerprint_firmware_package \
 	libcamera-gts9u libspa-0.2-libcamera-gts9u \
-	ubuntu-gts9u-device ubuntu-gts9u-companion fastfetch v4l2-relayd-gts9u; do
+	ubuntu-gts9u-device ubuntu-gts9u-companion fastfetch v4l2-relayd-gts9u \
+    gnome-settings-daemon gnome-settings-daemon-common; do
 	deb=$(ls -t "$base"/out/packages/${pkg}_*.deb 2>/dev/null | head -1 || true)
 	if [ -z "$deb" ]; then
 		echo "missing local package: $pkg" >&2
