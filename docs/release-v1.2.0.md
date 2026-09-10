@@ -22,3 +22,11 @@ For a fresh installation, flash `ubuntu-24.04-sm-x910-v1.2.0.zip` from TWRP; thi
 `Dualboot-v1.1.0.apk` contains the Android app improvements. `gts9u-split.zip` is unchanged. Both are only needed for dual boot.
 
 <!-- gts9u-update-format: 1 -->
+
+## SHA-256
+
+```
+1dc47f81196284b26931c2fd91ae20c662404dd4659f730f8dd463006acab307  ubuntu-24.04-sm-x910-v1.2.0.zip
+ef60183e1db8eb2f854f29c046be858b6eeb9f271e95faf7eae31bfad822f9ff  gts9u-split.zip
+264ade366cc850b7609d061e1a4a5bd2d6c0cee254044277cf8ee11b35b1cb55  Dualboot-v1.1.0.apk
+```
