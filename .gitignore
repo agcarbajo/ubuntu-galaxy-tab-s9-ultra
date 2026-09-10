@@ -38,6 +38,7 @@ kernel/firmware/
 # Local kernel checkouts and build trees.
 kernel/src/
 build/
+/out/
 __pycache__/
 *.pyc
 

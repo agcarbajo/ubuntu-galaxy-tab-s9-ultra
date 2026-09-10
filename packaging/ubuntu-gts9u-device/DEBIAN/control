@@ -10,7 +10,7 @@ Depends: systemd, kmod, e2fsprogs, gdisk, parted, util-linux, cloud-guest-utils,
  fprintd, libpam-fprintd,
  libfprint-2-2 (>= 1:1.94.7+tod1-0ubuntu5~24.04.8+gts9u47),
  hexagonrpcd, libssc, iio-sensor-proxy,
- libcamera-gts9u (= 0.7.2+53.g62d4bfc-gts9u5),
+ libcamera-gts9u (= 0.7.2+53.g62d4bfc-gts9u9),
  libspa-0.2-libcamera-gts9u (= 1.0.5-gts9u10),
  v4l2-relayd-gts9u (= 0.1.2-gts9u16)
 Description: Device support for the Samsung Galaxy Tab S9 Ultra Wi-Fi
