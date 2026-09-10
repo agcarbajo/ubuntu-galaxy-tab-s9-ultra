@@ -35,8 +35,12 @@ def sanitize(root):
             issues.append('personal deployment or archive in ' + name)
     for name in ('etc/machine-id', 'var/lib/dbus/machine-id'):
         path = root / name
-        if path.is_file() and not path.is_symlink() and path.read_bytes().strip():
-            issues.append('machine identity in ' + name)
+        if path.is_file() and not path.is_symlink():
+            identity = path.read_bytes().strip()
+            # systemd uses this sentinel to request a new machine ID on first
+            # boot.  It is shared intentionally and contains no host identity.
+            if identity and identity != b'uninitialized':
+                issues.append('machine identity in ' + name)
     if issues:
         raise ValueError('refusing to publish: ' + '; '.join(issues))
     # openssh-server generates these during package installation. Fresh images

@@ -80,6 +80,17 @@ class ShippingRootTests(unittest.TestCase):
             path.write_text('generic package fixture', encoding='utf-8')
         module.sanitize(self.root)
 
+    def test_allows_uninitialized_machine_id(self):
+        path = self.root / 'etc/machine-id'
+        path.write_text('uninitialized\n', encoding='ascii')
+        module.sanitize(self.root)
+
+    def test_rejects_real_machine_id(self):
+        path = self.root / 'etc/machine-id'
+        path.write_text('0123456789abcdef0123456789abcdef\n', encoding='ascii')
+        with self.assertRaisesRegex(ValueError, 'machine identity'):
+            module.sanitize(self.root)
+
     def test_first_start_generates_unique_keys_and_preserves_existing(self):
         module.sanitize(self.root)
         command = ['ssh-keygen', '-A', '-f', str(self.root)]
