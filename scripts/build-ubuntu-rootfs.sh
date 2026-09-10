@@ -461,7 +461,14 @@ cat > "$hooks/chroot-setup.sh" <<HOOK
 set -eu
 target="\$1"
 
-chroot "\$target" locale-gen
+# locales-all already ships every supported locale pre-generated.  Running
+# locale-gen here would rebuild hundreds of them under qemu-user and overwrite
+# package-owned data for no benefit.  Keep the fallback for trimmed developer
+# profiles that deliberately omit locales-all.
+if ! chroot "\$target" dpkg-query -W -f '\${Status}' locales-all 2>/dev/null | \
+	grep -q 'ok installed'; then
+	chroot "\$target" locale-gen
+fi
 chroot "\$target" update-locale LANG=$locale
 
 chroot "\$target" passwd -l root
@@ -528,24 +535,34 @@ chmod +x "$hooks/chroot-setup.sh"
 # Build
 # ---------------------------------------------------------------------------
 
-rm -rf -- "$rootfs"
-mkdir -p "$rootfs" "$base"
+if [ "${RESUME_ROOTFS:-0}" = 1 ]; then
+	# A completed mmdebstrap tree can be expensive to recreate.  Resume only
+	# after checking enough of it to avoid staging a kernel into a partial tree.
+	test -x "$rootfs/usr/bin/dpkg"
+	test -f "$rootfs/etc/os-release"
+	chroot "$rootfs" dpkg --audit
+	chroot "$rootfs" apt-get check
+	echo "resuming completed $profile rootfs: $rootfs"
+else
+	rm -rf -- "$rootfs"
+	mkdir -p "$rootfs" "$base"
 
-echo "building $profile rootfs: $suite arm64 -> $rootfs"
-mmdebstrap \
-	--architecture=arm64 \
-	--variant=important \
-	--components='main,restricted,universe,multiverse' \
-	--include="$packages" \
-	--customize-hook="$hooks/configure.sh" \
-	--customize-hook="$hooks/local-packages.sh" \
-	--customize-hook="$hooks/chroot-setup.sh" \
-	--verbose \
-	"$suite" \
-	"$rootfs" \
-	"deb $mirror $suite main restricted universe multiverse" \
-	"deb $mirror $suite-updates main restricted universe multiverse" \
-	"deb $mirror $suite-security main restricted universe multiverse"
+	echo "building $profile rootfs: $suite arm64 -> $rootfs"
+	mmdebstrap \
+		--architecture=arm64 \
+		--variant=important \
+		--components='main,restricted,universe,multiverse' \
+		--include="$packages" \
+		--customize-hook="$hooks/configure.sh" \
+		--customize-hook="$hooks/local-packages.sh" \
+		--customize-hook="$hooks/chroot-setup.sh" \
+		--verbose \
+		"$suite" \
+		"$rootfs" \
+		"deb $mirror $suite main restricted universe multiverse" \
+		"deb $mirror $suite-updates main restricted universe multiverse" \
+		"deb $mirror $suite-security main restricted universe multiverse"
+fi
 
 # ---------------------------------------------------------------------------
 # Kernel modules and optional development key
