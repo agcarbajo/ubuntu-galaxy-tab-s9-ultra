@@ -109,11 +109,24 @@ Both One UI and LineageOS have been tested in dual boot with Ubuntu and they wor
 
 Liked the project? you might want to [buy me a coffee](https://paypal.me/agcarbajo1), I'll be very grateful!
 
+## Updating an existing installation
+
+Starting with v1.1.0, open **Tab Companion → Updates** to update the complete
+port. For v1.0.0 installations without the updater, run:
+
+```sh
+d=$(mktemp -d) && curl -fL https://raw.githubusercontent.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/main/scripts/update-to-latest.py -o "$d/update.py" && sudo python3 "$d/update.py"
+```
+
+Updates preserve your data and settings. See [system updates](docs/system-updates.md)
+for local ZIP installation, repair and troubleshooting.
+
 ## Known issues
 
 - Regarding the official cover keyboard, as I said, only EF-DX920 cover keyboard has been tested. EF-DX900, EF-DX910, EF-DX915 and
 EF-DX925 are untested as I don't have them, so they might not work.
 - Guest virtual machines remain under development; initial Gunyah host support is included.
+- Sometimes returning from deep suspend might need a hard reset.
 
 ## Documentation
 
@@ -158,15 +171,3 @@ BSD-3-Clause. Imported sources are listed in
 
 Contributions must be reproducible in the repository and validated on physical
 hardware before a component is marked as working.
-
-## Updating an existing installation
-
-Starting with v1.1.0, open **Tab Companion → Updates** to update the complete
-port. For v1.0.0 installations without the updater, run:
-
-```sh
-d=$(mktemp -d) && curl -fL https://raw.githubusercontent.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/main/scripts/update-to-latest.py -o "$d/update.py" && sudo python3 "$d/update.py"
-```
-
-Updates preserve your data and settings. See [system updates](docs/system-updates.md)
-for local ZIP installation, repair and troubleshooting.
