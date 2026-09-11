@@ -1,6 +1,6 @@
 # Ubuntu 24.04 LTS for Samsung Galaxy Tab S9 Ultra Wi-Fi
 
-<img width="2319" height="1306" alt="20260805_041759" src="https://github.com/user-attachments/assets/1d8ddb29-a499-430c-b1b8-078672399d81" />
+<img width="4000" height="2252" alt="20260911_124542" src="https://github.com/user-attachments/assets/80a44675-d588-43b5-b86d-514cd7875800" />
 
 Ubuntu 24.04 LTS arm64 for the Samsung Galaxy Tab S9 Ultra Wi-Fi
 (`SM-X910`, `gts9uwifi`), running GNOME 46 on Wayland and upstream Linux
