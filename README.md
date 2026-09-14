@@ -107,7 +107,9 @@ From **Android**, install the `Dualboot-vX.X.X.apk` app and give it root access,
 
 Both One UI and LineageOS have been tested in dual boot with Ubuntu and they work fine.
 
-Liked the project? you might want to [buy me a coffee](https://paypal.me/agcarbajo1), I'll be very grateful!
+Liked the project? you might want to buy me a coffee, I'll be very grateful!
+
+<a href='https://ko-fi.com/V7W426ZJIP' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi5.png?v=6' border='0' alt='Buy Me a Coffee at ko-fi.com' /></a>
 
 ## Updating an existing installation
 
