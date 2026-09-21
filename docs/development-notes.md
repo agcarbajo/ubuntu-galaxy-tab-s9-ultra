@@ -43,7 +43,128 @@ does not intrude into it.
 - **New partition labels** (`UBTS9U_BOOT`/`UBTS9U_ROOT`) so that a postmarketOS
   initramfs and an Ubuntu one do not compete for the same card.
 
+## Desktop regression work, 2026-09-20
+
+- **Battery percentages are not the raw gauge SOC.** One UI's SM5714 driver
+  scales tenths of a percent by `capacity_max` and learns that scale at full
+  charge. The Android reference reported raw 68.7%, maximum 990 and UI 69%.
+  The stock board permits a maximum in 700–1000 and its full-charge rule is
+  `raw_soc * 100 / 102`. Ubuntu previously exported the raw integer alone.
+  The port now learns from the charger's full indication, qualifies that
+  indication with external power and excludes direct charging/OTG, and retains
+  the learned scale through a device-package service and udev rule. The SM5440
+  continues to use unscaled SOC, so this display correction does not change
+  charging eligibility or safety thresholds. No fuel-gauge reset, deep
+  discharge, charging-voltage change or arbitrary 95%-means-full rule is used.
+  `test-battery-capacity.py` executes the actual C calculation and tests saved
+  state, invalid inputs and the unchanged direct-charge input. A physical
+  near-full cycle on the updated kernel remains necessary.
+- **An HBM observer is too late to prevent a flash.** The earlier Shell code
+  waited for `fod_mode=1` before drawing the compensating shade. Libfprint now
+  publishes a short, uniquely timed light request, and waits asynchronously for
+  the active local Shell's acknowledgement after painting the internal panel
+  and allowing scanout. Only then may HBM start. The broker revalidates UID,
+  active session, availability, request and expiry; stale or missing responses
+  abort illumination. Release/cancel/seat loss revoke pending requests. The
+  shade also outlives HBM exit, including on older kernels. Device 2.55 and
+  libfprint gts9u48 must be installed together; a running GNOME 46 ES module
+  cannot be refreshed by `ReloadExtension`, so a new login is required. Mock
+  tests and Clutter signal introspection do not establish visual acceptance.
+- **The missing tiles were a global disable, not missing files.** The live
+  account retained both UUIDs but had `disable-user-extensions=true`. The
+  journal records `org.gnome.Shell-disable-extensions.service` running after
+  a *stop* timeout on 2026-09-18, before Shell's 60-second startup marker was
+  removed. Both tiles became ACTIVE after clearing that switch. The packaged
+  ExecStopPost helper removes the crash marker only for normal exit or a
+  timeout after this invocation reached ACTIVE; genuine crashes, startup
+  timeouts and unknown results retain GNOME's recovery behavior. Companion
+  also reports global/individual disables correctly and clears them only when
+  the user explicitly enables its tile.
+- **External-display configuration failed in DPU resource reassignment.** With
+  the HJW 32-inch HDMI monitor connected through DP-1, a mode change reproduced
+  `drmModeAtomicCommit: Invalid argument` continuously from 19:22:30 through
+  19:22:49, freezing every page flip until GNOME reverted the temporary config.
+  The mode itself was not invalid: 800×600 succeeded on the next attempt. The
+  pinned DPU re-reserved CTL/DSPP whenever `color_mgmt_changed` was set, although
+  DRM reprogrammed the encoder only for a modeset. The resulting CRTC and
+  encoder could therefore refer to different resources. Upstream patch v3 7/8,
+  `msm-dpu-reassign-resources-with-encoder.patch`, keeps colour-only updates on
+  the existing resources and requests a modeset when CTM or gamma first needs
+  DSPPs. It contains no connector, monitor, resolution or timing allowlist.
+  `test-dpu-color-resource-modeset.py` applies the real patch with zero fuzz and
+  checks both boundaries. On the patched physical kernel, temporary Mutter
+  configurations passed at 800×600, 1920×1080@60/120 and
+  2560×1440@49.964, including valid 2× scaling, 90-degree rotation and
+  placement to the left, above and right. DRM diagnostics captured real
+  `color_mgmt_changed=1` states
+  with no failed atomic commit, page flip or SMMU fault. Mutter separately and
+  correctly rejected scale 2 for 1280×720 because that scale is absent from the
+  mode's advertised list.
+
+### Validation and deployment boundary
+
+The initial fresh-tree build with `BUILD_WIFI_MODULES=0` was only a compile
+check; do not flash it with the tablet's existing modules. After explicit owner
+authorization, the three changed drivers were rebuilt in the matching v1.2.0
+object tree, preserving its configuration and signing certificate. All 17,466
+existing exported symbol CRCs remained unchanged; the only new export is
+`sm5714_battery_get_raw_capacity`.
+
+The corrected kernel booted as `7.2.0-rc3-dirty #2`. Both the live `boot` and
+Ubuntu's saved Dualboot image read back as
+`8eda64f34a3bb0258e82f765425c68d0a09f3bb4626e84313646b853b04a3155`.
+The original boot header and appended DTB were retained and the AVB footer was
+verified before deployment. Other boot partitions and Android's saved images
+were checked unchanged. Backups of all four original boot partitions, Ubuntu's
+saved boot and the previous fingerprint UI/library are retained under
+`/var/lib/gts9u-diagnostics/fixes-20260920/backup/`. The original boot SHA-256 is
+`3a98aa1b716cff1dfac689152b4985ceffc1cc6d42a04e912f584cf88ecb9124`.
+
+Device 2.55, Companion 1.3.13 and libfprint gts9u48 build successfully. The
+focused battery, broker, request/cleanup, Shell state/geometry/keyboard,
+Companion and updater tests pass. Upstream libfprint's Meson run reports three
+passed and 25 skipped (the build intentionally omits introspection/other test
+dependencies); those skips are not hardware validation. The paired device and
+libfprint packages pass APT's simulation on the tablet without removals. The
+SPSS module and boot-lifetime secure owner packaged in device 2.55 were checked
+byte-for-byte against the installed copies.
+
+All three packages are installed. Root remains writable, the battery scale
+service and fingerprint services are active, and the scale (990 at this point)
+was preserved through a service restart. Both quick-setting extensions report
+ACTIVE after login. A near-full physical charge cycle is still needed.
+
+The first live optical test caught an error in device 2.54 / overlay 15:
+GNOME 46's `Clutter.StageView.get_layout()` requires a caller-allocated
+`Mtk.Rectangle`, not a zero-argument call returning one. The original mock
+incorrectly modeled that API. Device 2.55 / overlay 16 fixes the call and its
+regression test now requires the rectangle. After a separately authorized GDM
+reload, a display-only request was acknowledged in 112.1 ms at the greeter and
+83.7 ms in the user session, without raising HBM. A subsequent real fingerprint
+operation reached capture after compositor readiness. Visual confirmation that
+both flashes are absent still belongs to the owner; the diagnostic is not a
+photometric measurement. `scripts/diagnostics/test-fingerprint-presentation.py`
+repeats the bounded display-only check and never writes panel mode or templates.
+
+Fingerprint templates and PAM policy were not changed, and the secure DMA owner
+was never restarted in place. The IPv4 lease changed across reboot; recover SSH
+by hostname and verify the host key rather than assuming an old address. LXC
+was already failed before deployment. Proton's split-tunnelling daemon also
+reports missing kernel headers/kheaders; its policy was not modified.
+External-display reproduction and the patched configuration matrix were completed with the monitor connected on 2026-09-21.
+
 ## Working environment
+
+**2026-09-20 correction:** both WSL distributions exist. The installed v1.2.0
+kernel's matching build and SPSS module are in WSL `Ubuntu`, under
+`/root/ubuntu-gts9u/build/linux-release-1.2.0` and
+`/root/ubuntu-gts9u/out/spss-irq-module`. WSL `Ubuntu-24.04` is usable for fresh
+builds/tests, but its older SPSS artifact has a different signing certificate
+with the same vermagic. Verify the certificate and configuration; do not pick
+a build directory by distro name or kernel release alone. Native offline tests
+also require `libglib2.0-dev` and `nodejs`; run the `.mjs` tests with
+`node --experimental-default-type=module`. The historical environment notes
+below describe the original bring-up setup.
 
 - The Ubuntu build base is `wsl.exe -d Ubuntu-24.04 -u root`, directory
   `/root/ubuntu-gts9u`. The pmOS base is `/root/pmos-gts9u` and the two are not

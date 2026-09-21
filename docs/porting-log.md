@@ -6910,3 +6910,37 @@ the next EnrollInit and the next opcode-4 arm still occur only after that
 terminal result. The full ARM64 build and 11 wire tests pass. Package SHA-256
 is `0f107c9585221cf7b42ef98a34e88f4ea86d00e2a64ea1d6990df7af47443881`;
 it was installed live over `gts9u35` with fprintd and FOD idle.
+
+## Session 115 — external display atomic configuration no longer wedges
+
+Date: 2026-09-21. With the HJW 32-inch HDMI monitor physically connected as
+DP-1, changing its mode reproduced the original failure: GNOME Shell logged
+`drmModeAtomicCommit: Invalid argument` for every page flip from 19:22:30 to
+19:22:49 and remained frozen until the temporary configuration reverted. The
+same 800×600 mode succeeded immediately afterwards, excluding a hard mode or
+EDID limitation.
+
+Linux 7.2-rc3 contained the DPU ordering defect fixed by upstream patch v3 7/8:
+`dpu_crtc_atomic_check()` reallocated CTL/DSPP for a colour-only update while
+the encoder was not reprogrammed. The imported patch retains resources for
+colour-only commits and forces a real modeset only when CTM or gamma first
+requires DSPPs. It is generic DPU state handling and contains no SM-X910,
+connector, monitor, resolution, timing or transform special case.
+
+The matching installed-kernel tree produced Image SHA-256
+`270fb380af9e6ece28e9513b3423db4bcff799e07c3339abd415570ea4d060e8`.
+Configuration, signing certificate, release and all 17,467 exported symbol CRCs
+remained unchanged. The header-v4/DTB/AVB-verified boot image is
+`6e6ca457b0d2c09dcd8f335668069891d2d758564f44804f1cb80b7b1472b7ab`.
+It was written only to `boot` and Ubuntu's saved Dualboot copy, then reread
+identically before reboot. The preceding `8eda64f3…1555` images and candidate
+are retained under `/var/lib/gts9u-diagnostics/display-fix-20260921/`.
+
+After reboot, root was writable and the critical fingerprint, battery and GDM
+services remained active. A temporary Mutter matrix exercised 800×600,
+1920×1080@60/120 and 2560×1440@49.964, valid 2× scaling, 90-degree rotation,
+and placement to the left, above and right. DRM captured colour-management
+commits without a failed
+atomic commit, page flip or SMMU fault. Mutter rejected an unadvertised 2× scale
+for 1280×720 before DRM, as expected. The external display was returned to
+800×600; no reboot or partition other than `boot` was involved in validation.

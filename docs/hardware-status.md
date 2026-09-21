@@ -1,7 +1,7 @@
 # SM-X910 hardware status under Ubuntu 24.04
 
-Last updated: 2026-09-03, after the owner confirmed the complete fingerprint
-workflow and accepted the feature for integration into main.
+Last updated: 2026-09-21, after physical external-display modeset validation
+and the DPU colour-resource ordering fix.
 
 Ubuntu **boots** on the tablet. This matrix explicitly separates what is
 inherited from what has been checked, and no component reaches ✅ without a real
@@ -69,7 +69,7 @@ accepted as proof that something works.
 | CPU frequency scaling | ✅ | ✅ | measured | It had never probed: `qcom-cpufreq-hw` needs its interconnect paths, and `INTERCONNECT_QCOM_OSM_L3` was a module in a port that installs no module tree, so all eight cores ran at a fixed clock with no governor. Built in, `schedutil` takes over |
 | USB gadget / RNDIS | ✅ | ⏳ | inherited | |
 | USB host, HID and storage | ✅ | ✅ | confirmed | With and without external power |
-| USB-C DisplayPort | ✅ | ✅ | confirmed | Video output confirmed by the owner |
+| USB-C DisplayPort | ✅ | ✅ | measured | Video output and temporary Mutter reconfiguration validated with an HDMI monitor: resolution, 49.964/60/120 Hz, valid 2× scaling, 90° rotation and placement left/above/right. The DPU colour-resource ordering fix eliminated the reproduced atomic-commit freeze without filtering EDID modes |
 | RTL8153 Ethernet | 🟡 | ⏳ | inherited | Enumerates and loads firmware; real link and traffic still missing |
 | UAS | ❓ | ❓ | assumed | Never tested: no drive with a UAS interface was available |
 | STK31610 ambient light | ❌ | ✅ | confirmed | One UI uses the SSC `auto_brightness` datatype. Selecting it in libssc produces live lux using the original firmware; GNOME dimming and brightening were verified with room lighting. The physical `ambient_light` endpoint was the wrong standalone stream ([evidence](light-sensor-reference.md)) |

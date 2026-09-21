@@ -247,6 +247,9 @@ apply_unless 'bridge->of_node = msm_dp_display->pdev->dev.of_node' \
 	drivers/gpu/drm/msm/dp/dp_drm.c msm-dp-associate-bridge-of-node.patch
 apply_unless 'defer_hpd_until_resume' \
 	drivers/gpu/drm/msm/dp/dp_drm.h msm-dp-defer-oob-hpd-until-resume.patch
+apply_unless 'dpu_crtc_needs_dspp' \
+	drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c \
+	msm-dpu-reassign-resources-with-encoder.patch
 apply_unless 'adopt_retained_source_ufp' \
 	include/linux/usb/tcpm.h tcpm-adopt-retained-source-ufp-role.patch
 apply_unless 'consume_retained_sink_dfp' \
