@@ -15,6 +15,12 @@ int main (int argc, char **argv)
     { "ready \n", 1000, FALSE }, { "ready 1001\n", 1000, TRUE },
   };
   g_test_init (&argc, &argv, NULL);
+  g_assert_true (el721_ui_light_ready ("ready 1001000\n", 1000, 2000));
+  g_assert_false (el721_ui_light_ready ("ready 1001000\n", 1001, 2000));
+  g_assert_false (el721_ui_light_ready ("ready 1001000\n", 1000, 1001000));
+  g_assert_false (el721_ui_light_ready (NULL, 1000, 2000));
+  g_assert_false (el721_ui_light_ready ("ready 1\n", G_MAXINT64, G_MAXINT64));
+  g_assert_false (el721_ui_light_ready ("ready 1001000\n", 0, 2000));
   for (guint i = 0; i < G_N_ELEMENTS (cases); i++)
     g_assert_cmpint (el721_ui_lease_ready (cases[i].text, cases[i].now), ==, cases[i].ready);
   g_print ("PASS: %u optical availability lease cases\n", (guint) G_N_ELEMENTS (cases));

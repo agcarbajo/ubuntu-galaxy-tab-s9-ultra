@@ -12,6 +12,7 @@ ubuntu-gts9u-grow-rootfs.service:basic.target
 ubuntu-gts9u-zram.service:basic.target
 ubuntu-gts9u-swapfile.service:multi-user.target
 ubuntu-gts9u-cpu-boost.service:graphical.target
+ubuntu-gts9u-battery-capacity.service:multi-user.target
 ubuntu-gts9u-panel-coldboot-recover.service:multi-user.target
 ubuntu-gts9u-adsp-boot.service:multi-user.target
 ubuntu-gts9u-sensor-registry.service:multi-user.target
@@ -61,6 +62,7 @@ case "$1" in
 		if [ -d /run/systemd/system ]; then
 			systemctl daemon-reload || true
 			systemctl restart ubuntu-gts9u-cpu-boost.service || true
+			systemctl start ubuntu-gts9u-battery-capacity.service || true
 			systemctl reset-failed \
 				ubuntu-gts9u-desktop-user.service \
 				ubuntu-gts9u-desktop-user.path \

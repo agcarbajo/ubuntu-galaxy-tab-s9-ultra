@@ -27,7 +27,7 @@ find "$staging" -type d -name '__pycache__' -empty -delete
 
 # Boot-lifetime native secure owner and the matching signed IRQ module are
 # built separately. No proprietary runtime/firmware bytes enter this package.
-owner=$base/out/fingerprint-secure/ubuntu-gts9u-fingerprint-secure-owner
+owner=${FINGERPRINT_SECURE_OWNER:-$base/out/fingerprint-secure/ubuntu-gts9u-fingerprint-secure-owner}
 irq=${SPSS_IRQ_OUT_DIR:-$base/out/spss-irq-module}/qcom_spss_irq.ko
 test -x "$owner" || { echo 'Run scripts/build-fingerprint-secure-owner.sh first' >&2; exit 1; }
 test -f "$irq" || { echo 'Run scripts/build-spss-irq-module.sh first' >&2; exit 1; }

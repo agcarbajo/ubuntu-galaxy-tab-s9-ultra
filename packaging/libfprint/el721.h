@@ -27,6 +27,7 @@ struct _FpiDeviceEl721
   gboolean udfps_lit;
   gboolean touch_inhibited;
   gint64 capture_deadline;
+  gint64 light_requested;
   gint64 visual_refreshed;
   gboolean enroll_armed;
   guint32 enroll_arm_status;

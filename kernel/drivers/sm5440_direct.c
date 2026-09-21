@@ -200,6 +200,7 @@ static int sm5440_request_ma(int target_mv)
 #define SM5440_FREQUENCY_KHZ		450
 
 int sm5714_battery_set_direct_charge(bool active);
+int sm5714_battery_get_raw_capacity(void);
 
 struct sm5440_direct {
 	struct device *dev;
@@ -507,7 +508,7 @@ static bool sm5440_eligible(struct sm5440_direct *sm)
 	int capacity, online, temp, voltage;
 
 	online = sm5440_psy_get(sm->tcpm, POWER_SUPPLY_PROP_ONLINE);
-	capacity = sm5440_psy_get(sm->battery, POWER_SUPPLY_PROP_CAPACITY);
+	capacity = sm5714_battery_get_raw_capacity();
 	temp = sm5440_psy_get(sm->battery, POWER_SUPPLY_PROP_TEMP);
 	voltage = sm5440_psy_get(sm->battery, POWER_SUPPLY_PROP_VOLTAGE_NOW);
 
@@ -609,7 +610,7 @@ static void sm5440_work(struct work_struct *work)
 		}
 	}
 
-	capacity = sm5440_psy_get(sm->battery, POWER_SUPPLY_PROP_CAPACITY);
+	capacity = sm5714_battery_get_raw_capacity();
 	pack_temp = sm5440_psy_get(sm->battery, POWER_SUPPLY_PROP_TEMP);
 	op_mode = i2c_smbus_read_byte_data(sm->client, SM5440_REG_CNTL5);
 	status3 = i2c_smbus_read_byte_data(sm->client, SM5440_REG_STATUS3);

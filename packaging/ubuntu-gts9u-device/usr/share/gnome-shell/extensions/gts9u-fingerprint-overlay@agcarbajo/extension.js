@@ -3,13 +3,14 @@ import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import St from 'gi://St';
+import Mtk from 'gi://Mtk';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import {sensorGeometry, panelMonitor} from './geometry.js';
 import {ShellUserVerifier} from 'resource:///org/gnome/shell/gdm/util.js';
 import {recoverClosedCancellation} from './authRecovery.js';
-import {visualState} from './visualState.js';
+import {visualState, lightRequest} from './visualState.js';
 import {keyboardCovers} from './keyboardGuard.js';
 import {AuthKeyboard, isTypingKeyboard} from './authKeyboard.js';
 import {KeyboardEventGuard} from './keyboardEvents.js';
@@ -19,6 +20,7 @@ const BUS_NAME = 'io.github.agcarbajo.Gts9uFingerprintOverlay';
 const OBJECT_PATH = '/io/github/agcarbajo/Gts9uFingerprintOverlay';
 const BACKLIGHT = '/sys/class/backlight/ae94000.dsi.0';
 const ACTIVE_LEASE = '/run/gts9u-fingerprint/active';
+const LIGHT_REQUEST = '/run/gts9u-fingerprint/light';
 const UI_BUS_NAME = 'io.github.agcarbajo.Gts9uFingerprintUI';
 const UI_PATH = '/io/github/agcarbajo/Gts9uFingerprintUI';
 const INTERFACE = `
@@ -57,6 +59,9 @@ export default class Gts9uFingerprintOverlay extends Extension {
         this._panel = null;
         this._active = false;
         this._illuminated = false;
+        this._hbmWasActive = false;
+        this._shadeHoldUntil = 0;
+        this._lightToken = 0;
         this._shade = new St.Widget({
             style_class: 'gts9u-fingerprint-shade',
             reactive: false,
@@ -132,6 +137,7 @@ export default class Gts9uFingerprintOverlay extends Extension {
     }
 
     disable() {
+        this._cancelLightPresentation();
         this._keyboardEventGuard?.destroy();
         this._keyboardEventGuard = null;
         if (ShellUserVerifier.prototype.cancel === this._recoveryCancel)
@@ -211,6 +217,7 @@ export default class Gts9uFingerprintOverlay extends Extension {
     }
 
     _finishHide() {
+        this._cancelLightPresentation();
         this._active = false;
         this._illuminated = false;
         this._stopSafetyTimeout();
@@ -235,7 +242,77 @@ export default class Gts9uFingerprintOverlay extends Extension {
         } catch (_) {
             // Normally absent when fprintd is idle or not running.
         }
-        return visualState(lease, GLib.get_monotonic_time(), this._panelFodActive());
+        const now = GLib.get_monotonic_time();
+        const hbm = this._panelFodActive();
+        if (this._hbmWasActive && !hbm)
+            this._shadeHoldUntil = now + 50_000;
+        this._hbmWasActive = hbm;
+        const state = visualState(lease, now, hbm);
+        const request = state.active && this._canShowTarget() ? this._lightRequest() : 0;
+        const holding = now < (this._shadeHoldUntil ?? 0);
+        return {active: state.active || holding,
+            illuminated: state.illuminated || Boolean(request) || holding, request};
+    }
+
+    _lightRequest() {
+        try {
+            const [, bytes] = Gio.File.new_for_path(LIGHT_REQUEST).load_contents(null);
+            return lightRequest(new TextDecoder().decode(bytes), GLib.get_monotonic_time());
+        } catch (_) {
+            return 0;
+        }
+    }
+
+    _cancelLightPresentation() {
+        if (this._lightPaintId) {
+            global.stage.disconnect(this._lightPaintId);
+            this._lightPaintId = 0;
+        }
+        if (this._lightPresentId) {
+            GLib.source_remove(this._lightPresentId);
+            this._lightPresentId = 0;
+        }
+        this._lightToken = 0;
+    }
+
+    _requestLightPresentation(token) {
+        if (token === this._lightToken)
+            return;
+        this._cancelLightPresentation();
+        if (!token || !this._canShowTarget())
+            return;
+        this._lightToken = token;
+        this._lightPaintId = global.stage.connect('after-paint', (_stage, view) => {
+            const layout = new Mtk.Rectangle();
+            view.get_layout(layout);
+            const monitor = this._panel?.monitor;
+            if (!monitor || layout.x !== monitor.x || layout.y !== monitor.y)
+                return;
+            global.stage.disconnect(this._lightPaintId);
+            this._lightPaintId = 0;
+            this._lightPresentId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 35, () => {
+                this._lightPresentId = 0;
+                if (this._lightToken !== token || this._lightRequest() !== token ||
+                    !this._canShowTarget() || !this._shade.visible || !this._actor.visible)
+                    return GLib.SOURCE_REMOVE;
+                const lifetime = this._displayCancellable;
+                Gio.DBus.system.call(UI_BUS_NAME, UI_PATH, UI_BUS_NAME, 'Presented',
+                    new GLib.Variant('(st)', [this._session.Id, token]), null,
+                    Gio.DBusCallFlags.NONE, 500, lifetime,
+                    (connection, result) => {
+                        if (this._displayCancellable !== lifetime)
+                            return;
+                        try {
+                            connection.call_finish(result);
+                        } catch (_) {
+                            this._lightToken = 0;
+                        }
+                    });
+                return GLib.SOURCE_REMOVE;
+            });
+        });
+        this._shade.queue_redraw();
+        this._actor.queue_redraw();
     }
 
     _setIllumination(illuminated) {
@@ -407,7 +484,7 @@ export default class Gts9uFingerprintOverlay extends Extension {
         // Read-only state for intermittent post-login input failures. No key
         // contents, finger images, credentials, user names or auth answers.
         return JSON.stringify({
-            version: 14,
+            version: 16,
             sessionActive: Boolean(this._session?.Active),
             greeter: Boolean(Main.sessionMode.isGreeter),
             locked: Boolean(Main.screenShield?.locked),
@@ -472,7 +549,7 @@ export default class Gts9uFingerprintOverlay extends Extension {
             GLib.PRIORITY_DEFAULT, 50, () => {
                 this._syncAuthKeyboard();
                 this._pulseAvailability();
-                const {active, illuminated} = this._visualState();
+                const {active, illuminated, request} = this._visualState();
                 if (active && !this._active)
                     this.Show();
                 else if (!active && this._active)
@@ -483,6 +560,7 @@ export default class Gts9uFingerprintOverlay extends Extension {
                     this._actor.show();
                 else
                     this._actor.hide();
+                this._requestLightPresentation(request ?? 0);
                 this._updateFeedback();
                 return GLib.SOURCE_CONTINUE;
             });

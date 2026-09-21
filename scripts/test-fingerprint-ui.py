@@ -82,7 +82,10 @@ class BrokerLifecycleTest(unittest.TestCase):
         self.patcher = patch.dict(sys.modules, fake_modules)
         self.patcher.start()
         self.addCleanup(self.patcher.stop)
-        self.globals_patch = patch.dict(module['main'].__globals__, LEASE=self.lease)
+        self.request = Path(self.temp.name) / 'light'
+        self.presented = Path(self.temp.name) / 'presented'
+        self.globals_patch = patch.dict(module['main'].__globals__, LEASE=self.lease,
+                                       LIGHT_REQUEST=self.request, PRESENTED=self.presented)
         self.globals_patch.start()
         self.addCleanup(self.globals_patch.stop)
         self.broker = module['main']()
@@ -90,6 +93,34 @@ class BrokerLifecycleTest(unittest.TestCase):
                           Seat=('seat0', '/seat'), User=(1000, '/user'))
         self.broker.active = Mock(return_value=('104', self.props))
         self.broker.Pulse('104', True, sender=':1.5')
+
+    def test_presented_requires_current_request_and_same_client(self):
+        token = module['time'].monotonic_ns() // 1000
+        self.request.write_text(f'prepare {token}\n')
+        self.broker.Presented('104', token + 1, sender=':1.5')
+        self.assertFalse(self.presented.exists())
+        with self.assertRaises(Exception):
+            self.broker.Presented('104', token, sender=':1.6')
+        self.broker.Presented('104', token, sender=':1.5')
+        self.assertEqual(self.presented.read_text(), f'ready {token + 1_000_000}\n')
+        self.broker.Pulse('104', False, sender=':1.5')
+        self.assertFalse(self.presented.exists())
+        self.broker.Presented('104', token, sender=':1.5')
+        self.assertFalse(self.presented.exists())
+
+    def test_expired_request_cannot_be_presented(self):
+        token = module['time'].monotonic_ns() // 1000 - 1_000_001
+        self.request.write_text(f'prepare {token}\n')
+        self.broker.Presented('104', token, sender=':1.5')
+        self.assertFalse(self.presented.exists())
+
+    def test_presented_revalidates_seat(self):
+        token = module['time'].monotonic_ns() // 1000
+        self.request.write_text(f'prepare {token}\n')
+        self.broker.active.return_value = ('105', self.props)
+        with self.assertRaises(Exception):
+            self.broker.Presented('104', token, sender=':1.5')
+        self.assertFalse(self.presented.exists())
 
     def test_timer_does_not_query_logind(self):
         self.broker.active.reset_mock()

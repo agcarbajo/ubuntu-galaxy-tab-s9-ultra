@@ -13,6 +13,13 @@ NAME = 'io.github.agcarbajo.Gts9uFingerprintUI'
 PATH = '/io/github/agcarbajo/Gts9uFingerprintUI'
 LEASE = Path('/run/gts9u-fingerprint-ui/ready')
 TTL_US = 2_000_000
+LIGHT_REQUEST = Path('/run/gts9u-fingerprint/light')
+PRESENTED = Path('/run/gts9u-fingerprint-ui/presented')
+
+
+def light_request_matches(contents, token, now):
+    return (0 < token <= now < token + 1_000_000 and
+            contents == f'prepare {token}\n')
 
 
 def authorized(uid, requested, active_id, properties):
@@ -60,6 +67,7 @@ def main():
         def clear(self):
             self.client = None
             LEASE.unlink(missing_ok=True)
+            PRESENTED.unlink(missing_ok=True)
 
         def active(self):
             seat = dbus.Interface(bus.get_object('org.freedesktop.login1',
@@ -89,6 +97,32 @@ def main():
                 stream.write(lease_text(bool(available), expires))
             temporary.replace(LEASE)
             self.client = (str(sender), uid, str(session), expires)
+            if not available:
+                PRESENTED.unlink(missing_ok=True)
+
+        @dbus.service.method(NAME, in_signature='st', out_signature='', sender_keyword='sender')
+        def Presented(self, session, token, sender=None):
+            uid = int(daemon.GetConnectionUnixUser(sender, timeout=1))
+            active_id, props = self.active()
+            now = time.monotonic_ns() // 1000
+            if not authorized(uid, str(session), active_id, props):
+                raise dbus.exceptions.DBusException('Not the active local session',
+                    name=NAME + '.NotActiveSession')
+            if not self.client or self.client[:3] != (str(sender), uid, str(session)):
+                raise dbus.exceptions.DBusException('No current availability lease')
+            try:
+                request = LIGHT_REQUEST.read_text(encoding='ascii')
+                available = LEASE.read_text(encoding='ascii').startswith('ready ')
+            except (OSError, UnicodeError):
+                return
+            if (not available or now >= self.client[3] or
+                    not light_request_matches(request, int(token), now)):
+                return
+            temporary = PRESENTED.with_suffix('.new')
+            with temporary.open('w', encoding='ascii') as stream:
+                os.fchmod(stream.fileno(), 0o644)
+                stream.write(lease_text(True, int(token) + 1_000_000))
+            temporary.replace(PRESENTED)
 
         def disconnected(self, sender, old_owner, new_owner):
             if sender == 'org.freedesktop.login1' and old_owner:

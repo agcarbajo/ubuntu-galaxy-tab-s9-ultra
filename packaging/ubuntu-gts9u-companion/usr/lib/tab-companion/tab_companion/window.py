@@ -490,7 +490,9 @@ class CompanionWindow(Adw.ApplicationWindow):
             shell = Gio.Settings.new("org.gnome.shell")
         except GLib.Error:
             return False
-        return self.SHELL_EXTENSION_UUID in shell.get_strv("enabled-extensions")
+        return (self.SHELL_EXTENSION_UUID in shell.get_strv("enabled-extensions") and
+                self.SHELL_EXTENSION_UUID not in shell.get_strv("disabled-extensions") and
+                not shell.get_boolean("disable-user-extensions"))
 
     def _boot_tile_toggled(self, row, _param):
         try:
@@ -501,6 +503,9 @@ class CompanionWindow(Adw.ApplicationWindow):
         if row.get_active():
             if self.SHELL_EXTENSION_UUID not in enabled:
                 enabled.append(self.SHELL_EXTENSION_UUID)
+            shell.set_strv("disabled-extensions", [uuid for uuid in
+                shell.get_strv("disabled-extensions") if uuid != self.SHELL_EXTENSION_UUID])
+            shell.set_boolean("disable-user-extensions", False)
         else:
             enabled = [uuid for uuid in enabled if uuid != self.SHELL_EXTENSION_UUID]
         shell.set_strv("enabled-extensions", enabled)

@@ -114,6 +114,9 @@ struct sm5714_battery {
 	struct mutex sram_lock;
 	/* Serialises charger programming from polling and the TCPM callback. */
 	struct mutex chg_lock;
+	struct mutex capacity_lock;
+	int capacity_max;
+	bool capacity_full;
 	struct power_supply *psy_bat;
 	struct power_supply *psy_usb;
 	struct power_supply_battery_info *info;
@@ -682,17 +685,92 @@ out:
  * discharging battery look like a failing I2C transfer.
  */
 
+static int sm5714_get_status(struct sm5714_battery *sm);
+
+static int sm5714_capacity_scaled(int soc, bool full, int *maximum,
+				 bool *was_full)
+{
+	int learned = clamp(soc * 100 / 102, 700, 1000);
+
+	full = full && soc >= 700;
+	if (full && (!*was_full || learned > *maximum))
+		*maximum = learned;
+	*was_full = full;
+	return clamp(soc * 100 / *maximum, 0, 100);
+}
+
 /* State of charge arrives as an unsigned Q8.8 percentage. */
 static int sm5714_get_capacity(struct sm5714_battery *sm, int *val)
 {
 	int raw = sm5714_fg_read_sram(sm, SM5714_FG_SRAM_SOC);
+	int status;
 
 	if (raw < 0)
 		return raw;
+	status = sm5714_get_status(sm);
+	if (status < 0)
+		return status;
 
-	*val = clamp(((raw * 10) >> 8) / 10, 0, 100);
+	mutex_lock(&sm->capacity_lock);
+	*val = sm5714_capacity_scaled((raw * 10) >> 8,
+			status == POWER_SUPPLY_STATUS_FULL,
+			&sm->capacity_max, &sm->capacity_full);
+	mutex_unlock(&sm->capacity_lock);
 	return 0;
 }
+
+int sm5714_battery_get_raw_capacity(void);
+
+int sm5714_battery_get_raw_capacity(void)
+{
+	int raw = -ENODEV;
+
+	mutex_lock(&sm5714_global_lock);
+	if (sm5714_primary)
+		raw = sm5714_fg_read_sram(sm5714_primary, SM5714_FG_SRAM_SOC);
+	mutex_unlock(&sm5714_global_lock);
+	return raw < 0 ? raw : clamp(raw >> 8, 0, 100);
+}
+EXPORT_SYMBOL_GPL(sm5714_battery_get_raw_capacity);
+
+static ssize_t capacity_max_show(struct device *dev,
+				 struct device_attribute *attr, char *buf)
+{
+	struct sm5714_battery *sm = dev_get_drvdata(dev);
+	int maximum;
+
+	mutex_lock(&sm->capacity_lock);
+	maximum = sm->capacity_max;
+	mutex_unlock(&sm->capacity_lock);
+	return sysfs_emit(buf, "%d\n", maximum);
+}
+
+static ssize_t capacity_max_store(struct device *dev,
+				  struct device_attribute *attr,
+				  const char *buf, size_t count)
+{
+	struct sm5714_battery *sm = dev_get_drvdata(dev);
+	int maximum, ret;
+
+	ret = kstrtoint(buf, 10, &maximum);
+	if (ret)
+		return ret;
+	if (maximum < 700 || maximum > 1000)
+		return -ERANGE;
+	mutex_lock(&sm->capacity_lock);
+	if (!sm->capacity_full)
+		sm->capacity_max = maximum;
+	mutex_unlock(&sm->capacity_lock);
+	power_supply_changed(sm->psy_bat);
+	return count;
+}
+static DEVICE_ATTR_RW(capacity_max);
+
+static struct attribute *sm5714_capacity_attrs[] = {
+	&dev_attr_capacity_max.attr,
+	NULL,
+};
+ATTRIBUTE_GROUPS(sm5714_capacity);
 
 /* Battery voltage is offset from 2700 mV in units of 10/109 mV. */
 static int sm5714_get_voltage(struct sm5714_battery *sm, u8 sram_addr, int *val)
@@ -799,6 +877,19 @@ static int sm5714_get_online(struct sm5714_battery *sm)
 	return sm5714_get_online_raw(sm);
 }
 
+static int sm5714_status_from_regs(int st1, int st2, bool direct, bool otg)
+{
+	if (otg || !(st1 & SM5714_CHG_STATUS1_VBUS_POK))
+		return POWER_SUPPLY_STATUS_DISCHARGING;
+	if (direct)
+		return POWER_SUPPLY_STATUS_CHARGING;
+	if (st2 & SM5714_CHG_STATUS2_TOPOFF)
+		return POWER_SUPPLY_STATUS_FULL;
+	if (st2 & SM5714_CHG_STATUS2_CHG_ON)
+		return POWER_SUPPLY_STATUS_CHARGING;
+	return POWER_SUPPLY_STATUS_NOT_CHARGING;
+}
+
 static int sm5714_get_status(struct sm5714_battery *sm)
 {
 	int st1, st2;
@@ -813,17 +904,8 @@ static int sm5714_get_status(struct sm5714_battery *sm)
 	if (st2 < 0)
 		return st2;
 
-	if (st2 & SM5714_CHG_STATUS2_TOPOFF)
-		return POWER_SUPPLY_STATUS_FULL;
-	if (READ_ONCE(sm->direct_charging) &&
-	    (st1 & SM5714_CHG_STATUS1_VBUS_POK))
-		return POWER_SUPPLY_STATUS_CHARGING;
-	if (st2 & SM5714_CHG_STATUS2_CHG_ON)
-		return POWER_SUPPLY_STATUS_CHARGING;
-	if (st1 & SM5714_CHG_STATUS1_VBUS_POK)
-		return POWER_SUPPLY_STATUS_NOT_CHARGING;
-
-	return POWER_SUPPLY_STATUS_DISCHARGING;
+	return sm5714_status_from_regs(st1, st2,
+			READ_ONCE(sm->direct_charging), READ_ONCE(sm->otg_active));
 }
 
 static int sm5714_bat_get_property(struct power_supply *psy,
@@ -1117,6 +1199,10 @@ static int sm5714_probe(struct i2c_client *client)
 	ret = devm_mutex_init(dev, &sm->chg_lock);
 	if (ret)
 		return ret;
+	ret = devm_mutex_init(dev, &sm->capacity_lock);
+	if (ret)
+		return ret;
+	sm->capacity_max = 990;
 
 	ret = i2c_smbus_read_byte_data(client, SM5714_CHG_REG_DEVICEID);
 	if (ret < 0)
@@ -1224,6 +1310,7 @@ static struct i2c_driver sm5714_driver = {
 		.name = "sm5714-battery",
 		.of_match_table = sm5714_of_match,
 		.pm = pm_sleep_ptr(&sm5714_pm_ops),
+		.dev_groups = sm5714_capacity_groups,
 	},
 	.probe = sm5714_probe,
 	.id_table = sm5714_i2c_id,

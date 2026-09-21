@@ -1,0 +1,46 @@
+#!/usr/bin/python3
+import fcntl
+from pathlib import Path
+import sys
+
+SCALE = Path('/sys/class/power_supply/sm5714-battery/device/capacity_max')
+STATE = Path('/var/lib/ubuntu-gts9u-battery/capacity-max')
+READY = Path('/run/ubuntu-gts9u-battery/ready')
+
+
+def valid_scale(text):
+    value = int(text.strip())
+    if not 700 <= value <= 1000:
+        raise ValueError('capacity scale outside the SM5714 range')
+    return value
+
+
+def synchronize(action, scale=SCALE, state=STATE, ready=READY):
+    if not scale.exists() or (action == 'save' and not ready.exists()):
+        return
+    ready.parent.mkdir(parents=True, exist_ok=True)
+    with (ready.parent / 'lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if action == 'restore' and state.exists():
+            try:
+                saved = valid_scale(state.read_text())
+            except ValueError:
+                print('Ignoring invalid saved battery scale', file=sys.stderr)
+            else:
+                scale.write_text(f'{saved}\n')
+        current = valid_scale(scale.read_text())
+        text = f'{current}\n'
+        state.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if not state.exists() or state.read_text() != text:
+            temporary = state.with_suffix('.new')
+            temporary.write_text(text)
+            temporary.chmod(0o600)
+            temporary.replace(state)
+        if action == 'restore':
+            ready.touch(mode=0o600)
+
+
+if __name__ == '__main__':
+    if len(sys.argv) != 2 or sys.argv[1] not in ('restore', 'save'):
+        raise SystemExit('usage: ubuntu-gts9u-battery-capacity restore|save')
+    synchronize(sys.argv[1])

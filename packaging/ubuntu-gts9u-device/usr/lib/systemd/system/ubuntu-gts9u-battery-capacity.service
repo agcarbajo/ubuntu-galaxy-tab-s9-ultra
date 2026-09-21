@@ -1,0 +1,18 @@
+[Unit]
+Description=Restore and retain the measured SM5714 full-charge scale
+After=local-fs.target
+Before=upower.service
+ConditionPathExists=/sys/class/power_supply/sm5714-battery/device/capacity_max
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+RuntimeDirectory=ubuntu-gts9u-battery
+RuntimeDirectoryMode=0700
+StateDirectory=ubuntu-gts9u-battery
+StateDirectoryMode=0700
+ExecStart=/usr/libexec/ubuntu-gts9u-battery-capacity restore
+ExecStop=/usr/libexec/ubuntu-gts9u-battery-capacity save
+
+[Install]
+WantedBy=multi-user.target

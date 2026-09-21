@@ -1,0 +1,1 @@
+ACTION=="change", SUBSYSTEM=="power_supply", KERNEL=="sm5714-battery", RUN+="/usr/libexec/ubuntu-gts9u-battery-capacity save"

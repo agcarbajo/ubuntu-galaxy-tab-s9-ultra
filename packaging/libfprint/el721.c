@@ -22,6 +22,8 @@
 #define EL721_PANEL "/sys/class/backlight/ae94000.dsi.0"
 #define EL721_VISUAL_STATE "/run/gts9u-fingerprint/active"
 #define EL721_UI_LEASE "/run/gts9u-fingerprint-ui/ready"
+#define EL721_LIGHT_REQUEST "/run/gts9u-fingerprint/light"
+#define EL721_LIGHT_PRESENTED "/run/gts9u-fingerprint-ui/presented"
 #define EL721_BATTERY_TEMP "/sys/class/power_supply/battery/temp"
 #define EL721_BATTERY_TEMP_FALLBACK "/sys/class/power_supply/sm5714-battery/temp"
 #define EL721_POLL_MS 45
@@ -156,6 +158,24 @@ udfps_light (FpiDeviceEl721 *self, gboolean enabled, GError **error)
     return FALSE;
   self->udfps_lit = enabled;
   self->udfps_refreshed = enabled ? g_get_monotonic_time () : 0;
+  if (!enabled)
+    {
+      self->light_requested = 0;
+      g_unlink (EL721_LIGHT_REQUEST);
+    }
+  return TRUE;
+}
+
+static gboolean
+udfps_prepare_light (FpiDeviceEl721 *self, GError **error)
+{
+  gint64 token = g_get_monotonic_time ();
+  g_autofree gchar *request = g_strdup_printf ("prepare %" G_GINT64_FORMAT "\n", token);
+  if (!g_file_set_contents_full (EL721_LIGHT_REQUEST, request, -1,
+                                G_FILE_SET_CONTENTS_CONSISTENT, 0644, error))
+    return FALSE;
+  self->light_requested = token;
+  self->capture_deadline = token + G_USEC_PER_SEC;
   return TRUE;
 }
 
@@ -220,7 +240,9 @@ udfps_end (FpiDeviceEl721 *self)
 {
   if (!self->udfps_active)
     return;
-  write_child (EL721_PANEL, "fod_mode", "0\n", NULL);
+  udfps_light (self, FALSE, NULL);
+  self->light_requested = 0;
+  g_unlink (EL721_LIGHT_REQUEST);
   write_child (EL721_TOUCH, "fod_enable", "0\n", NULL);
   self->udfps_active = FALSE;
   self->udfps_lit = FALSE;
@@ -840,21 +862,48 @@ poll_action (FpDevice *device, gpointer user_data)
         pressed ? FP_FINGER_STATUS_PRESENT : FP_FINGER_STATUS_NEEDED,
         pressed ? FP_FINGER_STATUS_NEEDED : FP_FINGER_STATUS_PRESENT);
     }
+  if (self->light_requested)
+    {
+      g_autofree gchar *presented = NULL;
+      gint64 now = g_get_monotonic_time ();
+      g_file_get_contents (EL721_LIGHT_PRESENTED, &presented, NULL, NULL);
+      if (!pressed)
+        {
+          self->capture_deadline = 0;
+          if (!udfps_light (self, FALSE, &error))
+            action_fail (self, g_steal_pointer (&error));
+        }
+      else if (el721_ui_light_ready (presented, self->light_requested, now))
+        {
+          if (!udfps_light (self, TRUE, &error))
+            action_fail (self, g_steal_pointer (&error));
+          else
+            {
+              self->light_requested = 0;
+              /* The panel write itself takes time. Settle from completion, not from
+               * before the DDIC command, without blocking the cancellation loop. */
+              self->capture_deadline = g_get_monotonic_time () + EL721_LIGHT_SETTLE_US;
+            }
+        }
+      else if (now - self->light_requested >= G_USEC_PER_SEC)
+        action_fail (self, fpi_device_error_new_msg (FP_DEVICE_ERROR_GENERAL,
+                     "EL721 compositor did not present the compensation frame"));
+      if (self->action != EL721_ACTION_NONE)
+        schedule_poll (self);
+      return;
+    }
   light_step = el721_touch_light_step (&self->capture_deadline,
                                        g_get_monotonic_time (), pressed, capture);
   if (light_step == EL721_LIGHT_ON || light_step == EL721_LIGHT_OFF)
     {
-      if (!udfps_light (self, light_step == EL721_LIGHT_ON, &error))
+      if (!(light_step == EL721_LIGHT_ON ? udfps_prepare_light (self, &error) :
+                                          udfps_light (self, FALSE, &error)))
         {
           action_fail (self, g_steal_pointer (&error));
           return;
         }
-      /* The panel write itself takes time. Settle from completion, not from
-       * before the DDIC command, without blocking the cancellation loop. */
-      if (light_step == EL721_LIGHT_ON)
-        self->capture_deadline = g_get_monotonic_time () + EL721_LIGHT_SETTLE_US;
       g_message ("EL721 touch-to-light %s",
-                 light_step == EL721_LIGHT_ON ? "on; settling" : "off; early release");
+                 light_step == EL721_LIGHT_ON ? "waiting for compositor" : "off; early release");
     }
   if (light_step == EL721_LIGHT_CAPTURE)
     {

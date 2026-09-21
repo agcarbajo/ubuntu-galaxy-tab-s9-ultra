@@ -1,0 +1,43 @@
+#!/usr/bin/python3
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+
+def should_disable(properties):
+    result = properties.get('Result', '')
+    if result == 'success':
+        return False
+    if result == 'exit-code' and properties.get('ExecMainStatus') == '1':
+        return False
+    if result == 'timeout':
+        try:
+            started = int(properties.get('ExecMainStartTimestampMonotonic', '0'))
+            active = int(properties.get('ActiveEnterTimestampMonotonic', '0'))
+        except ValueError:
+            return True
+        if 0 < started <= active:
+            return False
+    return True
+
+
+def main():
+    unit = sys.argv[1]
+    if unit not in ('org.gnome.Shell@wayland.service', 'org.gnome.Shell@x11.service'):
+        raise SystemExit('Expected a GNOME Shell session unit')
+    result = subprocess.run(['systemctl', '--user', 'show', unit,
+        '--property=Result,ExecMainStatus,ExecMainStartTimestampMonotonic,ActiveEnterTimestampMonotonic'],
+        text=True, capture_output=True, timeout=3)
+    if result.returncode:
+        return
+    properties = dict(line.split('=', 1) for line in result.stdout.splitlines() if '=' in line)
+    properties['Result'] = os.environ.get('SERVICE_RESULT', properties.get('Result', ''))
+    if not should_disable(properties):
+        runtime = os.environ.get('XDG_RUNTIME_DIR')
+        if runtime:
+            (Path(runtime) / 'gnome-shell-disable-extensions').unlink(missing_ok=True)
+
+
+if __name__ == '__main__':
+    main()

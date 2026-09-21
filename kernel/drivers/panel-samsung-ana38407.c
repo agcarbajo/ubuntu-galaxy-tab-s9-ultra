@@ -181,6 +181,8 @@ static int ana38407_write_fod_locked(struct ana38407 *ctx, bool enable)
 	}
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0xa5, 0xa5);
 	ctx->dsi->mode_flags = mode_flags;
+	if (!dsi_ctx.accum_err)
+		msleep(ANA38407_FOD_SETTLE_MS);
 
 	return dsi_ctx.accum_err;
 }

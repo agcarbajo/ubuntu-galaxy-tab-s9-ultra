@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {isTypingKeyboard} from '../packaging/ubuntu-gts9u-device/usr/share/gnome-shell/extensions/gts9u-fingerprint-overlay@agcarbajo/authKeyboard.js';
+import {visualState} from '../packaging/ubuntu-gts9u-device/usr/share/gnome-shell/extensions/gts9u-fingerprint-overlay@agcarbajo/visualState.js';
 const source = readFileSync(new URL('../packaging/ubuntu-gts9u-device/usr/share/gnome-shell/extensions/gts9u-fingerprint-overlay@agcarbajo/extension.js', import.meta.url), 'utf8')
     .replace(/^import .*;\r?\n/gm, '')
     .replace('export default class', 'return class');
@@ -134,7 +135,7 @@ overlay._seat = {get_touch_mode: () => true};
 overlay._physicalKeyboard = true;
 overlay._session = {Active: true};
 const diagnostics = JSON.parse(overlay.GetDiagnostics());
-assert.equal(diagnostics.version, 14);
+assert.equal(diagnostics.version, 16);
 assert.equal(diagnostics.sessionActive, true);
 assert.equal(diagnostics.targetReactive, false);
 assert.equal(diagnostics.keyboardExists, false);
@@ -193,3 +194,71 @@ delete devices.event9['capabilities/key'];
 assert.equal(scanner._scanPhysicalKeyboards(), true); // Unknown: conservative until next scan.
 assert.equal(closes, 5);
 console.log('PASS: 5 actual sysfs inventory/hotplug paths with closed enumeration handles');
+
+let paintCallback;
+let presentations = 0;
+const stage = {
+    connect(name, callback) { assert.equal(name, 'after-paint'); paintCallback = callback; return 1; },
+    disconnect(id) { assert.equal(id, 1); paintCallback = null; },
+};
+const presentationGio = {DBusCallFlags: {NONE: 0}, DBus: {system: {call(...args) {
+    assert.equal(args[3], 'Presented');
+    assert.deepEqual(args[4].value, ['c1', 1000]);
+    presentations++;
+}}}};
+const presentationGLib = {...GLib, Variant: class {
+    constructor(type, value) { assert.equal(type, '(st)'); this.value = value; }
+}};
+const Mtk = {Rectangle: class {}};
+const view = x => ({get_layout(rectangle) {
+    assert(rectangle instanceof Mtk.Rectangle, 'GNOME 46 requires a caller-allocated rectangle');
+    Object.assign(rectangle, {x, y: 0});
+}});
+const PresentationType = new Function('Extension', 'GLib', 'Gio', 'global', 'Mtk', source)(
+    class {}, presentationGLib, presentationGio, {stage}, Mtk);
+const preparing = new PresentationType();
+preparing._panel = {monitor: {x: 0, y: 0}};
+preparing._session = {Id: 'c1'};
+preparing._canShowTarget = () => true;
+preparing._lightRequest = () => 1000;
+preparing._actor = {...actor(), visible: true, queue_redraw() {}};
+preparing._shade = {...actor(), visible: true, queue_redraw() {}};
+preparing._requestLightPresentation(1000);
+assert.equal(presentations, 0);
+paintCallback(stage, view(2000));
+assert(paintCallback);
+paintCallback(stage, view(0));
+assert.equal(presentations, 0);
+const present = timers.get(preparing._lightPresentId);
+timers.delete(preparing._lightPresentId);
+present();
+assert.equal(presentations, 1);
+preparing._cancelLightPresentation();
+preparing._requestLightPresentation(1000);
+paintCallback(stage, view(0));
+const stale = timers.get(preparing._lightPresentId);
+preparing._cancelLightPresentation();
+stale();
+assert.equal(presentations, 1);
+assert.equal(timers.size, 0);
+console.log('PASS: compensation acknowledgement follows internal-panel paint; cancellation revokes pending acknowledgement');
+
+let now = 1000;
+let hbm = true;
+const leaseGio = {File: {new_for_path: () => ({load_contents: () => [true, new Uint8Array()]})}};
+const VisualType = new Function('Extension', 'GLib', 'Gio', 'visualState', source)(
+    class {}, {...GLib, get_monotonic_time: () => now}, leaseGio, visualState);
+const exitState = new VisualType();
+exitState._panelFodActive = () => hbm;
+exitState._canShowTarget = () => true;
+exitState._lightRequest = () => 0;
+assert.equal(exitState._visualState().illuminated, true);
+hbm = false;
+now = 2000;
+assert.equal(exitState._visualState().illuminated, true);
+now = 51999;
+assert.equal(exitState._visualState().active, true);
+now = 52000;
+assert.equal(exitState._visualState().illuminated, false);
+assert.equal(exitState._visualState().active, false);
+console.log('PASS: compensation outlives HBM exit even after the active lease is removed');
