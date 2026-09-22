@@ -160,8 +160,12 @@ class PairingService(dbus.service.Object):
             print("S Pen Bluetooth remote features disabled", flush=True)
         else:
             print("S Pen Bluetooth remote features enabled", flush=True)
-            GLib.idle_add(self.tick)
+            GLib.idle_add(self.tick_once)
         return True
+
+    def tick_once(self):
+        self.tick()
+        return GLib.SOURCE_REMOVE
 
     @dbus.service.method(BUS_NAME, in_signature="", out_signature="b")
     def RecoverStaleBond(self):

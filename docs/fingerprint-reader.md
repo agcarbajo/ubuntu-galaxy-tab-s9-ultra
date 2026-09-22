@@ -31,9 +31,26 @@ been validated as a multi-print gallery; the ten-name capacity is software-teste
 Maintenance constraints remain: the SPU listener/DMA owner is a persistent
 boot-only service and must not be stopped or restarted in place while secure
 world can retain its DMA buffer. Recovery of that owner requires an Ubuntu
-reboot. The [multiple-fingerprint latency report](fingerprint-gallery-performance.md)
+reboot. Do not alter PAM, templates, biometric storage or enrolments to diagnose
+a visual/display issue. GNOME 46 keeps extension JavaScript modules in memory,
+so `ReloadExtension` does not prove that a new implementation is running; start
+a new graphical session when required. Tests must model the real GJS/GObject
+signatures, and Node mocks are regressions rather than compositor-rendering
+validation. The [multiple-fingerprint latency report](fingerprint-gallery-performance.md)
 documents the current independent-gallery cost and optional future optimization;
 it is not a remaining functional blocker.
+
+Focused offline regressions for changes to the presentation broker or Shell
+state are:
+
+```sh
+python3 scripts/test-fingerprint-ui.py
+node --experimental-default-type=module scripts/test-fingerprint-overlay-state.mjs
+node --experimental-default-type=module scripts/test-fingerprint-visual-state.mjs
+```
+
+Run them on Linux with the real documented GJS/GObject signatures. They do not
+replace a new GNOME session and physical compositor validation.
 
 The detailed checkpoints below preserve the investigation history. This status
 supersedes their earlier encryption failures, pending tests and percentage

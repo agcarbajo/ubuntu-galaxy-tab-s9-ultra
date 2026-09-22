@@ -6996,3 +6996,113 @@ CRTC-switch, page-flip, link-training or SMMU fault. DRM ended at
 1080p/1440p output, cursor traversal, normal touch and normal brightness.
 The earlier stale confirmation dialog was session-local; a reboot cleared its
 modal grab and did not indicate a panel or touchscreen fault.
+
+## Session 117 — intermittent whole-desktop stalls remain open
+
+Date: 2026-09-22. The owner reported intermittent 1–3-second freezes of both
+image and input with normal operation afterwards, without an external monitor.
+SSH identity was checked against a previously known host key, hostname `agcar`,
+SM-X910 model and Ubuntu 24.04.5. The live kernel was `7.2.0-rc3-dirty #2`.
+At baseline, 9.8 GiB of memory was available, swap use was zero, root had
+402 GiB free and instantaneous memory/IO pressure was low. The boot journal
+contained repeated `HFI_H2F_MSG_GX_BW_PERF_VOTE` timeouts immediately followed
+by a response carrying the same sequence number. One was recorded at 20:54:19,
+close to an owner-reported freeze; another occurred at 20:57:01. This is a
+correlation, not proof that every stall originates in the GMU.
+
+An independent SM8550 report describes the same GMU message pair and implicates
+CPU0's deep idle state. A bounded diagnostic disabled only
+`/sys/devices/system/cpu/cpu0/cpuidle/state1/disable` from approximately
+21:01 until 21:07:28. The live setting was checked at `1`, then restored and
+checked at `0`; no partition, graphical session or boot configuration was
+changed. No GMU timeout was captured during that short interval, but the owner
+still observed image/input freezes. At 21:06:12–13, the kernel instead recorded
+`geni_i2c a90000.i2c: prep_slave_sg failed`, GPI transfer `-5`, a Goodix
+read/checksum failure and `dpu_encoder_frame_done_timeout` for `enc35`. After
+restoration, GMU timeouts recurred at 21:08:14 and 21:08:36. A six-minute
+absence of GMU errors is insufficient to prove CPU idle causality, and the
+DPU/touch failures do not establish their own shared root cause. The existing
+bounded fault-coredump wait patch targets a different recovery deadlock and the
+current HFI response wait already lasts up to one second. Do not increase its
+timeout or ship a permanent idle-state disable from these observations alone.
+At 21:27 the owner confirmed a 2–3-second freeze of image and audio immediately
+after opening Waydroid. Its container started at 21:27:19, mounted Android
+images, and produced a high load and memory/IO pressure during initialization.
+The kernel recorded `enc35 frame done timeout` at 21:27:27 and 21:27:32 plus
+four `crtc106 event 1 overflow` messages at 21:27:27. There was no GMU
+bandwidth-vote timeout in that window. The owner also observes stalls while
+writing documents, so Waydroid startup is a confirmed trigger for this one
+episode, not the general explanation. Audio interruption makes an input-only
+Goodix failure insufficient. The DPU timeout appeared in both the 21:06 and
+21:27 episodes, but it could be a symptom of an earlier scheduling or hardware
+stall; its timing alone does not establish causality. Android startup also
+reported exhaustion of available loop devices; do not assume its warnings
+are the cause of host audio/display interruption without a focused comparison.
+
+At approximately 22:12, the owner reported another brief interruption of
+image and audio. At 22:12:13 and 22:12:14 the Goodix I²C bus `a90000.i2c`
+timed out (`-110`), followed at 22:12:15 by a GPI DMA `CH STOP` completion
+timeout. No GMU or DPU timeout was logged in that narrow interval. Binder
+errors from the already running Waydroid continued at regular intervals on
+both sides of this event and do not establish its cause. Instantaneous memory
+and IO pressure had returned to zero when sampled later; that cannot rule out
+a transient stall. The existing GENI I²C source already has a bounded
+cancel-then-abort path. A touchscreen transfer timeout alone cannot account
+for audio interruption; determine whether GPI, shared power/interrupt
+latency or host scheduling blocked the rest of the system before changing it.
+A read-only ten-minute 100-ms wakeup sampler from 21:36 to 21:46 saw no
+wakeup delay over 400 ms, no high-priority kernel errors and no owner-observed
+freeze; the issue was not reproduced during this negative control.
+
+A further owner-reported freeze at approximately 22:16 coincided with GPI
+I²C transfer timeouts at 22:16:44 and 22:16:47, then a GPI `CH STOP`
+completion timeout and `enc35 frame done timeout` both stamped 22:16:48.167.
+There was no GMU timeout in this window. No audio was playing during this
+22:16 episode, so an audio interruption cannot be asserted for it; the owner
+had reported brief audio interruption during the similar 22:12 episode. The near-simultaneous
+GPI and DPU timeout callbacks favor investigating shared latency or delayed
+interrupt service before treating the touch controller or DPU warning as a
+standalone cause. It does not establish which resource stalled first.
+
+No kernel or package fix was deployed; targeted timing, reproduction and
+physical validation of the distinct signatures remain pending.
+
+## Tab Companion 1.4.0 — explicit key combination confirmation
+
+Date: 2026-09-22. Source inspection reproduced the immediate-save defect:
+selecting an ordinary key called `_finish`, persisted the target and closed the
+chooser. The backend already accepts one or more evdev modifier codes without
+an ordinary key. The chooser now keeps modifier toggles and one replaceable
+ordinary key pending, displays the combination in a larger bottom-left label,
+and persists only on the bottom-right Save button. Closing without saving does
+not change the mapping. The Debian package and application version are 1.4.0;
+AppStream release metadata and all six interface languages were updated.
+The focused selector regression and translation tests passed on the development
+machine, as did Python compilation and `git diff --check`. The Debian package
+built on WSL with strict AppStream/schema checks (SHA-256
+`95bf7152bd6099ab2ae467eb712a8ba25f613315c2f3999f8c9be2fb64435a7e`).
+After host-key confirmation, SSH identified the SM-X910 running Ubuntu 24.04.5
+with Companion 1.3.13. The transferred package hash matched; tablet APT
+simulation showed one upgrade and zero removals. Extracted to `/tmp`, the new
+selector passed all seven regression tests, including a real GTK4/Adwaita
+instance in the tablet's Wayland session: Ctrl+A was replaced by Ctrl+Y without
+saving, Save committed it, and Shift alone saved as code 42. This is a GTK
+runtime test, not an owner-visible touch/keyboard confirmation. The tablet was
+at 10% battery and discharging, so installation was initially deferred. After
+the owner explicitly requested immediate installation, APT upgraded only
+`ubuntu-gts9u-companion` from 1.3.13 to 1.4.0, without removals. `dpkg --audit`
+returned no issues; root remained read/write and both hardware and S Pen
+pairing services remained active. All seven tests passed again against the
+installed code on the tablet, including its real GTK instance. No live mappings,
+boot partitions, GDM session or kernel were changed. The pre-existing open
+Companion process was not closed by APT and needs to be closed and reopened by
+the owner before judging the visible 1.4.0 UI; owner-visible touch/physical
+keyboard confirmation remains pending.
+
+## S Pen remote re-enable CPU regression
+
+Date: 2026-09-23. The owner reproduced failure to reconnect after switching remote features off for about 20 seconds and on with the S Pen docked. SSH host key and SM-X910 Ubuntu 24.04.5 identity were checked before read-only diagnostics. Installed Companion 1.4.0 logged Connect NoReply and BlueZ Failed at 00:24:38, then removed only the stale S Pen bond and opened its dock pairing window. BlueZ subsequently reported connected/paired/ServicesResolved; Companion reported 100% and gestures available, and the owner confirmed gestures physically after undocking. This proves eventual recovery, not reliable immediate reconnection.
+
+The pairing process consumed about six CPU seconds during an eight-second measurement and continued accumulating CPU while docked. Root cause in source: SetRemoteEnabled(true) scheduled tick with GLib.idle_add, but tick returns SOURCE_CONTINUE for its periodic timer, so the idle callback repeated indefinitely. Companion 1.4.1 instead schedules tick_once, which calls tick once and returns SOURCE_REMOVE; the existing two-second timer is unchanged. The focused test first failed because tick_once was missing, then passed after the fix. At the source-only stage, post-install CPU, connection and battery-drain measurements were still pending. At capture, the docked pen's sysfs capacity was unavailable, while the saved displayed percentage was 100%; that does not establish a fresh battery reading or a fuel-gauge fault. The initial read-only diagnosis did not change a bond, settings, services, partitions or graphical session. With owner authorization, the build script replaced its WSL staging directory and produced ubuntu-gts9u-companion_1.4.1_all.deb (SHA-256 e005a402252442d17d0f069befee0991d61b0a0004814d6c1fa87aa242d80462). Battery was 14% and charging, root was writable with 402 GiB free, and no update was pending. The transferred hash matched; APT simulation showed one upgrade and zero removals. APT installed 1.4.1 and restarted only the S Pen pairing service. dpkg --audit was clean. Before the new toggle, its CPU time did not increase over eight seconds; after toggling remote off, waiting about 20 seconds and turning it on, it again did not increase over eight seconds, unlike the old service's six CPU seconds in eight seconds.
+
+The original reconnection failure still reproduced: 12 seconds after re-enable, Connect timed out with NoReply and Failed, then removed the S Pen bond and restarted dock pairing. GestureAvailable was initially false and became true by 00:37:50; after undocking, the owner confirmed that gestures physically work in this new cycle. A direct fresh Battery Level GATT ReadValue on the recovered link returned [100, 0], but no timed pen discharge series was performed. Thus the CPU fix is physically measured, while immediate reconnect and real battery-drain behavior remain open. No boot partition, GDM session or kernel was changed.

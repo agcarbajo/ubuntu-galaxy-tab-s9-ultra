@@ -93,6 +93,8 @@ confirmations, not synthetic presentation tests, establish the working status.
 
 ## S Pen
 
+The 1.4.1 pairing-service fix makes re-enabling remote features schedule a single immediate connection check rather than an indefinitely repeated idle callback. The existing two-second periodic check remains active. Source regression passes, and after installing 1.4.1 the pairing process accumulated no measurable CPU time over an eight-second window after re-enabling remote features, versus six seconds in eight before the fix. The same docked toggle still reproduced a 12-second Connect timeout followed by automatic bond replacement; the gesture-available state recovered later. The owner confirmed gestures physically after undocking in this cycle; immediate reconnection and battery-drain validation remain pending. A displayed battery percentage can be the last saved BLE reading while the pen sleeps and is not a fresh measurement unless GATT ReadValue succeeded on the current link.
+
 The page shows the orientation and state graphically, with a bar holding the
 last real percentage known. The dock only reports discrete charge states; the
 percentage comes from the Battery Level characteristic of the Samsung BLE
@@ -272,9 +274,12 @@ command runs in the user's session and must not contain passwords or secrets.
 
 "Simulate a key" opens a graphical keyboard with alphanumerics, F1–F12,
 navigation and modifiers. A key can be tapped, or pressed on any physical
-keyboard; Ctrl, Shift, Alt, AltGr and Super allow combinations. "Toggle the
-flashlight" uses `gts9u-flashlight toggle` and is available for any key or
-gesture.
+keyboard; Ctrl, Shift, Alt, AltGr and Super can be toggled individually,
+including modifier-only combinations. Selecting another ordinary key replaces
+the previous one; the larger combination preview is at bottom left and **Save**
+at bottom right commits it without closing on each key press. Closing without
+saving keeps the old mapping. "Toggle the flashlight" uses
+`gts9u-flashlight toggle` and is available for any key or gesture.
 
 Two entries are not actions on hardware. "Do nothing" is the default for S Pen
 gestures and leaves the event unhandled. "Keep the default action" exists only

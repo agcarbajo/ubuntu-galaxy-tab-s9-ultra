@@ -45,8 +45,10 @@ does not intrude into it.
 
 ## Desktop regression work, 2026-09-20
 
-- **Battery percentages are not the raw gauge SOC.** One UI's SM5714 driver
-  scales tenths of a percent by `capacity_max` and learns that scale at full
+- **Battery percentages are not the raw gauge SOC.** Raw SOC, displayed
+  capacity and battery health are separate values and must remain separate in
+  diagnostics and policy. One UI's SM5714 driver scales tenths of a percent by
+  `capacity_max` and learns that scale at full
   charge. The Android reference reported raw 68.7%, maximum 990 and UI 69%.
   The stock board permits a maximum in 700–1000 and its full-charge rule is
   `raw_soc * 100 / 102`. Ubuntu previously exported the raw integer alone.
@@ -79,7 +81,8 @@ does not intrude into it.
   timeout after this invocation reached ACTIVE; genuine crashes, startup
   timeouts and unknown results retain GNOME's recovery behavior. Companion
   also reports global/individual disables correctly and clears them only when
-  the user explicitly enables its tile.
+  the user explicitly enables its tile. `python3 scripts/test-extension-recovery.py`
+  covers the helper and Companion state transitions.
 - **External-display configuration had three independent state-ordering
   failures.** The HJW 32-inch HDMI monitor reproduced continuous
   `drmModeAtomicCommit: Invalid argument` until GNOME reverted its temporary
@@ -107,6 +110,31 @@ does not intrude into it.
   on the tablet, working touch/brightness, zero HOTPLUG uevents and zero atomic,
   page-flip, link-training or SMMU errors. The owner confirmed correct 1080p and
   1440p output.
+
+  Future external-display work must use a physically connected monitor; an
+  unplugged connector cannot validate modes, scaling, rotation or placement.
+  Capture the exact atomic rejection before patching and reproduce the same path
+  the user follows: GNOME Settings can order monitors and perform confirmation
+  differently from a custom D-Bus harness. Correlate `ApplyMonitorsConfig`,
+  CRTC/plane state, Type-C Attention and HPD callbacks, HOTPLUG uevents, mode
+  before/after confirmation and owner-visible output. A temporary D-Bus success
+  is not Settings validation, and monitor/EDID/mode allowlists must not hide a
+  generic ordering failure.
+
+  The source-level regressions require the exact pristine source files:
+
+  ```sh
+  python3 scripts/test-dpu-color-resource-modeset.py \
+    /path/to/pristine/dpu_crtc.c /path/to/pristine/msm_atomic.c
+  python3 scripts/test-mutter-plane-assignment.py \
+    /path/to/pristine/meta-crtc-kms.c
+  python3 scripts/test-drm-bridge-oob-hotplug.py \
+    /path/to/pristine/drm_bridge_connector.c
+  ```
+
+  `scripts/diagnostics/capture-display-transaction.sh` captures the Settings
+  transaction, DRM/HPD logs, uevents, CRTC state and backlight timeline for the
+  physical confirmation flow.
 
 ### Validation and deployment boundary
 
