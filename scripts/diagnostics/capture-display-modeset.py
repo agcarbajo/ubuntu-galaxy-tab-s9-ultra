@@ -46,7 +46,7 @@ def main():
     snapshot()
     previous = signal.signal(signal.SIGTERM, terminate)
     try:
-        debug.write_text(f'{int(original.strip(), 0) | 0x14}\n')
+        debug.write_text(f'{int(original.strip(), 0) | 0x114}\n')
         print(f'Change one external-display setting now. Capturing for {args.seconds} seconds.', flush=True)
         time.sleep(args.seconds)
         snapshot()

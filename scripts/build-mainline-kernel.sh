@@ -247,6 +247,11 @@ apply_unless 'bridge->of_node = msm_dp_display->pdev->dev.of_node' \
 	drivers/gpu/drm/msm/dp/dp_drm.c msm-dp-associate-bridge-of-node.patch
 apply_unless 'defer_hpd_until_resume' \
 	drivers/gpu/drm/msm/dp/dp_drm.h msm-dp-defer-oob-hpd-until-resume.patch
+if ! grep -q 'drm_bridge_connector_should_send_hotplug' \
+	"$kernel_tree/drivers/gpu/drm/display/drm_bridge_connector.c"; then
+	git -C "$kernel_tree" apply \
+		"$pat/drm-bridge-oob-ignore-unchanged-status.patch"
+fi
 apply_unless 'dpu_crtc_needs_dspp' \
 	drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c \
 	msm-dpu-reassign-resources-with-encoder.patch

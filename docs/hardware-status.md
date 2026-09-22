@@ -1,7 +1,7 @@
 # SM-X910 hardware status under Ubuntu 24.04
 
-Last updated: 2026-09-21, after physical external-display modeset validation
-and the DPU colour-resource ordering fix.
+Last updated: 2026-09-22, after complete physical external-display
+reconfiguration validation through GNOME Settings.
 
 Ubuntu **boots** on the tablet. This matrix explicitly separates what is
 inherited from what has been checked, and no component reaches ✅ without a real
@@ -69,7 +69,7 @@ accepted as proof that something works.
 | CPU frequency scaling | ✅ | ✅ | measured | It had never probed: `qcom-cpufreq-hw` needs its interconnect paths, and `INTERCONNECT_QCOM_OSM_L3` was a module in a port that installs no module tree, so all eight cores ran at a fixed clock with no governor. Built in, `schedutil` takes over |
 | USB gadget / RNDIS | ✅ | ⏳ | inherited | |
 | USB host, HID and storage | ✅ | ✅ | confirmed | With and without external power |
-| USB-C DisplayPort | ✅ | ✅ | measured | Video output and temporary Mutter reconfiguration validated with an HDMI monitor: resolution, 49.964/60/120 Hz, valid 2× scaling, 90° rotation and placement left/above/right. The DPU colour-resource ordering fix eliminated the reproduced atomic-commit freeze without filtering EDID modes |
+| USB-C DisplayPort | ✅ | ✅ | confirmed | Video output and GNOME Settings reconfiguration work with the tested HDMI monitor. Physically confirmed at 1080p and 1440p, 60/49.964 Hz, rotated and repositioned left, with confirmation on the tablet and normal touch/brightness. The final capture recorded six Apply calls, three persistent applications, zero userspace HOTPLUG uevents and zero atomic/page-flip/link/SMMU errors |
 | RTL8153 Ethernet | 🟡 | ⏳ | inherited | Enumerates and loads firmware; real link and traffic still missing |
 | UAS | ❓ | ❓ | assumed | Never tested: no drive with a UAS interface was available |
 | STK31610 ambient light | ❌ | ✅ | confirmed | One UI uses the SSC `auto_brightness` datatype. Selecting it in libssc produces live lux using the original firmware; GNOME dimming and brightening were verified with room lighting. The physical `ambient_light` endpoint was the wrong standalone stream ([evidence](light-sensor-reference.md)) |

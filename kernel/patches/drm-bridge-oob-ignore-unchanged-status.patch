@@ -1,0 +1,64 @@
+From: Ubuntu gts9uwifi port contributors <noreply@example.invalid>
+Subject: [PATCH] drm/bridge: suppress unchanged OOB connector hotplugs
+
+Out-of-band Type-C Attention notifications can carry IRQ_HPD while the physical
+connection status remains unchanged. Bridge callbacks still need to process
+those notifications, but unconditionally emitting a userspace connector
+hotplug makes compositors re-probe and replace an in-flight modeset with their
+stored configuration.
+
+Track whether the connector status changed while updating it. Normal bridge
+HPD callbacks retain the existing forced hotplug behavior. The OOB path always
+notifies the bridge chain but emits a userspace hotplug only for a real status
+transition.
+
+--- a/drivers/gpu/drm/display/drm_bridge_connector.c
++++ b/drivers/gpu/drm/display/drm_bridge_connector.c
+@@ -154,31 +154,43 @@ static void drm_bridge_connector_hpd_notify(struct drm_connector *connector,
+ }
+ 
++static bool drm_bridge_connector_should_send_hotplug(
++		enum drm_connector_status old_status,
++		enum drm_connector_status new_status, bool force_hotplug)
++{
++	return force_hotplug || old_status != new_status;
++}
++
+ static void drm_bridge_connector_handle_hpd(struct drm_bridge_connector *drm_bridge_connector,
+-					    enum drm_connector_status status)
++					    enum drm_connector_status status,
++					    bool force_hotplug)
+ {
+ 	struct drm_connector *connector = &drm_bridge_connector->base;
+ 	struct drm_device *dev = connector->dev;
++	enum drm_connector_status old_status;
+ 
+ 	mutex_lock(&dev->mode_config.mutex);
++	old_status = connector->status;
+ 	connector->status = status;
+ 	mutex_unlock(&dev->mode_config.mutex);
+ 
+ 	drm_bridge_connector_hpd_notify(connector, status);
+ 
+-	drm_kms_helper_connector_hotplug_event(connector);
++	if (drm_bridge_connector_should_send_hotplug(old_status, status,
++						      force_hotplug))
++		drm_kms_helper_connector_hotplug_event(connector);
+ }
+ 
+ static void drm_bridge_connector_hpd_cb(void *cb_data,
+ 					enum drm_connector_status status)
+ {
+-	drm_bridge_connector_handle_hpd(cb_data, status);
++	drm_bridge_connector_handle_hpd(cb_data, status, true);
+ }
+ 
+ static void drm_bridge_connector_oob_hotplug_event(struct drm_connector *connector,
+ 						   enum drm_connector_status status)
+ {
+ 	struct drm_bridge_connector *bridge_connector =
+ 		to_drm_bridge_connector(connector);
+ 
+-	drm_bridge_connector_handle_hpd(bridge_connector, status);
++	drm_bridge_connector_handle_hpd(bridge_connector, status, false);
+ }

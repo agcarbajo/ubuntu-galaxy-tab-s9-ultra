@@ -269,6 +269,21 @@ if [ ! -f "$base/out/packages/gnome-settings-daemon_46.0-1ubuntu1.24.04.1+gts9u1
     printf '%s\n' "$power_fingerprint" > "$power_stamp"
 fi
 
+mutter_version=46.2-1ubuntu0.24.04.16+gts9u1
+mutter_stamp=$base/out/packages/.gts9u-mutter-inputs.sha256
+mutter_fingerprint=$(sha256sum "$repo/scripts/build-mutter-package.sh" \
+    "$repo/packaging/mutter/preserve-crtc-plane-assignments.patch" | sha256sum | awk '{print $1}')
+mutter_missing=0
+for package in gir1.2-mutter-14 libmutter-14-0 mutter mutter-common-bin; do
+    test -f "$base/out/packages/${package}_${mutter_version}_arm64.deb" || mutter_missing=1
+done
+test -f "$base/out/packages/mutter-common_${mutter_version}_all.deb" || mutter_missing=1
+if [ "$mutter_missing" = 1 ] || \
+   [ "$(cat "$mutter_stamp" 2>/dev/null || true)" != "$mutter_fingerprint" ]; then
+    bash "$repo/scripts/build-mutter-package.sh" >/dev/null
+    printf '%s\n' "$mutter_fingerprint" > "$mutter_stamp"
+fi
+
 # The device package embeds the native boot owner and matching signed IRQ
 # module. Build these after libfprint has provided the pinned QTEE dependencies.
 bash "$repo/scripts/build-fingerprint-secure-owner.sh" >/dev/null
@@ -394,7 +409,9 @@ for pkg in libssc hexagonrpcd iio-sensor-proxy \
 	libfprint-2-2 $fingerprint_firmware_package \
 	libcamera-gts9u libspa-0.2-libcamera-gts9u \
 	ubuntu-gts9u-device ubuntu-gts9u-companion fastfetch v4l2-relayd-gts9u \
-    gnome-settings-daemon gnome-settings-daemon-common $npu_package; do
+    gnome-settings-daemon gnome-settings-daemon-common \
+    gir1.2-mutter-14 libmutter-14-0 mutter mutter-common mutter-common-bin \
+    $npu_package; do
 	deb=$(ls -t "$base"/out/packages/${pkg}_*.deb 2>/dev/null | head -1 || true)
 	if [ -z "$deb" ]; then
 		echo "missing local package: $pkg" >&2

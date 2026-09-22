@@ -80,26 +80,33 @@ does not intrude into it.
   timeouts and unknown results retain GNOME's recovery behavior. Companion
   also reports global/individual disables correctly and clears them only when
   the user explicitly enables its tile.
-- **External-display configuration failed in DPU resource reassignment.** With
-  the HJW 32-inch HDMI monitor connected through DP-1, a mode change reproduced
-  `drmModeAtomicCommit: Invalid argument` continuously from 19:22:30 through
-  19:22:49, freezing every page flip until GNOME reverted the temporary config.
-  The mode itself was not invalid: 800×600 succeeded on the next attempt. The
-  pinned DPU re-reserved CTL/DSPP whenever `color_mgmt_changed` was set, although
-  DRM reprogrammed the encoder only for a modeset. The resulting CRTC and
-  encoder could therefore refer to different resources. Upstream patch v3 7/8,
-  `msm-dpu-reassign-resources-with-encoder.patch`, keeps colour-only updates on
-  the existing resources and requests a modeset when CTM or gamma first needs
-  DSPPs. It contains no connector, monitor, resolution or timing allowlist.
-  `test-dpu-color-resource-modeset.py` applies the real patch with zero fuzz and
-  checks both boundaries. On the patched physical kernel, temporary Mutter
-  configurations passed at 800×600, 1920×1080@60/120 and
-  2560×1440@49.964, including valid 2× scaling, 90-degree rotation and
-  placement to the left, above and right. DRM diagnostics captured real
-  `color_mgmt_changed=1` states
-  with no failed atomic commit, page flip or SMMU fault. Mutter separately and
-  correctly rejected scale 2 for 1280×720 because that scale is absent from the
-  mode's advertised list.
+- **External-display configuration had three independent state-ordering
+  failures.** The HJW 32-inch HDMI monitor reproduced continuous
+  `drmModeAtomicCommit: Invalid argument` until GNOME reverted its temporary
+  config. First, DPU re-reserved CTL/DSPP for a colour-only update without
+  reprogramming the encoder; upstream patch v3 7/8 now retains those resources
+  and requests a modeset only when CTM or gamma first needs DSPPs. That removed
+  one invalid resource state but did not make GNOME Settings reliable.
+  Diagnostics then captured the exact atomic rejection: Settings supplied
+  DP-1 before DSI-1, Mutter selected the first free universal primary planes,
+  and tried to move both active planes directly between CRTCs. DRM core
+  correctly rejects that operation. The paired Mutter
+  `46.2-1ubuntu0.24.04.16+gts9u1` packages preserve each compatible current
+  primary/cursor plane before falling back to dynamic allocation. Finally, a
+  successful 1920×1080 modeset was immediately undone because two identical
+  Type-C Attention VDOs (`0x19a`) carried HPD-high plus IRQ_HPD. The bridge
+  connector correctly ran its HPD callbacks but incorrectly converted both
+  unchanged OOB statuses into userspace hotplugs, making Mutter reload the
+  stored 800×600 configuration. The bridge patch keeps callback delivery while
+  emitting an OOB userspace hotplug only for a real connector-status transition.
+  None of the three fixes contains a monitor, resolution, refresh-rate or
+  transform allowlist. Strict source-level regressions cover DPU colour
+  resources, reversed monitor order, forced normal HPD, unchanged OOB status,
+  and connect/disconnect transitions. The final physical Settings matrix kept
+  2560×1440@60 and @49.964, rotation and left-side placement, with confirmation
+  on the tablet, working touch/brightness, zero HOTPLUG uevents and zero atomic,
+  page-flip, link-training or SMMU errors. The owner confirmed correct 1080p and
+  1440p output.
 
 ### Validation and deployment boundary
 

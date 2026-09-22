@@ -6944,3 +6944,55 @@ commits without a failed
 atomic commit, page flip or SMMU fault. Mutter rejected an unadvertised 2× scale
 for 1280×720 before DRM, as expected. The external display was returned to
 800×600; no reboot or partition other than `boot` was involved in validation.
+
+## Session 116 — the successful temporary matrix hid two more display failures
+
+Date: 2026-09-22. Repeating the test through GNOME Settings disproved Session
+115's completion claim. Settings orders DP-1 before DSI-1, while the earlier
+D-Bus harness ordered the internal display first. Mutter 46.2's dynamic KMS
+plane allocator chose the first free universal primary plane, so reversing the
+logical-monitor order swapped plane 46 and plane 52 directly between two active
+CRTCs. DRM core rejected every frame with `switching CRTC directly` and
+`-EINVAL`; the 20-second apparent freeze was the confirmation timeout.
+
+Mutter now prefers each CRTC's existing compatible primary and cursor planes
+before searching the remaining free set. The exact Ubuntu source was rebuilt as
+five coordinated `46.2-1ubuntu0.24.04.16+gts9u1` packages. A regression applies
+the patch with zero fuzz and executes the allocator with reversed order,
+occupied old planes and incompatible old planes. APT simulated and installed
+five upgrades with no additions or removals. The previous archive packages and
+hashes are retained under
+`/var/lib/gts9u-diagnostics/mutter-plane-fix-20260921/`.
+
+That removed the atomic errors, but a valid modeset still returned to 800×600
+in about one second. The complete persistent capture showed two identical
+Type-C Attention VDOs (`0x19a`) from the same altmode, each carrying HPD-high
+and IRQ_HPD. Kprobe stacks ended in `dp_altmode_attention()` and
+`drm_connector_oob_hotplug_event()`. Both bridge callbacks had to run, but the
+bridge connector also emitted two userspace HOTPLUG uevents despite its status
+remaining connected. Mutter re-probed DP-1 and reloaded the saved 800×600
+config before showing its confirmation dialog. The final bridge patch preserves
+normal HPD behavior and all callbacks, while the OOB path emits a userspace
+hotplug only when connector status actually changes. Its regression covers
+forced normal HPD, unchanged OOB status, connect and disconnect transitions.
+
+The matching build preserved kernel release, configuration, signing
+certificate and all 17,467 exported CRCs. The final Image is
+`2c3c556bd5f87f6a21380c32e0c5a8e5fa3dbc5aac0c3227606fc4a0414c7ad7`;
+the header-v4/DTB/AVB-verified boot image is
+`fa3f9e86c5080ab3373077b8a573115c752f54b9c2746a67da1eb92ed25fae7d`.
+Active boot and Ubuntu's Dualboot copy read back identically before reboot;
+all preceding images and candidates are retained under
+`/var/lib/gts9u-diagnostics/display-*-20260922/`.
+
+After reboot, a direct DP-first 1920×1080@60 configuration remained current
+for 20 seconds with no userspace hotplug or atomic/page-flip error. The final
+five-minute GNOME Settings capture contained six Apply calls and three
+persistent applications: 2560×1440@60, 2560×1440@49.964, rotation and
+left-side placement all remained active after confirmation. Its udev log
+contained zero HOTPLUG events; kernel diagnostics contained no atomic-core,
+CRTC-switch, page-flip, link-training or SMMU fault. DRM ended at
+2560×1440@49.964 with the selected rotation, while the owner confirmed correct
+1080p/1440p output, cursor traversal, normal touch and normal brightness.
+The earlier stale confirmation dialog was session-local; a reboot cleared its
+modal grab and did not indicate a panel or touchscreen fault.

@@ -1,0 +1,56 @@
+From: Ubuntu gts9uwifi port contributors <noreply@example.invalid>
+Subject: [PATCH] crtc/kms: preserve compatible plane assignments
+
+When several primary or cursor planes support the same CRTCs, assigning the
+first free plane makes the result depend on monitor configuration order.  A
+reordered configuration can swap two active primary planes between CRTCs in a
+single atomic commit, which DRM core rejects because active planes cannot
+switch CRTCs directly.
+
+Prefer the plane already assigned to the CRTC while it remains compatible and
+is not claimed by an earlier assignment.  Fall back to the existing dynamic
+search when a plane disappeared, became incompatible, or is needed by another
+CRTC.
+
+--- a/src/backends/native/meta-crtc-kms.c
++++ b/src/backends/native/meta-crtc-kms.c
+@@ -248,6 +248,23 @@ is_plane_assigned (MetaKmsPlane     *plane,
+   return FALSE;
+ }
+ 
++static MetaKmsPlane *
++get_assigned_plane (MetaCrtcKms     *crtc_kms,
++                    MetaKmsPlaneType plane_type)
++{
++  switch (plane_type)
++    {
++    case META_KMS_PLANE_TYPE_PRIMARY:
++      return crtc_kms->assigned_primary_plane;
++    case META_KMS_PLANE_TYPE_CURSOR:
++      return crtc_kms->assigned_cursor_plane;
++    case META_KMS_PLANE_TYPE_OVERLAY:
++      g_assert_not_reached ();
++    }
++
++  return NULL;
++}
++
+ static MetaKmsPlane *
+ find_unassigned_plane (MetaCrtcKms      *crtc_kms,
+                        MetaKmsPlaneType  kms_plane_type,
+@@ -256,8 +273,15 @@ find_unassigned_plane (MetaCrtcKms      *crtc_kms,
+ {
+   MetaKmsCrtc *kms_crtc = meta_crtc_kms_get_kms_crtc (crtc_kms);
+   MetaKmsDevice *kms_device = meta_kms_crtc_get_device (kms_crtc);
++  MetaKmsPlane *assigned_plane;
+   GList *l;
+ 
++  assigned_plane = get_assigned_plane (crtc_kms, kms_plane_type);
++  if (assigned_plane &&
++      meta_kms_plane_is_usable_with (assigned_plane, kms_crtc) &&
++      !is_plane_assigned (assigned_plane, kms_plane_type, crtc_assignments))
++    return assigned_plane;
++
+   for (l = meta_kms_device_get_planes (kms_device); l; l = l->next)
+     {
+       MetaKmsPlane *kms_plane = l->data;

@@ -153,6 +153,11 @@ patches. These pieces must be tried natively before anything is ported:
 
 What does **not** translate and has to be repackaged as `.deb`:
 
+- Mutter's five installed binary packages are rebuilt from Ubuntu's exact
+  `46.2-1ubuntu0.24.04.16` source as `+gts9u1`. Its dynamic KMS allocator keeps
+  compatible primary/cursor planes attached to their existing CRTCs when the
+  logical-monitor order changes. `build-mutter-package.sh` and the rootfs input
+  hash make the same package set reach clean images and update payloads;
 - `libssc` and `hexagonrpcd` (the sensors' SSC/FastRPC client). `libssc` carries
   its own patch: its synchronous wait spun the GLib context without blocking,
   which cost a whole core as soon as the SSC left a request unanswered;
