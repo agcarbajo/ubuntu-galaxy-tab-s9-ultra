@@ -15,6 +15,7 @@ def main():
     parser.add_argument('--discover', nargs='+')
     parser.add_argument('--root', action='store_true')
     parser.add_argument('--upload', nargs=2, metavar=('LOCAL', 'REMOTE'))
+    parser.add_argument('--download', nargs=2, metavar=('REMOTE', 'LOCAL'))
     parser.add_argument('--wait', type=int, default=0)
     parser.add_argument('command', nargs='?', default='true')
     args = parser.parse_args()
@@ -55,9 +56,12 @@ def main():
         client.connect(host, username=os.environ['TABLET_USER'],
                        password=os.environ['TABLET_PASSWORD'], timeout=10,
                        look_for_keys=False, allow_agent=False)
-        if args.upload:
+        if args.upload or args.download:
             with client.open_sftp() as sftp:
-                sftp.put(*args.upload)
+                if args.upload:
+                    sftp.put(*args.upload)
+                if args.download:
+                    sftp.get(*args.download)
         command = args.command
         if args.root:
             command = "sudo -S -p '' -- sh -c " + shlex.quote(command)

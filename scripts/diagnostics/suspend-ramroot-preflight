@@ -1,0 +1,49 @@
+#!/bin/sh
+set -eu
+export PATH=/usr/bin:/usr/sbin:/bin:/sbin
+ROOT=/run/gts9u-suspend/root
+ORIGINAL=add0ee44a386db86a9860ae6bfe846d3b9424695d05271e93e574fff21c806bd
+wrote=0
+sha() { /usr/bin/sha256sum "$1" | cut -d' ' -f1; }
+part() {
+    for event in /sys/class/block/*/uevent; do
+        if grep -qx "PARTNAME=$1" "$event"; then
+            name=${event%/uevent}
+            printf '/dev/%s\n' "${name##*/}"
+            return
+        fi
+    done
+    return 1
+}
+fail() {
+    trap - EXIT
+    echo 'gts9u-suspend-preflight: preflight failed' > /dev/kmsg || true
+    if awk -v target="$ROOT" '$2 == target { found=1 } END { exit !found }' /proc/mounts; then
+        umount "$ROOT" || wrote=1
+    fi
+    if [ "$wrote" = 1 ]; then
+        while :; do sleep 60; done
+    fi
+    exit 0
+}
+trap fail EXIT
+mkdir -p "$ROOT"
+grep -aq 'samsung,gts9uwifi' /sys/firmware/devicetree/base/compatible
+root=$(part linuxroot)
+init=$(part init_boot)
+test "$(blockdev --getsize64 "$init")" = 8388608
+test "$(sha "$init")" != "$ORIGINAL"
+mount -t ext4 -o ro,noload "$root" "$ROOT"
+backup="$ROOT/var/lib/gts9u-boot-sets/ubuntu/init_boot.img"
+test "$(sha "$backup")" = "$ORIGINAL"
+cp "$backup" /run/gts9u-suspend/original.img
+test "$(sha /run/gts9u-suspend/original.img)" = "$ORIGINAL"
+umount "$ROOT"
+wrote=1
+dd if=/run/gts9u-suspend/original.img of="$init" bs=4M conv=fsync status=none
+test "$(sha "$init")" = "$ORIGINAL"
+echo 'gts9u-suspend-preflight: original init_boot restored and read back' > /dev/kmsg
+trap - EXIT
+sync
+echo b > /proc/sysrq-trigger
+while :; do sleep 60; done
