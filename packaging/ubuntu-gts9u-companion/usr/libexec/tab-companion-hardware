@@ -105,6 +105,7 @@ REL_X = 0
 REL_Y = 1
 LED_CAPSL = 1
 BTN_LEFT = 272
+BTN_TOOL_PEN = 320
 BTN_STYLUS = 331
 BUS_VIRTUAL = 0x06
 # BTN_MOUSE up to just below BTN_JOYSTICK: the exact range udev scans to decide
@@ -126,6 +127,7 @@ UI_DEV_CREATE = 0x5501
 UI_DEV_DESTROY = 0x5502
 UI_DEV_SETUP = 0x405C5503
 EVIOCGRAB = 0x40044590
+EVIOCGKEY = 0x80004518
 EVIOCSFF_48 = 0x40304580
 FF_RUMBLE = 0x50
 
@@ -429,6 +431,8 @@ class HardwareService:
         self.keyboard_watch = None
         self.pen_fd = None
         self.pen_watch = None
+        self.pen_in_proximity = False
+        self.pen_gesture_blocked = False
         self.pen_pressed = False
         self.pen_long_fired = False
         self.pen_long_timer = None
@@ -646,7 +650,13 @@ class HardwareService:
     def _remote_mode_changed(self, *_args):
         if self.pen_pressed and self.virtual_pointer is not None:
             self.virtual_pointer.button(False)
+        for timer in (self.pen_long_timer, self.pen_single_timer):
+            if timer is not None:
+                GLib.source_remove(timer)
+        self.pen_long_timer = None
+        self.pen_single_timer = None
         self.pen_pressed = False
+        self.pen_gesture_blocked = False
         self.pen_motion = []
         self.pointer_filtered_x = 0.0
         self.pointer_filtered_y = 0.0
@@ -1017,13 +1027,14 @@ class HardwareService:
                 else:
                     if header in {15, 143} and not self.pen_pressed:
                         self._pen_button(True)
-                    self.pen_motion.append((dx, dy))
-                    self.pen_motion_energy += abs(dx) + abs(dy)
-                    if self.pen_motion_energy >= 300 and not self.pen_motion_active:
-                        self.pen_motion_active = True
-                        if self.pen_long_timer is not None:
-                            GLib.source_remove(self.pen_long_timer)
-                            self.pen_long_timer = None
+                    if not self.pen_in_proximity and not self.pen_gesture_blocked:
+                        self.pen_motion.append((dx, dy))
+                        self.pen_motion_energy += abs(dx) + abs(dy)
+                        if self.pen_motion_energy >= 300 and not self.pen_motion_active:
+                            self.pen_motion_active = True
+                            if self.pen_long_timer is not None:
+                                GLib.source_remove(self.pen_long_timer)
+                                self.pen_long_timer = None
                     if header in {14, 142}:
                         self._pen_button(False)
                 offset += 6
@@ -1161,8 +1172,14 @@ class HardwareService:
             return
         try:
             self.pen_fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+            keys = bytearray(BTN_TOOL_PEN // 8 + 1)
+            fcntl.ioctl(self.pen_fd, EVIOCGKEY | (len(keys) << 16), keys, True)
+            self._set_pen_proximity(bool(
+                keys[BTN_TOOL_PEN // 8] & (1 << (BTN_TOOL_PEN % 8))
+            ))
         except OSError:
-            self.pen_fd = None
+            self._set_pen_proximity(True)
+            self._close_pen_reader()
             return
         self.pen_watch = GLib.io_add_watch(
             self.pen_fd, GLib.IO_IN | GLib.IO_HUP | GLib.IO_ERR, self._pen_event
@@ -1177,6 +1194,7 @@ class HardwareService:
             self.virtual_pointer.button(False)
             self.pen_pressed = False
         if self.pen_fd is not None:
+            self._set_pen_proximity(True)
             os.close(self.pen_fd)
             self.pen_fd = None
         self.pen_watch = None
@@ -1231,6 +1249,23 @@ class HardwareService:
                 pass
         return GLib.SOURCE_CONTINUE
 
+    def _set_pen_proximity(self, near):
+        if (
+            near and not self.pen_in_proximity
+            and self.settings.get_string("spen-remote-mode") != "pointer"
+        ):
+            self.pen_gesture_blocked |= self.pen_pressed
+            self.pen_pressed = False
+            self.pen_motion = []
+            self.pen_motion_energy = 0
+            self.pen_motion_active = False
+            for timer in (self.pen_long_timer, self.pen_single_timer):
+                if timer is not None:
+                    GLib.source_remove(timer)
+            self.pen_long_timer = None
+            self.pen_single_timer = None
+        self.pen_in_proximity = near
+
     def _pen_event(self, _source, condition):
         if condition & (GLib.IO_HUP | GLib.IO_ERR):
             self._close_pen_reader()
@@ -1247,7 +1282,9 @@ class HardwareService:
             return GLib.SOURCE_REMOVE
         for offset in range(0, len(data) - INPUT_EVENT.size + 1, INPUT_EVENT.size):
             _sec, _usec, event_type, code, value = INPUT_EVENT.unpack_from(data, offset)
-            if event_type == EV_KEY and code == BTN_STYLUS and value in {0, 1}:
+            if event_type == EV_KEY and code == BTN_TOOL_PEN and value in {0, 1}:
+                self._set_pen_proximity(value == 1)
+            elif event_type == EV_KEY and code == BTN_STYLUS and value in {0, 1}:
                 self._pen_button(value == 1)
         return GLib.SOURCE_CONTINUE
 
@@ -1259,6 +1296,12 @@ class HardwareService:
                 return
             self.pen_pressed = pressed
             self.virtual_pointer.button(pressed)
+            return
+        if pressed and (self.pen_in_proximity or self.pen_gesture_blocked):
+            self.pen_gesture_blocked = True
+            return
+        if not pressed and self.pen_gesture_blocked:
+            self.pen_gesture_blocked = False
             return
         if pressed:
             if self.pen_pressed:
@@ -1303,7 +1346,8 @@ class HardwareService:
 
     def _pen_single_press(self):
         self.pen_single_timer = None
-        self.execute_mapping("gesture-single-press")
+        if not self.pen_in_proximity and not self.pen_gesture_blocked:
+            self.execute_mapping("gesture-single-press")
         return GLib.SOURCE_REMOVE
 
     FLASHLIGHT_SCHEMA = "io.github.agcarbajo.GTS9UFlashlight"

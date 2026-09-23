@@ -93,6 +93,23 @@ confirmations, not synthetic presentation tests, establish the working status.
 
 ## S Pen
 
+In 1.4.2, gesture mode tracks the Wacom digitizer's `BTN_TOOL_PEN`, not the
+finger-rejection preference: from the first hover until the pen leaves range,
+side-button presses and BLE movement cannot trigger mappings. Entering range
+cancels pending single/long presses and discards any partial air movement; a
+button held across that transition remains blocked until released. The reader
+queries the current evdev key state when it starts, so a service started while
+the cursor is already visible does not mistakenly enable gestures. Losing the
+reader conservatively blocks them until its proximity state can be read again.
+Pointer mode still sends `BTN_STYLUS` as a held left click near the screen.
+`python3 scripts/test-companion-efficiency.py` exercises these event paths
+without opening hardware. After installing 1.4.2, the owner confirmed that
+pressing the side button with the cursor visible no longer triggered the
+configured `play-pause` gesture; the same gesture still worked when the cursor
+had disappeared, and Pointer mode still clicked near the screen. The previous
+Gestures setting was restored after the pointer test. BLE movement during hover
+and persistence through a later reboot remain untested.
+
 The 1.4.1 pairing-service fix makes re-enabling remote features schedule a single immediate connection check rather than an indefinitely repeated idle callback. The existing two-second periodic check remains active. Source regression passes, and after installing 1.4.1 the pairing process accumulated no measurable CPU time over an eight-second window after re-enabling remote features, versus six seconds in eight before the fix. The same docked toggle still reproduced a 12-second Connect timeout followed by automatic bond replacement; the gesture-available state recovered later. The owner confirmed gestures physically after undocking in this cycle; immediate reconnection and battery-drain validation remain pending. A displayed battery percentage can be the last saved BLE reading while the pen sleeps and is not a fresh measurement unless GATT ReadValue succeeded on the current link.
 
 The page shows the orientation and state graphically, with a bar holding the
