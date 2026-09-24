@@ -122,7 +122,7 @@ if [ -d /run/systemd/system ]; then
 	# Dummy Output/Input even though /proc/asound/cards is healthy.  The sound
 	# card's later udev event does not make WirePlumber rebuild that object.
 	#
-	# Wait for the actual control node, then refresh only the session manager.
+	# Wait for the actual control node and ALSA state, then refresh only the session manager.
 	# Restarting the ADSP here would be actively harmful: ASoC cannot rebind the
 	# card after a hot remoteproc restart on this kernel.  A per-boot stamp keeps
 	# PathChanged=/home or package upgrades from disrupting an already healthy
@@ -137,6 +137,7 @@ if [ -d /run/systemd/system ]; then
 		done
 
 		if [ -e /dev/snd/controlC0 ]; then
+			systemctl start alsa-restore.service || true
 			systemctl start "user@$uid.service" || true
 			attempt=0
 			while [ ! -S "/run/user/$uid/bus" ] && [ "$attempt" -lt 10 ]; do

@@ -1,7 +1,7 @@
 # SM-X910 hardware status under Ubuntu 24.04
 
-Last updated: 2026-09-22, after complete physical external-display
-reconfiguration validation through GNOME Settings.
+Last updated: 2026-09-24, after the speaker stereo-routing diagnosis and
+package installation; listening validation remains pending.
 
 Ubuntu **boots** on the tablet. This matrix explicitly separates what is
 inherited from what has been checked, and no component reaches ✅ without a real
@@ -57,8 +57,8 @@ accepted as proof that something works.
 | microSD | ✅ | ✅ | confirmed | Works normally as removable storage on the current UFS installation. Up to v0.17 it also held the `UBTS9U_ROOT` root; those images use a journal and `errors=remount-ro` to tolerate dirty shutdowns |
 | WCN7850 Wi-Fi / ath12k | ✅ | ✅ | confirmed | Connected to the network by the owner; SSH in use for development |
 | Bluetooth and A2DP | ✅ | ✅ | confirmed | The unit waits for `bluetoothd`, feeds `btmgmt` correctly and reapplies the native address; controller and A2DP validated |
-| 4× CS35L45 speakers and DMICs | ✅ | ✅ | confirmed | Native PipeWire, no PulseAudio. Requires the late ADSP start and `protection-domain-mapper` |
-| Speaker DSP protection | ❌ | ❌ | assumed | Cirrus firmware not loaded; conservative hardware volume |
+| 4× CS35L45 speakers and DMICs | ✅ | 🟡 | measured | Native PipeWire, no PulseAudio; requires late ADSP start and `protection-domain-mapper`. The owner initially heard an improvement with Device 2.56's right-channel routing but reported that it reverted after reboot, with some speakers still louder. Measured cause: `alsa-restore` restored a saved mono DAC source after UCM's one-time BootSequence. Device 2.57 reapplies the safe gains and stereo sources whenever Speaker is enabled; restoring stale ALSA state then reloading WirePlumber recovered both channels. An authorized 2.57 reboot also had the right controls, but shutdown had already saved the corrected state, and the journal showed the systemd unit started before a later ALSA restore. Device 2.58 additionally waits for that restore after the sound card appears. After its authorized reboot both right controls remained ASP_RX2, all digital gains were equal at 420 and the audio services were active. The saved state already held ASP_RX2, so the stale-state boot path was validated by a separate restore/reload reproduction rather than by that reboot. Balanced listening is still pending |
+| Speaker DSP protection | ❌ | ❌ | measured | Android runs individually calibrated Cirrus protection on four-channel/24-bit TDM. Ubuntu's matching firmware files load, but a controlled single-amplifier preload reported zero VSC/ISC, unset calibration status and incomplete mixer controls; it was turned back off without routing audio through the DSP. Do not enable protection or raise gain without validated per-amplifier calibration |
 | Battery | ✅ | ✅ | confirmed | SM5714: percentage, voltage, current and pack temperature |
 | USB-PD/PPS charging | ✅ | ✅ | measured | SM5714 TCPM + SM5440 2:1. **25.2–25.5 W** sustained for five minutes with the EP-T4510, die at 49.5 °C and pack at 36.4 °C. The ceiling was the current requested in the PPS contract, fixed at 3000 mA; swept on hardware, the optimum is 3400 (above that `ibus` rises and the power does not, only the die). Adjustable in `/sys/module/sm5440_direct/parameters/pps_op_curr_ma` |
 | Deep suspend | ✅ | ⚠️ | measured | A 2026-09-09 cycle failed UFS PHY calibration on resume and forced root read-only ([diagnosis](resume-recovery.md)). The later local suspend safeguard was removed after short kernel #10 tests, but folio tests on 2026-09-23 and 2026-09-24 on the installed `7.2.0-rc3-dirty #2` ended after deep-suspend entry with no logged exit; the following boots recovered the root ext4 journal. The latter test included connecting a charger while asleep; its causal role is unproven. Root cause and long-duration reliability remain open ([log](porting-log.md)) |

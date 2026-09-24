@@ -440,6 +440,61 @@ accelerometer perfectly and the daemon says `No accelerometer`.
 When a capability exists in the code but the system does not see it, look at
 the discovery mechanism first, not at the implementation.
 
+## Speaker stereo is not an equal-volume setting
+
+On 2026-09-24 the owner reported louder left-side speakers (portrait, charging
+port down) and sound below Android quality. Samsung's live four-channel,
+24-bit TDM route gives the four CS35L45s separate slots 0/1/2/3 and runs
+per-amplifier Protection DSP firmware. Ubuntu currently offers a two-channel,
+16-bit PRIMARY_MI2S_RX PCM. In the pinned codec driver all four amplifiers
+have the same ASP_RX1 slot 0 and ASP_RX2 slot 1 defaults, but the former UCM
+BootSequence fed **all four** DACs from ASP_RX1. The equal 420 hardware
+volumes could not restore the missing right channel. Device 2.56 sends
+Front/Rear Left to ASP_RX1 and Front/Rear Right to ASP_RX2, leaving all four
+volumes and the PCM format unchanged. A source regression, live ALSA controls,
+regmap and silent playback verify that route. The owner reported an initial
+improvement but a reboot with only left-channel audio and some remaining
+speaker loudness differences. Package 2.56 was still installed and its UCM
+still contained the correct right-channel source, but both right DAC controls
+had reverted to ASP_RX1. `alsa-restore.service` had restored a saved
+`/var/lib/alsa/asound.state` containing ASP_RX1 at 38 seconds into that boot;
+the later WirePlumber HiFi refresh did not correct it because the Speaker
+EnableSequence only switched on the amps. Equal 420 volumes survived, so this
+was not a hardware-volume imbalance. Device 2.57 reapplies all four matched
+hardware gains and both stereo sources **before** enabling Speaker, every time
+that device is selected. The desktop-user unit Wants/After `alsa-restore`, and
+replaying the saved ASP_RX1 state with `alsactl restore 0` then restarting
+WirePlumber restored ASP_RX2 through the new Speaker sequence. On a separately
+authorized 2.57 reboot, both right controls were correct. However, a clean
+shutdown had saved ASP_RX2 into `asound.state`, so that boot did not test a
+stale restore. Its journal also caught a race: `alsa-restore` skipped at 19 s
+without the card, desktop-user *started* at 33 s, ALSA restore retriggered
+at 39 s, and only then did the user manager refresh finish at 40 s. Unit
+ordering alone does not ensure that sequence on every boot. Device 2.58 also
+starts and waits for `alsa-restore` explicitly **after** `controlC0` exists,
+before starting the user manager or WirePlumber. The profile still reapplies
+all speaker controls after that restore. The owner-authorized 2.58 reboot
+returned with both right sources at ASP_RX2, all digital gains at 420, active
+ALSA/GDM and root read/write. Its journal has ALSA restore finishing at 39.67 s
+before the user audio refresh at 39.71–41.19 s. The shutdown again saved
+ASP_RX2, however, so that reboot proves the resulting route and service
+order, not a boot from stale ASP_RX1 state; the isolated stale-state restore
+and reload test covers that transition. Acoustic balance still requires the
+owner's ears, not just correct software mixer values.
+
+The stock DSP images staged on Ubuntu match Android byte-for-byte, but files
+alone do not establish protection. A controlled preload of only the Front Left
+amp made the kernel load its Protection image, yet its VSC and ISC were both
+zero and its CAL_STATUS was 0; Android reported nonzero, differing VSC/ISC
+for each amp and a different VIMON calibration state. The preload was disabled
+again. The kernel also reported two DSP mixer-control name collisions.
+**Do not route the DAC through DSP_TX1, copy factory-specific coefficients into
+packages, copy Android's 817 digital setting into mainline's 0–457 scale,
+or raise gain beyond the current 420 digital / 3 analog (19 dB) controls**
+until per-amp calibration and safe protection have been
+established. This port does not currently reproduce Android's protected DSP
+path or its 24-bit/four-channel TDM and cannot claim full sound parity.
+
 ## Restarting the ADSP hot leaves the system with no sound
 
 `echo stop/start > /sys/class/remoteproc/remoteproc0/state` with the system

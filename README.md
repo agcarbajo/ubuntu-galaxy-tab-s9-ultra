@@ -23,7 +23,7 @@ Ubuntu 24.04 LTS arm64 for the Samsung Galaxy Tab S9 Ultra Wi-Fi
 | Power and volume buttons | ✅ | Power, wake and volume controls |
 | Wi-Fi | ✅ | WCN7850 / ath12k |
 | Bluetooth | ✅ | Controller, audio and S Pen BLE |
-| Speakers and microphones | ✅ | Four speakers and digital microphones |
+| Speakers and microphones | 🟡 | Stereo routing persisted through an Ubuntu reboot; listening balance and Android parity remain open |
 | Vibration / haptics | ✅ | On-screen keyboard feedback |
 | Motion sensors | ✅ | Rotation, accelerometer, gyroscope and compass |
 | Battery telemetry | ✅ | Charge, voltage, current and temperature |
