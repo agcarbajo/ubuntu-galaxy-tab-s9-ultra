@@ -425,6 +425,20 @@ for an owner-supplied macOS guest, and macOS GPU acceleration remain separate
 unresolved requirements. Generic diagnostics may enter future builds, but
 macOS-specific guest assets/configuration must remain installation-local.
 
+The EZI2 `NON-HLOS.bin` FAT image also contains signed `cpusys_vm` and
+`oemvm` MDT/segment sets, but no `trustedvm`- or `pvmfw`-named image. An
+`oemvm` file is not an owner-supplied guest loader or proof that its signed
+payload can boot macOS; this package was inventoried offline only.
+
+Even a future CPU backend would not solve the display requirement. Apple's
+[macOS VM platform documentation](https://developer.apple.com/documentation/virtualization/virtualize-macos-on-a-mac)
+describes macOS guests on Apple silicon Macs with a Mac hardware model and
+Apple-provided boot loader. Its
+[paravirtualized graphics framework](https://developer.apple.com/documentation/paravirtualizedgraphics)
+uses a macOS host-side Metal implementation, not an Adreno/Linux one. These
+sources do not prove a third-party solution impossible, but they do not
+provide an off-the-shelf accelerated graphics path for this Snapdragon tablet.
+
 ### Guard private firmware discovery on generic guests
 
 Running the port kernel as a QEMU `virt` guest exposed an unconditional SMC in
