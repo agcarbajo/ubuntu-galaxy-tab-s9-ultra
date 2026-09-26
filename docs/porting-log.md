@@ -6,6 +6,29 @@ One session per iteration, failures included. The current state is in
 
 ---
 
+## Controlled stock TrustZone EL2-service availability query
+
+Date: 2026-09-26. The live kernel's `CONFIG_KVM=y` and boot message
+`kvm [1]: HYP mode not available` establish that the missing `/dev/kvm`
+is not a missing build option. The current `tz` partition was copied
+read-only to private WSL scratch (4 MiB, SHA-256
+`315be8017e41e05c411f64a9eef4e2b018046bf9674ffc2ea666a50ab48174a2`);
+literal/string scans did not settle whether the proposed QCS9100 EL2-exit SMC
+exists on SM-X910. A retained diagnostic module built with a different
+certificate was correctly rejected by kernel lockdown without executing.
+
+The matching object tree was then found in WSL `Ubuntu` at
+`/root/ubuntu-gts9u/build/linux-release-1.2.0`; its config hash matches the
+installed `/boot/config`, and its certificate is announced by the live kernel.
+The existing diagnostic was rebuilt with Clang 22, signed with that private
+build key and loaded only for Qualcomm SCM `IS_CALL_AVAIL` requests. A known
+working PIL service (`0x02000207`) returned `a1=1`; the proposed Gunyah-exit
+service (`0x02000121`) returned **`a1=0`**. This controlled result rules out
+relying on the published QCS9100 early-EL2 switch as-is on this stock Samsung
+firmware. It does not invoke the exit SMC and cannot prove every undocumented
+interface absent. The module and its `/tmp` copy were removed; there was no
+reboot, partition write or VM start. Wi-Fi and GDM were still active.
+
 ## EZI2 Gunyah firmware comparison without tablet changes
 
 Date: 2026-09-26. An isolated branch, `research/gunyah-pvmfw-sm8550-20260926`, avoids the concurrent kernel/Ubuntu 26 work. Read-only SSH confirmed the SM-X910 and unchanged live `hyp` SHA-256 `dc03857f02055531c221476fa68e6e76006797c20b8e884a1ebd01cee3043b52`; `/dev/gunyah` exists and `/dev/kvm` does not. Samsung FUS identified EUX EZI2 for SM-X910, and its `hypvm.mbn` was extracted entirely on the PC (SHA-256 `83673420c2d7dafe2abb960563b7b13ad6c863bdfef28f35d8f36a1d645c6644`). All three embedded ARM64 ELFs have changed loadable content, so old policy results were not presumed to apply. Nevertheless, all 35 known allocation/authentication/RPC gate instructions match DZA1. A bounded Unicorn dispatch test on both images sees the EZI2 HLOS path reject `0x56000031` through `0x56000034` with raw error -1 while recognizing `0x56000001` and `0x56000030`. This does not execute a guest or test signed QTVM. The new image was not flashed; the tablet was not rebooted or changed. See `docs/virtualization.md` for scope and reproduction tools.

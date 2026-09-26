@@ -463,18 +463,46 @@ selector `1`) that asks to exit Gunyah and enter EL2, potentially allowing
 native KVM instead of a Gunyah RM guest. Crucially, the series explicitly
 targets **Dragonwing** platforms and enables the option for **QCS9100**, not
 SM8550. The [v4 implementation](https://www.mail-archive.com/u-boot@lists.denx.de/msg579505.html)
-runs at U-Boot entry before normal EL register setup. There is no evidence
-that Samsung SM-X910 TrustZone authorizes this call or that its boot chain can
-enter an owner-controlled U-Boot in the required state. Calling an exit SMC
+runs at U-Boot entry before normal EL register setup. Its availability had
+not been established for Samsung SM-X910, nor has an owner-controlled U-Boot
+entry been verified on this boot chain. Calling an exit SMC
 from a running Ubuntu/Android kernel is not equivalent and risks terminating
 the active hypervisor and its system VMs. It has **not** been attempted here.
 
-This is an offline research lead, not a usable workaround. Before even
-considering a boot-image-only test, establish device-specific TrustZone
-support and a recovery path, and account for Samsung peripherals/security
-services that may depend on Gunyah. Preservation of Ubuntu, Wi-Fi,
-fingerprint and normal Android boot takes precedence over an unvalidated EL2
-switch. The current stock-firmware Gunyah and KVM gates above are unchanged.
+The live firmware now gives a stronger, device-specific answer to the
+*availability* question. The installed kernel already has `CONFIG_KVM=y` but
+logs `kvm [1]: HYP mode not available`. A temporary copy of the existing
+`gts9u-tzlog` diagnostic module was rebuilt using the **matching** WSL
+`Ubuntu` object tree, `/root/ubuntu-gts9u/build/linux-release-1.2.0`, and
+Clang 22. Its `.config` SHA-256
+`67930b1997348bca2d8f1210667fa58b848872f2b1611bf29a84ac4969aaa651`
+equals `/boot/config-7.2.0-rc3-dirty` on the tablet, and its build certificate
+subject-key ID `43e6c46f99336df9048b40081adf38b1e40d6477` is the one
+announced by the live kernel. The signed diagnostic module SHA-256 was
+`999cbcbf3a682fbefb773bed651253c17213882423a9275b68b89ae3ff2778bc`.
+No private signing key or module binary is checked into Git.
+
+The module issued only Qualcomm SCM's information-service
+`IS_CALL_AVAIL` query (service 6, command 1, one value argument), **not** the
+exit SMC itself. Querying the known working PIL `PAS_IS_SUPPORTED` service
+(`0x02000207`) returned success with availability `a1=1`, establishing a
+positive control for this query path. Querying the proposed early-EL2 service
+(`0x02000121`) returned success with availability **`a1=0`**. A query of the
+diagnostic-log call (`0x02000602`) also returned `a1=0`, so it was not used
+as the control. The result proves this stock TrustZone does not advertise the
+QCS9100 exit service to HLOS through the standard availability interface; it
+does **not** prove every private firmware mechanism absent. The temporary
+module and tablet `/tmp` copy were unloaded/removed. No exit request, reboot,
+partition write or guest start occurred; Wi-Fi and GDM remained active.
+
+This is not a usable workaround on the stock SM-X910 firmware. A
+boot-image-only U-Boot experiment invoking `0x02000121` is **not justified**
+after the negative controlled availability result. Any different EL2 route
+would first require device-specific support evidence and a recovery path, and
+must account for Samsung peripherals/security services that may depend on
+Gunyah. Preservation of Ubuntu, Wi-Fi, fingerprint and normal Android boot
+takes precedence over an unvalidated EL2 switch. The stock-firmware Gunyah
+and KVM gates above are unchanged.
 
 ### SM-X910 EZI2 offline firmware audit (2026-09-26)
 
