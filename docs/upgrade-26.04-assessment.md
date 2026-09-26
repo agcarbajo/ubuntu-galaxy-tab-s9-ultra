@@ -189,8 +189,13 @@ The current `libssc 0.4.4-gts9u3`, `hexagonrpcd 0.4.0` and patched
 `iio-sensor-proxy 3.9-gts9u3` packages were tested together in the isolated
 Resolute desktop root. After refreshing the full APT indices, the resolver
 installed their five archive dependencies with zero removals; `dpkg --audit`
-and `apt-get check` passed. The DSP path and automatic rotation still need a
-live device test.
+and `apt-get check` passed. A Python import probe exposed a missing
+`python3-protobuf` dependency and an absolute import emitted by `protoc` for
+`ssc_server`. Adding that dependency and making the import package-relative
+made `import ssc_server.ssc` succeed under Resolute's Python 3.14. The sensor
+build recipe now packages those changes as `libssc ...-gts9u4` and gives the
+new proxy package a matching dependency. A clean package rebuild is still
+required. The DSP path and automatic rotation still need a live device test.
 
 [pipewire]: https://packages.ubuntu.com/resolute/arm64/pipewire
 [libcamera]: https://packages.ubuntu.com/resolute/arm64/libcamera0.7

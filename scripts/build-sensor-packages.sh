@@ -30,6 +30,12 @@ isp_ver=${IIO_SENSOR_PROXY_VERSION:-3.9}
 # Keep patched package versions distinct from the pinned upstream source tags.
 libssc_pkgver=${LIBSSC_PACKAGE_VERSION:-${libssc_ver}-gts9u3}
 isp_pkgver=${IIO_SENSOR_PROXY_PACKAGE_VERSION:-${isp_ver}-gts9u3}
+if [ "$suite" = resolute ] && [ -z "${LIBSSC_PACKAGE_VERSION:-}" ]; then
+	libssc_pkgver=${libssc_ver}-gts9u4
+fi
+if [ "$suite" = resolute ] && [ -z "${IIO_SENSOR_PROXY_PACKAGE_VERSION:-}" ]; then
+	isp_pkgver=${isp_ver}-gts9u4
+fi
 
 mkdir -p "$out"
 
@@ -156,11 +162,23 @@ meson compile -C output
 DESTDIR=/build/stage-libssc meson install --no-rebuild -C output
 echo 'libssc built'"
 
+# protoc emits a top-level import even though it installs both generated
+# modules in ssc_server. Python 3.14 imports the package with only its parent
+# on sys.path; use a package-relative import for the Resolute build.
+if [ "$suite" = resolute ]; then
+	sed -i 's/^import ssc_common_pb2 as /from . import ssc_common_pb2 as /' \
+		"$buildroot/build/stage-libssc/usr/lib/python3/dist-packages/ssc_server/ssc_sensor_suid_pb2.py"
+fi
+
 # The next two builds link against it, so it must be visible in the chroot.
 run 'cp -a /build/stage-libssc/. / && ldconfig && echo "libssc available to the chroot"'
 
+libssc_deps='libc6, libglib2.0-0t64, libqmi-glib5, libqrtr-glib0, libprotobuf-c1'
+if [ "$suite" = resolute ]; then
+	libssc_deps="$libssc_deps, python3, python3-protobuf"
+fi
 package_tree /build/stage-libssc libssc "$libssc_pkgver" \
-	'libc6, libglib2.0-0t64, libqmi-glib5, libqrtr-glib0, libprotobuf-c1' \
+	"$libssc_deps" \
 	'Client library for the Qualcomm Sensor Core (SSC)'
 
 # ---------------------------------------------------------------------------
@@ -288,7 +306,7 @@ DESTDIR=/build/stage-isp meson install --no-rebuild -C output
 echo 'iio-sensor-proxy built'"
 
 package_tree /build/stage-isp iio-sensor-proxy "$isp_pkgver" \
-	'libc6, dbus, libglib2.0-0t64, libgudev-1.0-0, libssc (>= 0.4.4-gts9u3)' \
+	"libc6, dbus, libglib2.0-0t64, libgudev-1.0-0, libssc (>= $libssc_pkgver)" \
 	'IIO sensors to D-Bus proxy, built with Qualcomm SSC support'
 
 step 'results'
