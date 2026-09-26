@@ -1,0 +1,44 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+#
+# WCN7850 can remain in mhi_sync_power_up during early device resume after a
+# lid/charger cycle. Unbind before device suspend, then probe it after the
+# kernel has resumed the rest of the tablet. Do this on every suspend: a
+# second lid cycle can start soon after the first one completes.
+set -eu
+
+driver=/sys/bus/pci/drivers/ath12k_wifi7_pci
+state=/run/ubuntu-gts9u-ath12k-sleep.bdf
+
+case "${1:-}" in
+    pre)
+        for device in "$driver"/????:??:??.?; do
+            [ -L "$device" ] || continue
+            bdf=${device##*/}
+            printf '%s\n' "$bdf" > "$state"
+            if printf '%s' "$bdf" > "$driver/unbind"; then
+                logger -t ubuntu-gts9u-ath12k-sleep "unbound $bdf before suspend"
+                exit 0
+            fi
+            rm -f -- "$state"
+            logger -t ubuntu-gts9u-ath12k-sleep "failed to unbind $bdf"
+            exit 1
+        done
+        ;;
+    post)
+        [ -f "$state" ] || exit 0
+        IFS= read -r bdf < "$state"
+        case "$bdf" in
+            ????\:??\:??.?) ;;
+            *) logger -t ubuntu-gts9u-ath12k-sleep 'invalid saved PCIe device'; exit 1 ;;
+        esac
+        if [ "$(readlink -f "/sys/bus/pci/devices/$bdf/driver" 2>/dev/null)" = "$driver" ] ||
+           printf '%s' "$bdf" > "$driver/bind"; then
+            rm -f -- "$state"
+            logger -t ubuntu-gts9u-ath12k-sleep "bound $bdf after suspend"
+        else
+            logger -t ubuntu-gts9u-ath12k-sleep "failed to bind $bdf"
+            exit 1
+        fi
+        ;;
+esac
