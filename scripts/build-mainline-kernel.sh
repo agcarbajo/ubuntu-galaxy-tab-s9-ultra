@@ -962,6 +962,11 @@ install -m 0644 "$build_dir/arch/arm64/boot/Image.gz" "$out_dir/Image.gz"
 install -m 0644 \
 	"$build_dir/arch/arm64/boot/dts/qcom/sm8550-samsung-gts9uwifi.dtb" \
 	"$out_dir/sm8550-samsung-gts9uwifi.dtb"
+# ABL has rejected structural DTB changes before Linux can report them. The
+# published v1.2.0 vendor_boot DTB is the last physically booted reference.
+printf '%s  %s\n' \
+	'613b3bb7729d55d1c60aaeda348a098163b79aed1efbf24cdcc582ff0d58ccc4' \
+	"$out_dir/sm8550-samsung-gts9uwifi.dtb" | sha256sum -c -
 install -m 0644 "$build_dir/.config" "$out_dir/config"
 
 sha256sum "$out_dir/Image.gz" \

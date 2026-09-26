@@ -103,6 +103,12 @@ layout. Rebuilding just the 7.2.8 board DTB after that adjustment produced
 SHA-256 `613b3bb7729d55d1c60aaeda348a098163b79aed1efbf24cdcc582ff0d58ccc4`:
 **byte-identical** to the published v1.2.0 DTB. The new kernel's ability to
 use that old mapping, especially for PCIe Wi-Fi, still needs a physical test.
+The kernel build now fails if its final board DTB differs from this booted
+reference; a future DTB change requires an explicit review and device test.
+The `Gts9uPresented` bridge also compiled successfully against Resolute's
+Mutter 18 headers and libraries. Its ARM64 ELF depends on
+`libmutter-clutter-18.so.0` and has the matching runtime search path. The
+7.2.8 SPSS IRQ module built and signed with the same key and kernel release.
 The kernel source
 contains 59 project patch files and 42 driver files, plus DTS, config fragments,
 signed modules and Android v4 boot packing. Build 7.2.8 in an isolated Linux
