@@ -176,13 +176,21 @@ matching, GDM authentication or the secure kernel module on hardware.
 
 The archive-only Resolute root has [PipeWire 1.6.2][pipewire],
 [libcamera 0.7.0][libcamera] and [iio-sensor-proxy 3.8][iio]. The current
-custom camera SPA package declares
-`pipewire (<< 1.1)` and therefore cannot enter this root. Resolute's own
-`libspa-0.2-libcamera` targets libcamera 0.7 and may subsume some of the seven
-old PipeWire backports, but its interaction with the four V4L2 relays and the
-port's custom libcamera 0.7.2 needs a separate build and device check. The
-camera package also has file and ABI overlap with the archive's libcamera0.7.
+custom camera SPA package declares `pipewire (<< 1.1)` and therefore cannot
+enter this root. The Resolute arm64 APT index does not list a separate
+`libspa-0.2-libcamera` package; the port still needs its own plugin. PipeWire
+1.6.2 has changed the plugin source layout, so the old patch series cannot be
+reapplied verbatim. Its video-transform override has been rebased and applies
+cleanly, while the other six fixes need upstream comparison. The camera
+package also has file and ABI overlap with the archive's `libcamera0.7`.
 Do not weaken its version bound merely to satisfy APT.
+
+The current `libssc 0.4.4-gts9u3`, `hexagonrpcd 0.4.0` and patched
+`iio-sensor-proxy 3.9-gts9u3` packages were tested together in the isolated
+Resolute desktop root. After refreshing the full APT indices, the resolver
+installed their five archive dependencies with zero removals; `dpkg --audit`
+and `apt-get check` passed. The DSP path and automatic rotation still need a
+live device test.
 
 [pipewire]: https://packages.ubuntu.com/resolute/arm64/pipewire
 [libcamera]: https://packages.ubuntu.com/resolute/arm64/libcamera0.7
