@@ -310,6 +310,12 @@ Resolute; the matching Noble system root must also be recoverable.
 
 ## Distribution gate
 
+After refreshing the Noble fixture for the new release-suite guard, the
+existing Linux-hosted updater tests pass: `test-system-update.py` (36 cases),
+`test-release-suite-guard.py` (2 cases) and `test-update-launcher.py` (5 cases).
+These exercise the current same-suite updater and its refusal of a mismatched
+26.04 payload; they do not constitute a Noble-to-Resolute migration test.
+
 Do not publish or present a ZIP as flashable until a clean, pinned 7.2.8 kernel
 and modules, Resolute rootfs, rebuilt custom packages, GNOME 50 extensions,
 offline migration simulation, complete Android v4 images and the updater ZIP

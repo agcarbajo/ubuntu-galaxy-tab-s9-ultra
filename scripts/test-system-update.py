@@ -448,11 +448,14 @@ class PackagingTests(unittest.TestCase):
         spec.loader.exec_module(module)
         with tempfile.TemporaryDirectory() as temp:
             base = Path(temp)
-            for path in ("rootfs/boot", "rootfs/usr/lib", "out/local-debs",
+            for path in ("rootfs/boot", "rootfs/usr/lib", "rootfs/etc/apt/sources.list.d", "out/local-debs",
                          "out/kernel-gts9uwifi", "out/rootfs-overlay/usr/lib/modules/test",
                          "out/rootfs-overlay/etc/modules-load.d"):
                 (base / path).mkdir(parents=True)
             (base / "rootfs/usr/lib/gts9u-required-packages.txt").write_text("python3\n")
+            (base / "rootfs/etc/os-release").write_text('ID=ubuntu\nVERSION_ID="24.04"\n')
+            (base / "rootfs/etc/apt/sources.list.d/ubuntu.sources").write_text(
+                "Suites: noble noble-updates noble-backports\nSuites: noble-security\n")
             (base / "rootfs/boot/config-test").write_text("CONFIG_TEST=y\n")
             (base / "out/kernel-gts9uwifi/kernel.release").write_text("test\n")
             (base / "out/kernel-gts9uwifi/sm8550-samsung-gts9uwifi.dtb").write_bytes(b"test dtb")
