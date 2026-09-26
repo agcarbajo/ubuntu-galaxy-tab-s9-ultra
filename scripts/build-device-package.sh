@@ -9,17 +9,31 @@ repo=$(cd "$(dirname "$0")/.." && pwd)
 base=${UBUNTU_WORKDIR:-/root/ubuntu-gts9u}
 src=$repo/packaging/ubuntu-gts9u-device
 out=${DEB_OUT_DIR:-$base/out/packages}
+suite=${UBUNTU_SUITE:-noble}
 
 test -f "$src/DEBIAN/control"
+case "$suite" in
+    noble) control=$src/DEBIAN/control ;;
+    resolute) control=$src/DEBIAN/control-resolute ;;
+    *) echo "unsupported device suite: $suite" >&2; exit 2 ;;
+esac
+test -f "$control"
 
-version=$(awk '/^Version:/ {print $2}' "$src/DEBIAN/control")
-arch=$(awk '/^Architecture:/ {print $2}' "$src/DEBIAN/control")
+version=$(awk '/^Version:/ {print $2}' "$control")
+arch=$(awk '/^Architecture:/ {print $2}' "$control")
 staging=$base/build/deb/ubuntu-gts9u-device
 deb=$out/ubuntu-gts9u-device_${version}_${arch}.deb
 
 rm -rf -- "$staging"
 mkdir -p "$staging" "$out"
 cp -a "$src/." "$staging/"
+cp "$control" "$staging/DEBIAN/control"
+rm -f "$staging/DEBIAN/control-resolute"
+if [ "$suite" = resolute ]; then
+    rm -rf -- "$staging/usr/share/wireplumber/main.lua.d"
+else
+    rm -rf -- "$staging/usr/share/wireplumber/wireplumber.conf.d"
+fi
 # Test imports may leave ignored bytecode beside extensionless Python helpers.
 # Generated caches are not package source or reproducible runtime artifacts.
 find "$staging" -type f -name '*.pyc' -delete
@@ -59,7 +73,7 @@ install -d "$staging/usr/lib/modules/$release/updates"
 install -m0644 "$irq" "$staging/usr/lib/modules/$release/updates/"
 
 # Clutter's presented signal carries an opaque frame-info pointer that GJS
-# cannot marshal. Keep the tiny native bridge matched to Mutter 14 in this
+# cannot marshal. Keep the tiny native bridge matched to this suite's Mutter in this
 # package so the greeter and user session see the same presentation gate.
 bridge=${PRESENTED_BRIDGE_OUT_DIR:-$base/out/gnome-presented-bridge}
 test -f "$bridge/libgts9u-presented.so"

@@ -290,16 +290,19 @@ package_tree /build/stage-hexagonrpcd hexagonrpcd "$hexagonrpc_ver" \
 # ---------------------------------------------------------------------------
 step "iio-sensor-proxy $isp_ver with SSC support"
 cp "$patches/fix-early-ssc-claim-race.patch" "$buildroot/build/"
-run "cd /build
-rm -rf iio-sensor-proxy stage-isp isp.tar.gz
-curl -fsSL -o isp.tar.gz \
-	'https://gitlab.freedesktop.org/hadess/iio-sensor-proxy/-/archive/$isp_ver/iio-sensor-proxy-$isp_ver.tar.gz'
-tar xf isp.tar.gz
-mv iio-sensor-proxy-$isp_ver iio-sensor-proxy
-cd iio-sensor-proxy
-patch -p1 < /build/fix-early-ssc-claim-race.patch
+rm -rf -- "$buildroot/build/iio-sensor-proxy" \
+	"$buildroot/build/iio-sensor-proxy-$isp_ver" "$buildroot/build/stage-isp"
+curl -fsSL -o "$buildroot/build/isp.tar.gz" \
+	"https://gitlab.freedesktop.org/hadess/iio-sensor-proxy/-/archive/$isp_ver/iio-sensor-proxy-$isp_ver.tar.gz"
+# Extract with the native host tar: arm64 tar under WSL's binfmt emulation can
+# fail openat with ENOSYS on this upstream archive.
+tar xf "$buildroot/build/isp.tar.gz" -C "$buildroot/build"
+mv "$buildroot/build/iio-sensor-proxy-$isp_ver" "$buildroot/build/iio-sensor-proxy"
+patch -d "$buildroot/build/iio-sensor-proxy" -p1 < "$patches/fix-early-ssc-claim-race.patch"
+run "cd /build/iio-sensor-proxy
 meson setup output --prefix=/usr \
 	-Dssc-support=enabled \
+	-Dudevrulesdir=/usr/lib/udev/rules.d \
 	-Dsystemdsystemunitdir=/usr/lib/systemd/system
 meson compile -C output
 DESTDIR=/build/stage-isp meson install --no-rebuild -C output

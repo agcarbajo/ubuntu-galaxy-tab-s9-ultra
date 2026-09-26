@@ -51,6 +51,24 @@ successfully; `dpkg --audit` was empty, `apt-get check` passed and
 `gnome-shell` 50.1-0ubuntu1.2, Mutter 50.1-0ubuntu2.4, GNOME Settings Daemon
 50.0-1ubuntu1 and libfprint 1:1.95.1+tod1-0ubuntu2 during this check.
 
+For a separate migration probe, the project's available Noble build rootfs
+(24.04.4, device package 2.34) was copied to an isolated directory and its APT
+sources switched to Resolute. A plain `dist-upgrade` simulation selected 1291
+upgrades, 447 new packages and 17 removals. This is an **older reference
+rootfs**, not the v1.2.0 tablet, and the plan is not an approved transaction.
+The `apt-get -s dist-upgrade` command itself exited 1 after printing the
+plan: it reported broken configuration steps for `sudo-common` and
+`coreutils-from-uutils`. A staged transition or Ubuntu's release-upgrader
+ordering must be tested; the plain APT command is insufficient.
+The removals include the old `ubuntu-gts9u-device`, Mutter 14 and camera SPA,
+which need matching replacements in the same plan. Four separate Ubuntu GNOME
+extensions (dock, appindicator, desktop icons and tiling assistant) are also
+removed because Resolute consolidates them into
+[`gnome-shell-ubuntu-extensions`][ubuntu-extensions]. That package must be an
+explicit migration requirement so those desktop features survive.
+
+[ubuntu-extensions]: https://packages.ubuntu.com/resolute/gnome-shell-ubuntu-extensions
+
 The v1.2 updater preserves accounts, `/home`, app data and `/etc` by applying
 packages to the existing filesystem. It stages matching boot images, backs up
 the old images, modules and `/etc`, and writes boot images only after APT. This
@@ -200,6 +218,13 @@ prove camera enumeration, frame delivery, autofocus or GPU ISP operation on the
 tablet. The release-upgrade resolver must explicitly allow this one removal,
 never arbitrary removals.
 
+WirePlumber 0.5 no longer reads the port's `main.lua.d` camera rules. The
+Resolute device package therefore carries a `wireplumber.conf.d` fragment
+with the same four stable camera names, descriptions and `Video/Source` class;
+the Noble package keeps its Lua fragment. `pw-config` in the isolated 26.04
+root merged all four Resolute rules successfully. Live WirePlumber arbitration
+and Snapshot enumeration remain device tests.
+
 The current `libssc 0.4.4-gts9u3`, `hexagonrpcd 0.4.0` and patched
 `iio-sensor-proxy 3.9-gts9u3` packages were tested together in the isolated
 Resolute desktop root. After refreshing the full APT indices, the resolver
@@ -209,8 +234,14 @@ and `apt-get check` passed. A Python import probe exposed a missing
 `ssc_server`. Adding that dependency and making the import package-relative
 made `import ssc_server.ssc` succeed under Resolute's Python 3.14. The sensor
 build recipe now packages those changes as `libssc ...-gts9u4` and gives the
-new proxy package a matching dependency. A clean package rebuild is still
-required. The DSP path and automatic rotation still need a live device test.
+new proxy package a matching dependency. A clean arm64 rebuild of all three
+sensor packages completed on Resolute after setting the udev rules directory
+explicitly for systemd 259 and extracting the upstream proxy archive with the
+native host `tar` (the arm64 emulation returned ENOSYS). The new libssc
+package upgraded in the disposable desktop root and its Python import passed.
+The `iio-sensor-proxy ...-gts9u4` package then upgraded in the same root with
+no removal; `dpkg --audit` and `apt-get check` passed. The DSP path and
+automatic rotation still need a live device test.
 
 [pipewire]: https://packages.ubuntu.com/resolute/arm64/pipewire
 [libcamera]: https://packages.ubuntu.com/resolute/arm64/libcamera0.7
