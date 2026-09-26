@@ -225,6 +225,16 @@ the Noble package keeps its Lua fragment. `pw-config` in the isolated 26.04
 root merged all four Resolute rules successfully. Live WirePlumber arbitration
 and Snapshot enumeration remain device tests.
 
+The Resolute device package 2.65 was assembled with the 7.2.8 signed SPSS
+module, a freshly compiled secure fingerprint owner and the Mutter 18 bridge.
+Its dependencies select the matched fingerprint stack, rebuilt camera and
+sensor packages, V4L2 relay and Ubuntu's consolidated GNOME extensions.
+The relay `0.1.2-gts9u16` compiled against Resolute and both packages installed
+in the disposable desktop root without removals. Their maintainer scripts
+completed; `dpkg --audit` and `apt-get check` passed. The chroot had no running
+kernel or `/proc`, so depmod emitted expected missing-module-metadata warnings;
+this does not verify the module load or boot-time service activation.
+
 The current `libssc 0.4.4-gts9u3`, `hexagonrpcd 0.4.0` and patched
 `iio-sensor-proxy 3.9-gts9u3` packages were tested together in the isolated
 Resolute desktop root. After refreshing the full APT indices, the resolver
