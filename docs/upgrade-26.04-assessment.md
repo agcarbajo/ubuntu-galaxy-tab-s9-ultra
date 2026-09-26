@@ -185,6 +185,21 @@ cleanly, while the other six fixes need upstream comparison. The camera
 package also has file and ABI overlap with the archive's `libcamera0.7`.
 Do not weaken its version bound merely to satisfy APT.
 
+The pinned libcamera `0.7.2` tree with all seven SM-X910 patches compiled
+against Resolute arm64. The exact Ubuntu PipeWire `1.6.2-1ubuntu1.2` source
+compiled its libcamera SPA against that staged library with the rebased
+video-transform patch. New reproducible package inputs use the real
+`libcamera0.7` name to upgrade the archive library and provide the port's
+`libcamera-gts9u` dependency. The matching SPA package requires PipeWire
+`>= 1.6.2, << 1.7`. In the disposable desktop root, APT planned one reviewed
+removal, `gstreamer1.0-libcamera`, because its direct physical-camera provider
+duplicates the port's four V4L2 relay cameras. GNOME Snapshot remained
+installed through the versioned virtual dependency. The package pair installed;
+`dpkg --audit`, `apt-get check` and `ldd` on the SPA all passed. This does not
+prove camera enumeration, frame delivery, autofocus or GPU ISP operation on the
+tablet. The release-upgrade resolver must explicitly allow this one removal,
+never arbitrary removals.
+
 The current `libssc 0.4.4-gts9u3`, `hexagonrpcd 0.4.0` and patched
 `iio-sensor-proxy 3.9-gts9u3` packages were tested together in the isolated
 Resolute desktop root. After refreshing the full APT indices, the resolver
