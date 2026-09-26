@@ -213,6 +213,17 @@ Changing the Linux UAPI or implementing a KVM facade would not remove this
 firmware check. Firmware replacement, flashing Qualcomm partitions and disabling
 security policy are not part of the permitted recovery strategy.
 
+Directly issuing Gunyah object-creation hypercalls is not a demonstrated
+bypass. The [public Gunyah API](https://github.com/quic/gunyah-hypervisor/blob/develop/docs/api/gunyah_api.md)
+requires existing Partition and CSpace capability IDs to create objects, and
+the [project's changelog](https://github.com/quic/gunyah-hypervisor/blob/develop/CHANGELOG.md)
+states that RM controls the rights to create secondary VMs. The live SM-X910
+`/hypervisor` device-tree inventory publishes the HLOS identity, watchdog and
+RM RPC queues, not an owner-visible partition-creation capability. **Inference:**
+without separately demonstrated donated rights, replacing `GH_CREATE_VM`
+with raw HVCs does not make HLOS the privileged RM. No object-creation HVC was
+issued as a probe.
+
 The public RM log request (`0x00000005`) also returns raw error -1
 (`-EOPNOTSUPP`) on this firmware. Do not rely on it for diagnostics.
 
