@@ -1,12 +1,17 @@
 #!/bin/bash
-# Noble daemon plus one additive, claim-private matched-finger signal.
+# Suite-matched daemon plus one additive, claim-private matched-finger signal.
 # Reuse Ubuntu's runtime packaging and pair its unchanged PAM module.
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
 base=${UBUNTU_WORKDIR:-/root/ubuntu-gts9u}
 buildroot=${BUILDROOT_DIR:-$base/buildroot}
 out=${DEB_OUT_DIR:-$base/out/packages}
-version=$(cat "$repo/packaging/fprintd/version")
+suite=${UBUNTU_SUITE:-noble}
+case "$suite" in
+    noble) version=$(cat "$repo/packaging/fprintd/version") ;;
+    resolute) version=$(cat "$repo/packaging/fprintd/version-resolute") ;;
+    *) echo "unsupported fprintd suite: $suite" >&2; exit 2 ;;
+esac
 cache=$base/cache/fprintd-matched
 mkdir -p "$cache" "$out" "$buildroot/build"
 
@@ -17,12 +22,26 @@ fetch() {
     fi
     printf '%s  %s\n' "$checksum" "$cache/$name" | sha256sum --check
 }
-fetch fprintd_1.94.3.orig.tar.bz2 \
-    https://archive.ubuntu.com/ubuntu/pool/main/f/fprintd \
-    969777bacf353706747998e50e5d55050e6cec09117b2565a2e8681eba094a82
-fetch fprintd_1.94.3-1_arm64.deb \
-    https://ports.ubuntu.com/ubuntu-ports/pool/main/f/fprintd \
-    4d44dfed1910f2eb2abb9de62170b76c920bc801c8bc1fa12013a2b910fce5a1
+if [ "$suite" = resolute ]; then
+    source_url=https://ports.ubuntu.com/ubuntu-ports/pool/main/f/fprintd
+    fetch fprintd_1.94.5.orig.tar.bz2 "$source_url" \
+        597466f61fdd5bd1d8af4fe96d982eb07528d28e915200ad789279ed7d8dfb6d
+    fetch fprintd_1.94.5-4.debian.tar.xz "$source_url" \
+        587669733ded75b811ed04d5afc82ea3741e060b47938da9d969477b2e83dc88
+    fetch fprintd_1.94.5-4.dsc "$source_url" \
+        75bc3d56d70bacff47289e1e30783fb2f8f7fdd10da771aecfdbe84575767a7b
+    fetch fprintd_1.94.5-4_arm64.deb "$source_url" \
+        aeff991b9e8cdc0ab2e6c344798315b6bf1b2a9cc692372e8e82d783b704a2ab
+    original=$cache/fprintd_1.94.5-4_arm64.deb
+else
+    fetch fprintd_1.94.3.orig.tar.bz2 \
+        https://archive.ubuntu.com/ubuntu/pool/main/f/fprintd \
+        969777bacf353706747998e50e6cec09117b2565a2e8681eba094a82
+    fetch fprintd_1.94.3-1_arm64.deb \
+        https://ports.ubuntu.com/ubuntu-ports/pool/main/f/fprintd \
+        4d44dfed1910f2eb2abb9de62170b76c920bc801c8bc1fa12013a2b910fce5a1
+    original=$cache/fprintd_1.94.3-1_arm64.deb
+fi
 
 # The existing Noble arm64 buildroot is also used for the device/libfprint
 # packages. These are build dependencies ONLY, never installed on the tablet.
@@ -33,19 +52,25 @@ apt-get install -y --no-install-recommends build-essential meson ninja-build \
 '
 task=$(mktemp -d "$buildroot/build/fprintd-matched.XXXXXX")
 inside=/build/$(basename "$task")
-tar -xf "$cache/fprintd_1.94.3.orig.tar.bz2" -C "$task"
-source=$task/fprintd-v1.94.3
+if [ "$suite" = resolute ]; then
+    source=$task/source
+    dpkg-source -x "$cache/fprintd_1.94.5-4.dsc" "$source"
+else
+    tar -xf "$cache/fprintd_1.94.3.orig.tar.bz2" -C "$task"
+    source=$task/fprintd-v1.94.3
+fi
 patch -d "$source" -p1 < "$repo/packaging/fprintd/0001-matched-finger-signal.patch"
+inside_source=$inside/${source##*/}
 chroot "$buildroot" /bin/bash -ec "
-meson setup '$inside/fprintd-v1.94.3/build' '$inside/fprintd-v1.94.3' \
+meson setup '$inside_source/build' '$inside_source' \
     --prefix=/usr --libexecdir=libexec --localstatedir=/var --sysconfdir=/etc \
     -Dpam=false -Dman=false -Dgtk_doc=false -Dsystemd=false
-ninja -C '$inside/fprintd-v1.94.3/build' src/fprintd
-strip --strip-unneeded '$inside/fprintd-v1.94.3/build/src/fprintd'
+ninja -C '$inside_source/build' src/fprintd
+strip --strip-unneeded '$inside_source/build/src/fprintd'
 "
 
 stage=$task/package
-dpkg-deb --raw-extract "$cache/fprintd_1.94.3-1_arm64.deb" "$stage"
+dpkg-deb --raw-extract "$original" "$stage"
 install -m0755 "$source/build/src/fprintd" "$stage/usr/libexec/fprintd"
 install -m0644 "$source/src/net.reactivated.Fprint.Device.xml" \
     "$stage/usr/share/dbus-1/interfaces/net.reactivated.Fprint.Device.xml"

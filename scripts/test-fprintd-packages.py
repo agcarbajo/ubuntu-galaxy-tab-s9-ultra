@@ -38,7 +38,8 @@ class PackageTests(unittest.TestCase):
         subprocess.run(["bash", str(ROOT / "scripts/check-fprintd-package-pair.sh"),
                         str(DAEMON), str(PAM)], check=True)
         self.assertEqual(field(PAM, "Depends"), field(ORIGINAL, "Depends").replace(
-            "fprintd (= 1.94.3-1)", "fprintd (= " + field(DAEMON, "Version") + ")"))
+            "fprintd (= " + field(ORIGINAL, "Version") + ")",
+            "fprintd (= " + field(DAEMON, "Version") + ")"))
 
     def test_broken_pair_guard_rejects(self):
         result = subprocess.run(["bash", str(ROOT / "scripts/check-fprintd-package-pair.sh"),
@@ -85,7 +86,7 @@ class PackageTests(unittest.TestCase):
             return subprocess.run(command, capture_output=True, text=True)
 
     def test_apt_original_pair(self):
-        result = self.apt_check("1.94.3-1", ORIGINAL)
+        result = self.apt_check(field(ORIGINAL, "Version"), ORIGINAL)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_apt_detects_original_regression(self):

@@ -43,9 +43,11 @@ APT sources still point to Noble. Nothing was installed, updated, flashed,
 restarted or reconfigured on the tablet.
 
 An isolated arm64 Resolute mmdebstrap root was created in WSL. APT simulation
-resolved all 98 packages in the current base/desktop input list with status 0;
-this establishes archive availability only. It does not include the port's
-local `.deb` packages or show that GNOME starts. The archive selected
+resolved all 98 packages in the current base/desktop input list with status 0.
+An archive-only desktop root containing those 98 requests then built
+successfully; `dpkg --audit` was empty, `apt-get check` passed and
+`gnome-shell --version` reported 50.1. It does not include the port's local
+`.deb` packages or show that GNOME starts on the tablet. The archive selected
 `gnome-shell` 50.1-0ubuntu1.2, Mutter 50.1-0ubuntu2.4, GNOME Settings Daemon
 50.0-1ubuntu1 and libfprint 1:1.95.1+tod1-0ubuntu2 during this check.
 
