@@ -142,10 +142,14 @@ automatic brightness on GNOME 50. Do not reapply the Noble patches blindly.
 Rebuild the native
 `Gts9uPresented` bridge against Mutter 18 headers and runtime path, then
 exercise the fingerprint overlay's private Shell/GDM APIs against GNOME 50.
-The five project Shell extensions (fingerprint overlay, flashlight, dualboot,
-haptics and S Pen dock) currently list Shell 46 or at most 48 in their
-metadata; validate each with GNOME 50 before extending that list. Also check
-the extension recovery systemd drop-ins and lock-screen/OSK patches.
+The bridge now builds against Mutter 18. The exact Ubuntu GNOME Shell 50.1
+source package was extracted offline: all imports used by the five project
+extensions resolve, and the current keyboard, quick-settings, GDM verifier
+and lock-dialog members they rely on are still present. All 11 project
+extension JavaScript files parsed, and their metadata now allows Shell 50.
+This is a static check, not a live Shell/GDM validation; a compositor session
+must still exercise fingerprint, flashlight, dualboot, haptics and S Pen dock.
+Also check the extension recovery systemd drop-ins and lock-screen/OSK patches.
 
 Port the pinned Noble libfprint, fprintd/PAM, camera, sensor, NPU and device
 packages against Resolute's library ABIs. The device package explicitly
