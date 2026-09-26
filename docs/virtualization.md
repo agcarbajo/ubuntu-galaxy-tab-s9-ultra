@@ -455,6 +455,27 @@ absent, but they rule out following the published AVF/pvmfw commands as-is on
 this stock Android installation. No VM was created or started and no Android
 file, service or partition was changed.
 
+### Early EL2 switch research (2026-09-26)
+
+Qualcomm's [U-Boot v4 series](https://www.mail-archive.com/u-boot@lists.denx.de/msg579504.html)
+introduces an early TrustZone SMC (`0x02000121`, parameter `0x23`, exit-Gunyah
+selector `1`) that asks to exit Gunyah and enter EL2, potentially allowing
+native KVM instead of a Gunyah RM guest. Crucially, the series explicitly
+targets **Dragonwing** platforms and enables the option for **QCS9100**, not
+SM8550. The [v4 implementation](https://www.mail-archive.com/u-boot@lists.denx.de/msg579505.html)
+runs at U-Boot entry before normal EL register setup. There is no evidence
+that Samsung SM-X910 TrustZone authorizes this call or that its boot chain can
+enter an owner-controlled U-Boot in the required state. Calling an exit SMC
+from a running Ubuntu/Android kernel is not equivalent and risks terminating
+the active hypervisor and its system VMs. It has **not** been attempted here.
+
+This is an offline research lead, not a usable workaround. Before even
+considering a boot-image-only test, establish device-specific TrustZone
+support and a recovery path, and account for Samsung peripherals/security
+services that may depend on Gunyah. Preservation of Ubuntu, Wi-Fi,
+fingerprint and normal Android boot takes precedence over an unvalidated EL2
+switch. The current stock-firmware Gunyah and KVM gates above are unchanged.
+
 ### SM-X910 EZI2 offline firmware audit (2026-09-26)
 
 The live tablet was checked **read-only** over host-key-verified SSH: it is
