@@ -14,6 +14,10 @@ branch; the virtualisation worktree and branch are independent.
   Check the `resolute-updates` pocket at build time rather than assuming its
   package versions are fixed. [Ubuntu GNOME Shell package][shell],
   [Ubuntu Mutter package][mutter].
+- The current Resolute archive has `libfprint-2-2` 1:1.95.1+tod1, with a
+  separate `libfprint-2-tod1` runtime dependency. The port's Noble EL721
+  package targets 1:1.94.7 and cannot be carried across unchanged.
+  [Ubuntu libfprint package][libfprint].
 - kernel.org lists 7.2.8, released 2026-09-25, as its latest stable kernel as
   of this assessment. 7.3-rc4 is a prerelease. The current physical tablet
   boots the project's `7.2.0-rc3-dirty` kernel, not 7.2.8. [kernel.org][kernel].
@@ -26,6 +30,7 @@ branch; the virtualisation worktree and branch are independent.
 [changes]: https://documentation.ubuntu.com/release-notes/26.04/changes-since-previous-interim/
 [shell]: https://packages.ubuntu.com/resolute/arm64/gnome-shell
 [mutter]: https://packages.ubuntu.com/resolute/arm64/mutter
+[libfprint]: https://packages.ubuntu.com/resolute-updates/arm64/libfprint-2-2
 [kernel]: https://www.kernel.org/
 
 ## Current installation and upgrade contract
@@ -36,6 +41,13 @@ fingerprint identified `Samsung Galaxy Tab S9 Ultra Wi-Fi`, Ubuntu 24.04.5,
 `cgroup2fs`, the root is read/write with about 287 GiB available, and its
 APT sources still point to Noble. Nothing was installed, updated, flashed,
 restarted or reconfigured on the tablet.
+
+An isolated arm64 Resolute mmdebstrap root was created in WSL. APT simulation
+resolved all 98 packages in the current base/desktop input list with status 0;
+this establishes archive availability only. It does not include the port's
+local `.deb` packages or show that GNOME starts. The archive selected
+`gnome-shell` 50.1-0ubuntu1.2, Mutter 50.1-0ubuntu2.4, GNOME Settings Daemon
+50.0-1ubuntu1 and libfprint 1:1.95.1+tod1-0ubuntu2 during this check.
 
 The v1.2 updater preserves accounts, `/home`, app data and `/etc` by applying
 packages to the existing filesystem. It stages matching boot images, backs up
@@ -78,9 +90,11 @@ compatibility or a matched release image.
 
 The generated DTB is SHA-256
 `12998b0a25fc763ab1dc6ea58a91ff488c5808440582cadc5c659ef530d5ab3c`,
-177,828 bytes. The previous WSL output DTB was SHA-256
+177,828 bytes. The published v1.2.0 ZIP's `vendor_boot.img` contains a DTB
+with SHA-256
 `613b3bb7729d55d1c60aaeda348a098163b79aed1efbf24cdcc582ff0d58ccc4`,
-177,812 bytes. Decompilation shows **two changed `iommu-map` properties** on
+177,812 bytes (extracted using the Android v4 header offsets in
+`validate-bundle.sh`). Decompilation shows **two changed `iommu-map` properties** on
 SM8550 PCIe nodes: 7.2.8 adds a zero cell to each mapping. The board DTS was
 pinned, but upstream included DTS material changed. Samsung ABL has rejected
 even inert changes in this DTB before Linux can log a failure. Reusing the old
@@ -106,10 +120,17 @@ cross-compile or module load cannot establish physical compatibility.
 
 ### GNOME and custom userspace
 
-Rebuild the patched Mutter package from the exact pinned Resolute source;
-re-evaluate whether its plane/CTL patch is still needed on Mutter 50. Rebase
-the patched GNOME Settings Daemon ambient-brightness source package from 46
-to 50, with a package version above the archive version. Rebuild the native
+The exact Resolute Mutter 50.1 source rejected the existing plane patch's
+second hunk. Inspection found that `find_unassigned_plane()` already reuses
+the CRTC's assigned plane and avoids taking an active plane from another CRTC;
+this appears to supersede the port's GNOME 46 patch. The exact GNOME Settings
+Daemon 50.0 source also rejected the ambient patch because automatic
+brightness now sends a rate-limited target to GNOME Shell instead of writing
+the backlight directly. These are source-level reasons to use the archive
+packages initially, subject to regression tests of external displays and
+automatic brightness on GNOME 50. Do not reapply the Noble patches blindly.
+
+Rebuild the native
 `Gts9uPresented` bridge against Mutter 18 headers and runtime path, then
 exercise the fingerprint overlay's private Shell/GDM APIs against GNOME 50.
 The five project Shell extensions (fingerprint overlay, flashlight, dualboot,
