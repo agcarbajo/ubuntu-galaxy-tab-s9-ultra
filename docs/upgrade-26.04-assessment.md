@@ -94,12 +94,15 @@ The generated DTB is SHA-256
 with SHA-256
 `613b3bb7729d55d1c60aaeda348a098163b79aed1efbf24cdcc582ff0d58ccc4`,
 177,812 bytes (extracted using the Android v4 header offsets in
-`validate-bundle.sh`). Decompilation shows **two changed `iommu-map` properties** on
-SM8550 PCIe nodes: 7.2.8 adds a zero cell to each mapping. The board DTS was
-pinned, but upstream included DTS material changed. Samsung ABL has rejected
-even inert changes in this DTB before Linux can log a failure. Reusing the old
-DTB with the new kernel and Wi-Fi PCIe, or booting the changed DTB, needs a
-controlled physical test and cannot be inferred safe from this compilation.
+`validate-bundle.sh`). Decompilation showed **two changed `iommu-map`
+properties** on SM8550 PCIe nodes: 7.2.8 added a zero cell to each mapping.
+The board DTS was pinned, but its upstream include changed. Samsung ABL has
+rejected even inert structural changes in this DTB before Linux can log a
+failure. This branch now pins the four PCIe mapping entries to their booted
+layout. Rebuilding just the 7.2.8 board DTB after that adjustment produced
+SHA-256 `613b3bb7729d55d1c60aaeda348a098163b79aed1efbf24cdcc582ff0d58ccc4`:
+**byte-identical** to the published v1.2.0 DTB. The new kernel's ability to
+use that old mapping, especially for PCIe Wi-Fi, still needs a physical test.
 The kernel source
 contains 59 project patch files and 42 driver files, plus DTS, config fragments,
 signed modules and Android v4 boot packing. Build 7.2.8 in an isolated Linux

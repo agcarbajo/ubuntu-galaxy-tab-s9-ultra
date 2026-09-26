@@ -125,6 +125,12 @@ git -C "$repo" show \
 	"$fingerprint_baseline:kernel/dts/sm8550-samsung-gts9uwifi.dts" \
 	> "$board_dts"
 
+# The board DTS alone is insufficient to pin vendor_boot's DTB: the 7.2.8
+# SM8550 include changes two PCIe iommu-map properties. Retain the exact
+# booted DTB layout until ABL and PCIe can be tested on the device.
+python3 "$repo/scripts/pin-sm8550-pcie-iommu-map.py" \
+	"$kernel_tree/arch/arm64/boot/dts/qcom/sm8550.dtsi"
+
 if ! grep -q 'sm8550-samsung-gts9uwifi.dtb' \
 	"$kernel_tree/arch/arm64/boot/dts/qcom/Makefile"; then
 	patch -d "$kernel_tree" -p1 < "$pat/add-gts9uwifi-dtb.patch"
