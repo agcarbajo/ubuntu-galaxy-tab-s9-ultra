@@ -386,6 +386,50 @@ An owner-usable authenticated QTVM boot chain would be an alternative, but
 none has been identified in the audited inputs. The hardware CPU and GPU
 acceptance criteria remain unmet.
 
+### Cross-check against DroidVM and community issues (2026-09-26)
+
+This check pinned DroidVM at `5c896915789294e3dbb9af81d6a53ee5f436887b`
+and the pvmfw guide at `61ac570c2d467274d1d7d73605dcc685af6945b8`.
+DroidVM's `VMHypervisor` selects Gunyah when `/dev/gunyah` exists; its
+`gunyah.yaml` SoC table omits SM8550, but that table supplies capability
+defaults and is **not** a firmware enable switch. Adding SM8550 there would
+not make RM accept `VM_INIT`. The crosvm backend normally passes
+`--hypervisor gunyah --protected-vm-without-firmware`; it offers
+`--protected-vm` and a pseudo-unprotected mode as alternatives. The latter
+changes guest/host memory sharing **after** VM setup; it is not a way around
+Samsung's VMID allocation and initialization policy. The project's
+[UEFI firmware](https://github.com/Droid-VM/edk2-gunyah/blob/droidvm/README.md)
+has only SM8750/SM8850 listed as tested.
+
+The [pvmfw instructions](https://github.com/polygraphene/gunyah-on-sd-guide/blob/main/PVMFW.md)
+say 8 Gen 2/3 need `--protected-vm`, but their demonstrated host is actually
+an 8 Elite Lenovo. Signing a *guest* kernel using its embedded AOSP test key
+only addresses pvmfw's **later** AVB verification, once the protected VM and
+pvmfw have already started. It cannot replace the unsupported host-side
+`VM_SET_FIRMWARE_MEM` message observed in DZA1 and EZI2. In the guide's
+[OnePlus 11 / 8 Gen 2 issue](https://github.com/polygraphene/gunyah-on-sd-guide/issues/1),
+both protected modes fail to create a VM; the author explicitly says this
+generation was untested and suggests its older ioctl interface as another
+obstacle. That ioctl mismatch is distinct from our later RM failure.
+
+The [Galaxy S24 / SM8650 success](https://github.com/polygraphene/gunyah-on-sd-guide/issues/5)
+required host kernel memory-array and SCM VMID fixes plus huge pages; it
+shows a real Samsung Gunyah route on different firmware, but those patches
+do not add the missing SM8550 RM handlers. DroidVM's
+[8 Gen 3 failure report](https://github.com/Droid-VM/DroidVM/issues/4)
+similarly reaches RM `VM_INIT` before a memory/start failure. Qualcomm's
+[Tab S9 issue](https://github.com/quic/gunyah-hypervisor/issues/24)
+contains failed VM creation, and Qualcomm says its public hypervisor source
+omits the commercial-platform BSP. Building or replacing it from that repo
+is therefore not a drop-in SM-X910 solution.
+
+These reports establish *technical possibility on some Snapdragon devices*,
+not a working SM-X910 configuration. A discriminating next test, if Android
+is made available later, is a **read-only** inventory of its AVF feature
+properties, pvmfw image source, `/dev/gunyah` UAPI and RM/driver logs. It
+must not be interpreted as permission to flash `hyp`, modify the Android
+system, or run a VM that could trigger the known RM/SCM reset behavior.
+
 ### SM-X910 EZI2 offline firmware audit (2026-09-26)
 
 The live tablet was checked **read-only** over host-key-verified SSH: it is
