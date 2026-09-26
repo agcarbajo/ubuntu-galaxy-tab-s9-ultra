@@ -25,6 +25,10 @@ branch; the virtualisation worktree and branch are independent.
   legacy or hybrid cgroups cannot upgrade. Removable media now mount under
   `/run/media`, which requires an audit of any path assumptions in our helper
   scripts. [Ubuntu system changes][changes].
+- On 2026-09-26, Canonical's live `meta-release-lts` index lists Resolute
+  26.04.1 with `Supported: 0`. The normal LTS release-upgrader path is not
+  enabled for Noble clients at this point. Recheck this live index before
+  considering that path for distribution. [Ubuntu LTS upgrade index][meta].
 
 [ubuntu]: https://documentation.ubuntu.com/release-notes/26.04/
 [changes]: https://documentation.ubuntu.com/release-notes/26.04/changes-since-previous-interim/
@@ -32,6 +36,7 @@ branch; the virtualisation worktree and branch are independent.
 [mutter]: https://packages.ubuntu.com/resolute/arm64/mutter
 [libfprint]: https://packages.ubuntu.com/resolute-updates/arm64/libfprint-2-2
 [kernel]: https://www.kernel.org/
+[meta]: https://changelogs.ubuntu.com/meta-release-lts
 
 ## Current installation and upgrade contract
 
@@ -58,8 +63,12 @@ upgrades, 447 new packages and 17 removals. This is an **older reference
 rootfs**, not the v1.2.0 tablet, and the plan is not an approved transaction.
 The `apt-get -s dist-upgrade` command itself exited 1 after printing the
 plan: it reported broken configuration steps for `sudo-common` and
-`coreutils-from-uutils`. A staged transition or Ubuntu's release-upgrader
-ordering must be tested; the plain APT command is insufficient.
+`coreutils-from-uutils`. Ubuntu's 26.04 LTS notes document the `sudo-rs` and
+Rust coreutils transitions behind these package changes. A staged transition
+or Ubuntu's release-upgrader ordering must be tested; the plain APT command
+is insufficient. The official LTS release-upgrader is currently disabled for
+Resolute by the live index above, so it cannot yet supply a verified migration
+path. [Ubuntu 26.04 LTS summary][lts-summary].
 The removals include the old `ubuntu-gts9u-device`, Mutter 14 and camera SPA,
 which need matching replacements in the same plan. Four separate Ubuntu GNOME
 extensions (dock, appindicator, desktop icons and tiling assistant) are also
@@ -68,6 +77,7 @@ removed because Resolute consolidates them into
 explicit migration requirement so those desktop features survive.
 
 [ubuntu-extensions]: https://packages.ubuntu.com/resolute/gnome-shell-ubuntu-extensions
+[lts-summary]: https://documentation.ubuntu.com/release-notes/26.04/summary-for-lts-users/
 
 The v1.2 updater preserves accounts, `/home`, app data and `/etc` by applying
 packages to the existing filesystem. It stages matching boot images, backs up
