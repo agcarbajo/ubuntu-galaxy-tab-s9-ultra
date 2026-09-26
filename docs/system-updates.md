@@ -1,5 +1,10 @@
 # System updates
 
+> Ubuntu 26.04/GNOME 50 and Linux 7.2.8 are under assessment. The current
+> updater supports same-suite Noble releases only. See the
+> [26.04 upgrade assessment](upgrade-26.04-assessment.md); no 26.04 ZIP is
+> approved for installation or update.
+
 Tab Companion 1.3 adds an **Updates** page for the complete Ubuntu port, not
 just the application. Release v1.1.0 is the first release with the update
 payload. The v1.0.0 ZIP predates that format and cannot be installed through

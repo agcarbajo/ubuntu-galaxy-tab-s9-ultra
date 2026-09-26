@@ -21,12 +21,20 @@ def main():
     if not re.fullmatch(r"[0-9][A-Za-z0-9.+~]*", a.version):
         p.error("version must be a Debian-compatible release number without a leading v")
     repo = Path(__file__).resolve().parents[1]
+    rootfs = a.base / "rootfs"
+    os_release = (rootfs / "etc/os-release").read_text()
+    if not re.search(r'^ID=ubuntu$', os_release, re.M) or not re.search(
+            r'^VERSION_ID="24\.04"$', os_release, re.M):
+        raise SystemExit("Refusing update payload: this builder only supports Ubuntu 24.04/Noble")
+    sources = (rootfs / "etc/apt/sources.list.d/ubuntu.sources").read_text()
+    if not re.search(r'^Suites: noble noble-updates noble-backports$', sources, re.M) or not re.search(
+            r'^Suites: noble-security$', sources, re.M):
+        raise SystemExit("Refusing update payload: APT sources are not the expected Noble pockets")
     out = a.base / "out/update-payload"
     if out.exists():
         shutil.rmtree(out)
     debs = out / "debs"
     debs.mkdir(parents=True)
-    rootfs = a.base / "rootfs"
     kernel = a.base / "out/kernel-gts9uwifi"
     kernel_release = (kernel / "kernel.release").read_text().strip()
     # local-debs is the exact selection installed in this build, not a directory

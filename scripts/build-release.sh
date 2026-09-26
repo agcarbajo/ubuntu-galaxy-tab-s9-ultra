@@ -14,6 +14,11 @@ set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
 base=${UBUNTU_WORKDIR:-/root/ubuntu-gts9u}
 version=${RELEASE_VERSION:-$(tr -d '[:space:]' < "$repo/VERSION")}
+suite=${UBUNTU_SUITE:-noble}
+if [ "$suite" != noble ]; then
+	echo "unsupported release suite: $suite; the port packages and updater are still pinned to noble" >&2
+	exit 2
+fi
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
 	echo "invalid release version: $version" >&2
 	exit 2
@@ -46,6 +51,10 @@ kernel_release=$(cat "$kernel_out/kernel.release")
 
 step "2/7 Ubuntu $profile rootfs"
 if [ "${SKIP_ROOTFS:-0}" = 1 ] && [ -d "$rootfs/etc" ]; then
+	if ! grep -qx 'VERSION_ID="24.04"' "$rootfs/etc/os-release"; then
+		echo 'refusing to reuse a rootfs that is not Ubuntu 24.04' >&2
+		exit 2
+	fi
 	echo 'reusing the existing rootfs'
 else
 	GTS9U_PROFILE="$profile" \
