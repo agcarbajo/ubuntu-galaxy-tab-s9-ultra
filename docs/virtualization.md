@@ -430,6 +430,31 @@ properties, pvmfw image source, `/dev/gunyah` UAPI and RM/driver logs. It
 must not be interpreted as permission to flash `hyp`, modify the Android
 system, or run a VM that could trigger the known RM/SCM reset behavior.
 
+#### Stock Android cross-check (2026-09-26)
+
+The owner booted stock Android and granted root for read-only inspection over
+ADB. It reports SM-X910, Android 16 and kernel
+`5.15.178-android13-8-32143072-abX910XXS5DZA1`. Reading the first 10 MiB
+of its `hyp` partition gives SHA-256
+`dc03857f02055531c221476fa68e6e76006797c20b8e884a1ebd01cee3043b52`:
+**the same firmware** inspected from Ubuntu. The Android host has
+`/dev/gunyah` but no `/dev/kvm`. Its `ro.boot.hypervisor.protected_vm.supported`
+and `ro.boot.hypervisor.vm.supported` properties are unset; `pm list features`
+does not list an AVF/virtualization feature; `service list` has no
+`virtualizationservice`; and the mounted `com.android.virt` APEX has Java/JNI
+resources but no `bin/crosvm` or `bin/vm`. No `pvmfw`-named partition or
+image was found in the inspected Android partition and filesystem inventories.
+The loaded vendor `gunyah` module exposes `gh_vm_ioctl_set_fw_name` and
+`gh_vm_ioctl_get_fw_name` symbols, while `gh_rm_drv` exports
+`gh_rm_vm_auth_image`. The mounted firmware directory contains signed
+`cpusys_vm` and `oemvm` images, but no general-purpose guest or pvmfw image.
+These symbols and images are consistent with the authenticated QTVM path;
+they are not evidence that a caller may supply an arbitrary guest.
+These negative inventories do not prove every possible private interface is
+absent, but they rule out following the published AVF/pvmfw commands as-is on
+this stock Android installation. No VM was created or started and no Android
+file, service or partition was changed.
+
 ### SM-X910 EZI2 offline firmware audit (2026-09-26)
 
 The live tablet was checked **read-only** over host-key-verified SSH: it is
