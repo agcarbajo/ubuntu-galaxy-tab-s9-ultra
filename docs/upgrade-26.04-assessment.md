@@ -245,6 +245,21 @@ completed; `dpkg --audit` and `apt-get check` passed. The chroot had no running
 kernel or `/proc`, so depmod emitted expected missing-module-metadata warnings;
 this does not verify the module load or boot-time service activation.
 
+The five NPU session modules (`gts9u_cdsp`, `gts9u_dsp_stats`, `system_heap`,
+`gts9u_fastrpc_prepared` and `gts9u_cdsp_intents_probe`) also compiled and
+signed against the same 7.2.8 build. The FastRPC prepared-CDSP patch needed a
+7.2.8-specific context rebase; the build script chooses it by kernel release
+and requires zero-fuzz application. `modinfo` reports `7.2.8-dirty` and the
+build signing key for all five. This is a build-time ABI check, not a live CDSP
+or HTP inference test. Stock CDSP firmware staged from the owner's pinned
+images verified all 43 file hashes. The existing staged NPU runtime has 88
+manifest entries, with no missing files but two digest mismatches in its
+Bionic diagnostic subset (`probe-npu-htp` and `libcdsprpc.so`). The matching
+library build artifact exists, but the pinned probe binary is not in the local
+staging inputs. The NPU packager correctly rejected these inputs; a verified
+26.04 NPU `.deb` has not been produced. Do not relax the manifest or reuse an
+old signed module in the update payload.
+
 The current `libssc 0.4.4-gts9u3`, `hexagonrpcd 0.4.0` and patched
 `iio-sensor-proxy 3.9-gts9u3` packages were tested together in the isolated
 Resolute desktop root. After refreshing the full APT indices, the resolver

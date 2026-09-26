@@ -20,17 +20,21 @@ test -f "$build_dir/Module.symvers" || {
     echo "KERNEL_BUILD_DIR is not a prepared build for KERNEL_WORKTREE" >&2
     exit 1
 }
+patch_file=$repo/kernel/patches/fastrpc-prepared-cdsp-module.patch
+case "$(cat "$build_dir/include/config/kernel.release")" in
+    7.2.8*) patch_file=$repo/kernel/patches/fastrpc-prepared-cdsp-module-7.2.8.patch ;;
+esac
 # Check compatibility before doing any compilation.  This patch intentionally
 # targets the exact upstream FastRPC source used by the running kernel.
 cp "$kernel_tree/drivers/misc/fastrpc.c" "$module_dir/gts9u_fastrpc_prepared.c"
 patch --batch --fuzz=0 --dry-run -d "$module_dir" -p1 \
-    < "$repo/kernel/patches/fastrpc-prepared-cdsp-module.patch" >/dev/null || {
+    < "$patch_file" >/dev/null || {
     echo "KERNEL_WORKTREE does not match the FastRPC patch; use the exact source tree for this kernel" >&2
     exit 1
 }
 CDSP_OUT_DIR="$out/modules" bash "$repo/scripts/build-cdsp-module.sh"
 cp "$kernel_tree/drivers/misc/fastrpc.c" "$module_dir/gts9u_fastrpc_prepared.c"
-patch --batch --fuzz=0 -d "$module_dir" -p1 < "$repo/kernel/patches/fastrpc-prepared-cdsp-module.patch"
+patch --batch --fuzz=0 -d "$module_dir" -p1 < "$patch_file"
 cp "$repo/kernel/drivers/gts9u_cdsp_intents_probe.c" "$module_dir/"
 printf 'obj-m += gts9u_fastrpc_prepared.o gts9u_cdsp_intents_probe.o\n' > "$module_dir/Makefile"
 export PATH=/usr/lib/llvm-22/bin:$PATH
