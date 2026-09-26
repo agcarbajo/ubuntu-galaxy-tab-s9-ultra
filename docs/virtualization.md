@@ -430,6 +430,21 @@ The EZI2 `NON-HLOS.bin` FAT image also contains signed `cpusys_vm` and
 `oemvm` file is not an owner-supplied guest loader or proof that its signed
 payload can boot macOS; this package was inventoried offline only.
 
+An additional read-only check of the locally retained stock `NON-HLOS.bin`
+(SHA-256 `1aa9de73c4977ebd65caddd22e3afdba642d8b792f0b4153c9cec4e985f29845`)
+found `oemvm.mdt` plus five `oemvm.b00`–`b04` segments. The large `b03`
+segment (SHA-256
+`db6592747a89d780d0fcf515124432128019bc31cfeba92257b09156a4f5b1c0`)
+contains repeated `TEEGRIS_5` identifiers; the matching stock Android
+`teegris_oemvm.rc` starts TEEGRIS services. This is evidence that the signed
+`oemvm` image is tied to Samsung's security workload, not evidence of a
+general-purpose loader for owner-supplied guests. Do not launch a second copy
+as an experiment: that could disturb services used by the host. The current
+live `/hypervisor` device-tree subtree publishes the HLOS VM identity,
+watchdog and RM RPC queues; it does not advertise a separate guest-creation
+capability that could avoid the RM lifecycle gate. The latter is a limited
+device-tree inventory, not proof that no undiscovered interface exists.
+
 Even a future CPU backend would not solve the display requirement. Apple's
 [macOS VM platform documentation](https://developer.apple.com/documentation/virtualization/virtualize-macos-on-a-mac)
 describes macOS guests on Apple silicon Macs with a Mac hardware model and
