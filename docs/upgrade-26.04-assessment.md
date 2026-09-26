@@ -252,13 +252,17 @@ signed against the same 7.2.8 build. The FastRPC prepared-CDSP patch needed a
 and requires zero-fuzz application. `modinfo` reports `7.2.8-dirty` and the
 build signing key for all five. This is a build-time ABI check, not a live CDSP
 or HTP inference test. Stock CDSP firmware staged from the owner's pinned
-images verified all 43 file hashes. The existing staged NPU runtime has 88
-manifest entries, with no missing files but two digest mismatches in its
-Bionic diagnostic subset (`probe-npu-htp` and `libcdsprpc.so`). The matching
-library build artifact exists, but the pinned probe binary is not in the local
-staging inputs. The NPU packager correctly rejected these inputs; a verified
-26.04 NPU `.deb` has not been produced. Do not relax the manifest or reuse an
-old signed module in the update payload.
+images verified all 43 file hashes. The assembled runtime's 88 manifest files
+were checked without relaxing their pinned digests. Two stale Bionic staging
+files were replaced with the matching FastRPC library build artifact and a
+fresh diagnostic probe compiled from this repository's source with the pinned
+NDK r26d and QAIRT headers; its SHA-256 matched the existing release manifest
+exactly. `ubuntu-gts9u-npu_1.2.0_arm64.deb` then built successfully with the
+new signed modules. `test-npu-package.py` passed, APT planned zero removals,
+and installation in the disposable Resolute desktop root completed with empty
+`dpkg --audit` and passing `apt-get check`. CDSP startup and HTP inference
+still require a physical test. Do not reuse an old signed module in the update
+payload.
 
 The current `libssc 0.4.4-gts9u3`, `hexagonrpcd 0.4.0` and patched
 `iio-sensor-proxy 3.9-gts9u3` packages were tested together in the isolated
