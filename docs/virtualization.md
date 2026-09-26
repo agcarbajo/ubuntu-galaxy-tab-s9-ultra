@@ -386,6 +386,45 @@ An owner-usable authenticated QTVM boot chain would be an alternative, but
 none has been identified in the audited inputs. The hardware CPU and GPU
 acceptance criteria remain unmet.
 
+### SM-X910 EZI2 offline firmware audit (2026-09-26)
+
+The live tablet was checked **read-only** over host-key-verified SSH: it is
+the SM-X910 Wi-Fi, runs `7.2.0-rc3-dirty`, exposes `/dev/gunyah` but not
+`/dev/kvm`, and its `hyp` partition still hashes to
+`dc03857f02055531c221476fa68e6e76006797c20b8e884a1ebd01cee3043b52`.
+There was no reboot, partition write, service change or VM start.
+
+Samsung FUS returned the newer EUX version
+`X910XXS6EZI2/X910OXM6EZI2/X910XXS6EZI2/X910XXS6EZI2` for `SM-X910`.
+The official archive was downloaded to private PC scratch space and only
+its BL container and `hypvm.mbn.lz4` were extracted for offline analysis.
+The decompressed 10 MiB `hypvm.mbn` SHA-256 is
+`83673420c2d7dafe2abb960563b7b13ad6c863bdfef28f35d8f36a1d645c6644`.
+No Samsung firmware binary is committed or deployed to the tablet.
+
+`scripts/diagnostics/compare-gunyah-firmware.py` finds three embedded ARM64
+ELFs at the same offsets as DZA1; each has changed loadable content, including
+the nested RM at `0x1145c0`. Therefore EZI2 needed a fresh policy audit.
+`scripts/diagnostics/compare-gunyah-rm-gates.py` confirms that all 35 checked
+instructions in the allocation, authentication and firmware-RPC gates are
+byte-identical between DZA1 and EZI2. More directly, the hash-pinned offline
+Unicorn test `scripts/diagnostics/audit-gunyah-rm-dispatch.py` executes the
+EZI2 RM dispatcher prefix with a synthetic HLOS sender: ALLOC `0x56000001`
+and TIME_BASE `0x56000030` reach their known handlers; SET_BOOT_CONTEXT
+`0x56000031`, SET_FIRMWARE_MEM `0x56000032`, SET_DEMAND_PAGING `0x56000033`
+and SET_ADDRESS_LAYOUT `0x56000034` all reach the common unsupported reply
+with raw RM error `-1`. The same six-case regression passes on DZA1. The
+emulator stops before recognized handlers and stubs only diagnostic printf;
+this is not full RM execution or a live firmware call.
+
+EZI2 thus does not supply the missing pvmfw or KVM-on-Gunyah RFC messages in
+the audited HLOS path. Flashing it would be a non-boot-partition experiment
+with no demonstrated benefit and risks the owner's hybrid unlocked boot chain;
+do **not** flash it based on this evidence. The signed QTVM route, CPU backend
+for an owner-supplied macOS guest, and macOS GPU acceleration remain separate
+unresolved requirements. Generic diagnostics may enter future builds, but
+macOS-specific guest assets/configuration must remain installation-local.
+
 ### Guard private firmware discovery on generic guests
 
 Running the port kernel as a QEMU `virt` guest exposed an unconditional SMC in

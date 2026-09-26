@@ -86,6 +86,7 @@ def main():
     if len(reference) != len(candidate) or not reference:
         print("RESULT: ELF inventory changed; inspect the candidate manually")
         return
+    changed = False
     for index, ((_, old_segments), (_, new_segments)) in enumerate(
         zip(reference, candidate)
     ):
@@ -93,8 +94,12 @@ def main():
         new = [(flags, vaddr, size, digest) for _, flags, _, vaddr, size, digest in new_segments]
         if old != new:
             print(f"RESULT: ELF {index} loadable content or layout changed")
-            print("The previous RM dispatch result cannot be transferred to this image.")
-            return
+            changed = True
+        else:
+            print(f"RESULT: ELF {index} loadable content and layout match")
+    if changed:
+        print("The previous RM dispatch result cannot be transferred to this image.")
+        return
     print("RESULT: every discovered ARM64 ELF PT_LOAD segment matches")
     print("This compares bytes on disk; it does not prove a guest can execute.")
 
