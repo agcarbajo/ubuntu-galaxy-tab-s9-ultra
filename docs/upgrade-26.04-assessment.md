@@ -32,8 +32,10 @@ branch; the virtualisation worktree and branch are independent.
 
 Read-only SSH inspection after matching the previously saved ED25519 host-key
 fingerprint identified `Samsung Galaxy Tab S9 Ultra Wi-Fi`, Ubuntu 24.04.5,
-`7.2.0-rc3-dirty`, and updater state `complete` at v1.2.0. Nothing was
-installed, updated, flashed, restarted or reconfigured on the tablet.
+`7.2.0-rc3-dirty`, and updater state `complete` at v1.2.0. The cgroup mount is
+`cgroup2fs`, the root is read/write with about 287 GiB available, and its
+APT sources still point to Noble. Nothing was installed, updated, flashed,
+restarted or reconfigured on the tablet.
 
 The v1.2 updater preserves accounts, `/home`, app data and `/etc` by applying
 packages to the existing filesystem. It stages matching boot images, backs up
@@ -62,6 +64,29 @@ implement a distribution release upgrade:
 The candidate upstream base is **7.2.8** because it is stable and remains in
 the same 7.2 line as the physically validated rc3. That is a lower porting
 distance, not evidence that the hardware will still work. The kernel source
+tag `v7.2.8` resolved to commit
+`9a66fdc0d7fd55f54235524a73435af99051e46f` in the official stable tree.
+The isolated build lives under `/root/ubuntu-gts9u-2604` in WSL and uses a
+separate clone of this port; these are local diagnostic inputs, not shipped
+files. The build completed successfully with no rejected patch hunks. Its
+configuration selects the board panel, Goodix touch, SM5714 battery,
+Qualcomm UFS, DRM/MSM, ath12k and EL721 fingerprint drivers. The generated
+`Image.gz` is SHA-256 `c7e1d9799726e4a1fb5d1b9d48c6cca2400b4db539e89ce9e0af6097856b5b53`;
+57 modules have `7.2.8-dirty` vermagic and a nonempty build-time signer. This
+proves compilation and internal module version consistency, not hardware
+compatibility or a matched release image.
+
+The generated DTB is SHA-256
+`12998b0a25fc763ab1dc6ea58a91ff488c5808440582cadc5c659ef530d5ab3c`,
+177,828 bytes. The previous WSL output DTB was SHA-256
+`613b3bb7729d55d1c60aaeda348a098163b79aed1efbf24cdcc582ff0d58ccc4`,
+177,812 bytes. Decompilation shows **two changed `iommu-map` properties** on
+SM8550 PCIe nodes: 7.2.8 adds a zero cell to each mapping. The board DTS was
+pinned, but upstream included DTS material changed. Samsung ABL has rejected
+even inert changes in this DTB before Linux can log a failure. Reusing the old
+DTB with the new kernel and Wi-Fi PCIe, or booting the changed DTB, needs a
+controlled physical test and cannot be inferred safe from this compilation.
+The kernel source
 contains 59 project patch files and 42 driver files, plus DTS, config fragments,
 signed modules and Android v4 boot packing. Build 7.2.8 in an isolated Linux
 tree; keep the ABL-facing DTB and boot parameters fixed initially. Compare
@@ -99,8 +124,8 @@ simply be copied into a 26.04 rootfs. Recheck camera PipeWire/GStreamer,
 libcamera, sensor daemon and firmware dependency versions. Keep Tab Companion's
 UI and hardware behaviour unchanged except for the updater compatibility
 changes needed for the release transition and any GNOME 50 extension APIs.
-Check the tablet's actual cgroup hierarchy before attempting any userspace
-transition; no read-only cgroup check has yet been recorded for this session.
+Recheck the cgroup hierarchy during update preflight even though the current
+installation was observed using v2; users can alter boot parameters.
 
 ### Non-destructive updater migration
 
@@ -112,9 +137,12 @@ plan, including legitimate obsolete-package removals reviewed by name. Reject
 unexpected removals, unauthenticated archives and downgrades. Download and
 verify the full dependency set before restart; freeze sources and package
 versions in the offline plan. Snapshot `/etc`, APT sources, dpkg status and
-local package inventory as well as images/modules; define recovery for an
-interrupted or failing userspace migration. Check free space for both packages
-and backups. The existing `--no-remove` path must remain for same-suite
+local package inventory as well as images/modules. Those backups alone cannot
+roll back a partially replaced `/usr` or `/var/lib/dpkg`; a tested full
+system-root backup/restore path (while preserving user-owned data) or another
+equivalent transactional mechanism is required before an unattended crossgrade.
+Check free space for both packages and backups. The existing `--no-remove`
+path must remain for same-suite
 updates; do not relax it globally to force a crossgrade.
 
 After a simulated migration, verify accounts, UID/GID, `/home`, dconf,
@@ -122,6 +150,8 @@ fingerprint templates, NetworkManager profiles, SSH keys, boot sets and the
 Android saved images are untouched. Verify `dpkg --audit`, `apt-get check`,
 GNOME 50 login, updater status and a second same-suite update or repair. Keep
 a known-good v1.2.0 boot set and matching module set for TWRP recovery.
+Boot images alone are not a valid rollback after userspace has crossed into
+Resolute; the matching Noble system root must also be recoverable.
 
 ## Distribution gate
 
