@@ -163,6 +163,31 @@ changes needed for the release transition and any GNOME 50 extension APIs.
 Recheck the cgroup hierarchy during update preflight even though the current
 installation was observed using v2; users can alter boot parameters.
 
+The EL721 patch now applies without fuzz to Ubuntu's Resolute libfprint
+`1:1.95.1+tod1-0ubuntu2`. Its arm64 build produced both `libfprint-2-2` and
+the required `libfprint-2-tod1`; the latter cannot be disabled because the
+archive's libfprint references TOD symbols. The existing matched-finger patch
+also applies to fprintd `1.94.5-4`; matching custom fprintd and PAM packages
+built and passed the eight package compatibility tests. All four packages
+installed together in a disposable Resolute arm64 desktop root. APT planned
+zero removals, and `dpkg --audit` and `apt-get check` passed afterward. These
+tests verify ABI/package consistency, not a real QTEE exchange, enrollment,
+matching, GDM authentication or the secure kernel module on hardware.
+
+The archive-only Resolute root has [PipeWire 1.6.2][pipewire],
+[libcamera 0.7.0][libcamera] and [iio-sensor-proxy 3.8][iio]. The current
+custom camera SPA package declares
+`pipewire (<< 1.1)` and therefore cannot enter this root. Resolute's own
+`libspa-0.2-libcamera` targets libcamera 0.7 and may subsume some of the seven
+old PipeWire backports, but its interaction with the four V4L2 relays and the
+port's custom libcamera 0.7.2 needs a separate build and device check. The
+camera package also has file and ABI overlap with the archive's libcamera0.7.
+Do not weaken its version bound merely to satisfy APT.
+
+[pipewire]: https://packages.ubuntu.com/resolute/arm64/pipewire
+[libcamera]: https://packages.ubuntu.com/resolute/arm64/libcamera0.7
+[iio]: https://packages.ubuntu.com/resolute/arm64/iio-sensor-proxy
+
 ### Non-destructive updater migration
 
 Build a clean Resolute arm64 rootfs and exact matching local Debian packages
