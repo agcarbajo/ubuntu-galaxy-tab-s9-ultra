@@ -288,6 +288,7 @@ fi
 # module. Build these after libfprint has provided the pinned QTEE dependencies.
 bash "$repo/scripts/build-fingerprint-secure-owner.sh" >/dev/null
 bash "$repo/scripts/build-spss-irq-module.sh" >/dev/null
+bash "$repo/scripts/build-gnome-presented-bridge.sh" >/dev/null
 bash "$repo/scripts/build-device-package.sh" >/dev/null
 
 # Ship the same NPU runtime for fresh installs and in the update payload.

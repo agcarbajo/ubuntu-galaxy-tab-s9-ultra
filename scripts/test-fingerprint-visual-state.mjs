@@ -1,10 +1,13 @@
 // Pure visual lease tests. No GNOME session or fingerprint device is accessed.
 import assert from 'node:assert/strict';
-import {visualState, lightRequest} from '../packaging/ubuntu-gts9u-device/usr/share/gnome-shell/extensions/gts9u-fingerprint-overlay@agcarbajo/visualState.js';
+import {visualState, lightRequest, lightRelease} from '../packaging/ubuntu-gts9u-device/usr/share/gnome-shell/extensions/gts9u-fingerprint-overlay@agcarbajo/visualState.js';
 assert.equal(lightRequest('prepare 1000\n', 2000), 1000);
 for (const text of ['', 'prepare 0', 'prepare -1', 'prepare 2001', 'prepare 1000\nextra'])
     assert.equal(lightRequest(text, 2000), 0);
 assert.equal(lightRequest('prepare 1000\n', 1001000), 0);
+assert.equal(lightRelease('release 1000\n', 2000), 1000);
+assert.equal(lightRelease('prepare 1000\n', 2000), 0);
+assert.equal(lightRelease('release 1000\n', 1001000), 0);
 const cases = [
     ['', 1000, false, false, false],
     [null, 1000, false, false, false],

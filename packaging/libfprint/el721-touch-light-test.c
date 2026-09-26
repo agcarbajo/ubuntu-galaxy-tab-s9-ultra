@@ -63,6 +63,13 @@ static void new_action (void)
   g_assert_cmpint (el721_touch_light_step (&deadline, 181000, TRUE, FALSE), ==, EL721_LIGHT_WAIT);
 }
 
+static void presentation_poll (void)
+{
+  g_assert_cmpuint (el721_touch_light_poll_ms (FALSE), ==, 45);
+  g_assert_cmpuint (el721_touch_light_poll_ms (TRUE), ==, 5);
+  g_assert_cmpuint (el721_touch_light_poll_ms (FALSE), ==, 45);
+}
+
 int main (int argc, char **argv)
 {
   g_test_init (&argc, &argv, NULL);
@@ -73,5 +80,6 @@ int main (int argc, char **argv)
   g_test_add_func ("/el721/light/release-at-deadline", release_at_deadline);
   g_test_add_func ("/el721/light/duplicate-edge", duplicate_edge);
   g_test_add_func ("/el721/light/new-action", new_action);
+  g_test_add_func ("/el721/light/presentation-poll", presentation_poll);
   return g_test_run ();
 }

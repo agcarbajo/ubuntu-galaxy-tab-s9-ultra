@@ -72,6 +72,59 @@ does not intrude into it.
   libfprint gts9u48 must be installed together; a running GNOME 46 ES module
   cannot be refreshed by `ReloadExtension`, so a new login is required. Mock
   tests and Clutter signal introspection do not establish visual acceptance.
+  On 2026-09-24 the owner reported a short dark dip before and after a read:
+  the shade is painted before HBM is allowed, and previously stayed at full
+  opacity for the 50 ms guard after HBM exit. Device 2.59 / overlay 17 eases
+  those edges without acknowledging the pre-HBM frame until full compensation
+  has been painted. A renewed HBM restores the shade immediately. The owner
+  physically tested the new session and confirmed both dark dips remain,
+  although the background is normal during HBM. A read-only timeline measured
+  115 ms from request to Shell acknowledgement and another 69 ms to
+  `fod_mode=1` (reported after the panel's 35 ms settling delay). Device 2.60 /
+  overlay 18 plus libfprint gts9u49 is an installed candidate with 20 ms
+  fades, active-operation light-request monitoring and 5 ms polling only for
+  pending acknowledgements. Idle polling and the painted-frame/scanout gate
+  remain unchanged; do not remove that gate to hide the pre-HBM interval.
+  Both arm64 packages built from the pinned inputs in WSL Ubuntu. Paired tablet
+  APT simulation and installation completed without removals; the new GDM
+  greeter and the next user session report overlay 18. The owner still sees
+  the dark edges, perhaps briefly shorter; two read-only timelines measured
+  74/111 ms from request to compositor acknowledgement and about 10 ms from
+  HBM exit to request removal. The presentation gate is still necessary:
+  `after-paint` precedes display scanout, and the panel has no local HBM.
+  A 240 fps owner video additionally shows an approximately 58 ms dark exit
+  followed by an approximately 83 ms bright rebound. Device 2.61 / overlay 19
+  and libfprint gts9u50 now notify Shell before the synchronous panel-off
+  write so its 55 ms shade release overlaps the transition. The pair is
+  installed and overlay 19 is loaded in the greeter; optical improvement and
+  any new flash still require owner-visible testing. Do not interpret a
+  passing mock or package install as acceptance.
+  The second 240 fps video still shows the dip and rebound on 2.61. The
+  repository driver's `fod_mode_show` takes the same mutex as its off write,
+  which waits 35 ms; overlay 19 reads that attribute synchronously before its
+  short release hint. Device 2.62 / overlay 20 with libfprint gts9u51 uses an
+  asynchronous mode read and a separate expiring marker, plus read-only hint
+  diagnostics. Both packages are installed and overlay 20 is loaded. The
+  owner-supplied third 240 fps video still shows the entry dip and exit
+  rebound, while Shell reports the release hint processed after 1 ms. A
+  temporary kprobe on a later owner-triggered attempt measured successful
+  panel FOD writes taking 40 ms on and 43 ms off. The probes were removed.
+  These software timings do not identify the emitted-light transition;
+  verify the running kernel before treating the source-level race as a
+  measured hardware cause.
+  The owner found proportional darkening at low and high display brightness.
+  Device 2.63 / overlay 21 introduces a 70 KiB GObject bridge for Mutter's
+  native `presented` signal, then waits for two internal-panel presentations
+  after shade paint before releasing HBM. The old 35 ms timer is a fallback.
+  Arm64 compilation, live headless GJS import and Shell mocks passed. The
+  owner-authorized GDM restart loaded overlay 21; a real attempt used the
+  native gate in 20 ms without fallback, but the owner saw no further visual
+  improvement. Device 2.64 / overlay 22 retains compensation through the
+  measured ~43 ms panel HBM-off transaction and starts its 20 ms release fade
+  only once the asynchronous `fod_mode` read observes zero. It retains the
+  50 ms post-off visual lease. The package is installed and GDM has loaded
+  overlay 22. The owner tried it and reports no visible change, and chose to
+  stop further iterations. This does not establish a photometric root cause.
 - **The missing tiles were a global disable, not missing files.** The live
   account retained both UUIDs but had `disable-user-extensions=true`. The
   journal records `org.gnome.Shell-disable-extensions.service` running after

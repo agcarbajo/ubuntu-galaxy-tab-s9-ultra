@@ -1,7 +1,19 @@
 # SM-X910 hardware status under Ubuntu 24.04
 
-Last updated: 2026-09-24, after the speaker stereo-routing diagnosis and
-package installation; listening validation remains pending.
+Last updated: 2026-09-26, after deployment of fingerprint exit candidate 22;
+optical acceptance and speaker listening validation remain pending.
+
+Device 2.61 / fingerprint overlay 19 and libfprint gts9u50 were physically
+tested; a second 240 fps video still showed the exit dip and rebound. Device
+2.62 / overlay 20 and libfprint gts9u51 were loaded and physically tested.
+Shell received the release hint after 1 ms, but a third 240 fps video still
+shows the entry dip and exit rebound. The visual regression remains open.
+Device 2.63 / overlay 21 used the native presentation gate in a real attempt
+(20 ms, no fallback), but the owner saw no further visual improvement. Device
+2.64 / overlay 22 is now installed and loaded; it keeps compensation until
+panel HBM has turned off, then fades it. The owner tried it and reports that
+the darkening still looks the same. The visual regression remains open, and
+the owner chose to stop further work on it.
 
 Ubuntu **boots** on the tablet. This matrix explicitly separates what is
 inherited from what has been checked, and no component reaches ✅ without a real
@@ -83,7 +95,7 @@ accepted as proof that something works.
 | EF-DX920 pogo keyboard (STM32 I²C 0x2a) | ❌ | ✅ | confirmed | Requires V37 on the MCU. Measured: Galaxy AI 760, DeX 701, Finder 710, Settings 709, and Fn+F1–F11: 757, 758, 759, 705, 254, 172, 224, 225, 113, 114 and 115. Fn+F12 produces no raw event. Tab Companion keeps Fn+F6–F11's home/brightness/volume by default and can restore every value |
 | Other EF-DX900/910/915/925 covers | ❌ | 🟡 | measured | The X910's official DTS declares all five models. The driver already tells the identifiers and VERSION apart, and the app publishes name/model and adapts the AI row. Only the DX920 is available: enumeration, special keys and touchpads of the other four still await real hardware |
 | Fingerprint: EL721/UDFPS infrastructure | ❌ | ✅ | measured | Automatic secure startup after Ubuntu boot, authenticated encrypted template storage, touch-triggered illumination and sensor-aligned rotation handling are validated. The paired fprintd/PAM packages pass APT dependency checks and are included together in future builds. The secure DMA owner is boot-only and must not be restarted in place. Details in [fingerprint-reader.md](fingerprint-reader.md) |
-| Fingerprint: enrolment, verification and GDM | ❌ | ✅ | confirmed | The owner confirmed enrolment/deletion/re-enrolment through Ubuntu Settings and Tab Companion, correct acceptance and rejection, identification with a single held touch, GDM login and screen unlock. Both saved fingers work after reboot/resume; rotation, password fallback and portrait keyboard overlap handling were validated. Functional implementation accepted as complete on 2026-09-03 |
+| Fingerprint: enrolment, verification and GDM | ❌ | ✅ | confirmed | The owner confirmed enrolment/deletion/re-enrolment through Ubuntu Settings and Tab Companion, correct acceptance and rejection, identification with a single held touch, GDM login and screen unlock. Both saved fingers work after reboot/resume; rotation, password fallback and portrait keyboard overlap handling were validated. Functional enrolment/matching accepted on 2026-09-03, but optical presentation has an open visual regression: the owner still sees pre/post-capture darkening with Device 2.60 / overlay 18 and libfprint gts9u49, although the interval may be slightly shorter. This timing candidate is not accepted as a visual fix |
 | Haptics | ❌ | ✅ | confirmed | The stock DTS identifies a `dc_vibrator` COINDC on TLMM GPIO18 and mainline publishes it as `gpio-vibrator`/`FF_RUMBLE`. The owner confirmed the motor and the on-screen keyboard; Tab Companion offers 24/42/66 ms pulses. Notifications vibrate optionally, and a real test measured GPIO554 active for 64.5 ms |
 | Flash / torch | ❌ | ✅ | observed | PM8550 SID 1, channels 0+1 grouped by `leds-qcom-flash`; real illumination observed in strobe and torch modes. The **Flashlight** quick-settings tile is installed, active and physically tested, with a brightness submenu and state shared with the shortcut actions |
 | Cameras | ❌ | 🟡 | observed | All four sensors take pictures and go through `libcamera` simple plus the software ISP, appearing as exactly four normal, named V4L2 cameras. GNOME Camera, Chrome WebRTC and OBS opened and switched between all four with changing video, including after a cold boot; the main rear focuses with its DW9808. Switching between sensors is closed. Factory calibration and automatic photographic flash remain open |

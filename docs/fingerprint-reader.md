@@ -40,6 +40,139 @@ validation. The [multiple-fingerprint latency report](fingerprint-gallery-perfor
 documents the current independent-gallery cost and optional future optimization;
 it is not a remaining functional blocker.
 
+The owner reported a new visual regression on 2026-09-24: instead of the old
+flash, the rest of the display briefly darkens before and after capture.
+Device 2.59 / overlay 17 was installed and loaded by a new GNOME session.
+The owner confirmed that its 50 ms eased shade **did not fix** either dark dip;
+the rest of the display looks normal while HBM stays on. A read-only observer
+measured 115 ms from light request to Shell acknowledgement, then 69 ms until
+`fod_mode=1`; after HBM exit, the request disappeared in 11 ms and the visual
+lease another 41 ms later. These are sysfs/software times, not measured light.
+
+Device 2.60 / overlay 18 and libfprint gts9u49 are an **installed candidate**:
+the shade eases over 20 ms, Shell watches light-request changes only during
+an active biometric operation (retaining its 50 ms fallback), and libfprint
+checks the painted-frame acknowledgement every 5 ms only while one request
+is pending (retaining its 45 ms normal poll). The 35 ms scanout allowance and
+full-opacity painted-frame gate remain in place so HBM cannot run on an
+unprotected desktop. Versions move together. Offline tests do not prove that
+this is visually imperceptible. After a separately authorized GDM restart, the
+active greeter Shell reports overlay 18; the next user login starts its own
+new Shell. With global panel HBM, some compensation must precede illumination.
+Acceptance still requires the owner's physical login/unlock and Companion test at low and high
+brightness, rapid retries, cancel and rotation, including inspection for both
+new flashes and residual dimming.
+
+The owner's first physical trial of 2.60 confirmed that both dark edges remain;
+the interval may be slightly shorter. Two read-only captures on the active user
+Shell (which reported overlay 18) measured 74 and 111 ms from `prepare` to
+`presented`; the first showed `fod_mode=1` another 45 ms later, while the
+second sampled presentation and HBM together. After HBM returned to zero,
+the request cleared in about 10 ms and the active lease in another 41–51 ms.
+These are sampled software states, not emitted-light measurements. The panel
+has only global HBM, so the compositor still has to paint full compensation
+before enabling it. No further timing reduction is accepted as a visual fix
+without a safe display-presentation gate and owner-visible validation.
+Upstream Mutter 46 declares `ClutterStage::presented` with a `(skip)`
+introspection annotation and an opaque frame-info pointer, so replacing the
+35 ms allowance with a GNOME Shell GJS signal is not a direct extension-only
+change. See the [Mutter 46 stage signal declaration](https://raw.githubusercontent.com/GNOME/mutter/46.0/clutter/clutter/clutter-stage.c).
+
+An owner-supplied 240 fps slow-motion video on 2026-09-26 confirms the optical
+transition. The file is encoded at about 30 fps for slow playback and declares
+`com.android.capture.fps=240`. In a fixed background crop away from the
+finger and terminal, paired-frame Y averages fell from about 88 to 49 for
+frames 224–231 at entry. At exit they fell from about 98 to 80 across frames
+402–415, then rose to about 130 around frames 420–421 before settling. A crop
+outside the tablet stayed near 35–38 through the exit; a second on-screen
+crop showed the same direction of change. The lit finger target remains visible
+through about frame 427, overlapping the bright rebound. Assuming the slow
+file retains consecutive 240 fps captures, these are approximately 33 ms of
+entry darkening, 58 ms of exit darkening and 83 ms of bright rebound. Camera
+Y values are encoded image levels, not panel nits; the video does not by itself
+identify which DDIC command or compositor frame caused the rebound. A further
+timing-only shortening cannot be credited as a fix for this measured exit
+sequence. Investigate and validate the panel/compositor release ordering before
+another live package change.
+
+The next paired candidate, Device 2.61 / overlay 19 and libfprint gts9u50,
+addresses one identified scheduling gap on exit. Libfprint publishes a short
+`release` hint before its synchronous `fod_mode=0` write; Shell starts a 55 ms
+shade release while that panel transition is in progress. If the hint is missed,
+Shell retains the existing release after observing `fod_mode=0`. A failed panel
+write removes the hint and restores full compensation while HBM remains active.
+The painted-frame gate on entry is unchanged. This is a test of the exit
+transition, not evidence that the optical rebound has been eliminated; physical
+comparison with 2.60 is required.
+The paired packages are installed and the owner-authorized GDM restart loaded
+overlay 19 in the greeter. An owner-visible login/unlock and a repeat optical
+comparison are still pending.
+
+The owner's second 240 fps video with 2.61 loaded shows the same exit shape.
+In the same background crop, paired-frame camera Y falls from about 99 to 78
+around frames 886–899 and rebounds to about 134 at 904–905 before settling
+near 84 at 928. The terminal crop follows the same direction; a crop outside
+the tablet stays near 22. This does not establish a visual improvement over
+2.60, despite the owner's impression that the overall period since the first
+version may be shorter. The repository source reveals a plausible reason the
+early-release hint can be missed: Shell synchronously reads `fod_mode` first;
+the driver's show
+path takes the mutex held by `fod_mode_store` across the DCS transition and
+35 ms settle. If the running driver has this path, Shell's main loop can wait
+until the hint has already been removed before it processes the file event.
+Device 2.62 / overlay 20 and libfprint gts9u51 move the mode read to a single
+outstanding asynchronous operation and retain a separate, expiring release
+marker until the next contact. The owner authorized a GDM restart; the new
+greeter and user session loaded overlay 20. On the user's next physical test,
+the user-session diagnostics reported two release hints seen, with the last
+one processed 1 ms after publication. Thus the missed-hint race was real in
+source but does not explain the remaining visible transition.
+
+The owner's third 240 fps recording on 2.62 shows the effect clearly during a
+`sudo su` fingerprint attempt. In the same fixed tablet-background crop, the
+entry falls from camera Y around 48 to 11–20 for frames 214–221, then rises
+to the HBM plateau around 54–59. The exit falls from about 48–59 around frames
+935–942 to about 41–55, rebounds to about 79–84 around frames 949–955, and
+falls sharply around frame 968 before the normal image returns. These values
+are uncalibrated camera levels, with alternating frame exposure and changing
+scene content; assuming consecutive 240 fps capture, the entry dip is roughly
+33 ms and the rebound spans roughly 80–100 ms. This third video and the
+1 ms hint diagnostic show that the early release is happening but has not
+removed the optical dip or rebound. Do not credit overlay 20 as a visual fix.
+The owner compared low and high screen brightness and found the darkening in
+both, with its apparent strength proportional to the starting brightness.
+This is consistent with a whole-screen compensation interval; it does not
+identify the exact emitted-light timing or justify weakening the painted-frame
+gate. GNOME 46's `ClutterStage::after-paint` is explicitly before display, while
+`ClutterStage::presented` carries an opaque `G_TYPE_POINTER` argument and is
+skipped in introspection. GJS 1.80 refuses to convert a non-null pointer in
+an untyped signal argument to JavaScript. A native bridge or compositor change
+would be required before replacing the conservative 35 ms allowance with a
+measured presentation event; overlay 20 had no such bridge.
+See the [Mutter 46 signal definition](https://raw.githubusercontent.com/GNOME/mutter/46.0/clutter/clutter/clutter-stage.c)
+and [GJS 1.80 value conversion](https://raw.githubusercontent.com/GNOME/gjs/1.80.0/gi/value.cpp);
+the tablet runs GJS 1.80.2.
+
+Device 2.63 / overlay 21 tested the entry
+interval. A 70 KiB arm64 GObject bridge receives Mutter's native `presented`
+signal in C and re-emits only the introspectable `ClutterStageView` to Shell.
+After painting the full compensation shade, Shell waits for two presentations
+of the internal monitor before acknowledging libfprint. The existing 35 ms
+timer remains as a fallback if no second presentation arrives or the watcher
+cannot connect. It reports `nativeGatesUsed`, `fallbackGatesUsed` and
+`lastLightGateMs` through its read-only diagnostics. Source mocks verify
+two-frame gating, fallback and cancellation; the native library/typelib
+compile and import on the live tablet. After the authorised GDM restart, a
+real attempt used the native gate in 20 ms with no fallback, but the owner
+reported the darkening looked the same. Device 2.64 / overlay 22 therefore
+changes the exit: the early release hint is still counted but does not fade
+the shade while HBM remains active. Once asynchronous `fod_mode` observes
+zero, Shell starts the 20 ms fade and preserves the 50 ms post-off lease.
+This aims to remove the measured bright rebound during the ~43 ms panel
+HBM-off transaction. The package is installed and GDM has loaded it; the
+owner tried it and reports that the darkening still looks the same. No
+photometric improvement is claimed; the owner chose to stop further work.
+
 Focused offline regressions for changes to the presentation broker or Shell
 state are:
 
@@ -50,7 +183,15 @@ node --experimental-default-type=module scripts/test-fingerprint-visual-state.mj
 ```
 
 Run them on Linux with the real documented GJS/GObject signatures. They do not
-replace a new GNOME session and physical compositor validation.
+replace a new GNOME session and physical compositor validation. The pinned
+`scripts/build-libfprint-el721.sh` runs `el721-touch-light-test.c` against GLib
+in its arm64 build chroot; it also replaces existing build staging and must
+not be run without authorization for that cleanup. For an owner-initiated
+capture, `python3 scripts/diagnostics/test-fingerprint-presentation.py --observe`
+reads request/ack/HBM transitions for at most 60 seconds without root, a panel
+write or access to biometric contents. Its default no-argument mode is a
+different, root-only synthetic presentation test and must not be confused with
+this read-only observer.
 
 The detailed checkpoints below preserve the investigation history. This status
 supersedes their earlier encryption failures, pending tests and percentage

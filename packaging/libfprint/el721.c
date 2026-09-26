@@ -23,10 +23,10 @@
 #define EL721_VISUAL_STATE "/run/gts9u-fingerprint/active"
 #define EL721_UI_LEASE "/run/gts9u-fingerprint-ui/ready"
 #define EL721_LIGHT_REQUEST "/run/gts9u-fingerprint/light"
+#define EL721_LIGHT_RELEASE "/run/gts9u-fingerprint/last-release"
 #define EL721_LIGHT_PRESENTED "/run/gts9u-fingerprint-ui/presented"
 #define EL721_BATTERY_TEMP "/sys/class/power_supply/battery/temp"
 #define EL721_BATTERY_TEMP_FALLBACK "/sys/class/power_supply/sm5714-battery/temp"
-#define EL721_POLL_MS 45
 #define EL721_ACTION_TIMEOUT_US (90 * G_USEC_PER_SEC)
 #define EL721_UDFPS_REFRESH_US (5 * G_USEC_PER_SEC)
 #define EL721_ENROLL_STAGES 17
@@ -154,8 +154,24 @@ udfps_publish (FpiDeviceEl721 *self, GError **error)
 static gboolean
 udfps_light (FpiDeviceEl721 *self, gboolean enabled, GError **error)
 {
+  gboolean announcing_release = !enabled && self->udfps_lit;
+
+  if (announcing_release)
+    {
+      /* Announce the DDIC transition before its synchronous 35 ms settle.
+       * Shell can start restoring the desktop while the panel switches back.
+       * Failure to announce must never prevent switching HBM off. */
+      g_autofree gchar *release = g_strdup_printf ("release %" G_GINT64_FORMAT "\n",
+                                                   g_get_monotonic_time ());
+      g_file_set_contents_full (EL721_LIGHT_RELEASE, release, -1,
+                                G_FILE_SET_CONTENTS_CONSISTENT, 0644, NULL);
+    }
   if (!write_child (EL721_PANEL, "fod_mode", enabled ? "1\n" : "0\n", error))
-    return FALSE;
+    {
+      if (announcing_release)
+        g_unlink (EL721_LIGHT_RELEASE);
+      return FALSE;
+    }
   self->udfps_lit = enabled;
   self->udfps_refreshed = enabled ? g_get_monotonic_time () : 0;
   if (!enabled)
@@ -171,6 +187,7 @@ udfps_prepare_light (FpiDeviceEl721 *self, GError **error)
 {
   gint64 token = g_get_monotonic_time ();
   g_autofree gchar *request = g_strdup_printf ("prepare %" G_GINT64_FORMAT "\n", token);
+  g_unlink (EL721_LIGHT_RELEASE);
   if (!g_file_set_contents_full (EL721_LIGHT_REQUEST, request, -1,
                                 G_FILE_SET_CONTENTS_CONSISTENT, 0644, error))
     return FALSE;
@@ -203,6 +220,7 @@ udfps_begin (FpiDeviceEl721 *self, GError **error)
   self->enroll_arm_status = 0;
   self->capture_deadline = 0;
   self->visual_refreshed = 0;
+  g_unlink (EL721_LIGHT_RELEASE);
   if (!udfps_light (self, FALSE, error) || !udfps_publish (self, error))
     {
       write_child (EL721_TOUCH, "fod_enable", "0\n", NULL);
@@ -354,7 +372,8 @@ static gboolean initialize_identify (FpiDeviceEl721 *self, GError **error);
 static void
 schedule_poll (FpiDeviceEl721 *self)
 {
-  self->poll_source = fpi_device_add_timeout (FP_DEVICE (self), EL721_POLL_MS,
+  guint interval = el721_touch_light_poll_ms (self->light_requested != 0);
+  self->poll_source = fpi_device_add_timeout (FP_DEVICE (self), interval,
                                                poll_action, NULL, NULL);
   g_source_ref (self->poll_source);
 }

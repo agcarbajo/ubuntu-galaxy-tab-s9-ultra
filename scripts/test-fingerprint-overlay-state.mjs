@@ -8,16 +8,18 @@ const source = readFileSync(new URL('../packaging/ubuntu-gts9u-device/usr/share/
     .replace(/^import .*;\r?\n/gm, '')
     .replace('export default class', 'return class');
 const timers = new Map();
+const intervals = new Map();
 let nextTimer = 1;
 const GLib = {
     get_monotonic_time() { return 1000; },
     PRIORITY_DEFAULT: 0, SOURCE_CONTINUE: true, SOURCE_REMOVE: false,
-    timeout_add(_priority, _interval, callback) {
+    timeout_add(_priority, interval, callback) {
         timers.set(nextTimer, callback);
+        intervals.set(nextTimer, interval);
         return nextTimer++;
     },
     timeout_add_seconds(...args) { return this.timeout_add(...args); },
-    source_remove(id) { timers.delete(id); },
+    source_remove(id) { timers.delete(id); intervals.delete(id); },
 };
 const Main = {panel: {statusArea: {quickSettings: {menu: {close() {
     assert.fail('Overlay must not close a native menu');
@@ -36,10 +38,12 @@ overlay._panel = {};
 overlay._uiAllowed = true;
 overlay._uiReadyUntil = 1500000;
 overlay._pulseAvailability = () => {};
+overlay._refreshPanelFod = () => {};
 overlay._syncAuthKeyboard = () => {};
 overlay._updateFeedback = () => {};
 overlay._position = () => {};
 overlay._updateShade = () => {};
+overlay._shadeOpacity = () => 135;
 let state = {active: true, illuminated: false};
 overlay._visualState = () => state;
 overlay._panelFodActive = () => state.illuminated;
@@ -52,6 +56,7 @@ overlay._shade.show();
 overlay._enforceInactive();
 assert(!overlay._shade.visible);
 overlay._startPanelPoll();
+assert.equal(intervals.get(overlay._panelPollId), 50);
 const poll = timers.get(overlay._panelPollId);
 state = {active: true, illuminated: true};
 poll();
@@ -135,7 +140,7 @@ overlay._seat = {get_touch_mode: () => true};
 overlay._physicalKeyboard = true;
 overlay._session = {Active: true};
 const diagnostics = JSON.parse(overlay.GetDiagnostics());
-assert.equal(diagnostics.version, 16);
+assert.equal(diagnostics.version, 22);
 assert.equal(diagnostics.sessionActive, true);
 assert.equal(diagnostics.targetReactive, false);
 assert.equal(diagnostics.keyboardExists, false);
@@ -197,6 +202,19 @@ console.log('PASS: 5 actual sysfs inventory/hotplug paths with closed enumeratio
 
 let paintCallback;
 let presentations = 0;
+let presentNow = 1000;
+const watchers = [];
+const Gts9uPresented = {PresentedWatcher: {new() {
+    const watcher = {
+        stopped: false,
+        connect(name, callback) { assert.equal(name, 'presented'); this.callback = callback; return 1; },
+        disconnect(id) { assert.equal(id, 1); this.callback = null; },
+        stop() { this.stopped = true; },
+        emit(view) { this.callback?.(this, view); },
+    };
+    watchers.push(watcher);
+    return watcher;
+}}};
 const stage = {
     connect(name, callback) { assert.equal(name, 'after-paint'); paintCallback = callback; return 1; },
     disconnect(id) { assert.equal(id, 1); paintCallback = null; },
@@ -206,7 +224,7 @@ const presentationGio = {DBusCallFlags: {NONE: 0}, DBus: {system: {call(...args)
     assert.deepEqual(args[4].value, ['c1', 1000]);
     presentations++;
 }}}};
-const presentationGLib = {...GLib, Variant: class {
+const presentationGLib = {...GLib, get_monotonic_time: () => presentNow, Variant: class {
     constructor(type, value) { assert.equal(type, '(st)'); this.value = value; }
 }};
 const Mtk = {Rectangle: class {}};
@@ -214,25 +232,34 @@ const view = x => ({get_layout(rectangle) {
     assert(rectangle instanceof Mtk.Rectangle, 'GNOME 46 requires a caller-allocated rectangle');
     Object.assign(rectangle, {x, y: 0});
 }});
-const PresentationType = new Function('Extension', 'GLib', 'Gio', 'global', 'Mtk', source)(
-    class {}, presentationGLib, presentationGio, {stage}, Mtk);
+const PresentationType = new Function('Extension', 'GLib', 'Gio', 'global', 'Mtk', 'Gts9uPresented', source)(
+    class {}, presentationGLib, presentationGio, {stage}, Mtk, Gts9uPresented);
 const preparing = new PresentationType();
+preparing._nativeGatesUsed = 0;
+preparing._fallbackGatesUsed = 0;
 preparing._panel = {monitor: {x: 0, y: 0}};
 preparing._session = {Id: 'c1'};
 preparing._canShowTarget = () => true;
 preparing._lightRequest = () => 1000;
 preparing._actor = {...actor(), visible: true, queue_redraw() {}};
 preparing._shade = {...actor(), visible: true, queue_redraw() {}};
+preparing._shadeReady = true;
 preparing._requestLightPresentation(1000);
 assert.equal(presentations, 0);
 paintCallback(stage, view(2000));
 assert(paintCallback);
 paintCallback(stage, view(0));
 assert.equal(presentations, 0);
-const present = timers.get(preparing._lightPresentId);
-timers.delete(preparing._lightPresentId);
-present();
+const firstWatcher = watchers.at(-1);
+firstWatcher.emit(view(0));
+assert.equal(presentations, 0);
+presentNow = 10_000;
+firstWatcher.emit(view(0));
 assert.equal(presentations, 1);
+assert.equal(preparing._nativeGatesUsed, 1);
+assert.equal(preparing._lastLightGateMs, 9);
+assert(firstWatcher.stopped);
+assert(!preparing._lightPresentId);
 preparing._cancelLightPresentation();
 preparing._requestLightPresentation(1000);
 paintCallback(stage, view(0));
@@ -241,7 +268,16 @@ preparing._cancelLightPresentation();
 stale();
 assert.equal(presentations, 1);
 assert.equal(timers.size, 0);
-console.log('PASS: compensation acknowledgement follows internal-panel paint; cancellation revokes pending acknowledgement');
+preparing._requestLightPresentation(1000);
+paintCallback(stage, view(0));
+const fallbackTimer = timers.get(preparing._lightPresentId);
+timers.delete(preparing._lightPresentId);
+fallbackTimer();
+assert.equal(presentations, 2);
+assert.equal(preparing._fallbackGatesUsed, 1);
+assert(watchers.at(-1).stopped);
+preparing._cancelLightPresentation();
+console.log('PASS: two native presentations acknowledge the painted shade; 35 ms fallback and cancellation remain');
 
 let now = 1000;
 let hbm = true;
@@ -250,6 +286,7 @@ const VisualType = new Function('Extension', 'GLib', 'Gio', 'visualState', sourc
     class {}, {...GLib, get_monotonic_time: () => now}, leaseGio, visualState);
 const exitState = new VisualType();
 exitState._panelFodActive = () => hbm;
+exitState._lightRelease = () => 0;
 exitState._canShowTarget = () => true;
 exitState._lightRequest = () => 0;
 assert.equal(exitState._visualState().illuminated, true);
@@ -262,3 +299,207 @@ now = 52000;
 assert.equal(exitState._visualState().illuminated, false);
 assert.equal(exitState._visualState().active, false);
 console.log('PASS: compensation outlives HBM exit even after the active lease is removed');
+
+// The panel holds its mode mutex through the 35 ms off settle. A pending
+// sysfs read must not block Shell from consuming the separate release hint.
+let finishModeRead;
+let modeReads = 0;
+let releaseFade;
+let asyncSyncs = 0;
+const asyncGio = {File: {new_for_path(path) {
+    if (path.endsWith('/fod_mode')) return {
+        load_contents_async(_cancellable, callback) {
+            modeReads++;
+            finishModeRead = () => callback(this, {});
+        },
+        load_contents_finish() { return [true, new TextEncoder().encode('0\n')]; },
+    };
+    return {load_contents() {
+        const text = path.endsWith('/last-release') ? 'release 1000\n' : '';
+        return [true, new TextEncoder().encode(text)];
+    }};
+}}};
+const AsyncType = new Function('Extension', 'GLib', 'Gio', 'visualState', 'lightRelease', source)(
+    class {}, {...GLib, get_monotonic_time: () => 2000}, asyncGio,
+    visualState, (text, current) => {
+        assert.equal(text, 'release 1000\n');
+        assert.equal(current, 2000);
+        return 1000;
+    });
+const asyncExit = new AsyncType();
+asyncExit._displayCancellable = {};
+asyncExit._hbmMode = true;
+asyncExit._hbmWasActive = true;
+asyncExit._releaseHintsSeen = 0;
+asyncExit._shade = {visible: true};
+asyncExit._fadeShade = (opacity, duration) => { releaseFade = [opacity, duration]; };
+asyncExit._canShowTarget = () => false;
+asyncExit._lightRequest = () => 0;
+asyncExit._syncVisualState = () => { asyncSyncs++; };
+asyncExit._refreshPanelFod();
+asyncExit._refreshPanelFod();
+assert.equal(modeReads, 1); // At most one worker blocked on the panel mutex.
+asyncExit._visualState();
+assert.equal(releaseFade, undefined); // Do not expose global HBM before DDIC-off.
+assert.equal(asyncExit._releaseHintsSeen, 1);
+assert.equal(asyncExit._lastReleaseHintDelayMs, 1);
+finishModeRead();
+assert.equal(asyncExit._hbmMode, false);
+assert.equal(asyncSyncs, 1);
+asyncExit._visualState();
+assert.deepEqual(releaseFade, [0, 20]); // Fade only after mode zero.
+console.log('PASS: release hint is processed while asynchronous panel read is pending');
+
+let fadeNow = 1000;
+let fadeHbm = false;
+let fadedPresentations = 0;
+let fadePaint;
+const fadeStage = {
+    connect(_name, callback) { fadePaint = callback; return 1; },
+    disconnect() { fadePaint = null; },
+};
+const FadeType = new Function('Extension', 'GLib', 'Gio', 'global', 'Mtk', 'Clutter', 'visualState', 'Gts9uPresented', source)(
+    class {}, {...presentationGLib, get_monotonic_time: () => fadeNow},
+    {File: leaseGio.File, DBusCallFlags: {NONE: 0}, DBus: {system: {call() { fadedPresentations++; }}}},
+    {stage: fadeStage}, Mtk, {AnimationMode: {EASE_IN_OUT_QUAD: 1}}, visualState,
+    Gts9uPresented);
+const fading = new FadeType();
+fading._panel = {monitor: {x: 0, y: 0}};
+fading._session = {Id: 'c1'};
+fading._canShowTarget = () => true;
+fading._lightRequest = () => 1000;
+fading._panelFodActive = () => fadeHbm;
+fading._lightRelease = () => 0;
+fading._shadeOpacity = () => 135;
+fading._actor = {...actor(), visible: true, queue_redraw() {}};
+fading._icon = actor();
+fading._shade = {...actor(), opacity: 0, queue_redraw() {},
+    ease(options) { this.transition = options; },
+    finish() { this.opacity = this.transition.opacity; this.transition.onComplete(); }};
+fading._setIllumination(true);
+assert.equal(fading._shade.opacity, 0);
+assert.equal(fading._shade.transition.opacity, 135);
+assert.equal(fading._shade.transition.duration, 20);
+fading._updateShade();
+assert.equal(fading._shade.opacity, 0);
+fading._requestLightPresentation(1000);
+fadePaint(fadeStage, view(0));
+assert.equal(fading._lightPresentId, undefined);
+fading._shade.finish();
+assert.equal(fading._shadeReady, true);
+fadePaint(fadeStage, view(0));
+assert(fading._lightPresentId);
+const fadePresent = timers.get(fading._lightPresentId);
+timers.delete(fading._lightPresentId);
+fadePresent();
+assert.equal(fadedPresentations, 1);
+fading._cancelLightPresentation();
+fading._stopBrightnessPoll();
+fadeHbm = true;
+fading._visualState();
+fading._lightRelease = () => 1500;
+fadeNow = 1500;
+fading._visualState();
+assert.equal(fading._shade.opacity, 135);
+assert.equal(fading._shade.transition.opacity, 135);
+fading._lightRelease = () => 0;
+fading._visualState();
+assert.equal(fading._shade.opacity, 135);
+fadeHbm = false;
+fadeNow = 2000;
+assert.equal(fading._visualState().illuminated, true);
+assert.equal(fading._shade.transition.opacity, 0);
+assert.equal(fading._shade.transition.duration, 20);
+const obsoleteRelease = fading._shade.transition.onComplete;
+fading._lightRequest = () => 2000;
+fading._requestLightPresentation(2000);
+assert.equal(fading._shade.transition.opacity, 135);
+obsoleteRelease();
+assert.equal(fading._shadeReady, false);
+fading._shade.finish();
+fadePaint(fadeStage, view(0));
+assert(fading._lightPresentId);
+fading._cancelLightPresentation();
+fadeHbm = true;
+fading._visualState();
+fadeHbm = false;
+fading._visualState();
+const interruptedRelease = fading._shade.transition.onComplete;
+fadeHbm = true;
+fading._visualState();
+assert.equal(fading._shade.opacity, 135);
+interruptedRelease();
+assert.equal(fading._shadeReady, true);
+fadeHbm = false;
+fading._visualState();
+assert.equal(fading._shade.transition.opacity, 0);
+fading._shade.finish();
+assert.equal(fading._shade.opacity, 0);
+fading._fadeShade(135);
+const obsoletePrepare = fading._shade.transition.onComplete;
+fading._finishHide();
+obsoletePrepare();
+assert.equal(fading._shadeReady, false);
+assert.equal(timers.size, 0);
+console.log('PASS: compensated fades gate presentation, release, rapid retry and cleanup');
+
+let changed;
+let canceled = false;
+let refreshes = 0;
+const WatchType = new Function('Extension', 'Gio', source)(class {}, {
+    FileMonitorFlags: {NONE: 0},
+    File: {new_for_path(path) {
+        assert.equal(path, '/run/gts9u-fingerprint');
+        return {monitor_directory(flags, cancellable) {
+            assert.equal(flags, 0);
+            assert.equal(cancellable, null);
+            return {connect(name, callback) {
+                assert.equal(name, 'changed');
+                changed = callback;
+            }, cancel() { canceled = true; }};
+        }};
+    }},
+});
+const watcher = new WatchType();
+watcher._syncVisualState = () => { refreshes++; };
+watcher._startVisualMonitor();
+const path = name => ({get_basename: () => name});
+changed(null, path('other'), null);
+assert.equal(refreshes, 0);
+changed(null, path('light'), null);
+changed(null, path('light.new'), path('light'));
+changed(null, path('active'), null);
+assert.equal(refreshes, 3);
+watcher._stopVisualMonitor();
+assert(canceled);
+changed(null, path('light'), null);
+assert.equal(refreshes, 3);
+const integration = new WatchType();
+let watchedState = {active: true, illuminated: false, request: 0};
+let requestSeen = 0;
+integration._visualState = () => watchedState;
+integration._active = false;
+integration._illuminated = false;
+integration._canShowTarget = () => true;
+integration._actor = actor();
+integration.Show = () => { integration._active = true; };
+integration._finishHide = () => { integration._active = false; integration._stopVisualMonitor(); };
+integration._setIllumination = lit => { integration._illuminated = lit; };
+integration._requestLightPresentation = token => { requestSeen = token; };
+integration._updateFeedback = () => {};
+integration._syncVisualState();
+assert(integration._visualMonitor);
+watchedState = {active: true, illuminated: true, request: 3000};
+changed(null, path('light'), null);
+assert.equal(integration._illuminated, true);
+assert.equal(requestSeen, 3000);
+watchedState = {active: false, illuminated: false, request: 0};
+integration._syncVisualState();
+assert.equal(integration._visualMonitor, null);
+const FailingWatchType = new Function('Extension', 'Gio', source)(class {}, {
+    File: {new_for_path() { throw Error('runtime directory unavailable'); }},
+});
+const fallback = new FailingWatchType();
+fallback._startVisualMonitor();
+assert.equal(fallback._visualMonitorFailed, true);
+console.log('PASS: active capture watches lease/request changes; idle and failures keep the poll fallback');

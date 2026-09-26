@@ -6,6 +6,14 @@
  * the white target before the synchronous secure capture. This is a bounded
  * settling interval, not an acknowledgement from the compositor. */
 #define EL721_LIGHT_SETTLE_US (180 * 1000)
+#define EL721_POLL_MS 45
+#define EL721_PRESENT_POLL_MS 5
+
+static inline guint
+el721_touch_light_poll_ms (gboolean awaiting_presentation)
+{
+  return awaiting_presentation ? EL721_PRESENT_POLL_MS : EL721_POLL_MS;
+}
 
 typedef enum
 {

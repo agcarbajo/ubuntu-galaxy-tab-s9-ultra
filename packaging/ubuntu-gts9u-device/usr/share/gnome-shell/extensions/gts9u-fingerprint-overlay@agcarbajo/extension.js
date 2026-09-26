@@ -4,13 +4,14 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import St from 'gi://St';
 import Mtk from 'gi://Mtk';
+import Gts9uPresented from 'gi://Gts9uPresented?version=1.0';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import {sensorGeometry, panelMonitor} from './geometry.js';
 import {ShellUserVerifier} from 'resource:///org/gnome/shell/gdm/util.js';
 import {recoverClosedCancellation} from './authRecovery.js';
-import {visualState, lightRequest} from './visualState.js';
+import {visualState, lightRequest, lightRelease} from './visualState.js';
 import {keyboardCovers} from './keyboardGuard.js';
 import {AuthKeyboard, isTypingKeyboard} from './authKeyboard.js';
 import {KeyboardEventGuard} from './keyboardEvents.js';
@@ -21,6 +22,7 @@ const OBJECT_PATH = '/io/github/agcarbajo/Gts9uFingerprintOverlay';
 const BACKLIGHT = '/sys/class/backlight/ae94000.dsi.0';
 const ACTIVE_LEASE = '/run/gts9u-fingerprint/active';
 const LIGHT_REQUEST = '/run/gts9u-fingerprint/light';
+const LIGHT_RELEASE = '/run/gts9u-fingerprint/last-release';
 const UI_BUS_NAME = 'io.github.agcarbajo.Gts9uFingerprintUI';
 const UI_PATH = '/io/github/agcarbajo/Gts9uFingerprintUI';
 const INTERFACE = `
@@ -60,8 +62,26 @@ export default class Gts9uFingerprintOverlay extends Extension {
         this._active = false;
         this._illuminated = false;
         this._hbmWasActive = false;
+        // Seed before polling; subsequent sysfs reads run outside Shell's main
+        // loop because the panel holds its mutex during the 35 ms FOD settle.
+        this._hbmMode = this._readBacklight('fod_mode') === 1;
+        this._fodReadPending = false;
         this._shadeHoldUntil = 0;
+        this._shadeReady = false;
+        this._shadeAnimating = false;
+        this._shadeReleasing = false;
+        this._shadeReleaseToken = 0;
+        this._releaseHintsSeen = 0;
+        this._lastReleaseHintDelayMs = null;
+        this._shadeFadeGeneration = 0;
+        this._visualMonitor = null;
+        this._visualMonitorFailed = false;
         this._lightToken = 0;
+        this._nativeGatesUsed = 0;
+        this._fallbackGatesUsed = 0;
+        this._lastLightGateMs = null;
+        this._presentWatcher = null;
+        this._presentWatcherId = 0;
         this._shade = new St.Widget({
             style_class: 'gts9u-fingerprint-shade',
             reactive: false,
@@ -156,6 +176,7 @@ export default class Gts9uFingerprintOverlay extends Extension {
         }
         this._active = false;
         this._stopPanelPoll();
+        this._stopVisualMonitor();
         this._authKeyboard?.destroy();
         this._authKeyboard = null;
         for (const id of this._seatSignals ?? [])
@@ -179,6 +200,7 @@ export default class Gts9uFingerprintOverlay extends Extension {
             Main.layoutManager.disconnect(this._monitorsChangedId);
             this._monitorsChangedId = 0;
         }
+        this._shadeFadeGeneration++;
         this._actor?.destroy();
         this._actor = null;
         this._icon = null;
@@ -223,6 +245,13 @@ export default class Gts9uFingerprintOverlay extends Extension {
         this._stopSafetyTimeout();
         this._stopHidePoll();
         this._stopBrightnessPoll();
+        this._stopVisualMonitor();
+        this._shadeFadeGeneration++;
+        this._shadeReleaseToken = 0;
+        this._shadeReady = false;
+        this._shadeAnimating = false;
+        this._shadeReleasing = false;
+        this._shade.remove_all_transitions?.();
         this._actor.hide();
         this._shade.hide();
         this._dbus?.emit_property_changed(
@@ -230,8 +259,33 @@ export default class Gts9uFingerprintOverlay extends Extension {
     }
 
     _panelFodActive() {
-        const mode = this._readBacklight('fod_mode');
-        return Number.isFinite(mode) && mode !== 0;
+        return this._hbmMode;
+    }
+
+    _refreshPanelFod() {
+        if (this._fodReadPending)
+            return;
+        this._fodReadPending = true;
+        const lifetime = this._displayCancellable;
+        const file = Gio.File.new_for_path(`${BACKLIGHT}/fod_mode`);
+        file.load_contents_async(null, (source, result) => {
+            if (this._displayCancellable !== lifetime)
+                return;
+            this._fodReadPending = false;
+            try {
+                const [, bytes] = source.load_contents_finish(result);
+                const mode = Number(new TextDecoder().decode(bytes).trim());
+                if (!Number.isFinite(mode))
+                    return;
+                const hbm = mode !== 0;
+                if (hbm !== this._hbmMode) {
+                    this._hbmMode = hbm;
+                    this._syncVisualState();
+                }
+            } catch (error) {
+                console.error(`GTS9U fingerprint HBM read failed: ${error.message}`);
+            }
+        });
     }
 
     _visualState() {
@@ -244,8 +298,30 @@ export default class Gts9uFingerprintOverlay extends Extension {
         }
         const now = GLib.get_monotonic_time();
         const hbm = this._panelFodActive();
-        if (this._hbmWasActive && !hbm)
+        const release = hbm ? this._lightRelease() : 0;
+        if (hbm && release && release !== this._shadeReleaseToken) {
+            this._shadeReleaseToken = release;
+            this._releaseHintsSeen++;
+            this._lastReleaseHintDelayMs = Math.round((now - release) / 1000);
+            // Keep compensation until the DDIC has completed HBM-off. Fading
+            // on the early release hint exposes global HBM during its ~43 ms
+            // exit transaction, producing the measured bright rebound.
+        }
+        if (this._hbmWasActive && !hbm) {
             this._shadeHoldUntil = now + 50_000;
+            if (this._shade?.visible)
+                this._fadeShade(0, 20);
+            this._shadeReleaseToken = 0;
+        } else if (hbm && !release &&
+                   (this._shadeReleasing || this._shadeReleaseToken)) {
+            this._shadeReleaseToken = 0;
+            this._shadeFadeGeneration++;
+            this._shade.remove_all_transitions?.();
+            this._shadeAnimating = false;
+            this._shadeReleasing = false;
+            this._updateShade();
+            this._shadeReady = true;
+        }
         this._hbmWasActive = hbm;
         const state = visualState(lease, now, hbm);
         const request = state.active && this._canShowTarget() ? this._lightRequest() : 0;
@@ -263,16 +339,65 @@ export default class Gts9uFingerprintOverlay extends Extension {
         }
     }
 
+    _lightRelease() {
+        try {
+            const [, bytes] = Gio.File.new_for_path(LIGHT_RELEASE).load_contents(null);
+            return lightRelease(new TextDecoder().decode(bytes), GLib.get_monotonic_time());
+        } catch (_) {
+            return 0;
+        }
+    }
+
     _cancelLightPresentation() {
         if (this._lightPaintId) {
             global.stage.disconnect(this._lightPaintId);
             this._lightPaintId = 0;
         }
+        this._stopPresentationGate();
+        this._lightToken = 0;
+    }
+
+    _stopPresentationGate() {
         if (this._lightPresentId) {
             GLib.source_remove(this._lightPresentId);
             this._lightPresentId = 0;
         }
-        this._lightToken = 0;
+        if (this._presentWatcher) {
+            if (this._presentWatcherId)
+                this._presentWatcher.disconnect(this._presentWatcherId);
+            this._presentWatcher.stop();
+            this._presentWatcher = null;
+            this._presentWatcherId = 0;
+        }
+    }
+
+    _presentLight(token, gate, paintedAt) {
+        this._stopPresentationGate();
+        if (this._lightToken !== token || this._lightRequest() !== token ||
+            !this._canShowTarget() || !this._shadeReady ||
+            !this._shade.visible || !this._actor.visible) {
+            this._lightToken = 0;
+            return;
+        }
+        this._lastLightGateMs = Math.round(
+            (GLib.get_monotonic_time() - paintedAt) / 1000);
+        if (gate === 'native')
+            this._nativeGatesUsed++;
+        else
+            this._fallbackGatesUsed++;
+        const lifetime = this._displayCancellable;
+        Gio.DBus.system.call(UI_BUS_NAME, UI_PATH, UI_BUS_NAME, 'Presented',
+            new GLib.Variant('(st)', [this._session.Id, token]), null,
+            Gio.DBusCallFlags.NONE, 500, lifetime,
+            (connection, result) => {
+                if (this._displayCancellable !== lifetime)
+                    return;
+                try {
+                    connection.call_finish(result);
+                } catch (_) {
+                    this._lightToken = 0;
+                }
+            });
     }
 
     _requestLightPresentation(token) {
@@ -281,38 +406,76 @@ export default class Gts9uFingerprintOverlay extends Extension {
         this._cancelLightPresentation();
         if (!token || !this._canShowTarget())
             return;
+        if (!this._shadeReady && !this._shadeAnimating && this._shade.visible)
+            this._fadeShade(this._shadeOpacity());
         this._lightToken = token;
         this._lightPaintId = global.stage.connect('after-paint', (_stage, view) => {
             const layout = new Mtk.Rectangle();
             view.get_layout(layout);
             const monitor = this._panel?.monitor;
-            if (!monitor || layout.x !== monitor.x || layout.y !== monitor.y)
+            if (!monitor || layout.x !== monitor.x || layout.y !== monitor.y ||
+                !this._shadeReady)
                 return;
             global.stage.disconnect(this._lightPaintId);
             this._lightPaintId = 0;
+            let frames = 0;
+            const paintedAt = GLib.get_monotonic_time();
+            // Mutter's native signal carries an opaque frame-info pointer.
+            // The bridge discards it in C and emits a GJS-safe view signal.
+            // Two presentations ensure that the painted shade has reached
+            // scanout even if the first notification was an older commit.
+            try {
+                this._presentWatcher = Gts9uPresented.PresentedWatcher.new(global.stage);
+                this._presentWatcherId = this._presentWatcher.connect(
+                    'presented', (_watcher, presentedView) => {
+                        const presentedLayout = new Mtk.Rectangle();
+                        presentedView.get_layout(presentedLayout);
+                        if (presentedLayout.x !== monitor.x ||
+                            presentedLayout.y !== monitor.y)
+                            return;
+                        frames++;
+                        if (frames === 1) {
+                            this._shade.queue_redraw();
+                            return;
+                        }
+                        if (GLib.get_monotonic_time() - paintedAt >= 8_000)
+                            this._presentLight(token, 'native', paintedAt);
+                    });
+            } catch (error) {
+                console.error(`GTS9U fingerprint presentation bridge: ${error.message}`);
+                this._stopPresentationGate();
+            }
+            // Retain the proven conservative gate if Mutter skips a frame or
+            // the bridge cannot run; it never acknowledges an unpainted shade.
             this._lightPresentId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 35, () => {
                 this._lightPresentId = 0;
-                if (this._lightToken !== token || this._lightRequest() !== token ||
-                    !this._canShowTarget() || !this._shade.visible || !this._actor.visible)
-                    return GLib.SOURCE_REMOVE;
-                const lifetime = this._displayCancellable;
-                Gio.DBus.system.call(UI_BUS_NAME, UI_PATH, UI_BUS_NAME, 'Presented',
-                    new GLib.Variant('(st)', [this._session.Id, token]), null,
-                    Gio.DBusCallFlags.NONE, 500, lifetime,
-                    (connection, result) => {
-                        if (this._displayCancellable !== lifetime)
-                            return;
-                        try {
-                            connection.call_finish(result);
-                        } catch (_) {
-                            this._lightToken = 0;
-                        }
-                    });
+                this._presentLight(token, 'fallback', paintedAt);
                 return GLib.SOURCE_REMOVE;
             });
         });
         this._shade.queue_redraw();
         this._actor.queue_redraw();
+    }
+
+    _fadeShade(opacity, duration = 20) {
+        const generation = this._shadeFadeGeneration = (this._shadeFadeGeneration ?? 0) + 1;
+        this._shadeReady = false;
+        this._shadeAnimating = opacity !== 0;
+        this._shadeReleasing = opacity === 0;
+        this._shade.ease({
+            opacity, duration, mode: Clutter.AnimationMode.EASE_IN_OUT_QUAD,
+            onComplete: () => {
+                if (generation !== this._shadeFadeGeneration)
+                    return;
+                this._shadeAnimating = false;
+                this._shadeReleasing = false;
+                if (opacity) {
+                    this._updateShade();
+                    this._shadeReady = true;
+                    this._shade.queue_redraw();
+                }
+            },
+        });
     }
 
     _setIllumination(illuminated) {
@@ -321,11 +484,28 @@ export default class Gts9uFingerprintOverlay extends Extension {
             ? 'gts9u-fingerprint-overlay' : 'gts9u-fingerprint-waiting');
         this._icon.visible = !illuminated;
         if (illuminated) {
-            this._updateShade();
+            const hbm = this._panelFodActive();
+            if (hbm) {
+                this._shadeFadeGeneration++;
+                this._shade.remove_all_transitions?.();
+                this._shade.opacity = this._shadeOpacity();
+                this._shadeReady = true;
+                this._shadeAnimating = false;
+                this._shadeReleasing = false;
+            } else {
+                this._shade.opacity = 0;
+            }
             this._shade.show();
+            if (!hbm)
+                this._fadeShade(this._shadeOpacity());
             this._startBrightnessPoll();
         } else {
             this._stopBrightnessPoll();
+            this._shadeFadeGeneration++;
+            this._shadeReady = false;
+            this._shadeAnimating = false;
+            this._shadeReleasing = false;
+            this._shade.remove_all_transitions?.();
             this._shade.hide();
         }
     }
@@ -484,7 +664,12 @@ export default class Gts9uFingerprintOverlay extends Extension {
         // Read-only state for intermittent post-login input failures. No key
         // contents, finger images, credentials, user names or auth answers.
         return JSON.stringify({
-            version: 16,
+            version: 22,
+            nativeGatesUsed: this._nativeGatesUsed ?? 0,
+            fallbackGatesUsed: this._fallbackGatesUsed ?? 0,
+            lastLightGateMs: this._lastLightGateMs ?? null,
+            releaseHintsSeen: this._releaseHintsSeen ?? 0,
+            lastReleaseHintDelayMs: this._lastReleaseHintDelayMs ?? null,
             sessionActive: Boolean(this._session?.Active),
             greeter: Boolean(Main.sessionMode.isGreeter),
             locked: Boolean(Main.screenShield?.locked),
@@ -549,21 +734,53 @@ export default class Gts9uFingerprintOverlay extends Extension {
             GLib.PRIORITY_DEFAULT, 50, () => {
                 this._syncAuthKeyboard();
                 this._pulseAvailability();
-                const {active, illuminated, request} = this._visualState();
-                if (active && !this._active)
-                    this.Show();
-                else if (!active && this._active)
-                    this._finishHide();
-                if (active && illuminated !== this._illuminated)
-                    this._setIllumination(illuminated);
-                if (active && this._canShowTarget())
-                    this._actor.show();
-                else
-                    this._actor.hide();
-                this._requestLightPresentation(request ?? 0);
-                this._updateFeedback();
+                this._refreshPanelFod();
+                this._syncVisualState();
                 return GLib.SOURCE_CONTINUE;
             });
+    }
+
+    _syncVisualState() {
+        const {active, illuminated, request} = this._visualState();
+        if (active && !this._active)
+            this.Show();
+        else if (!active && this._active)
+            this._finishHide();
+        if (active && !this._visualMonitor && !this._visualMonitorFailed)
+            this._startVisualMonitor();
+        if (active && illuminated !== this._illuminated)
+            this._setIllumination(illuminated);
+        if (active && this._canShowTarget())
+            this._actor.show();
+        else
+            this._actor.hide();
+        this._requestLightPresentation(request ?? 0);
+        this._updateFeedback();
+    }
+
+    _startVisualMonitor() {
+        try {
+            const directory = Gio.File.new_for_path('/run/gts9u-fingerprint');
+            const monitor = directory.monitor_directory(Gio.FileMonitorFlags.NONE, null);
+            this._visualMonitor = monitor;
+            monitor.connect('changed', (_monitor, file, otherFile) => {
+                if (this._visualMonitor !== monitor)
+                    return;
+                const names = [file?.get_basename(), otherFile?.get_basename()];
+                if (names.includes('light') || names.includes('last-release') ||
+                    names.includes('active'))
+                    this._syncVisualState();
+            });
+        } catch (_) {
+            this._stopVisualMonitor();
+            this._visualMonitorFailed = true;
+        }
+    }
+
+    _stopVisualMonitor() {
+        this._visualMonitor?.cancel();
+        this._visualMonitor = null;
+        this._visualMonitorFailed = false;
     }
 
     _stopPanelPoll() {
@@ -685,7 +902,7 @@ export default class Gts9uFingerprintOverlay extends Extension {
     }
 
     _updateShade() {
-        if (this._shade)
+        if (this._shade && !this._shadeAnimating && !this._shadeReleasing)
             this._shade.opacity = this._shadeOpacity();
     }
 

@@ -58,6 +58,19 @@ install -m0755 "$owner" "$staging/usr/libexec/"
 install -d "$staging/usr/lib/modules/$release/updates"
 install -m0644 "$irq" "$staging/usr/lib/modules/$release/updates/"
 
+# Clutter's presented signal carries an opaque frame-info pointer that GJS
+# cannot marshal. Keep the tiny native bridge matched to Mutter 14 in this
+# package so the greeter and user session see the same presentation gate.
+bridge=${PRESENTED_BRIDGE_OUT_DIR:-$base/out/gnome-presented-bridge}
+test -f "$bridge/libgts9u-presented.so"
+test -f "$bridge/Gts9uPresented-1.0.typelib"
+install -d "$staging/usr/lib/aarch64-linux-gnu" \
+    "$staging/usr/lib/aarch64-linux-gnu/girepository-1.0"
+install -m0644 "$bridge/libgts9u-presented.so" \
+    "$staging/usr/lib/aarch64-linux-gnu/"
+install -m0644 "$bridge/Gts9uPresented-1.0.typelib" \
+    "$staging/usr/lib/aarch64-linux-gnu/girepository-1.0/"
+
 # --- flashlight tile translations -----------------------------------------
 # The one place where what ships is not byte-for-byte what is versioned: the
 # catalogues are kept as .po next to the extension, because a .po is reviewable
