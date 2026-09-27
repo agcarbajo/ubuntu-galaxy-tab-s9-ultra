@@ -18,6 +18,7 @@ ubuntu-gts9u-adsp-boot.service:multi-user.target
 ubuntu-gts9u-sensor-registry.service:multi-user.target
 ubuntu-gts9u-powerkey.service:multi-user.target
 ubuntu-gts9u-bluetooth-address.service:multi-user.target
+ubuntu-gts9u-wifi-address.service:NetworkManager.service
 ubuntu-gts9u-sensors-resume.service:multi-user.target
 ubuntu-gts9u-pogo-firmware.service:multi-user.target
 ubuntu-gts9u-desktop-user.service:multi-user.target
@@ -25,6 +26,7 @@ ubuntu-gts9u-desktop-user.path:multi-user.target
 ubuntu-gts9u-camera-relays.service:graphical.target
 ubuntu-gts9u-fingerprint-ui.service:multi-user.target
 ubuntu-gts9u-fingerprint-secure.service:multi-user.target
+ubuntu-gts9u-tailscale-tun.service:multi-user.target
 '
 
 case "$1" in
@@ -80,6 +82,11 @@ case "$1" in
 		if command -v glib-compile-schemas >/dev/null 2>&1; then
 			glib-compile-schemas /usr/share/glib-2.0/schemas >/dev/null 2>&1 || true
 		fi
+		# Prefer the panel-sized Ubuntu artwork while retaining the distro BGRT
+		# alternative as a fallback. The boot image is refreshed separately.
+		update-alternatives --install \
+			/usr/share/plymouth/themes/default.plymouth default.plymouth \
+			/usr/share/plymouth/themes/gts9u-ubuntu/gts9u-ubuntu.plymouth 120
 		# Recompile Ubuntu GDM's vendor keyfiles, preserving its existing
 		# profile and other defaults. This does NOT restart GDM or log users out.
 		if [ -x /usr/share/gdm/generate-config ]; then

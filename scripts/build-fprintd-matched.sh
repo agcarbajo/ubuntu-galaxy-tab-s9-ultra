@@ -1,6 +1,5 @@
 #!/bin/bash
-# Suite-matched daemon plus one additive, claim-private matched-finger signal.
-# Reuse Ubuntu's runtime packaging and pair its unchanged PAM module.
+# Suite-matched daemon with private matched-finger signal and service-specific PAM.
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
 base=${UBUNTU_WORKDIR:-/root/ubuntu-gts9u}
@@ -48,7 +47,8 @@ fi
 chroot "$buildroot" /bin/bash -ec '
 export DEBIAN_FRONTEND=noninteractive
 apt-get install -y --no-install-recommends build-essential meson ninja-build \
-    pkg-config libfprint-2-dev libpolkit-gobject-1-dev libdbus-1-dev gettext
+    pkg-config libfprint-2-dev libpolkit-gobject-1-dev libdbus-1-dev gettext \
+    libpam0g-dev libsystemd-dev
 '
 task=$(mktemp -d "$buildroot/build/fprintd-matched.XXXXXX")
 inside=/build/$(basename "$task")
@@ -61,12 +61,15 @@ else
 fi
 patch -d "$source" -p1 < "$repo/packaging/fprintd/0001-matched-finger-signal.patch"
 inside_source=$inside/${source##*/}
+
+patch -d "$source" -p1 < "$repo/packaging/fprintd/0002-gdm-password-bypass-fingerprint.patch"
 chroot "$buildroot" /bin/bash -ec "
 meson setup '$inside_source/build' '$inside_source' \
     --prefix=/usr --libexecdir=libexec --localstatedir=/var --sysconfdir=/etc \
-    -Dpam=false -Dman=false -Dgtk_doc=false -Dsystemd=false
-ninja -C '$inside_source/build' src/fprintd
+    -Dpam=true -Dman=false -Dgtk_doc=false -Dsystemd=false
+ninja -C '$inside_source/build' src/fprintd pam/pam_fprintd.so
 strip --strip-unneeded '$inside_source/build/src/fprintd'
+strip --strip-unneeded '$inside_source/build/pam/pam_fprintd.so'
 "
 
 stage=$task/package
@@ -75,6 +78,7 @@ install -m0755 "$source/build/src/fprintd" "$stage/usr/libexec/fprintd"
 install -m0644 "$source/src/net.reactivated.Fprint.Device.xml" \
     "$stage/usr/share/dbus-1/interfaces/net.reactivated.Fprint.Device.xml"
 install -m0644 "$repo/packaging/fprintd/0001-matched-finger-signal.patch" \
+    "$repo/packaging/fprintd/0002-gdm-password-bypass-fingerprint.patch" \
     "$repo/packaging/fprintd/README.md" "$stage/usr/share/doc/fprintd/"
 sed -i "s/^Version: .*/Version: $version/" "$stage/DEBIAN/control"
 sed -i 's/^Maintainer: .*/Maintainer: Ubuntu gts9uwifi port contributors <noreply@example.invalid>/' "$stage/DEBIAN/control"
@@ -86,5 +90,5 @@ dpkg-deb --root-owner-group --build "$stage" "$deb"
 readelf -h "$stage/usr/libexec/fprintd" | grep Machine
 dpkg-deb --info "$deb"
 sha256sum "$deb"
-bash "$repo/scripts/build-fprintd-pam-package.sh" "$deb"
+bash "$repo/scripts/build-fprintd-pam-package.sh" "$deb" "$source/build/pam/pam_fprintd.so"
 printf 'Build retained for inspection: %s\n' "$task"

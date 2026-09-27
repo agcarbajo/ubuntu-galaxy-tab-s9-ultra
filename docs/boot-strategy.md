@@ -3,6 +3,9 @@
 Last revised: 2026-08-19. It inherits the chain physically proven by
 postmarketOS v1.71; only the root filesystem and its initramfs differ.
 
+Current measurements of the Ubuntu splash, panel recovery and remaining
+black interval are in [Visible boot on the SM-X910](boot-appearance-2026-09-27.md).
+
 Since v0.18 the root filesystem is installed on the **internal UFS** and a
 release is a single flashable ZIP. Since v1.0.0 it can share that UFS with
 Android — see [Two ways to install](#two-ways-to-install).
@@ -181,6 +184,14 @@ see `scripts/build-ufs-image.sh`.
 
 This runs only when installing into `linuxroot`. On a whole-tablet install
 there is no second system to switch to.
+
+When deploying a boot-image fix directly on a dual-boot tablet, update the
+matching image in `/var/lib/gts9u-boot-sets/ubuntu` as well as the active
+partition, then verify both hashes. Otherwise the Android switcher restores
+the previous image on the next return to Ubuntu. Release installation seeds
+Ubuntu's set from the ZIP; the system updater replaces it from its verified
+payload. The 2026-09-28 Android-to-Ubuntu round trip validated this path with
+Device 2.78 and the current Plymouth images.
 
 Because the set is copied off the live partitions, **install Android first and
 Ubuntu second**, and root Android before that step if it is meant to be rooted:

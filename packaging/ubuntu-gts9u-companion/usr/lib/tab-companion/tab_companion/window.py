@@ -14,6 +14,7 @@ from .hardware import HardwareClient
 from .i18n import _, N_
 from .key_selector import KeyChooser, chord_label
 from .keyboard_diagnostics_ui import add_to_about as add_keyboard_diagnostics
+from .spen_status import remote_status_phase
 
 
 GESTURES = (
@@ -652,6 +653,10 @@ class CompanionWindow(Adw.ApplicationWindow):
         hero_box.append(picture)
         self.pen_status = Gtk.Label(css_classes=["title-2"], wrap=True, justify=Gtk.Justification.CENTER)
         hero_box.append(self.pen_status)
+        self.pen_remote_status = Gtk.Label(
+            css_classes=["dim-label"], wrap=True, justify=Gtk.Justification.CENTER
+        )
+        hero_box.append(self.pen_remote_status)
         hero.add(hero_box)
         page.add(hero)
 
@@ -1122,13 +1127,38 @@ class CompanionWindow(Adw.ApplicationWindow):
             state.bluetooth_available
             and self.settings.get_boolean("spen-remote-enabled")
         )
+        pointer = self.settings.get_string("spen-remote-mode") == "pointer"
+        phase = remote_status_phase(
+            bluetooth=state.bluetooth_available,
+            enabled=self.settings.get_boolean("spen-remote-enabled"),
+            docked=state.pen_state == "docked",
+            paired=state.pen_bluetooth_paired,
+            connected=state.pen_bluetooth_connected,
+            ready=state.gesture_available,
+            pairing_active=state.pen_pairing_active,
+        )
+        remote_status = {
+            "bluetooth-off": _("Bluetooth is off; remote gestures are unavailable"),
+            "remote-off": _("Bluetooth remote features are off"),
+            "preparing": _("Bluetooth connected · Preparing remote features"),
+            "reconnecting": _("Paired · Reconnecting"),
+            "sleeping": _("Paired · Insert the S Pen to reconnect"),
+            "pairing": _("Pairing S Pen…"),
+            "pairing-needed": _("Could not pair · Remove and reinsert S Pen"),
+            "unpaired": _("Not paired · Insert the S Pen to pair"),
+        }.get(phase)
+        if phase == "ready":
+            remote_status = (
+                _("Connected and ready for pointer mode") if pointer
+                else _("Connected and ready for air gestures")
+            )
+        self.pen_remote_status.set_label(remote_status)
         if not remote_enabled:
             status = _("Inserted") if state.pen_state == "docked" else _("Not inserted")
         else:
-            pointer = self.settings.get_string("spen-remote-mode") == "pointer"
             status = {
                 "docked": _("Docked and charging") if state.pen_charging else _("Docked"),
-                "nearby": _("Connected and ready for pointer mode") if pointer else _("Connected and ready for air gestures"),
+                "nearby": _("Connected"),
                 "paired": _("Insert the S Pen to reconnect it"),
                 "unpaired": _("Not paired"),
                 "unavailable": _("Hardware service unavailable"),

@@ -100,6 +100,43 @@ confirmations, not synthetic presentation tests, establish the working status.
 
 ## S Pen
 
+Companion 1.4.3 shows Bluetooth readiness below the S Pen illustration even
+while the pen is inserted. It distinguishes an unpaired pen, a saved bond that
+is reconnecting, a connected link whose GATT has not passed a live operation,
+and a link ready for air gestures or the selected pointer mode. A BlueZ
+`Connected` flag alone is never labelled ready. Disabling the remote option or
+Bluetooth has its own explicit status. The hardware service now publishes the
+paired and connected flags independently of `PenState=docked`; it continues to
+derive readiness from the existing successful GATT check.
+
+After remote features have been off for at least 15 seconds, re-enabling them
+with the pen docked and a disconnected BlueZ bond repairs only that S Pen bond
+immediately. Short toggles still try to reuse the bond, and undocked pens are
+not reset. This addresses the measured stale-bond case without waiting for two
+failed `Connect` calls. The old 1.4.2 cycle first reached gesture readiness at
+the 43-second observation; a 1.4.3 repeat had entered the pairing window at
+once and had `GestureAvailable=true` at the 19-second observation. These are
+single observed cycles, not a latency guarantee. The owner then confirmed the
+inserted pen visibly showed "connected and ready" and a gesture worked after
+undocking.
+
+After a reboot with remote features disabled, the owner enabled them, docked
+the pen and observed a permanent "Pairing S Pen…" label. BlueZ initially had
+a stale bond; after the service removed it, no S Pen was visible during the
+bounded advertising window. The service then kept the dock marked as already
+handled, while the UI inferred pairing solely from "docked and unpaired".
+Physically removing and reinserting the pen reopened the window and restored
+the paired, connected and gesture-ready state.
+
+Companion 1.4.6 re-arms a docked pen when remote features are enabled, carries
+a pending stale-bond repair through the next dock when features are enabled
+while undocked, and permits one bounded second advertising window. After two
+misses it waits for a physical reinsert. The pairing service now exposes
+whether its window is actually active; the app says "Pairing S Pen…" only
+while that is true and otherwise asks the user to remove and reinsert it.
+The short disable/re-enable test after installation recovered to live GATT
+readiness. The exact reboot sequence has not yet been repeated on 1.4.6.
+
 In 1.4.2, gesture mode tracks the Wacom digitizer's `BTN_TOOL_PEN`, not the
 finger-rejection preference: from the first hover until the pen leaves range,
 side-button presses and BLE movement cannot trigger mappings. Entering range

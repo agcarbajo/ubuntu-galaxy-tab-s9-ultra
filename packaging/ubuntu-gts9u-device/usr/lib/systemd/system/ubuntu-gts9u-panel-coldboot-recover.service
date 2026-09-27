@@ -14,10 +14,11 @@ Before=display-manager.service gdm.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-# Give the DPU, DSI and panel time to finish their first probe; the cycle is
-# only useful once the complete DRM pipeline exists.
-ExecStartPre=/bin/sleep 2
+# The udev settle and pogo firmware ordering above already leave the DPU,
+# DSI and panel probed before this service starts. A fixed pause only keeps
+# the OLED black for another two seconds.
 ExecStart=/usr/libexec/ubuntu-gts9u-panel-coldboot-recover
+ExecStartPost=-/usr/libexec/ubuntu-gts9u-refresh-plymouth
 # Allow up to three attempts if the early-boot userspace freezer is aborted.
 TimeoutStartSec=90
 

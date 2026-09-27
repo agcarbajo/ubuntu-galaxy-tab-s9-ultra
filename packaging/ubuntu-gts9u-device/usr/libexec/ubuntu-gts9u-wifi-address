@@ -1,0 +1,43 @@
+#!/bin/sh
+# Use the tablet's Samsung EFS Wi-Fi address for NetworkManager connections.
+# Generate a runtime default before NetworkManager starts; never write EFS.
+set -eu
+
+efs=/dev/disk/by-partlabel/efs
+mountpoint=/run/ubuntu-gts9u-wifi-efs-ro
+target=/run/NetworkManager/conf.d/90-ubuntu-gts9u-wifi-address.conf
+tmp=
+
+cleanup() {
+	[ -z "$tmp" ] || rm -f -- "$tmp"
+	mountpoint -q "$mountpoint" && umount "$mountpoint" || true
+}
+trap cleanup EXIT HUP INT TERM
+
+i=0
+while [ ! -b "$efs" ] && [ "$i" -lt 15 ]; do
+	sleep 1
+	i=$((i + 1))
+done
+[ -b "$efs" ] || exit 0
+mkdir -p "$mountpoint"
+mount -o ro,noload "$efs" "$mountpoint" || exit 0
+
+address=$(tr -d '\r\n[:space:]' < "$mountpoint/wifi/.mac.info" 2>/dev/null) || exit 0
+copy=$(tr -d '\r\n[:space:]' < "$mountpoint/wifi/.mac.cob" 2>/dev/null) || exit 0
+[ "$address" = "$copy" ] || exit 0
+case "$address" in
+	[0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f]) ;;
+	*) exit 0 ;;
+esac
+first=$(printf '%d' "0x${address%%:*}")
+[ "$((first & 1))" -eq 0 ] || exit 0
+[ "$address" != 00:00:00:00:00:00 ] || exit 0
+umount "$mountpoint"
+
+install -d -m 0755 /run/NetworkManager/conf.d
+tmp=$(mktemp /run/NetworkManager/conf.d/.wifi-address.XXXXXX)
+printf '[connection]\nwifi.cloned-mac-address=%s\n' "$address" > "$tmp"
+chmod 0644 "$tmp"
+mv -f -- "$tmp" "$target"
+tmp=

@@ -72,6 +72,19 @@ install -m0755 "$owner" "$staging/usr/libexec/"
 install -d "$staging/usr/lib/modules/$release/updates"
 install -m0644 "$irq" "$staging/usr/lib/modules/$release/updates/"
 
+# TUN is modular in the released kernel. Ship the exact signed module with
+# the device package too, so an existing installation gets it through APT
+# without needing to replace its boot image.
+tun=${TUN_MODULE_OUT:-$kernel_out/modules-root/usr/lib/modules/$release/updates/tun.ko}
+test -f "$tun" || { echo 'Run scripts/build-mainline-kernel.sh or build-tailscale-tun.sh first' >&2; exit 1; }
+test "$(modinfo -F vermagic "$tun" | cut -d' ' -f1)" = "$release"
+tun_serial=$(modinfo -F sig_key "$tun" | tr -d ':' | tr '[:lower:]' '[:upper:]')
+test "$tun_serial" = "$cert_serial" || {
+	echo "TUN module signing key does not match this kernel build" >&2
+	exit 1
+}
+install -m0644 "$tun" "$staging/usr/lib/modules/$release/updates/"
+
 # Clutter's presented signal carries an opaque frame-info pointer that GJS
 # cannot marshal. Keep the tiny native bridge matched to this suite's Mutter in this
 # package so the greeter and user session see the same presentation gate.

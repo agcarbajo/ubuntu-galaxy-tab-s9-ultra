@@ -162,6 +162,9 @@ INTROSPECTION = """
     <property name="LastSpecialKey" type="s" access="read"/>
     <property name="ButtonActionsAvailable" type="b" access="read"/>
     <property name="BluetoothAvailable" type="b" access="read"/>
+    <property name="PenBluetoothPaired" type="b" access="read"/>
+    <property name="PenBluetoothConnected" type="b" access="read"/>
+    <property name="PenPairingActive" type="b" access="read"/>
     <property name="GestureAvailable" type="b" access="read"/>
     <property name="HapticsAvailable" type="b" access="read"/>
   </interface>
@@ -182,6 +185,9 @@ class State:
     LastSpecialKey: str = ""
     ButtonActionsAvailable: bool = False
     BluetoothAvailable: bool = False
+    PenBluetoothPaired: bool = False
+    PenBluetoothConnected: bool = False
+    PenPairingActive: bool = False
     GestureAvailable: bool = False
     HapticsAvailable: bool = False
 
@@ -192,6 +198,9 @@ SIGNATURES = {
     "KeyboardName": "s", "RemappingAvailable": "b",
     "LastSpecialKey": "s", "ButtonActionsAvailable": "b",
     "BluetoothAvailable": "b",
+    "PenBluetoothPaired": "b",
+    "PenBluetoothConnected": "b",
+    "PenPairingActive": "b",
     "GestureAvailable": "b",
     "HapticsAvailable": "b",
 }
@@ -727,6 +736,19 @@ class HardwareService:
             self.remote_synced = enabled
         except dbus.DBusException:
             pass
+
+    def _spen_pairing_active(self):
+        if self.system_bus is None:
+            return False
+        try:
+            service = dbus.Interface(
+                self.system_bus.get_object(
+                    PAIRING_BUS_NAME, PAIRING_OBJECT_PATH, introspect=False
+                ), PAIRING_BUS_NAME,
+            )
+            return bool(service.GetPairingActive(timeout=1))
+        except dbus.DBusException:
+            return False
 
     def _spen_gatt_success(self):
         self.ble_gatt_ready = True
@@ -1507,6 +1529,9 @@ class HardwareService:
             LastSpecialKey=self.state.LastSpecialKey,
             ButtonActionsAvailable=self.pen_fd is not None or self.ble_connected,
             BluetoothAvailable=self.bluetooth_powered,
+            PenBluetoothPaired=self.ble_paired,
+            PenBluetoothConnected=self.ble_connected,
+            PenPairingActive=self._spen_pairing_active(),
             GestureAvailable=(
                 self._remote_effective()
                 and

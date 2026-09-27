@@ -8,12 +8,14 @@
 # repairs it. Suspending devices alone does not: pm_test=devices returns with
 # the panel still dead, while pm_test=platform brings the ID back to 80 00 04.
 #
-# The platform test returns on its own after about five seconds, so it needs no
-# RTC and no wake event.
+# The platform test returns on its own after the configured diagnostic pause,
+# so it needs no RTC and no wake event. Its pause can be zero for this recovery.
 set -eu
 
 PM_TEST=/sys/power/pm_test
 PM_STATE=/sys/power/state
+PM_TEST_DELAY=/sys/module/suspend/parameters/pm_test_delay
+saved_pm_test_delay=
 
 log() {
 	echo "ubuntu-gts9u-panel-coldboot-recover: $*"
@@ -31,8 +33,20 @@ fi
 
 restore_pm_test() {
 	echo none > "$PM_TEST" 2>/dev/null || true
+	if [ -n "$saved_pm_test_delay" ]; then
+		echo "$saved_pm_test_delay" > "$PM_TEST_DELAY" 2>/dev/null || true
+	fi
 }
 trap restore_pm_test EXIT INT TERM
+
+# The platform test is a complete device/late/noirq suspend and resume even
+# when its diagnostic pause is zero.  The stock five-second pause contributes
+# nothing to the panel reset and only extends the black boot interval.  Keep
+# the old value so normal PM diagnostics retain their configured behaviour.
+if [ -w "$PM_TEST_DELAY" ]; then
+	saved_pm_test_delay=$(cat "$PM_TEST_DELAY")
+	echo 0 > "$PM_TEST_DELAY"
+fi
 
 attempt=1
 while :; do
@@ -40,6 +54,18 @@ while :; do
 	log "running the automatic platform suspend/resume cycle (attempt $attempt)"
 	echo platform > "$PM_TEST"
 	if echo mem > "$PM_STATE"; then
+		# A successful suspend syscall does not prove that the DDIC recovered.
+		# If the short test leaves its ID at zero, repeat once with the stock
+		# delay before allowing the display manager to start.
+		if dmesg 2>/dev/null | grep -i 'ana38407 panel id' | tail -1 | grep -q '80 00 04'; then
+			break
+		fi
+		if [ -n "$saved_pm_test_delay" ]; then
+			log 'short cycle did not recover the DDIC; retrying with the original delay'
+			echo "$saved_pm_test_delay" > "$PM_TEST_DELAY"
+			echo platform > "$PM_TEST"
+			echo mem > "$PM_STATE"
+		fi
 		break
 	fi
 	restore_pm_test

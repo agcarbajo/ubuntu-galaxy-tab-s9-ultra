@@ -6,6 +6,8 @@ set -e
 # serve black frames after the matching PipeWire backend is removed.
 case "$1" in
 	remove|deconfigure)
+		update-alternatives --remove default.plymouth \
+			/usr/share/plymouth/themes/gts9u-ubuntu/gts9u-ubuntu.plymouth || true
 		systemctl stop ubuntu-gts9u-chromium-desktops.path ubuntu-gts9u-chromium-desktops.service >/dev/null 2>&1 || true
 		/usr/libexec/ubuntu-gts9u-chromium-desktops --remove
 		/usr/libexec/ubuntu-gts9u-chromium-launchers --remove

@@ -90,6 +90,8 @@ class PairingService(dbus.service.Object):
     def __init__(self):
         self.bus = dbus.SystemBus()
         self.remote_enabled = self._load_remote_enabled()
+        self.remote_disabled_at = time.monotonic() if not self.remote_enabled else None
+        self.repair_on_next_dock = False
         self.manager = dbus.Interface(
             self.bus.get_object(BLUEZ, "/"),
             "org.freedesktop.DBus.ObjectManager",
@@ -115,6 +117,7 @@ class PairingService(dbus.service.Object):
         self.reset_for_dock = False
         self.pairing = False
         self.pairing_deadline = 0.0
+        self.pairing_attempts = 0
         self.pairable_before = False
         self.candidate = None
         self.connecting = set()
@@ -150,22 +153,46 @@ class PairingService(dbus.service.Object):
         enabled = bool(enabled)
         if enabled == self.remote_enabled:
             return True
+        disabled_for = (
+            time.monotonic() - self.remote_disabled_at
+            if enabled and self.remote_disabled_at is not None else 0
+        )
         self.remote_enabled = enabled
+        self.remote_disabled_at = None if enabled else time.monotonic()
         self._save_remote_enabled()
         self.finish_pairing()
         self.connecting.clear()
         self.next_connect = 0.0
         if not enabled:
+            self.pairing_attempts = 0
+            self.repair_on_next_dock = False
             self.disconnect_spen()
             print("S Pen Bluetooth remote features disabled", flush=True)
         else:
+            # A disabled docked pen is marked as already seen by tick().
+            # Re-arm it on re-enable, even if the pen never left the garage.
+            self.reset_for_dock = False
+            self.pairing_attempts = 0
+            self.repair_on_next_dock = disabled_for >= 15 and not self.docked()
             print("S Pen Bluetooth remote features enabled", flush=True)
+            # After a longer docked pause the pen often forgets its BLE bond,
+            # although BlueZ still says Paired. Recreate only that bond now
+            # instead of waiting for two timed-out Connect calls first.
+            if disabled_for >= 15 and self.docked():
+                path, properties = self.paired_spen()
+                if (path is not None and not properties.get("Connected", False)
+                        and self.recover_stale_bond(path, "after remote re-enable")):
+                    return True
             GLib.idle_add(self.tick_once)
         return True
 
     def tick_once(self):
         self.tick()
         return GLib.SOURCE_REMOVE
+
+    @dbus.service.method(BUS_NAME, in_signature="", out_signature="b")
+    def GetPairingActive(self):
+        return bool(self.pairing and time.monotonic() < self.pairing_deadline)
 
     @dbus.service.method(BUS_NAME, in_signature="", out_signature="b")
     def RecoverStaleBond(self):
@@ -343,6 +370,7 @@ class PairingService(dbus.service.Object):
             self.repairing_bond = False
             return GLib.SOURCE_REMOVE
         self.reset_for_dock = True
+        self.pairing_attempts = 0
         self.begin_pairing()
         if not self.pairing:
             self.repairing_bond = False
@@ -384,6 +412,7 @@ class PairingService(dbus.service.Object):
             self.finish_pairing()
             return
         print("S Pen dock pairing window started", flush=True)
+        self.pairing_attempts += 1
 
     def finish_pairing(self):
         if self.started_discovery:
@@ -464,13 +493,17 @@ class PairingService(dbus.service.Object):
             self.disconnect_spen()
             return GLib.SOURCE_CONTINUE
         paired_path, paired = self.paired_spen()
+        if self.repair_on_next_dock and docked:
+            self.repair_on_next_dock = False
+            if (paired_path is not None and not paired.get("Connected", False)
+                    and self.recover_stale_bond(paired_path, "after next dock")):
+                return GLib.SOURCE_CONTINUE
         if self.pairing and time.monotonic() >= self.pairing_deadline:
             self.finish_pairing()
-            if self.repairing_bond:
-                # A pen that missed the bounded advertising window must be
-                # allowed another dock reset instead of remaining wedged until
-                # the user physically removes and reinserts it.
-                self.repairing_bond = False
+            self.repairing_bond = False
+            if self.pairing_attempts < 2:
+                # One bounded retry covers a missed advertising window.
+                # After that, wait for a physical reinsert instead of looping.
                 self.reset_for_dock = False
         elif self.pairing and docked:
             # BlueZ can recreate the device immediately after RemoveDevice,
@@ -480,6 +513,7 @@ class PairingService(dbus.service.Object):
             for path, properties in self.devices().items():
                 self.consider(path, properties)
         if paired_path is not None:
+            self.pairing_attempts = 0
             self.reset_for_dock = docked
             self.consider(paired_path, paired)
         elif docked and not self.reset_for_dock:
@@ -487,6 +521,7 @@ class PairingService(dbus.service.Object):
             self.begin_pairing()
         elif not docked:
             self.reset_for_dock = False
+            self.pairing_attempts = 0
             self.finish_pairing()
         return GLib.SOURCE_CONTINUE
 
