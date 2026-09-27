@@ -1,6 +1,6 @@
 #!/bin/bash
 # Noble daemon plus one additive, claim-private matched-finger signal.
-# Reuse Ubuntu's runtime packaging and pair its unchanged PAM module.
+# Reuse Ubuntu's runtime packaging and pair a service-specific PAM module.
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
 base=${UBUNTU_WORKDIR:-/root/ubuntu-gts9u}
@@ -29,19 +29,22 @@ fetch fprintd_1.94.3-1_arm64.deb \
 chroot "$buildroot" /bin/bash -ec '
 export DEBIAN_FRONTEND=noninteractive
 apt-get install -y --no-install-recommends build-essential meson ninja-build \
-    pkg-config libfprint-2-dev libpolkit-gobject-1-dev libdbus-1-dev gettext
+    pkg-config libfprint-2-dev libpolkit-gobject-1-dev libdbus-1-dev gettext \
+    libpam0g-dev libsystemd-dev
 '
 task=$(mktemp -d "$buildroot/build/fprintd-matched.XXXXXX")
 inside=/build/$(basename "$task")
 tar -xf "$cache/fprintd_1.94.3.orig.tar.bz2" -C "$task"
 source=$task/fprintd-v1.94.3
 patch -d "$source" -p1 < "$repo/packaging/fprintd/0001-matched-finger-signal.patch"
+patch -d "$source" -p1 < "$repo/packaging/fprintd/0002-gdm-password-bypass-fingerprint.patch"
 chroot "$buildroot" /bin/bash -ec "
 meson setup '$inside/fprintd-v1.94.3/build' '$inside/fprintd-v1.94.3' \
     --prefix=/usr --libexecdir=libexec --localstatedir=/var --sysconfdir=/etc \
-    -Dpam=false -Dman=false -Dgtk_doc=false -Dsystemd=false
-ninja -C '$inside/fprintd-v1.94.3/build' src/fprintd
+    -Dpam=true -Dman=false -Dgtk_doc=false -Dsystemd=false
+ninja -C '$inside/fprintd-v1.94.3/build' src/fprintd pam/pam_fprintd.so
 strip --strip-unneeded '$inside/fprintd-v1.94.3/build/src/fprintd'
+strip --strip-unneeded '$inside/fprintd-v1.94.3/build/pam/pam_fprintd.so'
 "
 
 stage=$task/package
@@ -50,6 +53,7 @@ install -m0755 "$source/build/src/fprintd" "$stage/usr/libexec/fprintd"
 install -m0644 "$source/src/net.reactivated.Fprint.Device.xml" \
     "$stage/usr/share/dbus-1/interfaces/net.reactivated.Fprint.Device.xml"
 install -m0644 "$repo/packaging/fprintd/0001-matched-finger-signal.patch" \
+    "$repo/packaging/fprintd/0002-gdm-password-bypass-fingerprint.patch" \
     "$repo/packaging/fprintd/README.md" "$stage/usr/share/doc/fprintd/"
 sed -i "s/^Version: .*/Version: $version/" "$stage/DEBIAN/control"
 sed -i 's/^Maintainer: .*/Maintainer: Ubuntu gts9uwifi port contributors <noreply@example.invalid>/' "$stage/DEBIAN/control"
@@ -61,5 +65,5 @@ dpkg-deb --root-owner-group --build "$stage" "$deb"
 readelf -h "$stage/usr/libexec/fprintd" | grep Machine
 dpkg-deb --info "$deb"
 sha256sum "$deb"
-bash "$repo/scripts/build-fprintd-pam-package.sh" "$deb"
+bash "$repo/scripts/build-fprintd-pam-package.sh" "$deb" "$source/build/pam/pam_fprintd.so"
 printf 'Build retained for inspection: %s\n' "$task"

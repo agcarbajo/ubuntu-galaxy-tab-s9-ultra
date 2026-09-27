@@ -10,7 +10,9 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import {sensorGeometry, panelMonitor} from './geometry.js';
 import {ShellUserVerifier} from 'resource:///org/gnome/shell/gdm/util.js';
+import {AuthPrompt} from 'resource:///org/gnome/shell/gdm/authPrompt.js';
 import {recoverClosedCancellation} from './authRecovery.js';
+import {answerWithoutFingerprintMessages, beginPasswordImmediately, finishPasswordImmediately} from './authParallel.js';
 import {visualState, lightRequest, lightRelease} from './visualState.js';
 import {keyboardCovers} from './keyboardGuard.js';
 import {AuthKeyboard, isTypingKeyboard} from './authKeyboard.js';
@@ -42,6 +44,18 @@ export default class Gts9uFingerprintOverlay extends Extension {
             error => error.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.CLOSED) ?? false,
             () => console.log('GTS9U auth: cleared closed GDM verification connection'));
         ShellUserVerifier.prototype.cancel = this._recoveryCancel;
+        this._originalAnswerQuery = ShellUserVerifier.prototype.answerQuery;
+        this._parallelAnswerQuery = answerWithoutFingerprintMessages(
+            this._originalAnswerQuery,
+            error => error.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED) ?? false,
+            error => console.error(`GTS9U password answer: ${error.message}`));
+        ShellUserVerifier.prototype.answerQuery = this._parallelAnswerQuery;
+        this._originalBegin = AuthPrompt.prototype.begin;
+        this._parallelBegin = beginPasswordImmediately(this._originalBegin);
+        AuthPrompt.prototype.begin = this._parallelBegin;
+        this._originalFinish = AuthPrompt.prototype.finish;
+        this._parallelFinish = finishPasswordImmediately(this._originalFinish);
+        AuthPrompt.prototype.finish = this._parallelFinish;
         this._displayCancellable = new Gio.Cancellable();
         this._session = null;
         this._uiAllowed = false;
@@ -162,6 +176,12 @@ export default class Gts9uFingerprintOverlay extends Extension {
         this._keyboardEventGuard = null;
         if (ShellUserVerifier.prototype.cancel === this._recoveryCancel)
             ShellUserVerifier.prototype.cancel = this._originalCancel;
+        if (ShellUserVerifier.prototype.answerQuery === this._parallelAnswerQuery)
+            ShellUserVerifier.prototype.answerQuery = this._originalAnswerQuery;
+        if (AuthPrompt.prototype.begin === this._parallelBegin)
+            AuthPrompt.prototype.begin = this._originalBegin;
+        if (AuthPrompt.prototype.finish === this._parallelFinish)
+            AuthPrompt.prototype.finish = this._originalFinish;
         this._originalCancel = null;
         this._recoveryCancel = null;
         this._displayCancellable.cancel();
@@ -664,7 +684,7 @@ export default class Gts9uFingerprintOverlay extends Extension {
         // Read-only state for intermittent post-login input failures. No key
         // contents, finger images, credentials, user names or auth answers.
         return JSON.stringify({
-            version: 22,
+            version: 23,
             nativeGatesUsed: this._nativeGatesUsed ?? 0,
             fallbackGatesUsed: this._fallbackGatesUsed ?? 0,
             lastLightGateMs: this._lastLightGateMs ?? null,

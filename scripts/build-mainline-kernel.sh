@@ -824,6 +824,10 @@ if [ "${BUILD_WIFI_MODULES:-1}" = 1 ]; then
 	release=$(make -s -C "$kernel_tree" O="$build_dir" ARCH=arm64 LLVM=1 \
 		kernelrelease)
 	release_dir=$modules_root/lib/modules/$release
+	# Tailscale needs /dev/net/tun for ordinary applications and MagicDNS.
+	# CONFIG_TUN=m is not useful unless the signed module is in the image.
+	bash "$repo/scripts/build-tailscale-tun.sh" \
+		"$kernel_tree" "$build_dir" "$release_dir/updates"
 	# Containers need the modular NAT/filter stack too, not just ath12k.
 	# Without these modules Waydroid fails before Android starts, with
 	# "can't initialize iptables table filter" from waydroid-net.sh.

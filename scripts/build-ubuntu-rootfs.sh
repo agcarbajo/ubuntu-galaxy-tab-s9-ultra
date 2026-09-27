@@ -307,7 +307,8 @@ fi
 
 
 # Companion's one-touch named test needs the additive matched-finger signal.
-# Keep the original fprintd/PAM protocol and libfprint matcher unchanged.
+# The paired PAM module skips only gdm-password; gdm-fingerprint and all other
+# services retain the original biometric path and libfprint matcher.
 fprintd_stamp=$base/out/packages/.gts9u-fprintd-inputs.sha256
 fprintd_version=$(cat "$repo/packaging/fprintd/version")
 fprintd_fingerprint=$(
