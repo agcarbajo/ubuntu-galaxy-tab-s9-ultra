@@ -1,5 +1,54 @@
 # Port 1.3.0: Tab Companion update readiness
 
+## Integration and authorised tablet deployment, 2026-09-28
+
+After the initial review below, the owner authorised saving the other agent's
+completed work on main, pushing it and integrating it before installing the
+app. Commit `356170d` preserves that work; main merge `ee34312` retains the
+remote README update too. Merge `fbdaade` integrates main into this branch.
+The S Pen reconnect/status sources from Companion 1.4.6 were compared against
+the live tablet before integration and matched exactly. The integrated app
+keeps those fixes and the new updater/notification functions. Main's port
+VERSION is now 1.3.0; this does not publish a full release or change the live
+port identity, which remains 1.2.0.
+
+The rebuilt `artifacts/ubuntu-gts9u-companion_1.5.0_all.deb` supersedes the
+earlier artifact below. Its SHA-256 is
+`a1d7ecd34277bd65fb5fe5a86d75e2f0b3341e8973b869b37a5bdf9238a3d576`.
+The same 71 unit tests and two GTK scripts passed again, along with the
+S Pen reconnect/status and Companion efficiency/hover regressions and package
+validation. The merged fingerprint build scripts passed shell syntax checks;
+this app deployment does not validate or deploy new kernel/fingerprint builds
+or the untested Resolute migration/recovery engine.
+
+The owner supplied the current address and username. SSH matched a previously
+saved host key; the remote model identified SM-X910, Ubuntu 24.04.5 arm64,
+Companion 1.4.6, fprintd gts9u2, writable UFS root, 39% battery, 257 GiB free,
+no offline-update marker, complete updater state and clean package audit.
+The transferred package matched the full hash. APT simulation and installation
+selected only Companion: one upgrade, no additions/removals, with removals and
+unauthenticated archive packages disallowed. No partition, GDM restart or
+reboot was performed. APT's sandbox notice resulted from the private temporary
+directory; it was not an integrity or dependency failure.
+
+The previous installed package files, dpkg status and package control scripts
+are retained root-only at
+`/var/lib/tab-companion-update/package-backups/1.4.6-before-1.5.0-20260928/`.
+The `installed-files.tar.gz` hash is
+`a7c0e1ff3dde61385e9bc879437706da45549655d9c21d0dd8056168f146c7bd`.
+This is package recovery evidence, not a full Ubuntu migration backup; do not
+restore the saved entire dpkg status over unrelated later package changes.
+
+Post-install version is 1.5.0; `apt-get check` and `dpkg --audit` are clean.
+`dpkg -V` reports only the shared generated `gschemas.compiled`, also present
+before installation. Pairing and user hardware services are active and their
+installed sources still match 1.4.6. The weekly timer is enabled/active; the
+preference remains false. The new UI was launched in Updates through a
+transient user service and is active without Python errors in its journal.
+Owner-visible toggle, notification/badge, and real update acceptance remain
+pending. The installation does not fabricate an available release to force a
+notification.
+
 ## Baseline reviewed on 2026-09-28
 
 The isolated branch `feature/companion-future-updates-1.3.0` starts at

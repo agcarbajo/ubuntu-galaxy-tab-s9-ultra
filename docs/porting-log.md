@@ -7362,3 +7362,35 @@ The owner reproduced the old verbose boot after returning from Android. Device 2
 Device 2.78 makes the early splash pruning part of the package's normal initramfs hook. It removes the Pango/X11/font stack, unused graphics, early DHCP and desktop snap rules while retaining e2fsck and the details renderer. update-initramfs generated an 8,273,631-byte legacy-LZ4 stream. All 72 retained ELF objects had complete DT_NEEDED dependencies; the theme symlink and original artwork sizes were verified. make-initramfs.sh now enforces the correct 8,314,880-byte ramdisk budget including the v4 header and AVB reservation and checks the generated archive before packing. The rootfs builder rebuilds this device package, the bundle reads the current quiet/splash cmdline, and installation/update code seeds or replaces Ubuntu's saved set from the matching payload. Thirty-six updater tests and the installer boot-set seeding tests passed.
 
 APT simulation and installation selected only Device 2.78, zero removals. Package SHA-256 is b6b1b2891f533f388b96cb5460a5261b13a838c72f923034f690ca05a11226d3. The generated init_boot hashes to 41aabac1788012ffc2f4a3945aa963da742e6cd64c90e236cf67f504ce3f7428; vendor_boot hashes to a1bdabe2cf5c954f9defae58f4c52bf7cc44a2b8d21017a7310e1ef1260ec7b3. Both active and saved copies were read back and verified. An actual Ubuntu-to-Android switch via Tab Companion followed by Android-to-Ubuntu through the Android app preserved all four expected image hashes. OBS showed the current small Ubuntu splash followed by GDM. The final cmdline retains quiet splash loglevel=3, package audit/verification are clean and disable-user-extensions remains false. The known panel-black interval and Samsung bootloader warning screens remain. No full release ZIP was built or published.
+
+## Integrated Companion 1.5.0 installed for owner testing, 2026-09-28
+
+The owner explicitly authorised committing/pushing the completed other-agent
+work on main, integrating it and installing the combined app. Main now includes
+`356170d` and merge `ee34312`; this branch merged it as `fbdaade`. The live
+Companion 1.4.6 S Pen reconnect/status sources matched the main checkout by
+complete hash before integration, avoiding a regression to the earlier 1.4.2
+baseline. The integrated Companion remains version 1.5.0. Its rebuilt DEB has
+SHA-256 `a1d7ecd34277bd65fb5fe5a86d75e2f0b3341e8973b869b37a5bdf9238a3d576`.
+The 71 unit tests, two GTK scripts, S Pen reconnect/status and efficiency/hover
+regressions and package builder passed again. Broader hardware builds were
+preserved in Git, not rebuilt or deployed by this app-only installation.
+
+After matching the saved SSH host key and identifying SM-X910/Ubuntu 24.04.5,
+preflight found Companion 1.4.6, 39% battery, 257 GiB free, writable UFS root,
+complete updater state and clean audit. Transfer SHA-256 matched; APT simulation
+and installation selected one upgrade and zero additions/removals, with
+removals and unauthenticated archive packages disallowed. Installed 1.4.6 files
+and package metadata were backed up root-only under
+`/var/lib/tab-companion-update/package-backups/1.4.6-before-1.5.0-20260928/`;
+archive SHA-256 is
+`a7c0e1ff3dde61385e9bc879437706da45549655d9c21d0dd8056168f146c7bd`.
+
+Installed Companion is 1.5.0; dependency check/audit are clean and package
+verification differs only for the shared generated schema cache, as before.
+Pairing and user hardware services retain the exact 1.4.6 backend hashes and
+are active. The weekly user timer is enabled/active with its preference still
+false. The app was opened in Updates and is active without Python errors.
+No reboot, GDM restart or partition write occurred. Owner-visible toggle,
+notification/badge and physical data-preserving update remain acceptance checks;
+no synthetic available release was inserted into the real user's cache.
