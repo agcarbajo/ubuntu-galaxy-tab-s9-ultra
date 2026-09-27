@@ -7255,3 +7255,38 @@ The v6 marker from the failed second cycle (archived page SHA-256 `4d5d154813a58
 To cover every sleep cycle, the Noble `ubuntu-gts9u-device` package was bumped from 2.64 to 2.65 (Resolute recipe 2.65 to 2.66). Its new `/usr/lib/systemd/system-sleep/ubuntu-gts9u-ath12k-sleep` hook (SHA-256 `1ee6e6929fa86f22ab03aac5510ca84abedd6d508dcf6c675379d504bfdd4946`) unbinds the bound ath12k PCIe endpoint on every sleep `pre`, then rebinds it on `post`; a marker in `/run` preserves the endpoint identity across sleep. The package was built on the Linux filesystem with the repository builder; package SHA-256 is `5dadb8c18f1dc215d40c573bb722a40150f19c02330ef15cf56d1af5357df75b`. An APT simulation selected one upgrade with no additions or removals. The live tablet accepted the upgrade without reboot, and `dpkg --audit`, `dpkg -V`, installed-hook hash, GDM/fingerprint/camera service status, writable root, and deep sleep selection checked out.
 
 The owner then repeated the cover/charger/Power sequence three times and reported a successful wake every time. All three happened on boot `6daaa798-1bd8-4588-ae8e-8164fa18b4a9`, so no reboot was hidden between attempts. The journal shows matching hook unbind/bind pairs at 00:38:13/00:38:54, 00:39:20/00:39:52, and 00:40:11/00:42:11 CEST; the kernel logged `PM: suspend entry (deep)` followed by `PM: suspend exit` on each cycle. Afterwards the `ath12k_wifi7_pci` driver was bound, `wlp1s0` was connected, the gateway answered 2/2 pings, the `/run` marker was gone, GDM was active, root was `rw,noatime`, and `dpkg --audit` and `dpkg -V` remained clean. The temporary v6 trace module was unloaded after collecting this evidence. This validates the packaged workaround for three consecutive repetitions of the original fault; longer-term suspend reliability and the underlying MHI/reset mechanism remain open.
+
+## Tab Companion for the port 1.3.0 bridge, 2026-09-28
+
+Reviewed the committed port baseline at `0116bcc` and the concurrent hardware
+status before editing. Work is isolated on
+`feature/companion-future-updates-1.3.0`; uncommitted keyboard/Caps LED changes
+and the Gunyah research worktrees were not modified or incorporated.
+
+Tab Companion 1.5.0 adds opt-in weekly release checks, a cached bottom-bar
+attention indicator and desktop notifications with an Updates action. The
+per-user timer only dispatches an unprivileged check; it does not download or
+install a release. New format 2 metadata declares updater/port requirements,
+source and target suites and preservation policy. Format 1 remains available
+for the 1.3.0 bridge, allowing the current 1.2.0 updater to install it.
+
+A future official distribution release can supply a bounded, hashed Python
+backend using a fixed entry protocol. The full ZIP must match the published
+stable release digest even when selected locally. The app retains root-only
+inputs and hands off before APT or boot writes; the same-suite runner refuses
+distribution migrations. This prepares delivery of a later migration engine,
+not the actual Noble-to-Resolute engine or full-root recovery implementation.
+Those remain release gates, described in
+`docs/companion-1.3.0-update-roadmap.md` with the reviewed hardware dependencies.
+
+The app package built with schema, Python, resource, desktop and AppStream
+checks. Its SHA-256 is
+`e68e26d813a1ab4dcc5ebd53fd1f86a5d912f96e69a7e5d61e4141aeeb8d759e`.
+All 71 focused unit cases and both GTK UI scripts passed under WSL/Xvfb/private
+D-Bus, including a real Gio notification to a fake notification server and
+intercepted backend dispatch. Resolute arm64 APT simulation selected three
+additions and no removals. The old Noble reference lacks the existing custom
+fprintd dependency, so its simulation is blocked rather than reported as
+passing. Real GNOME timer/notification acceptance and a data-preserving
+same-suite update remain physical checks. No tablet connection or write and
+no full release ZIP were performed.

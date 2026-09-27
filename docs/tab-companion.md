@@ -7,6 +7,13 @@ the window is closed.
 
 ## Architecture
 
+Companion 1.5.0 prepares the future update protocol and adds opt-in weekly
+release notifications with a bottom-bar indicator. It is intended for the
+port's 1.3.0 bridge release. See [update readiness and migration
+requirements](companion-1.3.0-update-roadmap.md). The bridge can deliver a future
+official backend; the Ubuntu cross-suite migration implementation remains
+unfinished and must be validated with its future release.
+
 - The GTK4/libadwaita window uses only GSettings and D-Bus.
 - `tab-companion-hardware.service` detects the capabilities present and
   publishes `io.github.agcarbajo.TabCompanion.Hardware`.
