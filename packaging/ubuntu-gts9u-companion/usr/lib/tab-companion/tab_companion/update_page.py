@@ -6,9 +6,10 @@ import subprocess
 import threading
 from pathlib import Path
 
-from gi.repository import Adw, Gdk, GLib, Gtk, Pango
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango
 
 from . import update_bundle as bundle
+from . import update_monitor
 from .update_core import status
 from .i18n import _
 
@@ -103,6 +104,12 @@ class UpdatePage(Adw.PreferencesPage):
 
         information = Adw.PreferencesGroup()
         self.add(information)
+        self.weekly = Adw.SwitchRow(title=_("Check for updates weekly"),
+            subtitle=_("Notify me when a new build is available."))
+        settings = getattr(window, "settings", None) or Gio.Settings.new("io.github.agcarbajo.TabCompanion")
+        settings.bind("weekly-update-checks", self.weekly, "active", Gio.SettingsBindFlags.DEFAULT)
+        self.weekly.connect("notify::active", self._weekly_changed)
+        information.add(self.weekly)
         self.version = Adw.ActionRow(title=_("Installed build"),
             subtitle=bundle.current().get("tag") or _("Version not recorded by this build"))
         self.version.add_prefix(Gtk.Image(icon_name="computer-symbolic"))
@@ -148,6 +155,15 @@ class UpdatePage(Adw.PreferencesPage):
             self._check()
         elif self.busy and self.stage not in ("download", "copy"):
             self._start_pulse()
+
+    def _weekly_changed(self, row, *_args):
+        # User service is unprivileged. Disabling leaves the periodic timer
+        # inert through GSettings, and removes a notification already shown.
+        app = self.window.get_application()
+        if row.get_active():
+            Gio.Subprocess.new(["/usr/libexec/tab-companion-update-schedule"], Gio.SubprocessFlags.NONE)
+        elif app:
+            app.withdraw_notification("system-update")
 
     @staticmethod
     def _button(container, title, callback, primary=False):
@@ -226,6 +242,9 @@ class UpdatePage(Adw.PreferencesPage):
             self._hero("A new build is available", "Ubuntu, drivers and Tab Companion in one update.")
         self.release_label.set_visible(bool(latest))
         if latest:
+            update_monitor.record(latest)
+            if hasattr(self.window, "refresh_update_badge"):
+                self.window.refresh_update_badge()
             self.release_label.set_text(latest["tag"] + ("  ·  " + size_label(latest["size"]) if latest.get("size") else ""))
         self.notes.set_visible(bool(latest and latest.get("notes")))
         self.notes_text.set_text((latest or {}).get("notes", ""))

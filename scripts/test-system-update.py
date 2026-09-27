@@ -64,6 +64,14 @@ class PayloadTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "predates"):
             b.inspect(path)
 
+    def test_protocol2_payload_keeps_bounded_extraction(self):
+        path = self.archive(lambda m: m.update(format=2, minimum_updater_protocol=2,
+            minimum_port_version="1.3.0", suite="resolute", source_suites=["resolute"],
+            update_kind="kernel", data_policy="preserve"))
+        manifest = b.extract(path, self.root / "out")
+        self.assertEqual(manifest["suite"], "resolute")
+        self.assertEqual(len(list((self.root / "out").rglob("*.img"))), 4)
+
     def test_wrong_device_suite_arch_format(self):
         for field, value in (("device", "gts9"), ("suite", "jammy"), ("architecture", "amd64"), ("format", 2)):
             with self.subTest(field=field):
@@ -181,6 +189,15 @@ class PayloadTests(unittest.TestCase):
 
 
 class ReleaseTests(unittest.TestCase):
+    def test_future_ubuntu_asset_discovery_and_protocol(self):
+        data = self.release_data()
+        data['body'] = '<!-- gts9u-update-format: 2 -->'
+        data['assets'][0]['name'] = 'ubuntu-26.04-sm-x910-v1.4.0.zip'
+        with patch.object(b, 'request', return_value=self.response(data)):
+            info = b.release()
+        self.assertTrue(info['supports_updates'])
+        self.assertEqual(info['name'], 'ubuntu-26.04-sm-x910-v1.4.0.zip')
+
     def test_three_asset_release_uses_notes_format_marker(self):
         data = self.release_data()
         data['body'] = '<!-- gts9u-update-format: 1 -->'
@@ -258,7 +275,7 @@ class OfflineTransactionTests(unittest.TestCase):
             device.write_bytes(self.old)
             self.devices[part] = device
             (self.transaction / (part + ".img")).write_bytes(self.new)
-        self.plan = {"files": {p + ".img": {"sha256": hashlib.sha256(self.new).hexdigest()}
+        self.plan = {"format": 1, "suite": "noble", "files": {p + ".img": {"sha256": hashlib.sha256(self.new).hexdigest()}
                                 for p in b.PARTITIONS}, "apt_packages": [],
                      "device": "gts9uwifi", "version": "1.1.0", "tag": "v1.1.0", "kernel_release": "test"}
         (self.transaction / "plan.json").write_text(json.dumps(self.plan))
@@ -269,6 +286,7 @@ class OfflineTransactionTests(unittest.TestCase):
             patch.object(c, "MARKER", self.marker), patch.object(b, "IDENTITY", self.identity),
             patch.dict(b.PARTITIONS, {p: 32 for p in b.PARTITIONS}),
             patch.object(c, "device_check"), patch.object(c, "power_check"),
+            patch.object(c.policy, "ubuntu_suite", return_value="noble"),
             patch.object(c, "partitions", return_value=self.devices),
             patch.object(c.subprocess, "run", return_value=subprocess.CompletedProcess([], 3)),
             patch.object(c, "Path", side_effect=lambda p: self.root / "saved-ubuntu" if
@@ -313,6 +331,21 @@ class OfflineTransactionTests(unittest.TestCase):
             c.apply_offline()
         self.assertEqual(c.status()["state"], "failed")
         self.assertFalse(any(a[0] == "apt-get" for a in self.commands))
+        self.assertTrue(all(d.read_bytes() == self.old for d in self.devices.values()))
+
+    def test_unimplemented_crossgrade_aborts_before_backup_or_apt(self):
+        self.plan.update(format=2, suite="resolute", source_suites=["noble"],
+                         minimum_updater_protocol=2, minimum_port_version="1.3.0",
+                         update_kind="distribution", data_policy="preserve",
+                         backend_strategy="official-release-backend-v1", backend_entry_protocol=1,
+                         backend_file="UPDATE/updater.pyz", recovery="full-system-root-v1")
+        (self.transaction / "plan.json").write_text(json.dumps(self.plan))
+        with patch.object(c, "run", side_effect=self.execute), patch.object(c.policy.subprocess, "run",
+                side_effect=lambda argv, **_kw: subprocess.CompletedProcess(argv, 3 if argv[0] == "systemctl" else 0)):
+            c.apply_offline()
+        self.assertEqual(c.status()["state"], "failed")
+        self.assertIn("verified release backend", c.status()["error"])
+        self.assertFalse(any(a[0] in ("apt-get", "cp") for a in self.commands))
         self.assertTrue(all(d.read_bytes() == self.old for d in self.devices.values()))
 
     def test_completed_transaction_is_not_rolled_back_after_power_loss(self):
@@ -506,6 +539,19 @@ class PackagingTests(unittest.TestCase):
             self.assertEqual(result["tag"], "v1.1")
             self.assertFalse((base / "extracted/vbmeta.img").exists())
             self.assertFalse((base / "extracted/META-INF").exists())
+            metadata = json.loads((payload / "metadata.json").read_text())
+            metadata.update(format=2, minimum_updater_protocol=2, minimum_port_version="1.3.0",
+                suite="resolute", source_suites=["noble"], update_kind="distribution", data_policy="preserve",
+                backend_file="UPDATE/updater.pyz", backend_entry_protocol=1,
+                backend_strategy="official-release-backend-v1", recovery="full-system-root-v1")
+            (payload / "metadata.json").write_text(json.dumps(metadata))
+            with zipfile.ZipFile(payload / "updater.pyz", "w") as program:
+                program.writestr("__main__.py", "raise RuntimeError('fixture never executed')")
+            with patch.dict(module.IMAGES, {n: 32 for n in module.IMAGES}), patch.dict(b.PARTITIONS, {n: 32 for n in b.PARTITIONS}), patch.object(sys, "argv", ["make-twrp-zip", str(images), str(archive), "--update-payload", str(payload)]):
+                module.main()
+                result = b.extract(archive, base / "migration-extracted")
+            self.assertIn("UPDATE/updater.pyz", result["files"])
+            self.assertEqual((base / "migration-extracted/UPDATE/updater.pyz").read_bytes(), (payload / "updater.pyz").read_bytes())
 
 
 if __name__ == "__main__":

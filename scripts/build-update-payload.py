@@ -17,6 +17,7 @@ def main():
     p.add_argument("--base", type=Path, required=True)
     p.add_argument("--version", required=True)
     p.add_argument("--bootstrap", type=Path, required=True)
+    p.add_argument("--update-format", type=int, choices=(1, 2), default=1)
     a = p.parse_args()
     if not re.fullmatch(r"[0-9][A-Za-z0-9.+~]*", a.version):
         p.error("version must be a Debian-compatible release number without a leading v")
@@ -90,15 +91,19 @@ def main():
     # Generated from the same rootfs input list; do not copy dpkg's database or
     # reinstall every application the image happened to pull in as a dependency.
     required = (rootfs / "usr/lib/gts9u-required-packages.txt").read_text().split()
-    (out / "metadata.json").write_text(json.dumps({**identity, "format": 1,
-        "architecture": "arm64", "suite": "noble", "apt_packages": required}, indent=2) + "\n")
+    metadata = {**identity, "format": a.update_format,
+        "architecture": "arm64", "suite": "noble", "apt_packages": required}
+    if a.update_format == 2:
+        metadata.update(minimum_updater_protocol=2, minimum_port_version="1.3.0",
+                        source_suites=["noble"], update_kind="port", data_policy="preserve")
+    (out / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
     with tempfile.TemporaryDirectory() as tmp:
         app = Path(tmp)
         package = app / "tab_companion"
         package.mkdir()
         (package / "__init__.py").write_text("")
         source = repo / "packaging/ubuntu-gts9u-companion/usr/lib/tab-companion/tab_companion"
-        for name in ("update_core.py", "update_bundle.py"):
+        for name in ("update_core.py", "update_bundle.py", "update_policy.py"):
             shutil.copyfile(source / name, package / name)
         (app / "__main__.py").write_text(
             "from tab_companion.update_core import main\n"

@@ -176,6 +176,16 @@ def main() -> None:
             (args.update_payload / "debs").glob("*.deb"))}
         if not update_files:
             raise SystemExit("Update payload has no packages")
+        if update_manifest.get("update_kind") == "distribution":
+            backend = args.update_payload / "updater.pyz"
+            if (update_manifest.get("backend_file") != "UPDATE/updater.pyz"
+                    or not backend.is_file() or backend.is_symlink()
+                    or backend.stat().st_size > 32 * 1024**2):
+                raise SystemExit("Missing or invalid release migration backend")
+            with zipfile.ZipFile(backend) as program:
+                if "__main__.py" not in program.namelist():
+                    raise SystemExit("Release backend must be a Python zip application")
+            update_files["UPDATE/updater.pyz"] = backend
         all_files = {**{n: args.bundle / n for n in IMAGES if n != "vbmeta.img"}, **update_files}
         update_manifest["files"] = {name: {"sha256": digest(path), "size": path.stat().st_size}
                                     for name, path in all_files.items()}

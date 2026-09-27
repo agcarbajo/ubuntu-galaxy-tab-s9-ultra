@@ -1,0 +1,10 @@
+[Unit]
+Description=Check for Ubuntu port updates without installing anything
+After=graphical-session.target
+ConditionEnvironment=|WAYLAND_DISPLAY
+ConditionEnvironment=|DISPLAY
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/tab-companion-update-check
+TimeoutStartSec=45s

@@ -1,0 +1,14 @@
+[Unit]
+Description=Weekly Tab Companion update discovery
+
+[Timer]
+# Local daily wake-ups retry offline checks and avoid a manual check moving the
+# next network check to almost two weeks later. Python enforces the 7-day gap.
+OnCalendar=daily
+OnStartupSec=5min
+Persistent=true
+RandomizedDelaySec=15min
+Unit=tab-companion-update-check.service
+
+[Install]
+WantedBy=timers.target

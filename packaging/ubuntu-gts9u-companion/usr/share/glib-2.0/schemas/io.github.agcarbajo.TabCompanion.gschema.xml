@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <schemalist gettext-domain="ubuntu-gts9u-companion">
   <schema id="io.github.agcarbajo.TabCompanion" path="/io/github/agcarbajo/TabCompanion/">
+    <key name="weekly-update-checks" type="b"><default>false</default></key>
     <key name="gesture-single-press" type="s"><default>'nothing'</default></key>
     <key name="gesture-double-press" type="s"><default>'nothing'</default></key>
     <key name="gesture-long-press" type="s"><default>'nothing'</default></key>
