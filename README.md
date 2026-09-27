@@ -23,7 +23,7 @@ Ubuntu 24.04 LTS arm64 for the Samsung Galaxy Tab S9 Ultra Wi-Fi
 | Power and volume buttons | ✅ | Power, wake and volume controls |
 | Wi-Fi | ✅ | WCN7850 / ath12k |
 | Bluetooth | ✅ | Controller, audio and S Pen BLE |
-| Speakers and microphones | 🟡 | Stereo routing persisted through an Ubuntu reboot; listening balance and Android parity remain open |
+| Speakers and microphones | ✅ | All four speakers and microphones work fine |
 | Vibration / haptics | ✅ | On-screen keyboard feedback |
 | Motion sensors | ✅ | Rotation, accelerometer, gyroscope and compass |
 | Battery telemetry | ✅ | Charge, voltage, current and temperature |
@@ -57,7 +57,8 @@ Tab Companion provides:
 - remapping for compatible Samsung Book Cover Keyboard keys;
 - adjustable vibration feedback for GNOME's on-screen keyboard and optional notification vibration;
 - fingerprint enrolment with progress, deletion and recognition tests, using the same fingerprints as Ubuntu Settings and login;
-- dual boot to Android, with an optional toggle in quick settings.
+- dual boot to Android, with an optional toggle in quick settings;
+- updater for future builds of the port directly from the app.
 
 The air-pointer concept is inspired by
 [PenMouse S](https://github.com/jojczak/PenMouseS) by Jakub J (`@jojczak`).
