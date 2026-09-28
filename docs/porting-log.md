@@ -7439,3 +7439,33 @@ still names its earlier 1.2.0 transaction), kernel 7.2.0-rc3-dirty, Ubuntu
 No reboot, GDM restart, partition write or fictitious update/notification was
 performed. Owner-visible layout/format acceptance and the explicitly deferred
 notification simulation remain pending.
+
+## Live fictional update preview, 2026-09-28
+
+The owner requested a fictional update to observe the system notification,
+availability indicator and Markdown notes. `scripts/preview-companion-update.py`
+runs the installed Companion code as the desktop user with the real application
+ID and notification action. Read-only release discovery returns v1.4.0~demo,
+a 2.25 GiB example size and explicitly fictional notes on kernel, S Pen, Wi-Fi,
+keyboard and Ubuntu. The Markdown exercises headings, lists, emphasis, quotes,
+a table, code, a repository link and strikethrough. There is no downloadable
+payload: its URL is reserved example.invalid and all update preparation,
+reinstallation and reboot callbacks show a preview notice instead. The real
+installed app files, port identity and updater transaction are untouched.
+
+Preview discovery uses a temporary cache via the monitor's cache_path override,
+not the user's normal cache. The notification callback gets a temporary opt-in
+read so the test can deliver without changing preferences. Background periodic
+discovery is inert within this preview. Clicking the real notification opens
+the normal Updates page with the fake release; closing that preview window
+releases the background hold, withdraws the notification and removes the
+isolated cache. Normal subsequent app activation uses installed real discovery.
+
+The script passed Python compilation. The previously verified SM-X910 reported
+Companion 1.5.1, no normal app process, complete updater state and no offline
+marker. The user's weekly preference was already true and remains true. The
+user service `tab-companion-update-preview.service` is active; its journal
+confirms the notification was dispatched without Python errors. The actual
+updater state remains complete for the prior 1.2.0 transaction. Owner-visible
+notification delivery/click, badge and Markdown appearance are pending; no
+mock release was published, package download/install or reboot performed.

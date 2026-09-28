@@ -495,3 +495,14 @@ bus name and resends the state every time that service appears.
 A separate bug is on record and still unfixed: the pairing service **does not
 survive a `bluetoothd` restart**. Its bus reference goes invalid, it raises
 `ServiceUnknown`, and it stays alive doing nothing while burning CPU.
+
+### Fictional notification preview
+
+Run `scripts/preview-companion-update.py` as the logged-in desktop user after
+closing the normal app. It temporarily advertises `v1.4.0~demo` through the real
+notification/action/UI code, with Markdown example notes and isolated release
+cache. Update preparation and reboot actions are blocked by an explanatory
+dialog. Closing the preview window removes the temporary cache and restores
+normal discovery on the next launch. If the window was never opened, stop its
+transient user service `tab-companion-update-preview.service` to end the trial.
+Do not publish this sample as a release or insert it into the real user cache.
