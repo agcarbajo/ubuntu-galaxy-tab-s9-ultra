@@ -67,6 +67,21 @@ with patch.object(update_page.bundle, "current", return_value={}), patch.object(
     assert page.install.get_sensitive()
     page._checked(None, "Offline test")
     assert not page.install.get_sensitive()
+    with patch.object(update_page.bundle, "current", return_value={"tag":"v1.2.0", "version":"1.2.0"}), \
+         patch.object(update_page.threading, "Thread"):
+        current = {"tag":"v1.2.0", "supports_updates":True, "notes":"## Installed\n**Old fix**"}
+        page._checked(current, None)
+        assert not page.notes.get_visible()
+        assert "Old fix" in page.installed_notes.get_text()
+        newer = {"tag":"v1.3.0", "supports_updates":True, "notes":"## Update\n**New fix**"}
+        page._checked(newer, None)
+        assert page.notes.get_visible()
+        assert "New fix" in page.notes_text.get_text()
+        assert "New fix" not in page.installed_notes.get_text()
+        assert "Old fix" in page.installed_notes.get_text()
+        page._checked(None, "Offline")
+        assert not page.notes.get_visible()
+        assert "Old fix" in page.installed_notes.get_text()
     page._line('{"event":"progress","stage":"download","completed":52428800,"total":104857600}')
     assert page.progress_bar.get_fraction() == 0.5
     assert page.progress_bar.get_text() == "50%"
@@ -83,6 +98,23 @@ with patch.object(update_page.bundle, "current", return_value={}), patch.object(
         assert page.restart.get_visible() and not page.local.get_sensitive()
     page._finished(False)
     assert page.details.get_expanded()
+    from tab_companion import window as window_module
+    from types import SimpleNamespace
+    window.hardware = SimpleNamespace(state=SimpleNamespace(
+        pen_state="nearby", pen_orientation="tip-left", pen_battery=70,
+        keyboard_model="EF-DX920", remapping_available=True,
+        button_actions_available=True, haptics_available=True))
+    with patch.object(window_module.Adw, "AboutWindow") as about, \
+         patch.object(window_module, "add_keyboard_diagnostics"), \
+         patch.object(window_module.system_summary, "rows", return_value=[
+             ("Port version", "v1.2.0"), ("Kernel", "7.2"), ("Ubuntu", "Ubuntu 24.04"),
+             ("Processor", "SM8550"), ("RAM", "12 GiB"), ("Uptime", "1 h")]):
+        window_module.CompanionWindow._show_about(window, None)
+        comments = about.call_args.kwargs["comments"]
+        for value in ("v1.2.0", "7.2", "Ubuntu 24.04", "SM8550", "12 GiB", "1 h"):
+            assert value in comments
+        assert "<b>" in comments
+        about.return_value.present.assert_called_once()
     window.present()
     loop = GLib.MainLoop()
     def finish():

@@ -7394,3 +7394,48 @@ false. The app was opened in Updates and is active without Python errors.
 No reboot, GDM restart or partition write occurred. Owner-visible toggle,
 notification/badge and physical data-preserving update remain acceptance checks;
 no synthetic available release was inserted into the real user's cache.
+
+## Companion 1.5.1 build notes and system details, 2026-09-28
+
+The owner requested one installed-build/notes section, Markdown GitHub release
+notes, and a system build summary in About Details. Installed build is now an
+expander with its exact tag's notes. New/unknown candidate notes are in the
+upper update card; equal/older release notes cannot overwrite installed notes.
+A separate tag-specific read supports releases whose asset has been retired.
+Missing notes or a failed request are explicit and retryable. The native
+renderer parses CommonMark and table/strikethrough tokens with python3-markdown-it
+and emits escaped Pango styling. HTTP(S)/mailto links are clickable; raw HTML
+cannot inject styling and images do not trigger downloads.
+
+About Details now reports port/kernel/Ubuntu versions, CPU, usable MemTotal RAM
+and uptime read from the installed system without root or subprocesses. Values
+are escaped before markup and also included in debug information. All new
+strings have Spanish/French/German/Italian/Portuguese translations. Package
+version is 1.5.1; python3-markdown-it is an explicit dependency.
+
+Seven new fixture tests passed, together with the 71 updater/readiness/launcher/
+translation cases and both GTK scripts. The GTK preview checks equal/newer/
+offline note separation and all six About fields. The Debian builder's Python,
+schema, resource, desktop and AppStream validations passed. Package SHA-256 is
+`683f9bd079b8686b07855ef8c4090bcedb4efa8cad43fd8ff7ba6b41de721018`.
+
+The same previously verified SSH host key/model identified the tablet on
+Ubuntu 24.04.5 with Companion 1.5.0, 36% battery, 257 GiB free, writable root,
+no offline-update marker, complete updater state and clean audit. The transfer
+hash matched. APT simulation and installation selected one upgrade, zero new
+packages/removals; python3-markdown-it 3.0.0-2 was already installed. Archive
+authentication was required and removals disabled. The previous exact 1.5.0
+DEB is retained root-only at
+`/var/lib/tab-companion-update/package-backups/1.5.0-before-1.5.1-20260928/`.
+Its hash remains `a1d7ecd34277bd65fb5fe5a86d75e2f0b3341e8973b869b37a5bdf9238a3d576`.
+
+Installed 1.5.1 has clean dependency check/audit, active pairing/hardware
+services and only the pre-existing generated schema cache verification
+difference. The previous trial UI had exited; the new app was launched in
+Updates and its service/journal show no Python errors. The live summary reads
+port v1.3.0 from installed release metadata (the updater's last complete status
+still names its earlier 1.2.0 transaction), kernel 7.2.0-rc3-dirty, Ubuntu
+24.04.5, Qualcomm SM8550, 14.2 GiB usable and 1 h 9 min uptime at inspection.
+No reboot, GDM restart, partition write or fictitious update/notification was
+performed. Owner-visible layout/format acceptance and the explicitly deferred
+notification simulation remain pending.

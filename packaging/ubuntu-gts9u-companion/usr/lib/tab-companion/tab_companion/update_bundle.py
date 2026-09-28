@@ -82,6 +82,17 @@ def release(tag=None):
                 or any(a.get("name") == "gts9u-update.pyz" for a in data.get("assets", []))}
 
 
+def release_notes(tag):
+    """Read installed release notes even if its download asset was retired."""
+    if not re.fullmatch(r"v[0-9][A-Za-z0-9.+~]{0,100}", str(tag)):
+        raise ValueError("Invalid release tag")
+    with request(API + "/tags/" + urllib.parse.quote(tag, safe="")) as stream:
+        data = json.loads(stream.read(2 * 1024**2 + 1))
+    if data.get("tag_name") != tag or data.get("draft") or data.get("prerelease"):
+        raise ValueError("The installed release is not published")
+    return re.sub(r"<!--.*?-->", "", data.get("body") or "", flags=re.S).strip()
+
+
 def release_state(info):
     if not info.get("supports_updates", False):
         return "unsupported"
