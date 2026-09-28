@@ -6,6 +6,7 @@ The installed application code is untouched. Closing the preview restores
 normal discovery; public mock metadata lives only in a temporary cache.
 """
 import os
+import signal
 from pathlib import Path
 import sys
 import tempfile
@@ -115,9 +116,12 @@ def main_preview():
             print("Preview notification sent; real updates and cache untouched", flush=True)
             return False
         app._weekly_check = lambda: None  # no repeat network/timer notification
-        GLib.timeout_add(750, notify)
+        GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGTERM,
+                             lambda: (app.quit(), False)[1])
+        if "--show" not in sys.argv:
+            GLib.timeout_add(750, notify)
         try:
-            return app.run([sys.argv[0], "--check-updates"])
+            return app.run([sys.argv[0], "--updates" if "--show" in sys.argv else "--check-updates"])
         finally:
             app.withdraw_notification("system-update")
 

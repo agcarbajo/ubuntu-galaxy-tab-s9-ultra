@@ -18,6 +18,9 @@
   <launchable type="desktop-id">io.github.agcarbajo.TabCompanion.desktop</launchable>
   <url type="homepage">https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra</url>
   <releases>
+    <release version="1.5.2" date="2026-09-28">
+      <description><p>Simplifies the available-update card by removing its generic subtitle.</p></description>
+    </release>
     <release version="1.5.1" date="2026-09-28">
       <description><p>Groups installed-build release notes with its version, formats Markdown notes in each build's section and adds the system build summary to About Details.</p></description>
     </release>

@@ -7469,3 +7469,32 @@ confirms the notification was dispatched without Python errors. The actual
 updater state remains complete for the prior 1.2.0 transaction. Owner-visible
 notification delivery/click, badge and Markdown appearance are pending; no
 mock release was published, package download/install or reboot performed.
+
+## Companion 1.5.2 simplifies the available-update card, 2026-09-28
+
+Following the owner's accepted preview, removed the generic «Ubuntu, drivers
+and Tab Companion in one update» subtitle. Empty hero descriptions are hidden,
+so there is no empty text row; descriptions for other update states remain.
+The UI still presents port version/release notes and does not have separate
+Ubuntu/kernel-specific presentation. No target versions are inferred from
+notes or treated as verified hardware compatibility.
+
+Package 1.5.2 SHA-256 is
+`cda1c35bd2f4dec712761ec754c46b87c446bc94e90ceee669ae12b516ff9143`.
+The package builder and GTK update-page preview passed. The same SSH key and
+SM-X910 identified Companion 1.5.1 on writable root, 34% battery, 257 GiB free,
+complete updater state and no offline marker. Transfer hash matched; APT
+simulation/install selected one upgrade, no new packages/removals with archive
+authentication required and removals disabled. The prior 1.5.1 DEB is kept
+root-only at
+`/var/lib/tab-companion-update/package-backups/1.5.1-before-1.5.2-20260928/`.
+Its SHA-256 remains
+`683f9bd079b8686b07855ef8c4090bcedb4efa8cad43fd8ff7ba6b41de721018`.
+
+Post-install audit/dependency checks are clean; verification differs only for
+the pre-existing generated schema cache. The fictional preview was restarted
+with its new --show option, opening the candidate screen without sending a
+second notification. SIGTERM now quits the preview through its main loop so
+its notification and isolated temporary cache are cleaned up. No actual
+update was prepared, reboot or partition write performed. Owner-visible
+confirmation of the simplified card remains pending.

@@ -217,6 +217,7 @@ class UpdatePage(Adw.PreferencesPage):
     def _hero(self, title, description, icon="software-update-available-symbolic", spinning=False):
         self.heading.set_text(_(title))
         self.description.set_text(_(description))
+        self.description.set_visible(bool(description))
         self.icon.set_from_icon_name(icon)
         self.icon_stack.set_visible_child_name("spinner" if spinning else "icon")
         self.spinner.set_spinning(spinning)
@@ -281,7 +282,7 @@ class UpdatePage(Adw.PreferencesPage):
         elif latest["tag"] == bundle.current().get("tag"):
             self._hero("You are up to date", "You're running the latest published build.", "emblem-ok-symbolic")
         else:
-            self._hero("A new build is available", "Ubuntu, drivers and Tab Companion in one update.")
+            self._hero("A new build is available", "")
         self.release_label.set_visible(bool(latest))
         if latest:
             update_monitor.record(latest)
