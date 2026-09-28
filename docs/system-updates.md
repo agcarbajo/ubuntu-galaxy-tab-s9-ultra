@@ -1,11 +1,27 @@
 # System updates
 
+> Ubuntu 26.04/GNOME 50 and Linux 7.2.8 are under assessment. The current
+> updater supports same-suite Noble releases only. See the
+> [26.04 upgrade assessment](upgrade-26.04-assessment.md); no 26.04 ZIP is
+> approved for installation or update.
+
 Tab Companion 1.3 adds an **Updates** page for the complete Ubuntu port, not
 just the application. Release v1.1.0 is the first release with the update
 payload. The v1.0.0 ZIP predates that format and cannot be installed through
 this updater; existing v1.0.0 installations can upgrade using the command below.
 
 ## Updating
+
+Companion 1.5.0, intended for port 1.3.0, adds an opt-in **Check for updates
+weekly** switch. It marks Updates in the bottom bar and sends a desktop
+notification for a newer published build, without downloading or installing it.
+Its format 2 contract and remaining distribution-migration requirements are in
+[the 1.3.0 roadmap](companion-1.3.0-update-roadmap.md). Build the 1.3.0 bridge
+with format 1; future format 2 updates require that bridge first. For a future
+Ubuntu migration, the app can hand off to a backend inside an exact official
+stable ZIP, authenticated against its published digest. The distribution-specific
+migration and full-root recovery engine must still be implemented and tested
+before publishing that upgrade.
 
 Open **Tab Companion → Updates**; it checks GitHub when opened. You can also
 use **Check for updates** to refresh, then download and

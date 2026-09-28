@@ -1,11 +1,49 @@
 # Tab Companion
 
+## Build notes and system summary (1.5.1)
+
+Installed build is now one expander containing its recorded port tag and its
+own release notes. When a newer build is offered, its notes appear inside the
+upper update card. Equal/older latest releases never replace installed notes.
+Installed notes are fetched by their exact tag, even if the corresponding
+download asset has been retired. Missing/unpublished notes and network errors
+have explicit messages; a later check retries failed retrieval.
+
+Both note areas render CommonMark with headings, emphasis, nested lists,
+quotes, code, links, strikethrough and readable table rows using the packaged
+`python3-markdown-it` parser. Tokens become escaped Pango markup; raw HTML is
+text and images show alt text without downloading external resources. Links
+are restricted to HTTP(S)/mailto. See the
+[parser documentation](https://markdown-it-py.readthedocs.io/en/latest/using.html).
+
+About → Details includes the installed port version, running kernel, Ubuntu
+release, processor, usable RAM and uptime at the moment the window opens.
+The same summary is included in the existing debug information. It uses the
+AboutWindow comments property, which is displayed on Details according to
+[libadwaita's documentation](https://gnome.pages.gitlab.gnome.org/libadwaita/doc/1.5/class.AboutWindow.html).
+Values are read without privileges or shell commands from release metadata,
+os-release, procfs and the device tree; missing values remain unknown. RAM is
+usable MemTotal, not an estimate of marketed physical capacity. This does not
+change the installed port identity or prepare an update.
+
+`scripts/test-companion-build-info.py` covers Markdown parsing/escaping,
+blocked local links, image handling, tables, system value fixtures and
+tag-specific notes without download assets. The GTK update preview verifies
+current/newer/offline note placement and the About Details integration.
+
 `Tab Companion` is the native settings application for the S Pen and for
 compatible Samsung keyboard covers. `ubuntu-gts9u-companion` installs it; it
 appears in GNOME's menu, and the user service applies the mappings even while
 the window is closed.
 
 ## Architecture
+
+Companion 1.5.0 prepares the future update protocol and adds opt-in weekly
+release notifications with a bottom-bar indicator. It is intended for the
+port's 1.3.0 bridge release. See [update readiness and migration
+requirements](companion-1.3.0-update-roadmap.md). The bridge can deliver a future
+official backend; the Ubuntu cross-suite migration implementation remains
+unfinished and must be validated with its future release.
 
 - The GTK4/libadwaita window uses only GSettings and D-Bus.
 - `tab-companion-hardware.service` detects the capabilities present and
@@ -457,3 +495,14 @@ bus name and resends the state every time that service appears.
 A separate bug is on record and still unfixed: the pairing service **does not
 survive a `bluetoothd` restart**. Its bus reference goes invalid, it raises
 `ServiceUnknown`, and it stays alive doing nothing while burning CPU.
+
+### Fictional notification preview
+
+Run `scripts/preview-companion-update.py` as the logged-in desktop user after
+closing the normal app. It temporarily advertises `v1.4.0~demo` through the real
+notification/action/UI code, with Markdown example notes and isolated release
+cache. Update preparation and reboot actions are blocked by an explanatory
+dialog. Closing the preview window removes the temporary cache and restores
+normal discovery on the next launch. If the window was never opened, stop its
+transient user service `tab-companion-update-preview.service` to end the trial.
+Do not publish this sample as a release or insert it into the real user cache.

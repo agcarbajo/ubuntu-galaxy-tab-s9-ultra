@@ -6,9 +6,11 @@ import subprocess
 import threading
 from pathlib import Path
 
-from gi.repository import Adw, Gdk, GLib, Gtk, Pango
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango
 
 from . import update_bundle as bundle
+from . import update_monitor
+from .release_markdown import markup
 from .update_core import status
 from .i18n import _
 
@@ -64,6 +66,10 @@ class UpdatePage(Adw.PreferencesPage):
         body.append(self.release_label)
         actions = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, halign=Gtk.Align.CENTER)
         body.append(actions)
+        self.notes = Adw.ExpanderRow(title=_("What's new"), visible=False)
+        self.notes_text = self._notes_label()
+        self.notes.add_row(self.notes_text)
+        body.append(self.notes)
         self.check = self._button(actions, _("Check for updates"), self._check)
         self._check_gesture = Gtk.GestureClick(button=1)
         self._check_gesture.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
@@ -103,22 +109,21 @@ class UpdatePage(Adw.PreferencesPage):
 
         information = Adw.PreferencesGroup()
         self.add(information)
-        self.version = Adw.ActionRow(title=_("Installed build"),
+        self.weekly = Adw.SwitchRow(title=_("Check for updates weekly"),
+            subtitle=_("Notify me when a new build is available."))
+        settings = getattr(window, "settings", None) or Gio.Settings.new("io.github.agcarbajo.TabCompanion")
+        settings.bind("weekly-update-checks", self.weekly, "active", Gio.SettingsBindFlags.DEFAULT)
+        self.weekly.connect("notify::active", self._weekly_changed)
+        information.add(self.weekly)
+        self.version = Adw.ExpanderRow(title=_("Installed build"),
             subtitle=bundle.current().get("tag") or _("Version not recorded by this build"))
         self.version.add_prefix(Gtk.Image(icon_name="computer-symbolic"))
         information.add(self.version)
-        self.notes = Adw.ExpanderRow(title=_("What's new"), visible=False)
-        self.notes_text = Gtk.Label(xalign=0, yalign=0, wrap=True,
-            wrap_mode=Pango.WrapMode.WORD_CHAR, selectable=False, hexpand=True,
-            max_width_chars=70, margin_top=18, margin_bottom=18,
-            margin_start=20, margin_end=20)
-        note_style = Pango.AttrList()
-        note_style.insert(Pango.attr_scale_new(1.12))
-        self.notes_text.set_attributes(note_style)
-        # Let the page scroll the complete notes instead of nesting a short
-        # viewport inside the expander. Height follows the wrapped text.
-        self.notes.add_row(self.notes_text)
-        information.add(self.notes)
+        self.installed_notes = self._notes_label()
+        self.installed_notes.set_text(_("Check for updates to load this build's release notes."))
+        self.version.add_row(self.installed_notes)
+        self._installed_notes_tag = None
+        self._installed_notes_loading = None
 
         other = Adw.PreferencesGroup(title=_("Other installation options"))
         self.add(other)
@@ -143,11 +148,64 @@ class UpdatePage(Adw.PreferencesPage):
         self.connect("map", self._mapped)
         self.connect("unmap", lambda *_: (self._stop_pulse(), self._cancel_hold()))
 
+    @staticmethod
+    def _notes_label():
+        label = Gtk.Label(xalign=0, yalign=0, wrap=True,
+            wrap_mode=Pango.WrapMode.WORD_CHAR, selectable=False, hexpand=True,
+            max_width_chars=70, margin_top=18, margin_bottom=18,
+            margin_start=20, margin_end=20)
+        note_style = Pango.AttrList()
+        note_style.insert(Pango.attr_scale_new(1.12))
+        label.set_attributes(note_style)
+        # Let the page scroll the complete notes instead of nesting a short
+        # viewport inside the expander. Height follows the wrapped text.
+        return label
+
+    def _load_installed_notes(self, latest):
+        tag = bundle.current().get("tag")
+        if not tag:
+            self.installed_notes.set_text(_("Version not recorded by this build"))
+            return
+        if latest and latest.get("tag") == tag:
+            self._installed_notes_ready(tag, latest.get("notes", ""), None)
+            return
+        if self._installed_notes_tag == tag or self._installed_notes_loading == tag:
+            return
+        self._installed_notes_loading = tag
+        self.installed_notes.set_text(_("Loading release notes…"))
+        def worker():
+            try:
+                notes, error = bundle.release_notes(tag), None
+            except Exception as exc:
+                notes, error = "", str(exc)
+            GLib.idle_add(self._installed_notes_ready, tag, notes, error)
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _installed_notes_ready(self, tag, notes, error):
+        self._installed_notes_loading = None
+        if tag != bundle.current().get("tag"):
+            return False
+        if error:
+            self.installed_notes.set_text(_("Couldn't load this build's release notes. Check again to retry."))
+        else:
+            self._installed_notes_tag = tag
+            self.installed_notes.set_markup(markup(notes) if notes else _("No release notes were published for this build."))
+        return False
+
     def _mapped(self, *_args):
         if not self.checked and not self.busy and status().get("state") not in ("ready", "failed"):
             self._check()
         elif self.busy and self.stage not in ("download", "copy"):
             self._start_pulse()
+
+    def _weekly_changed(self, row, *_args):
+        # User service is unprivileged. Disabling leaves the periodic timer
+        # inert through GSettings, and removes a notification already shown.
+        app = self.window.get_application()
+        if row.get_active():
+            Gio.Subprocess.new(["/usr/libexec/tab-companion-update-schedule"], Gio.SubprocessFlags.NONE)
+        elif app:
+            app.withdraw_notification("system-update")
 
     @staticmethod
     def _button(container, title, callback, primary=False):
@@ -158,7 +216,8 @@ class UpdatePage(Adw.PreferencesPage):
 
     def _hero(self, title, description, icon="software-update-available-symbolic", spinning=False):
         self.heading.set_text(_(title))
-        self.description.set_text(_(description))
+        self.description.set_text(_(description) if description else "")
+        self.description.set_visible(bool(description))
         self.icon.set_from_icon_name(icon)
         self.icon_stack.set_visible_child_name("spinner" if spinning else "icon")
         self.spinner.set_spinning(spinning)
@@ -223,12 +282,19 @@ class UpdatePage(Adw.PreferencesPage):
         elif latest["tag"] == bundle.current().get("tag"):
             self._hero("You are up to date", "You're running the latest published build.", "emblem-ok-symbolic")
         else:
-            self._hero("A new build is available", "Ubuntu, drivers and Tab Companion in one update.")
+            self._hero("A new build is available", None)
         self.release_label.set_visible(bool(latest))
         if latest:
+            update_monitor.record(latest)
+            if hasattr(self.window, "refresh_update_badge"):
+                self.window.refresh_update_badge()
             self.release_label.set_text(latest["tag"] + ("  ·  " + size_label(latest["size"]) if latest.get("size") else ""))
-        self.notes.set_visible(bool(latest and latest.get("notes")))
-        self.notes_text.set_text((latest or {}).get("notes", ""))
+        # The installed build owns its own notes. Candidate notes belong only
+        # to the upper update card, including an unidentifiable installation.
+        candidate = latest and bundle.release_state(latest) in ("newer", "unknown")
+        self.notes.set_visible(bool(candidate and latest.get("notes")))
+        self.notes_text.set_markup(markup(latest.get("notes", "")) if candidate else "")
+        self._load_installed_notes(latest)
         return False
 
     def _stop_pulse(self):

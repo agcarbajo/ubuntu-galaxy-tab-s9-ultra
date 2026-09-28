@@ -4,6 +4,17 @@
 # Each tuple is (es, fr, de, it, pt). English is the source/fallback language.
 LANGUAGE_INDEX = {"es": 0, "fr": 1, "de": 2, "it": 3, "pt": 4}
 TRANSLATIONS = {
+    "System build": ("Build del sistema", "Version du système", "System-Build", "Build del sistema", "Build do sistema"),
+    "Port version": ("Versión del port", "Version du portage", "Port-Version", "Versione del port", "Versão do port"),
+    "Processor": ("Procesador", "Processeur", "Prozessor", "Processore", "Processador"),
+    "RAM": ("RAM", "RAM", "RAM", "RAM", "RAM"),
+    "Uptime": ("Tiempo encendido", "Durée de fonctionnement", "Betriebszeit", "Tempo di attività", "Tempo ligado"),
+    "{size} GiB usable": ("{size} GiB utilizables", "{size} Gio utilisables", "{size} GiB nutzbar", "{size} GiB utilizzabili", "{size} GiB utilizáveis"),
+    "{days} d · {hours} h · {minutes} min": ("{days} d · {hours} h · {minutes} min", "{days} j · {hours} h · {minutes} min", "{days} T · {hours} Std · {minutes} Min", "{days} g · {hours} h · {minutes} min", "{days} d · {hours} h · {minutes} min"),
+    "Check for updates to load this build's release notes.": ("Comprueba las actualizaciones para cargar las novedades de esta build.", "Recherchez les mises à jour pour charger les notes de cette version.", "Suche nach Updates, um die Versionshinweise dieses Builds zu laden.", "Controlla gli aggiornamenti per caricare le novità di questa build.", "Procura atualizações para carregar as novidades desta build."),
+    "Loading release notes…": ("Cargando novedades…", "Chargement des nouveautés…", "Versionshinweise werden geladen…", "Caricamento delle novità…", "A carregar novidades…"),
+    "Couldn't load this build's release notes. Check again to retry.": ("No se pudieron cargar las novedades de esta build. Vuelve a comprobar para reintentarlo.", "Impossible de charger les notes de cette version. Relancez la recherche.", "Die Versionshinweise konnten nicht geladen werden. Suche erneut, um es nochmals zu versuchen.", "Impossibile caricare le novità di questa build. Riprova il controllo.", "Não foi possível carregar as novidades desta build. Procura novamente para tentar de novo."),
+    "No release notes were published for this build.": ("No se publicaron novedades para esta build.", "Aucune note de version publiée pour cette version.", "Für diesen Build wurden keine Versionshinweise veröffentlicht.", "Non sono state pubblicate novità per questa build.", "Não foram publicadas novidades para esta build."),
     "Test mode": ("Modo de prueba", "Mode de test", "Testmodus", "Modalità di test", "Modo de teste"),
     "Verify saved fingerprint": ("Verificar huella guardada", "Vérifier l’empreinte enregistrée", "Gespeicherten Fingerabdruck prüfen", "Verifica impronta salvata", "Verificar impressão guardada"),
     "Enroll / replace fingerprint": ("Registrar / reemplazar huella", "Enregistrer / remplacer l’empreinte", "Fingerabdruck registrieren / ersetzen", "Registra / sostituisci impronta", "Registar / substituir impressão"),

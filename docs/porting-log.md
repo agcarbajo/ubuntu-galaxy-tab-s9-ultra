@@ -7315,3 +7315,31 @@ The owner reproduced the old verbose boot after returning from Android. Device 2
 Device 2.78 makes the early splash pruning part of the package's normal initramfs hook. It removes the Pango/X11/font stack, unused graphics, early DHCP and desktop snap rules while retaining e2fsck and the details renderer. update-initramfs generated an 8,273,631-byte legacy-LZ4 stream. All 72 retained ELF objects had complete DT_NEEDED dependencies; the theme symlink and original artwork sizes were verified. make-initramfs.sh now enforces the correct 8,314,880-byte ramdisk budget including the v4 header and AVB reservation and checks the generated archive before packing. The rootfs builder rebuilds this device package, the bundle reads the current quiet/splash cmdline, and installation/update code seeds or replaces Ubuntu's saved set from the matching payload. Thirty-six updater tests and the installer boot-set seeding tests passed.
 
 APT simulation and installation selected only Device 2.78, zero removals. Package SHA-256 is b6b1b2891f533f388b96cb5460a5261b13a838c72f923034f690ca05a11226d3. The generated init_boot hashes to 41aabac1788012ffc2f4a3945aa963da742e6cd64c90e236cf67f504ce3f7428; vendor_boot hashes to a1bdabe2cf5c954f9defae58f4c52bf7cc44a2b8d21017a7310e1ef1260ec7b3. Both active and saved copies were read back and verified. An actual Ubuntu-to-Android switch via Tab Companion followed by Android-to-Ubuntu through the Android app preserved all four expected image hashes. OBS showed the current small Ubuntu splash followed by GDM. The final cmdline retains quiet splash loglevel=3, package audit/verification are clean and disable-user-extensions remains false. The known panel-black interval and Samsung bootloader warning screens remain. No full release ZIP was built or published.
+
+## Companion integrated into main for port 1.3.0, 2026-09-28
+
+The owner requested merging the finished Companion changes into main before
+the final release fix. Integrated the app tree from
+`feature/companion-future-updates-1.3.0` at `14bfa9e`, together with its update
+payload/bootstrap/ZIP support, tests, isolated preview and documentation.
+Broader Ubuntu 26.04/kernel build experiments were not merged. The existing
+S Pen 1.4.6 code is retained. Main's VERSION remains 1.3.0; the bridge update
+payload defaults to format 1 and validates Noble rootfs/APT inputs.
+
+The available-update subtitle stays hidden. Catalogue validation exposed an
+empty message passed to translation through _hero; using None for an absent
+description and translating only nonempty descriptions fixes that test without
+restoring the removed text. The GTK fixture intercepts user-scheduler launch,
+avoiding a missing installed helper on the isolated test host. These source
+changes bump the app to 1.5.3 rather than changing an existing package version.
+
+On a separate WSL copy of main, all 76 unit cases and both GTK scripts passed.
+The initial ZIP fixture run lacked the copied TWRP configs; it passed after the
+reference inputs were copied, with no product-code change for that setup issue.
+The package builder's Python/schema/resource/Desktop/AppStream checks passed.
+The built DEB SHA-256 is
+`b4d190b18eee25cfd60ffcb0a622622d6372692b405ff3242af1ecdbd4d30855`.
+No tablet access/change, full release ZIP or publication was part of this
+integration. The publisher intends subsequent port builds to target Ubuntu
+26.04 with one common update UI; the migration engine/full-system recovery and
+hardware-validation gates remain separate unfinished work for those releases.

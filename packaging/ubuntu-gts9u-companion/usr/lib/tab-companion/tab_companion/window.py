@@ -9,6 +9,8 @@ from . import boot_sets
 from .actions import action_for, action_label, actions_for
 from .fingerprint_page import FingerprintPage
 from .update_page import UpdatePage
+from . import update_monitor
+from . import system_summary
 from .hardware import HardwareClient
 from .i18n import _, N_
 from .key_selector import KeyChooser, chord_label
@@ -209,9 +211,10 @@ class CompanionWindow(Adw.ApplicationWindow):
             self.fingerprint_page, "fingerprint", _("Fingerprint"), "auth-fingerprint-symbolic"
         )
         self.update_page = UpdatePage(self)
-        self.view_stack.add_titled_with_icon(
+        self.update_stack_page = self.view_stack.add_titled_with_icon(
             self.update_page, "updates", _("Updates"), "software-update-available-symbolic"
         )
+        self.refresh_update_badge()
         switcher = Adw.ViewSwitcherBar(stack=self.view_stack, reveal=True)
         toolbar.set_content(self.view_stack)
         toolbar.add_bottom_bar(switcher)
@@ -222,6 +225,9 @@ class CompanionWindow(Adw.ApplicationWindow):
         initial = os.environ.get("TAB_COMPANION_PAGE")
         if initial and self.view_stack.get_child_by_name(initial) is not None:
             self.view_stack.set_visible_child_name(initial)
+
+    def refresh_update_badge(self):
+        self.update_stack_page.set_needs_attention(update_monitor.available(update_monitor.load()))
 
     @staticmethod
     def _page():
@@ -1187,6 +1193,7 @@ class CompanionWindow(Adw.ApplicationWindow):
 
     def _show_about(self, _button):
         state = self.hardware.state
+        summary = system_summary.rows()
         debug = (
             f"Application version: {VERSION}\n"
             f"Kernel: {os.uname().release}\n"
@@ -1207,8 +1214,8 @@ class CompanionWindow(Adw.ApplicationWindow):
             website="https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra",
             issue_url="https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/issues",
             license_type=Gtk.License.MIT_X11,
-            comments=_("S Pen, keyboard and fingerprint settings for the Galaxy Tab S9 Ultra.") + "\n" + _("Kernel") + ": " + os.uname().release,
-            debug_info=debug,
+            comments=GLib.markup_escape_text(_("S Pen, keyboard and fingerprint settings for the Galaxy Tab S9 Ultra.")) + "\n\n" + system_summary.markup(summary),
+            debug_info=system_summary.text(summary) + "\n\n" + debug,
             debug_info_filename="tab-companion-hardware.txt",
         )
         about.add_credit_section(

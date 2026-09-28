@@ -9,9 +9,11 @@ import stat
 import subprocess
 import sys
 import time
+import zipfile
 from pathlib import Path
 
 from . import update_bundle as bundle
+from . import update_policy as policy
 
 STATE = Path("/var/lib/tab-companion-update")
 TRANSACTION = STATE / "transaction"
@@ -84,9 +86,7 @@ def device_check():
         raise ValueError("Updates are only supported on the SM-X910")
     if run(["dpkg", "--print-architecture"], True) != "arm64":
         raise ValueError("Expected arm64 Ubuntu")
-    release = Path("/etc/os-release").read_text()
-    if '\nID=ubuntu\n' not in '\n' + release or 'VERSION_ID="24.04"' not in release:
-        raise ValueError("Only Ubuntu 24.04 is supported")
+    policy.ubuntu_suite()
     if run(["findmnt", "-n", "-o", "LABEL", "/"], True) != "UBTS9U_UFS":
         raise ValueError("The installed root filesystem is not this port's UFS installation")
     # Do not overwrite a saved switch to Android while Linux is still running.
@@ -208,7 +208,7 @@ def install_runner():
     package = TRANSACTION / "tab_companion"
     package.mkdir()
     (package / "__init__.py").write_text("")
-    for name in ("update_core.py", "update_bundle.py"):
+    for name in ("update_core.py", "update_bundle.py", "update_policy.py"):
         # get_source also works when the legacy bootstrap runs as a zipapp.
         module = sys.modules[__package__ + "." + name[:-3]]
         source = module.__loader__.get_source(module.__name__)
@@ -238,6 +238,58 @@ StandardError=journal+console
     if not link.exists():
         link.symlink_to("../" + UNIT)
     run(["systemctl", "daemon-reload"])
+
+
+def handoff_release_backend(archive, manifest, info=None):
+    """Execute only the backend in an authenticated official stable ZIP.
+
+    This is the same publisher trust already required for privileged DEB
+    maintainer scripts. Metadata is a contract, not proof of migration safety.
+    Local ZIPs must match the exact published tag, size and GitHub digest too.
+    No APT, boot or installed application change precedes this handoff.
+    """
+    info = info or bundle.release(manifest["tag"])
+    digest = bundle.sha256(archive)
+    if (not info.get("supports_updates") or info.get("tag") != manifest["tag"]
+            or info.get("size") != archive.stat().st_size or info.get("sha256") != digest):
+        raise ValueError("Release migration backends require the exact official stable ZIP and its published digest")
+    if os.environ.get("GTS9U_UPDATER_HANDOFF") == digest:
+        raise ValueError("The release backend did not implement this migration; refusing a recursive handoff")
+    with zipfile.ZipFile(archive) as source:
+        data = source.read("UPDATE/updater.pyz")
+    import hashlib
+    entry = manifest["files"]["UPDATE/updater.pyz"]
+    if len(data) != entry["size"] or hashlib.sha256(data).hexdigest() != entry["sha256"]:
+        raise ValueError("Release backend checksum mismatch")
+    # These immutable public inputs live outside transaction: the new backend
+    # can replace staging without deleting the ZIP it is about to read.
+    handoffs = STATE / "handoff"
+    owned_directory(handoffs)
+    os.chmod(handoffs, 0o700)
+    directory = handoffs / str(time.time_ns())
+    directory.mkdir(mode=0o700)
+    backend = directory / "updater.pyz"
+    with backend.open("xb") as stream:
+        stream.write(data)
+    os.chmod(backend, 0o600)
+    with zipfile.ZipFile(backend) as program:
+        if "__main__.py" not in program.namelist():
+            raise ValueError("Release backend is not a Python zip application")
+    source_zip = directory / "release.zip"
+    shutil.copyfile(archive, source_zip)
+    os.chmod(source_zip, 0o600)
+    if bundle.sha256(source_zip) != digest:
+        raise ValueError("Release ZIP changed while being retained for migration")
+    os.sync()
+    emit("Starting the verified release migration backend…")
+    os.environ["GTS9U_UPDATER_HANDOFF"] = digest
+    # boot_lock is CLOEXEC: the new backend acquires its own lock and performs
+    # its own model/power/source/backup checks. Keep the UI's progress protocol.
+    command = ["/usr/bin/python3", str(backend), "--zip", str(source_zip)]
+    if PROGRESS_JSON:
+        command.append("--progress-json")
+    os.execv(command[0], command)
+    raise RuntimeError("Release backend handoff did not replace the process")
 
 
 def prepare(args):
@@ -303,11 +355,14 @@ def prepare(args):
             bundle.download(info, archive, downloaded)
         progress("verify")
         manifest = bundle.inspect(archive)
+        policy.check_installed(manifest, allow_handoff=True)
         payload_size = sum(f["size"] for f in manifest["files"].values())
         if shutil.disk_usage(STATE).free < payload_size * 3 + 3 * 1024**3:
             raise ValueError("Not enough free space for packages, module backup and APT dependencies")
         if info and manifest["tag"] != info["tag"]:
             raise ValueError("The payload version does not match the GitHub release")
+        if manifest.get("update_kind") == "distribution":
+            handoff_release_backend(archive, manifest, info)
         emit("Verifying and extracting the update payload…")
         manifest = bundle.extract(archive, TRANSACTION)
         validate_packages(TRANSACTION, manifest)
@@ -382,6 +437,7 @@ def apply_offline():
         if previous["state"] != "applying" and bundle.sha256("/var/lib/dpkg/status") != (TRANSACTION / "dpkg.sha256").read_text():
             raise ValueError("Packages changed after preparation. Prepare the update again.")
         plan = json.loads((TRANSACTION / "plan.json").read_text())
+        policy.check_installed(plan)
         for name, entry in plan["files"].items():
             if bundle.sha256(TRANSACTION / name) != entry["sha256"]:
                 raise ValueError("Staged payload changed: " + name)
@@ -472,10 +528,14 @@ def main(argv=None):
     group.add_argument("--repair", action="store_true", help=argparse.SUPPRESS)
     group.add_argument("--check", action="store_true")
     group.add_argument("--status", action="store_true")
+    group.add_argument("--capabilities", action="store_true")
     group.add_argument("--cancel", action="store_true")
     group.add_argument("--apply-offline", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     PROGRESS_JSON = args.progress_json
+    if args.capabilities:
+        print(json.dumps(policy.capabilities()))
+        return
     if args.check:
         print(json.dumps({"current": bundle.current(), "latest": bundle.release()}))
         return

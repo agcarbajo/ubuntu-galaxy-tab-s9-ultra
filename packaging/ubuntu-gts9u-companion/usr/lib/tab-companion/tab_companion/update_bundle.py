@@ -9,6 +9,7 @@ import urllib.parse
 import urllib.request
 import zipfile
 from pathlib import Path
+from . import update_policy as policy
 
 REPOSITORY = "agcarbajo/ubuntu-galaxy-tab-s9-ultra"
 API = "https://api.github.com/repos/" + REPOSITORY + "/releases"
@@ -32,7 +33,7 @@ def sha256(path):
 def current():
     try:
         value = json.loads(IDENTITY.read_text())
-        return value if value.get("device") == "gts9uwifi" else {}
+        return value if isinstance(value, dict) and value.get("device") == "gts9uwifi" else {}
     except (OSError, ValueError):
         return {}
 
@@ -55,8 +56,10 @@ def release(tag=None):
         data = json.loads(stream.read(2 * 1024**2 + 1))
     if data.get("draft") or data.get("prerelease"):
         raise ValueError("This is not a published stable release")
+    if not re.fullmatch(r"v[0-9][A-Za-z0-9.+~]{0,100}", str(data.get("tag_name", ""))):
+        raise ValueError("Invalid published release version")
     assets = [a for a in data.get("assets", []) if re.fullmatch(
-        r"ubuntu-24\.04-sm-x910-v[^/]+\.zip", a.get("name", ""))]
+        r"ubuntu-[0-9]{2}\.[0-9]{2}-sm-x910-v[^/]+\.zip", a.get("name", ""))]
     if len(assets) != 1:
         raise ValueError("The release must contain exactly one SM-X910 installation ZIP")
     asset = assets[0]
@@ -74,8 +77,20 @@ def release(tag=None):
             # Release notes advertise the payload format without an extra asset.
             # Accept the original bootstrap marker for already-published builds.
             # inspect() still validates the complete downloaded ZIP independently.
-            "supports_updates": "<!-- gts9u-update-format: 1 -->" in (data.get("body") or "")
+            "supports_updates": any("<!-- gts9u-update-format: " + str(n) + " -->" in (data.get("body") or "")
+                                    for n in (1, policy.PROTOCOL))
                 or any(a.get("name") == "gts9u-update.pyz" for a in data.get("assets", []))}
+
+
+def release_notes(tag):
+    """Read installed release notes even if its download asset was retired."""
+    if not re.fullmatch(r"v[0-9][A-Za-z0-9.+~]{0,100}", str(tag)):
+        raise ValueError("Invalid release tag")
+    with request(API + "/tags/" + urllib.parse.quote(tag, safe="")) as stream:
+        data = json.loads(stream.read(2 * 1024**2 + 1))
+    if data.get("tag_name") != tag or data.get("draft") or data.get("prerelease"):
+        raise ValueError("The installed release is not published")
+    return re.sub(r"<!--.*?-->", "", data.get("body") or "", flags=re.S).strip()
 
 
 def release_state(info):
@@ -119,9 +134,9 @@ def inspect(path):
         if archive.getinfo(MANIFEST).file_size > 1024**2:
             raise ValueError("Oversized update manifest")
         manifest = json.loads(archive.read(MANIFEST))
-        if (manifest.get("format") != 1 or manifest.get("device") != "gts9uwifi"
-                or manifest.get("architecture") != "arm64" or manifest.get("suite") != "noble"):
+        if (manifest.get("device") != "gts9uwifi" or manifest.get("architecture") != "arm64"):
             raise ValueError("Unsupported update format, device or Ubuntu release")
+        policy.validate(manifest)
         for field in ("version", "tag", "kernel_release"):
             if not isinstance(manifest.get(field), str) or not TOKEN.fullmatch(manifest[field]):
                 raise ValueError("Invalid " + field)
@@ -132,9 +147,13 @@ def inspect(path):
         packages = 0
         for name, metadata in files.items():
             if name not in {p + ".img" for p in PARTITIONS}:
-                if not re.fullmatch(r"UPDATE/debs/[A-Za-z0-9][A-Za-z0-9.+_~%-]*\.deb", name):
+                if name == "UPDATE/updater.pyz" and manifest.get("update_kind") == "distribution":
+                    if archive.getinfo(name).file_size > 32 * 1024**2:
+                        raise ValueError("Oversized release backend")
+                elif not re.fullmatch(r"UPDATE/debs/[A-Za-z0-9][A-Za-z0-9.+_~%-]*\.deb", name):
                     raise ValueError("Unsafe payload path: " + name)
-                packages += 1
+                else:
+                    packages += 1
             info = archive.getinfo(name)
             if stat.S_IFMT(info.external_attr >> 16) not in (0, stat.S_IFREG):
                 raise ValueError("Payload entries must be regular files")
@@ -144,6 +163,8 @@ def inspect(path):
             total += info.file_size
         if total > MAX_PAYLOAD or not packages:
             raise ValueError("Invalid payload size")
+        if manifest.get("update_kind") == "distribution" and "UPDATE/updater.pyz" not in files:
+            raise ValueError("Missing release migration backend")
         for part, size in PARTITIONS.items():
             if files.get(part + ".img", {}).get("size") != size:
                 raise ValueError("Missing or truncated " + part)

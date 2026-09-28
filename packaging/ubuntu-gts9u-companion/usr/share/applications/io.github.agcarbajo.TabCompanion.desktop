@@ -18,4 +18,5 @@ Keywords[de]=S Pen;Stift;Tastatur;Samsung;
 Keywords[it]=S Pen;Stilo;Tastiera;Samsung;
 Keywords[pt]=S Pen;Caneta;Teclado;Samsung;
 StartupNotify=true
-DBusActivatable=false
+DBusActivatable=true
+X-GNOME-UsesNotifications=true

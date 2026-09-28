@@ -18,6 +18,18 @@
   <launchable type="desktop-id">io.github.agcarbajo.TabCompanion.desktop</launchable>
   <url type="homepage">https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra</url>
   <releases>
+    <release version="1.5.3" date="2026-09-28">
+      <description><p>Integrates the upcoming port 1.3.0 updater and notification features while keeping the simplified update card.</p></description>
+    </release>
+    <release version="1.5.2" date="2026-09-28">
+      <description><p>Simplifies the available-update card by removing its generic subtitle.</p></description>
+    </release>
+    <release version="1.5.1" date="2026-09-28">
+      <description><p>Groups installed-build release notes with its version, formats Markdown notes in each build's section and adds the system build summary to About Details.</p></description>
+    </release>
+    <release version="1.5.0" date="2026-09-28">
+      <description><p>Adds optional weekly update checks, desktop notifications and an update indicator. Prepares the port 1.3.0 bridge for future kernel packages and verified release-specific Ubuntu migration backends.</p></description>
+    </release>
     <release version="1.4.0" date="2026-09-22">
       <description><p>Choose and explicitly save key combinations, including modifier-only shortcuts, for S Pen gestures and keyboard mappings.</p></description>
     </release>
