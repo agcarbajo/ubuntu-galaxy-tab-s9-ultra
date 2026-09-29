@@ -131,6 +131,23 @@ confirmations, not synthetic presentation tests, establish the working status.
 
 ## S Pen
 
+Version 1.5.4 allows pointer sensitivity from 25 to 500 in both the UI and
+hardware service; the default remains 100. Replacement pairing now releases
+the bond-repair latch when BlueZ reports Paired, including a not-yet-connected
+pen, so subsequent connection failures can request recovery. The regression
+also checks that removal in flight stays protected until pairing begins.
+After installing 1.5.4, the owner confirmed the 500 maximum, connected pen and
+physical gesture/pointer operation. Recovery after actual depletion remains
+untested; the previous zero reading was followed by a live 80% reading.
+
+About's system details read the running device: kernel from uname, Ubuntu from
+os-release, usable RAM from MemTotal, uptime from proc, and port version from
+the installed release identity. Processor detection reads cpuinfo/device-tree
+compatible/soc0; the SM8550 commercial name is a static lookup selected by the
+detected compatible, not a directly reported marketing string. Peripheral
+details come from the hardware service's sysfs/evdev/BlueZ observations. S Pen
+battery may be the last saved measured value while the pen sleeps.
+
 Companion 1.4.3 shows Bluetooth readiness below the S Pen illustration even
 while the pen is inserted. It distinguishes an unpaired pen, a saved bond that
 is reconnecting, a connected link whose GATT has not passed a live operation,

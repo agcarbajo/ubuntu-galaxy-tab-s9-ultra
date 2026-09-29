@@ -439,10 +439,14 @@ class PairingService(dbus.service.Object):
         if not self.remote_enabled or not is_spen(properties):
             return
         if properties.get("Paired", False):
+            # A replacement bond is complete once BlueZ reports Paired,
+            # even if a depleted pen cannot connect yet. Keeping the repair
+            # latch set after finish_pairing() would suppress every later
+            # failed-connection recovery while this dock session continues.
+            if self.pairing:
+                self.repairing_bond = False
             if properties.get("Connected", False):
                 self.connect_failures.pop(path, None)
-                if self.pairing:
-                    self.repairing_bond = False
             if not properties.get("Trusted", False):
                 try:
                     dbus.Interface(

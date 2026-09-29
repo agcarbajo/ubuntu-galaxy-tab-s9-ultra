@@ -116,7 +116,7 @@ another update; the updater does not silently discard that failure.
 
 `build-release.sh` produces the installation ZIP and a local validation
 manifest. Publish only the installation ZIP, the dual-boot APK and the split
-ZIP. Put their SHA-256 checksums in the release notes, together with the hidden
+ZIP. GitHub displays each asset SHA-256 digest; retain the hidden
 compatibility marker `<!-- gts9u-update-format: 1 -->`. The updater script lives
 in `scripts/update-to-latest.py`. Do not routinely replace published builds;
 use a new version when distributing subsequent changes. The app selects the latest non-prerelease GitHub

@@ -7343,3 +7343,83 @@ No tablet access/change, full release ZIP or publication was part of this
 integration. The publisher intends subsequent port builds to target Ubuntu
 26.04 with one common update UI; the migration engine/full-system recovery and
 hardware-validation gates remain separate unfinished work for those releases.
+
+## 2026-09-28: Companion pointer range and S Pen reconnection review
+
+The owner requested pointer sensitivity up to 500 and an audit of About's
+hardware details, then reported a pen apparently depleted and stuck reconnecting.
+The live tablet had Companion 1.5.2; this change uses the integrated main app
+tree, rather than the older 1.4.2 source in the upgrade checkout. Companion
+1.5.4 raises both the slider maximum and backend clamp to 500, retaining the
+25 minimum and 100 default. Package and About versions agree.
+
+The installed system-summary code reads uname, os-release, MemTotal, proc
+uptime and installed release identity. Processor naming uses a static lookup
+after detecting qcom,sm8550 in the running device tree. The live tablet reported
+that compatible, MemTotal 14913628 kB and Ubuntu 24.04.5. Thus the system values
+are device-derived; the commercial CPU label is translated, not directly read.
+Peripheral state comes from sysfs/evdev/BlueZ, with a saved last-reading fallback
+for S Pen battery while asleep.
+
+The owner confirmed roughly five minutes on the charging area. Sysfs reported
+docked/charging, BlueZ Paired/Trusted but not Connected/ServicesResolved, and
+the session backend exposed battery 0. A bounded direct BlueZ Connect answered
+successfully but did not immediately restore valid GATT. Review found a repair
+latch can remain set when replacement pairing becomes Paired without Connected:
+consider() closes the pairing window but previously cleared the latch only
+for Connected. It now releases the latch for Paired during the replacement
+window; a regression verifies that state and preserves protection during removal
+before a replacement window starts. However, the old process subsequently
+logged another stale-bond recovery at 14:32:15 before installation, so this
+source defect is not established as the cause of the owner's specific stall.
+
+The focused efficiency/proximity and new repair-state regressions passed, as
+did package syntax/resource/schema/Desktop/AppStream checks and diff checking.
+The DEB SHA-256 is d03ff3dc1d585baf3004f507a259ec5b5fec13fa8a42dc1d840887aa4ba2ad2d.
+Host identity matched the known SSH key and model; battery was 63%, root rw,
+256 GiB free, updater complete and package audit empty. Transfer hash matched;
+APT simulation and installation selected one upgrade, zero removals, and
+rejected unauthenticated archives. Companion 1.5.4 is installed, both pen
+services active after the session backend restart. Installed slider/backend
+source shows 500; GestureAvailable became true and the pen battery read 80.
+This contradicts treating the earlier 0 as proof of actual depletion. Package
+verification found only the expected shared regenerated gschemas.compiled
+checksum difference. No GDM restart, tablet reboot or partition write occurred.
+The owner reopened Companion and confirmed the slider reaches 500, the pen
+appears connected and the requested physical gesture/pointer check works.
+Recurrence after real depletion remains untested.
+
+## 2026-09-30: prepare port 1.3.0 publication
+
+The owner requested an English grouped release announcement, the full clean-
+installation ZIP and unchanged Android/split assets, and removal of checksum
+sections from published notes. Updated all three previous GitHub release bodies;
+retained the format-1 update markers and linked the README update instructions.
+The APK and split ZIP match the v1.2.0 published digests exactly. New notes are
+in release-v1.3.0.md. The owner explicitly authorised committing/pushing these
+changes and the already tested Companion 1.5.4 adjustments on main.
+
+Reviewed format-2 policy and official-backend handoff: kernel releases are not
+hardcoded, format 1 bridges installed v1.2.0 updaters, data replacement and
+cross-suite use of the old APT path are rejected. A future approved distribution
+ZIP can carry its authenticated migration/full-root-recovery engine. This does
+not implement or validate the Noble-to-Resolute engine itself.
+
+Found the legacy README launcher omitted update_policy.py, now imported by the
+backend. Added that module to its single-revision download set and a real
+backend-import regression with network/update actions intercepted. Six launcher
+cases pass. Also passed readiness 18, system update 39, shipping privacy 10 and
+build-info 7 cases (80 total), plus the S Pen efficiency/proximity/repair-state
+checks and actual Companion 1.5.4 packaging. The Ubuntu build host lacked the
+Pango typelib for build-info tests; those seven cases passed on the separate
+Ubuntu-24.04 host. No tablet writes or restarts were part of these tests.
+
+A Linux source snapshot of main and its pending Companion changes is staged
+under /root/ubuntu-gts9u-release130. A fresh pinned rc3 kernel built successfully:
+Image.gz c64174a9fc8663eee3af29cf3d824d94582ea4855f26fc8e1c11ba08eb3244d9,
+config 67930b1997348bca2d8f1210667fa58b848872f2b1611bf29a84ac4969aaa651,
+and the unchanged booted DTB 613b3bb7729d55d1c60aaeda348a098163b79aed1efbf24cdcc582ff0d58ccc4.
+Matching modules and packages are built for this kernel. Fresh rootfs/ZIP
+construction is in progress; this entry does not claim final artifact validation
+or publication. The source snapshot does not include the upgrade checkout's
+uncommitted kernel work.

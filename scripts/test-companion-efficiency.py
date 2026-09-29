@@ -24,6 +24,18 @@ props.Set.assert_not_called()
 consider(service,'/pen',{'Paired':True,'Trusted':False})
 props.Set.assert_called_once_with('device','Trusted',True)
 service.connect.assert_not_called()
+service = SimpleNamespace(remote_enabled=True, connect_failures={}, pairing=True,
+    repairing_bond=True, bus=Mock(), finish_pairing=Mock(), docked=lambda:True,
+    connect=Mock())
+consider(service, '/replacement-pen', {'Paired':True, 'Connected':False, 'Trusted':True})
+assert service.repairing_bond is False
+service.finish_pairing.assert_called_once_with()
+service.connect.assert_called_once_with('/replacement-pen')
+# Do not release a removal still in flight before replacement pairing starts.
+service.pairing = False
+service.repairing_bond = True
+consider(service, '/old-pen', {'Paired':True, 'Connected':False, 'Trusted':True})
+assert service.repairing_bond is True
 ns={'dbus':SimpleNamespace(DBusException=RuntimeError),'BLUEZ_ADAPTER':'adapter','BLUEZ_DEVICE':'device'}
 powered=method('tab-companion-hardware','_refresh_bluetooth_powered',ns)
 ble=method('tab-companion-hardware','_refresh_spen_ble',ns)

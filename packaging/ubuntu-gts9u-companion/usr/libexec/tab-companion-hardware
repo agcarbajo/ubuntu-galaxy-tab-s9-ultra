@@ -1066,7 +1066,7 @@ class HardwareService:
     def _pointer_move(self, raw_x, raw_y):
         if self.virtual_pointer is None:
             return
-        sensitivity = min(300, max(25, self.settings.get_int("pointer-sensitivity")))
+        sensitivity = min(500, max(25, self.settings.get_int("pointer-sensitivity")))
         smoothing = min(90, max(0, self.settings.get_int("pointer-smoothing")))
         # Raw gyro samples arrive at roughly 24 Hz. This scale is calibrated
         # against the physical sensor range rather than the much smaller

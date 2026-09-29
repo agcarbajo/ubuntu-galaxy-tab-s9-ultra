@@ -48,7 +48,7 @@ def update(core, bundle):
 def main():
     if os.geteuid() != 0:
         raise SystemExit('Run this script with sudo.')
-    # Resolve main once so both backend modules come from the same source revision.
+    # Resolve main once so every backend module comes from the same revision.
     commit = json.loads(fetch('https://api.github.com/repos/' + REPOSITORY +
                               '/commits/main', 1024 * 1024))['sha']
     if not re.fullmatch(r'[0-9a-f]{40}', commit):
@@ -59,7 +59,7 @@ def main():
         package = Path(directory) / 'tab_companion'
         package.mkdir()
         (package / '__init__.py').write_bytes(b'')
-        for name in ('update_bundle.py', 'update_core.py'):
+        for name in ('update_bundle.py', 'update_core.py', 'update_policy.py'):
             (package / name).write_bytes(fetch(prefix + name, 1024 * 1024))
         sys.path.insert(0, directory)
         core = importlib.import_module('tab_companion.update_core')

@@ -756,7 +756,7 @@ class CompanionWindow(Adw.ApplicationWindow):
         self.pointer_group = pointer
         pointer.add(self._scale_setting_row(
             "pointer-sensitivity", _("Sensitivity"),
-            _("Controls how far the pointer moves."), 25, 300, 5,
+            _("Controls how far the pointer moves."), 25, 500, 5,
             "preferences-system-symbolic",
         ))
         pointer.add(self._scale_setting_row(
