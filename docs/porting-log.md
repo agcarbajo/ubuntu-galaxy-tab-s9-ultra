@@ -7423,3 +7423,43 @@ Matching modules and packages are built for this kernel. Fresh rootfs/ZIP
 construction is in progress; this entry does not claim final artifact validation
 or publication. The source snapshot does not include the upgrade checkout's
 uncommitted kernel work.
+
+## 2026-09-30: USB experiment rollback before port 1.3.0
+
+The owner reported that the USB-C hub's USB devices and HDMI no longer worked
+with the phone-reset experimental kernel and explicitly requested restoration
+of the pre-experiment state, followed by a physical hub check before publication.
+The experiment is not accepted as a phone-reset fix; causal attribution of the
+hub failure remains pending the owner's comparison.
+
+The tablet was identified by its known ED25519 key, hardware model and Ubuntu
+24.04.5. It ran candidate #5 at 72% battery, writable root, clean dpkg audit and
+completed update state. The verified original #3 image in
+/var/lib/gts9u-kernel-backups/pre-usb-policy-20260929/boot.img was restored:
+b82b66be360c12512768bf95e17c5c044a3b57900105e924bc19e67856a687b5.
+Before writing, its complete digest, Android v4 header, zero ramdisk, appended
+original DTB and AVB descriptor were verified. Its decompressed kernel matches
+the preserved original object tree. The running config and module signing key
+match that original build; previous experiments introduced no exported CRC
+changes. The Caps Lock correction remains in #3.
+
+Only the active boot partition and Ubuntu's saved Dualboot boot image changed.
+Both were verified by full readback. Root-only backups of candidate #5 are in
+/var/lib/gts9u-kernel-backups/pre-usb-rollback-20260930-k798J2hx.
+The active/saved vendor_boot and every Android saved image retained their hashes.
+After the authorized reboot, the same host key returned at a new address with
+kernel #3 and boot ID e5013723-8bbe-402e-bfa1-37a97ec9bde1. Both boot hashes
+match the restored image; NetworkManager/GDM are active, root is writable,
+dpkg audit is clean, Fprint returns its device, and OTG selector is the original 3.
+Physical USB/HDMI acceptance is still pending the owner.
+
+The uncommitted charger initialization experiment and its test are preserved
+under ignored work/usb-rollback-20260930 in the upgrade checkout; its tracked
+driver is restored to the original source. The 1.3.0 main source snapshot and
+the actual compiled kernel source already use this exact baseline driver,
+SHA-256 cb3d538098862861b91a9632191540cabe10a39e13802d6f94d91aa7f2139098.
+No experimental USB policy or discharge initialization entered the release build.
+Release notes are unchanged. Publication is paused for the physical hub result.
+
+The owner subsequently confirmed that the hub works after this rollback.
+This is owner-confirmed physical recovery of USB/HDMI, and publication may resume.
