@@ -100,3 +100,16 @@ Ubuntu set, the cmdline retained `quiet splash loglevel=3`, Device 2.78 passed
 `dpkg -V`/`dpkg --audit`, and the global extension-disable key remained false.
 The updater's 36 regression tests and installer boot-set seeding tests passed.
 No complete 1.3.0 release ZIP was built or published during this repair.
+
+## 2026-09-30: deterministic ext4 checking in release initramfs
+
+The fresh 1.3.0 build reached initramfs validation, which correctly rejected an
+archive without e2fsck. Ubuntu's fsck hook defaults to FSTYPE=auto and probes the
+root fstab device even when its type is specified. The label device does not
+exist inside the WSL image-building chroot, so it emitted "Couldn't identify
+type of root file system" and omitted the checker. The supported SD/UFS root
+is always ext4. Device 2.79 therefore packages an initramfs-tools conf.d setting
+FSTYPE=ext4, applying both to clean images and subsequent package updates.
+The existing real-initramfs checker remains the required regression gate for
+e2fsck, dependency closure, theme and the 8,314,880-byte budget. Validation of
+the regenerated archive is pending; no tablet change is required for this fix.
