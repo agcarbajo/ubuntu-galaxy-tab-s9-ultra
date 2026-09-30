@@ -7476,3 +7476,33 @@ FSTYPE=ext4, applying both to clean images and subsequent package updates.
 The existing real-initramfs checker remains the required regression gate for
 e2fsck, dependency closure, theme and the 8,314,880-byte budget. Validation of
 the regenerated archive is pending; no tablet change is required for this fix.
+
+## 2026-09-30: release 1.3.0 built and published
+
+Built the release from main runtime revision
+517d41b0086ecf50c6bb336940b93e5f5ebdca8d using a fresh pinned kernel
+and Noble rootfs, with matching signed modules and Companion 1.5.4 / Device 2.79.
+The ext4 initramfs fix passes the actual image gate: e2fsck is included, all
+72 ELF dependencies resolve, and the payload is 8,273,061 bytes within budget.
+Boot and update bundle validators, rootfs filesystem checking, APT dependency
+checks and dpkg audit pass. The actual 1.2 updater reads the format-1 ZIP;
+all 21 selected local packages match the rootfs and update payload. All 129
+module files inspected match the signing key embedded in the shipped kernel.
+The 80 focused updater/readiness/privacy/launcher/build-info cases and S Pen /
+Companion packaging checks passed; see release-1.3.0-build.md for details.
+
+Published v1.3.0 as latest with exactly three verified assets:
+https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/releases/tag/v1.3.0
+The new ZIP is 1,406,562,255 bytes, SHA-256
+057c4537ebb8996efa901331d749d950aaa968724eee7d3da70b5400936c065d.
+The Android APK and partition split ZIP retain their previous release digests.
+GitHub's published asset digests match the local files. Release notes are in
+English, grouped by component, link the README update instructions and omit
+SHA-256 sections; those sections were also removed from older releases.
+
+Both clean installation and data-preserving update payloads remain in the ZIP.
+The new ZIP itself has not been physically installed on the development tablet.
+The owner confirmed physical USB/HDMI recovery with the baseline kernel rollback;
+release code retains that pre-experiment driver. Future Ubuntu suite changes
+require the validated release's migration backend and recovery implementation;
+this release does not claim a physically tested Ubuntu 26 migration.

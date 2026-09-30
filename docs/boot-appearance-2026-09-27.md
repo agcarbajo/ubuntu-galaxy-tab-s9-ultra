@@ -111,5 +111,7 @@ type of root file system" and omitted the checker. The supported SD/UFS root
 is always ext4. Device 2.79 therefore packages an initramfs-tools conf.d setting
 FSTYPE=ext4, applying both to clean images and subsequent package updates.
 The existing real-initramfs checker remains the required regression gate for
-e2fsck, dependency closure, theme and the 8,314,880-byte budget. Validation of
-the regenerated archive is pending; no tablet change is required for this fix.
+e2fsck, dependency closure, theme and the 8,314,880-byte budget. The regenerated
+archive passes validation: e2fsck is present, all 72 ELF
+dependency closures are complete, and the 8,273,061-byte payload fits the
+8,314,880-byte budget. No tablet change was required for this fix.
