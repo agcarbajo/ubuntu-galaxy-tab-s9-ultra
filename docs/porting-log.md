@@ -7586,3 +7586,20 @@ kernel signing sets; the native helpers and all remaining files are identical.
 The draft still reports hidden. The publication script's guard was updated to
 require the corrected candidate digest and new runtime revision before it can
 publish, so it rejects the old retained draft.
+
+### Corrected 1.3.0 published (2026-10-01)
+
+The owner authorized uploading the validated full ZIP and publishing the build.
+Replaced the withdrawn draft ZIP, updated the English release notes and moved
+v1.3.0 to runtime revision 68b1963b6cdeed50989174498550881c7bee6371.
+Before publication, GitHub reported the corrected ZIP at 1,406,825,122 bytes with
+SHA-256 49ea916f5229529a537ef6e7dddcc6a130d913a0cfbbc4b8b6121dc501214dcf.
+The APK and split ZIP retained their previous hashes. The publication guard
+verified exactly three uploaded assets and the notes/update-format contract,
+then published the draft as latest. The public latest-release API confirmed
+v1.3.0 and all three matching artifact digests.
+
+https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/releases/tag/v1.3.0
+
+No additional tablet changes or physical full-ZIP installation occurred.
+The runtime tag identifies the shipped code; this documentation follows it.

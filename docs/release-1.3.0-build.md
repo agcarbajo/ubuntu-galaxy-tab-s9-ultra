@@ -93,7 +93,8 @@ owner-confirmed speaker playback and camera capture. See audio-startup.md.
 The replacement candidate reuses the verified kernel and clean Noble rootfs,
 installs its matching Device 2.83 package and regenerates the complete image,
 boot bundle and update ZIP. The replacement manifest records its source revision
-and hashes. Its artifact verification passed as recorded below; it remains unpublished.
+and hashes. Its artifact verification passed as recorded below; publication is
+recorded in the final section.
 
 The replacement candidate also includes Device 2.83's camera enumeration rule,
 preventing the port's own V4L2 compatibility outputs from appearing as duplicate
@@ -105,8 +106,9 @@ see audio-startup.md for the graph, relay and Lua scope checks.
 Replacement runtime revision: 68b1963b6cdeed50989174498550881c7bee6371.
 The completed candidate includes Device 2.83 in both the clean rootfs and update
 payload; package SHA-256 c4261d742628d5c3b37ed9c309fc238a67ee89942b4be3c620e1f7b3f17c2794.
-The live-tablet package differs only in the matched baseline kernel's signed
-modules/native binary inputs, retaining its installed signing set. Recovery and
+The live-tablet package differs only in the IRQ/TUN modules for its matched
+baseline kernel, retaining its installed signing set. All native helpers and
+remaining payload/control files are identical. Recovery and
 camera configuration source bytes match the release image and update package.
 The actual ext4 image was inspected for both helpers, the audio unit and the
 camera rules, and each matched the committed source. Filesystem checking,
@@ -123,8 +125,20 @@ The APK and partition split ZIP remain byte-identical to the previous release.
 
 The owner confirmed audio and camera operation and the disappearance of duplicate
 choices on the updated development installation. The full corrected ZIP itself
-has not been physically installed. The release remains a draft; its retained
-remote ZIP is the withdrawn initial candidate. Before publication, replace that
-asset and notes and move the existing v1.3.0 tag from the original 517d41b runtime
-revision to this replacement runtime revision. Do not publish the retained old
-asset or pair the corrected ZIP with the old source tag.
+has not been physically installed. The withdrawn initial candidate was replaced
+before publication, as recorded below.
+
+### Corrected release published (2026-10-01)
+
+Following explicit owner authorization, replaced the draft's old ZIP with the
+corrected full artifact and updated its notes. Moved v1.3.0 from the original
+517d41b runtime revision to 68b1963b6cdeed50989174498550881c7bee6371.
+GitHub's uploaded sizes and SHA-256 digests matched all three local shipping
+artifacts before publication. Published v1.3.0 as the latest stable release and
+verified the public release API reports exactly the corrected ZIP, unchanged
+Dualboot-v1.1.0.apk and unchanged gts9u-split.zip with matching digests.
+
+Public release:
+https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/releases/tag/v1.3.0
+The artifact source tag stays on the runtime revision; subsequent documentation
+commits do not change the shipped code. No additional tablet operation occurred.
