@@ -7557,5 +7557,32 @@ Lua 5.4 configuration passes the native/board-relay/other-loopback/USB predicate
 regression. Package verification/audit are clean. Live Device 2.83 SHA-256:
 14fcd6a3ce49f6c6d128ff4341dac955a4a05a6d842bfe4729dfe9c30e33d9f0.
 Its audio helper is unchanged from the two reboot-tested 2.81 runs. No further
-reboot, kernel or partition write occurred. Owner list confirmation is pending.
+reboot, kernel or partition write occurred. The owner confirmed the duplicates disappeared and the native cameras work.
 The final replacement build must use Device 2.83 and remains unpublished.
+
+### Corrected 1.3.0 candidate completed, publication deferred
+
+Rebuilt the complete clean-install/update ZIP from runtime revision
+68b1963b6cdeed50989174498550881c7bee6371 with Device 2.83, retaining the verified
+kernel and completed fresh Noble rootfs and upgrading only its Device package.
+Package SHA-256 c4261d742628d5c3b37ed9c309fc238a67ee89942b4be3c620e1f7b3f17c2794;
+ZIP SHA-256 49ea916f5229529a537ef6e7dddcc6a130d913a0cfbbc4b8b6121dc501214dcf,
+1,406,825,122 bytes. Clean ext4 image, actual bundled audio helpers/unit/camera
+rules, initramfs 72-ELF dependency/budget checks, boot/update validators, published
+1.2 bundle reader, matched signed module set, all 21 local package payloads and
+installed versions, APT/dpkg and privacy checks pass. The corrected shipping
+assets and manifest/audit are retained in artifacts/release-v1.3.0-corrected.
+The owner confirmed audio, native cameras and removal of duplicate choices.
+The complete corrected ZIP was not physically installed. No new release upload,
+tag movement or publication occurred; 1.3.0 remains hidden with its original
+asset, and 1.2.0 remains the public latest. Replace the draft asset/notes and
+retag the new runtime revision before eventual publication. Full evidence and
+remaining publication steps are in release-1.3.0-build.md.
+
+The corrected Windows ZIP/APK/split copies match their expected hashes after
+transfer. A full live-vs-release Device 2.83 payload/control-file comparison
+shows differences only in the IRQ/TUN modules for their respective matched
+kernel signing sets; the native helpers and all remaining files are identical.
+The draft still reports hidden. The publication script's guard was updated to
+require the corrected candidate digest and new runtime revision before it can
+publish, so it rejects the old retained draft.

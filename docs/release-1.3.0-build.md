@@ -90,12 +90,41 @@ Dummy Output. It must not be republished unchanged. Device 2.81 replaces the
 single early refresh with bounded, outcome-checked recovery. It passed the
 captured failure, nine behavioral regressions, two physical reboot checks and
 owner-confirmed speaker playback and camera capture. See audio-startup.md.
-The replacement candidate will reuse the verified kernel and clean Noble rootfs,
-install its matching Device 2.83 package and regenerate the complete image,
+The replacement candidate reuses the verified kernel and clean Noble rootfs,
+installs its matching Device 2.83 package and regenerates the complete image,
 boot bundle and update ZIP. The replacement manifest records its source revision
-and hashes. Its artifact verification is pending; it remains unpublished.
+and hashes. Its artifact verification passed as recorded below; it remains unpublished.
 
 The replacement candidate also includes Device 2.83's camera enumeration rule,
 preventing the port's own V4L2 compatibility outputs from appearing as duplicate
 PipeWire camera inputs. The native cameras and direct V4L2 relay remain available;
 see audio-startup.md for the graph, relay and Lua scope checks.
+
+### Final replacement artifact (2026-10-01)
+
+Replacement runtime revision: 68b1963b6cdeed50989174498550881c7bee6371.
+The completed candidate includes Device 2.83 in both the clean rootfs and update
+payload; package SHA-256 c4261d742628d5c3b37ed9c309fc238a67ee89942b4be3c620e1f7b3f17c2794.
+The live-tablet package differs only in the matched baseline kernel's signed
+modules/native binary inputs, retaining its installed signing set. Recovery and
+camera configuration source bytes match the release image and update package.
+The actual ext4 image was inspected for both helpers, the audio unit and the
+camera rules, and each matched the committed source. Filesystem checking,
+boot/update validators, the actual 1.2 reader, 129 module signature/release checks,
+all 21 installed package versions, APT/dpkg and fresh-account checks pass.
+The final initramfs is 8,273,103 bytes with 72 complete ELF dependency closures.
+
+Corrected ZIP: 1,406,825,122 bytes, SHA-256
+49ea916f5229529a537ef6e7dddcc6a130d913a0cfbbc4b8b6121dc501214dcf.
+Clean ext4 image SHA-256:
+f8f4b247de6630221137493ed443dc5265d7339e81dc4a615a6506b2e13fd4c6.
+Local shipping assets and audit/manifest are in artifacts/release-v1.3.0-corrected.
+The APK and partition split ZIP remain byte-identical to the previous release.
+
+The owner confirmed audio and camera operation and the disappearance of duplicate
+choices on the updated development installation. The full corrected ZIP itself
+has not been physically installed. The release remains a draft; its retained
+remote ZIP is the withdrawn initial candidate. Before publication, replace that
+asset and notes and move the existing v1.3.0 tag from the original 517d41b runtime
+revision to this replacement runtime revision. Do not publish the retained old
+asset or pair the corrected ZIP with the old source tag.

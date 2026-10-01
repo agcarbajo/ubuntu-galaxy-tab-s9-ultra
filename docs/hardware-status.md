@@ -333,3 +333,18 @@ programming happens during boot.
 - Do not add improvised MMIO/ioremap reads to diagnose probes.
 - Never write the PIT, EFS, persist, modem/modemst or the calibration
   partitions.
+
+### 2026-10-01: audio startup and camera list acceptance
+
+Device 2.83 includes the outcome-checked audio startup recovery introduced in
+2.81. Two real test reboots automatically exposed UCM HiFi and the board speaker
+sink; the owner confirmed speaker playback and camera capture without recovery
+commands. The camera list initially also exposed four compatibility loopbacks as
+(V4L2) PipeWire inputs. The final configuration filters only the board's named
+virtual relays from PipeWire, leaving the native four sources and direct V4L2
+endpoints available. A direct relay delivered five frames, the actual Lua rules
+passed native/relay/other-loopback/USB-path scope checks, and the owner confirmed
+that the duplicate entries disappeared while the usual cameras still work.
+The kernel and fingerprint modules were retained unchanged. These checks cover
+startup recovery and enumeration, not any new speaker DSP calibration or external
+USB-camera hardware test. Full evidence: [audio startup](audio-startup.md).

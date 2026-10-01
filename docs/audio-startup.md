@@ -84,5 +84,6 @@ was retained. A Lua 5.4 regression evaluates the actual configuration and covers
 all four relays, native sources, other loopbacks and USB paths. Device 2.83 passes
 package verification and audit; its live package SHA-256 is
 14fcd6a3ce49f6c6d128ff4341dac955a4a05a6d842bfe4729dfe9c30e33d9f0.
-Final owner camera-list confirmation is pending. No new kernel or reboot was
+The owner confirmed the duplicate choices are gone and the usual cameras work.
+No new kernel or reboot was
 needed for this enumeration change; WirePlumber was restarted with Camera closed.
