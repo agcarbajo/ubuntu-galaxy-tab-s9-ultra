@@ -6,6 +6,7 @@
 - Shorter fingerprint illumination transitions with reduced glare.
 - External display settings now work correctly: change resolution, position, refresh rate and rotation.
 - Improved speaker audio, with each speaker playing its correct stereo channel.
+- Fixed intermittent Dummy Output after startup.
 - Fixed crashes when connecting a charger after closing the keyboard cover.
 - Fixed the Caps Lock indicator turning off when no further keys were pressed.
 - Tailscale now works reliably and retains its IP address across reboots.

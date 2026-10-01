@@ -2,7 +2,7 @@
 
 ## Inputs
 
-Runtime source: main commit `517d41b0086ecf50c6bb336940b93e5f5ebdca8d`.
+Initial candidate runtime source: main commit `517d41b0086ecf50c6bb336940b93e5f5ebdca8d`.
 The release uses a fresh kernel source/output tree at the pinned Linux rc3
 commit `a13c140cc289c0b7b3770bce5b3ad42ab35074aa`, with matching signed modules,
 and a fresh Ubuntu Noble desktop root filesystem. Heavy work runs in WSL
@@ -79,5 +79,18 @@ Final artifact validation passed:
   and update payload validators pass.
 
 The build manifest and machine-readable audit are retained with local artifacts.
-Publication: https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/releases/tag/v1.3.0
+Initial publication (subsequently hidden):
+https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/releases/tag/v1.3.0
 The final ZIP has not been physically installed on the development tablet.
+
+## 2026-10-01: audio correction and replacement candidate
+
+The September 30 candidate was returned to draft after the owner reproduced
+Dummy Output. It must not be republished unchanged. Device 2.81 replaces the
+single early refresh with bounded, outcome-checked recovery. It passed the
+captured failure, nine behavioral regressions, two physical reboot checks and
+owner-confirmed speaker playback and camera capture. See audio-startup.md.
+The replacement candidate will reuse the verified kernel and clean Noble rootfs,
+install its matching Device 2.81 package and regenerate the complete image,
+boot bundle and update ZIP. The replacement manifest records its source revision
+and hashes. Its artifact verification is pending; it remains unpublished.

@@ -2103,10 +2103,12 @@ nothing but zeros.
 The mandatory order is now panel → ADSP → desktop user → camera relays. On top
 of that, WirePlumber may have started before the card exists: in that case it
 keeps an object with `off`/`pro-audio` profiles and GNOME shows Dummy
-Input/Output. `ubuntu-gts9u-desktop-user` waits for `controlC0`, restarts
-WirePlumber alone, selects `HiFi`, and uses a stamp in `/run` to do it once per
-boot. The ADSP is not restarted hot: ASoC does not re-register the card with
-this kernel.
+Input/Output. Device 2.81 retains ALSA restore before user-manager startup and
+queues a bounded audio-session service. It verifies the HiFi profile and the
+actual board output, retries incomplete WirePlumber probes up to three times
+and stops after success. Healthy sessions are left alone. See
+[audio startup](audio-startup.md) for the failure, recovery and reboot evidence.
+The ADSP is not restarted hot: ASoC does not re-register the card with this kernel.
 
 ### I²C adapter numbers are not an ABI
 

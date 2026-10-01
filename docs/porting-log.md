@@ -7506,3 +7506,38 @@ The owner confirmed physical USB/HDMI recovery with the baseline kernel rollback
 release code retains that pre-experiment driver. Future Ubuntu suite changes
 require the validated release's migration backend and recovery implementation;
 this release does not claim a physically tested Ubuntu 26 migration.
+
+## 2026-10-01: recover late audio initialization across boots
+
+The owner reproduced Dummy Output after the 1.3.0 publication; the release was
+returned to draft and 1.2.0 remains latest. On the development tablet, Device
+2.78 with the baseline kernel reproduced the failure: ALSA card 0 was present,
+but WirePlumber exposed only off/pro-audio, the helper exhausted ten seconds
+and exited without a subsequent retry. The package files matched their hashes.
+
+Device 2.81 retains ALSA restore ordering and dynamically queues a per-owner
+oneshot that verifies both UCM HiFi and an actual board sink. It allows at most
+three spaced WirePlumber restarts within 120 seconds, leaves healthy sessions
+untouched and never restarts ADSP or PipeWire. The 2.80 development iteration
+recovered sound but failed to recognize Noble's sink JSON lacking a top-level
+card index; it was stopped and 2.81 uses device.name, covered by an actual-shape
+regression. Nine behavioral regressions, speaker routing, shell syntax and
+ShellCheck pass. The live ARM64 package SHA-256 is
+a1bce3a6ca4eb81d0a1799bb07fd3090b9360f89914c86caa7fb98a3ee691284.
+It preserves the exact installed fingerprint owner, presentation bridge and
+signed IRQ/TUN modules. APT selected one upgrade and no removals. The incomplete
+September 30 update download had no running/prepared install and was cancelled
+with the official updater before APT. Root-only recovery files are retained at
+/var/lib/gts9u-diagnostics/audio-startup-20261001.
+
+Two owner-authorized test reboots returned on IDs
+63abd2b3-c8ef-43c3-8e12-5d71e920b2a2 and
+ac50e25a-7caa-4d55-bcb7-77f5866ff8bd. Each automatically restored HiFi and the
+default speaker output after one restart in roughly four seconds. Right DACs
+remain ASP_RX2, ADSP/pd-mapper/GDM/camera relays are active, four video endpoints
+and the Fprint device are present, and dpkg audit is clean. The owner confirmed
+speaker audio and camera capture after the second reboot. The reboot noticed
+just after login matches the second scheduled test reboot; no extra boot ID
+appears in the history. No kernel or partition changed. The replacement 1.3.0
+ZIP must incorporate this package for both clean installs and existing updates;
+publication remains deferred. Detailed recovery contract: audio-startup.md.
