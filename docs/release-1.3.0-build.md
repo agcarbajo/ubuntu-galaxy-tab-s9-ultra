@@ -91,6 +91,11 @@ single early refresh with bounded, outcome-checked recovery. It passed the
 captured failure, nine behavioral regressions, two physical reboot checks and
 owner-confirmed speaker playback and camera capture. See audio-startup.md.
 The replacement candidate will reuse the verified kernel and clean Noble rootfs,
-install its matching Device 2.81 package and regenerate the complete image,
+install its matching Device 2.83 package and regenerate the complete image,
 boot bundle and update ZIP. The replacement manifest records its source revision
 and hashes. Its artifact verification is pending; it remains unpublished.
+
+The replacement candidate also includes Device 2.83's camera enumeration rule,
+preventing the port's own V4L2 compatibility outputs from appearing as duplicate
+PipeWire camera inputs. The native cameras and direct V4L2 relay remain available;
+see audio-startup.md for the graph, relay and Lua scope checks.

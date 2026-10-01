@@ -7541,3 +7541,21 @@ just after login matches the second scheduled test reboot; no extra boot ID
 appears in the history. No kernel or partition changed. The replacement 1.3.0
 ZIP must incorporate this package for both clean installs and existing updates;
 publication remains deferred. Detailed recovery contract: audio-startup.md.
+
+### Camera duplicates revealed during audio validation
+
+The owner then reported four broken (V4L2) camera choices alongside the working
+native sources. pw-dump confirmed eight Video/Source nodes: four libcamera inputs
+and the port's four output loopbacks. Device 2.83 filters only the named board
+relays on virtual V4L2 paths during WirePlumber device creation; direct V4L2
+clients keep /dev/video20-23. The 2.82 development rule used capability properties
+that were populated only after rule evaluation, so it did not match; the final
+rule uses the device name/description established before evaluation. With Camera
+closed, reloading WirePlumber produced exactly four native Video/Source objects.
+A direct V4L2 capture delivered five frames and retained no images. The actual
+Lua 5.4 configuration passes the native/board-relay/other-loopback/USB predicate
+regression. Package verification/audit are clean. Live Device 2.83 SHA-256:
+14fcd6a3ce49f6c6d128ff4341dac955a4a05a6d842bfe4729dfe9c30e33d9f0.
+Its audio helper is unchanged from the two reboot-tested 2.81 runs. No further
+reboot, kernel or partition write occurred. Owner list confirmation is pending.
+The final replacement build must use Device 2.83 and remains unpublished.

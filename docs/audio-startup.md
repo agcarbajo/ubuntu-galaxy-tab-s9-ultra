@@ -60,5 +60,29 @@ Rollback package and the original helper/ALSA state were saved root-only in
 /var/lib/gts9u-diagnostics/audio-startup-20261001. A stale, incomplete September 30
 update download had no running updater or prepared installation; it was cancelled
 using the official updater before APT installation. The hidden 1.3.0 candidate
-must be rebuilt with 2.81 before publication. New clean images and APT updates
+must be rebuilt with the current Device package before publication. New clean images and APT updates
 consume this same package source.
+
+## Camera enumeration after session recovery (Device 2.83)
+
+The owner reported four non-working duplicate camera choices suffixed (V4L2),
+while the four native sources worked. The PipeWire graph confirmed eight video
+sources: four libcamera inputs plus this port's four compatibility loopbacks.
+The latter already consume the native inputs and should not be reimported into
+PipeWire. Device 2.83 filters exactly the four named board relays on virtual
+V4L2 device paths; the /dev/video20-23 devices remain available to direct V4L2
+applications. Other virtual cameras and external USB cameras are not matched.
+The audio recovery helper is byte-identical to the reboot-tested 2.81 helper.
+
+The 2.82 development iteration matched api.v4l2.cap.* keys, but WirePlumber fills
+those after its initial device-rule evaluation. It failed to remove duplicates.
+The final rule instead uses device.name and device.description, populated before
+rulesApplyProperties in the installed 0.4 monitor. After loading the final rule,
+the live graph exposes exactly four native video sources, and /dev/video20
+successfully delivers five frames through the compatibility relay. No image data
+was retained. A Lua 5.4 regression evaluates the actual configuration and covers
+all four relays, native sources, other loopbacks and USB paths. Device 2.83 passes
+package verification and audit; its live package SHA-256 is
+14fcd6a3ce49f6c6d128ff4341dac955a4a05a6d842bfe4729dfe9c30e33d9f0.
+Final owner camera-list confirmation is pending. No new kernel or reboot was
+needed for this enumeration change; WirePlumber was restarted with Camera closed.
