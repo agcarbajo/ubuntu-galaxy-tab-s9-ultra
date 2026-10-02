@@ -213,3 +213,19 @@ this replacement was not physically performed. Backups remain root-only under
 /var/lib/tab-companion-update/transaction/backup, with earlier completed backups
 archived under /var/lib/tab-companion-update/backups. Private diagnostic copies
 remain under /var/lib/gts9u-diagnostics/update-marker-20261002.
+
+### Owner acceptance and republication (2026-10-02)
+
+The owner confirmed physical audio, fingerprint and camera operation after the
+complete offline reinstall, then explicitly requested publication. Published
+v1.3.0 as the latest stable release with the exact physically tested replacement
+ZIP (1,406,414,137 bytes, SHA-256
+2364644bff1fb0e5e8371a5833d2b31fbd2bbfe86958d9f0d56b6f057cf6640d).
+Verified GitHub's sizes/digests and uploaded state for exactly three assets:
+this ZIP, unchanged Dualboot-v1.1.0.apk and unchanged gts9u-split.zip.
+The public latest API reports v1.3.0, not a draft. The source tag points to
+82264fcf8dd2a2bcfb3065421c73793084acccf7; subsequent evidence commits do not
+change the artifact source. Notes retain the release heading, format-1 marker
+and README updating link, with no SHA-256 section.
+
+https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/releases/tag/v1.3.0

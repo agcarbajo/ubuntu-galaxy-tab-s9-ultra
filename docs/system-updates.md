@@ -198,7 +198,8 @@ the physical tablet, including its separate S Pen battery.
 The Companion Debian package builds successfully. The corrected 1.3.0 ZIP
 completed the physical offline update path on 2026-10-02, including package
 installation, boot writes/readback, saved-set update and return to the desktop.
-Post-update hardware enumeration and audio-session recovery pass; physical
-audio/camera/fingerprint confirmation is recorded separately. A fresh TWRP
+Post-update hardware enumeration and audio-session recovery pass. The owner
+confirmed physical audio, camera and fingerprint operation before republication.
+A fresh TWRP
 installation of this exact replacement ZIP and power-loss recovery have not
 been physically exercised.
