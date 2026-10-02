@@ -138,3 +138,25 @@ ELF closure, fsck and the partition budget. Three focused hook tests pass,
 including normal/partially patched launchers, duplicate prevention, prerequisite
 query and missing-launcher failure. A generated image and physical deployment
 remain pending. No partition was changed during diagnosis.
+
+The normal rootfs/package pipeline generated Device 2.84 from committed source
+f5794d751dc59bee14264339ce2322a526579df3. Package SHA-256:
+4bd94aaa41cb72674de69f0d77b0f7b5343f8848fbe41e30f2ef1c19cbec53c7.
+APT simulation selects only Device 2.84, zero removals. The normal initramfs
+builder produced an 8,273,117-byte legacy-LZ4 stream, below the 8,314,880-byte
+budget. All 72 ELF dependency closures, artwork, fsck and both graphical
+launcher options pass. The strengthened validator rejects the previous release
+initramfs specifically for its missing --graphical-boot option.
+
+The normal Android bundle builder produced init_boot SHA-256
+ce1ddfad3d33b5265d4cd1f5936c10b86b5263a72cae4f0a56358c848f8dc1da.
+The other boot, vendor_boot and dtbo images are byte-identical to the published
+release. Bundle validation passes. The staged tablet image/package hashes and
+both signed board modules match the running release; no kernel replacement is
+needed. Root-only active and saved init_boot backups are hash-verified under
+/var/lib/gts9u-diagnostics/plymouth-20261002/backup, with other partition and
+Android saved-set hashes recorded. Battery is 21% charging; preflight passes.
+Deployment and reboot require the owner's explicit authorization, requested
+before any active partition write or package installation. Physical animation
+acceptance and any replacement full release artifact remain pending. The public
+1.3.0 ZIP is unchanged at this checkpoint.
