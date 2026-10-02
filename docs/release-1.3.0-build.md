@@ -229,3 +229,50 @@ change the artifact source. Notes retain the release heading, format-1 marker
 and README updating link, with no SHA-256 section.
 
 https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/releases/tag/v1.3.0
+
+## 2026-10-02: graphical boot replacement ZIP
+
+Final runtime revision: 95e0f5235bf37a18f90f1d315ca65dd213127769. Device 2.84
+ships the persistent graphical Plymouth initramfs hook; hardware revision
+1.3.0-2 includes the corrected generated filesystem boot archive. Companion
+remains 1.5.5. The clean rootfs and selected update DEBs contain the same exact
+Device package physically installed on the tablet. Its animation was confirmed
+by the owner after the authorized reboot.
+
+The normal complete release pipeline rebuilt the clean ext4 image, boot bundle
+and ZIP. The final payload was repacked with incremented hardware revision -2;
+no further rootfs/kernel/boot change was required for that packaging revision.
+Clean image: 4,769,972,224 bytes, SHA-256
+3b33a5a2597e44a0c40e75decd21faee867f1051c6e01ad84c67347e71079b92.
+Generated initramfs: 8,273,096 bytes, 72 complete ELF closures, graphical options,
+artwork, fsck and budget all pass. The resulting init_boot hashes to
+4825041321594bb977fe59daa4fddc45089ec549983527215fcf7ab7b378714a.
+Its archive timestamps differ from the physically tested ce1ddfad image, but an
+extracted comparison found zero differences in file contents, symlink targets
+or permissions. Kernel/boot, vendor_boot and dtbo are byte-identical to the
+previously shipped artifact. All 129 matching signature/release checks pass.
+
+Final ZIP: 1,406,567,258 bytes, SHA-256
+8f0e964f5627db1a6a31f80bf33844aecbfdf4bc037a1ea93244036fbf792f8d.
+Full bundle/CRC and update payload hashing pass; all 21 local package versions
+match the rootfs and ZIP, no payload ownership collision remains, the original
+1.2 reader accepts format 1, and fresh-account/APT/dpkg checks pass. The packaged
+hook was read from the real ext4 image and matches source. Three Plymouth hook
+regressions, the negative gate against the old release initramfs, and all three
+packaging tests pass. The Windows copy matches the Linux ZIP hash. Artifacts,
+manifest, audit and 789 tracked-source hashes are preserved locally under
+artifacts/release-v1.3.0-plymouthfix. The changed package/animation path was
+physically validated separately; neither a fresh TWRP install nor a second
+complete offline reinstall of this exact final ZIP was performed. The unchanged
+offline backend had already passed the complete 1.3.0 reinstall earlier today.
+
+Replaced the public v1.3.0 ZIP with the audited graphical-boot artifact after
+owner confirmation of the animation. GitHub reports the exact new size and
+SHA-256 digest above, plus the unchanged APK and split ZIP, all uploaded.
+v1.3.0 remains the latest stable public release with exactly three assets.
+The source tag and release target now both point to
+95e0f5235bf37a18f90f1d315ca65dd213127769. Release notes remain unchanged,
+including the existing boot-animation feature, format-1 marker and README
+updating link; no SHA-256 section was added. Prior ZIPs/manifests remain retained
+locally. No further tablet reboot or partition write occurred during rebuilding
+or publication.

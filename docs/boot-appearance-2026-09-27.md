@@ -177,3 +177,14 @@ has not yet been replaced with this later fix.
 The owner confirmed the Ubuntu animation is displayed again and verbose boot
 text has disappeared after the authorized reboot. This closes the physical
 visible-boot reproduction for the new initramfs hook.
+
+Replaced the public v1.3.0 ZIP with the audited graphical-boot artifact after
+owner confirmation of the animation. GitHub reports the exact new size and
+SHA-256 digest above, plus the unchanged APK and split ZIP, all uploaded.
+v1.3.0 remains the latest stable public release with exactly three assets.
+The source tag and release target now both point to
+95e0f5235bf37a18f90f1d315ca65dd213127769. Release notes remain unchanged,
+including the existing boot-animation feature, format-1 marker and README
+updating link; no SHA-256 section was added. Prior ZIPs/manifests remain retained
+locally. No further tablet reboot or partition write occurred during rebuilding
+or publication.
