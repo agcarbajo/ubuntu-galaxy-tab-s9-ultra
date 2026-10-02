@@ -7646,3 +7646,14 @@ unchanged. Preflight reports 39% battery while charging, writable root and
 The repository bootstrap additionally accepts --repair to reinstall the
 recorded release using the fixed current backend even when the installed app
 is older. Eight launcher tests and 18 future-update readiness tests pass.
+
+The complete b6500f2 ZIP passed final artifact auditing: 1,406,677,123 bytes,
+SHA-256 12fc1b5496a8de583c9f81973fab2b49723bfea0c5cc6fc90471ab06b21edd6a.
+The Windows transfer and physical tablet copy match. The tablet staged that
+exact ZIP successfully, including 140 MB of authenticated cached APT downloads.
+The real PackageKit Offline.Cancel call now leaves /etc/system-update intact
+and the reported state ready. Preparation's package checksum still matches.
+Saved and hash-verified all four current boot partitions plus the original module
+archive; recorded the untouched Android saved-set hashes in root-only diagnostic
+storage. Battery is 47% and charging. Offline execution, its required owner
+authorization and replacement of the public ZIP remain pending.

@@ -142,3 +142,25 @@ Public release:
 https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/releases/tag/v1.3.0
 The artifact source tag stays on the runtime revision; subsequent documentation
 commits do not change the shipped code. No additional tablet operation occurred.
+
+## 2026-10-02: restart-trigger replacement candidate
+
+Runtime revision b6500f2dd18c18d659e05faa7cdca872ab2386ec packages Companion
+1.5.5 to protect its offline trigger from PackageKit cancellation. Device 2.83,
+the kernel and DTB are unchanged. The full build completed with clean ext4,
+TWRP/boot and update payload validation. The audited image contains the exact
+committed update_core/update_page plus the unchanged audio helpers and camera
+configuration. All 21 selected local packages match the installed rootfs and ZIP
+payload, and the published 1.2 reader accepts the format-1 update. All 129 module
+signature/release checks, shipped kernel certificate and fresh-account/APT/dpkg
+checks pass.
+
+Candidate ZIP: 1,406,677,123 bytes, SHA-256
+12fc1b5496a8de583c9f81973fab2b49723bfea0c5cc6fc90471ab06b21edd6a.
+Rootfs image: 4,769,972,224 bytes, SHA-256
+49c27af523d4d5790ab9d83c4cba429e6c672bbf23a379917cc8f93d2a427351.
+Initramfs: 8,273,036 bytes; all 72 ELF dependency closures and budget pass.
+Companion package SHA-256:
+148342807bf46705485450902f4077ff121a7a5daec5411cdef3ae430cafc315.
+The Windows ZIP copy matches the Linux artifact digest. Earlier artifacts remain
+preserved; physical offline acceptance and GitHub replacement are pending.
