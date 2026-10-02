@@ -61,7 +61,7 @@ def main():
     debs.mkdir(parents=True)
     kernel = a.base / "out/kernel-gts9uwifi"
     kernel_release = (kernel / "kernel.release").read_text().strip()
-    hardware_version = a.version + "-1"
+    hardware_version = a.version + "-2"
     # local-debs is the exact selection installed in this build, not a directory
     # of stale packages from previous releases.
     for source in (a.base / "out/local-debs").glob("*.deb"):

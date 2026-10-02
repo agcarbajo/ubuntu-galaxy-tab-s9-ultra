@@ -114,8 +114,9 @@ APT and dpkg are clean. See release-1.3.0-build.md for artifact and boot evidenc
 The hardware payload omits both `qcom_spss_irq.ko` and `tun.ko`, which are owned
 by the matching Device package. The initial 1.3.0 payload excluded only the IRQ
 module, so dpkg rejected the duplicated TUN file during a physical update. The
-corrected hardware package uses Debian version `1.3.0-1`; the port version stays
-1.3.0. The builder now rejects any overlapping non-directory path among its
+ownership correction used Debian version `1.3.0-1`; the subsequent graphical
+initramfs fix uses `1.3.0-2`, since its packaged boot files changed. The port
+version stays 1.3.0. The builder now rejects any overlapping non-directory path among its
 selected update packages. The regression installs the Device and generated
 hardware packages together through real dpkg in an isolated root and checks
 that Device owns both board modules.

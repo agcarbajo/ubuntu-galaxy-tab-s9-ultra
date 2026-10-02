@@ -7779,3 +7779,7 @@ remain unchanged. Returned on boot f80f652c-c39d-44c1-a755-2570e8ce009d with Dev
 The active/saved init_boot hash is the validated ce1ddfad candidate above.
 Owner-visible animation confirmation has been requested; the published full ZIP
 has not yet been replaced with this later fix.
+
+The owner confirmed the Ubuntu animation is displayed again and verbose boot
+text has disappeared after the authorized reboot. This closes the physical
+visible-boot reproduction for the new initramfs hook.

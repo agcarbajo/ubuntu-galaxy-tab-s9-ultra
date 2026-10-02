@@ -587,7 +587,7 @@ class PackagingTests(unittest.TestCase):
             with patch.object(sys, "argv", ["build-update", "--base", str(base), "--version", "1.1", "--bootstrap", str(bootstrap)]), patch.object(module.subprocess, "check_output", side_effect=output):
                 module.main()
             self.assertEqual(json.loads((base / "out/update-payload/metadata.json").read_text())["tag"], "v1.1")
-            hardware = base / "out/update-payload/debs/ubuntu-gts9u-hardware_1.1-1_arm64.deb"
+            hardware = base / "out/update-payload/debs/ubuntu-gts9u-hardware_1.1-2_arm64.deb"
             listing = subprocess.check_output(["dpkg-deb", "-c", str(hardware)], text=True)
             self.assertIn("ath12k.ko", listing)
             self.assertNotIn("tun.ko", listing)
