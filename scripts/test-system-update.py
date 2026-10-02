@@ -525,6 +525,28 @@ class ConffileTests(unittest.TestCase):
 
 
 class PackagingTests(unittest.TestCase):
+    def test_builder_rejects_duplicate_package_file_ownership(self):
+        if not shutil.which("dpkg-deb"):
+            self.skipTest("Needs dpkg-deb")
+        spec = importlib.util.spec_from_file_location("build_update", REPO / "scripts/build-update-payload.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            debs = []
+            for name in ("owner-one", "owner-two"):
+                stage = base / name
+                (stage / "DEBIAN").mkdir(parents=True)
+                (stage / "DEBIAN/control").write_text(
+                    f"Package: {name}\nVersion: 1\nArchitecture: all\nMaintainer: Test <test@example.invalid>\nDescription: Test\n")
+                (stage / "usr/lib/modules/test").mkdir(parents=True)
+                (stage / "usr/lib/modules/test/tun.ko").write_bytes(b"same bytes still conflict")
+                deb = base / (name + ".deb")
+                subprocess.run(["dpkg-deb", "-b", str(stage), str(deb)], check=True, capture_output=True)
+                debs.append(deb)
+            with self.assertRaisesRegex(ValueError, "Overlapping update file.*tun.ko"):
+                module.validate_package_ownership(debs)
+
     def test_payload_builder_and_legacy_bootstrap(self):
         if not shutil.which("dpkg-deb"):
             self.skipTest("Needs dpkg-deb")
@@ -545,11 +567,18 @@ class PackagingTests(unittest.TestCase):
             (base / "out/kernel-gts9uwifi/kernel.release").write_text("test\n")
             (base / "out/kernel-gts9uwifi/sm8550-samsung-gts9uwifi.dtb").write_bytes(b"test dtb")
             (base / "out/rootfs-overlay/usr/lib/modules/test/ath12k.ko").write_bytes(b"matching module")
+            for name in ("qcom_spss_irq.ko", "tun.ko"):
+                (base / "out/rootfs-overlay/usr/lib/modules/test" / name).write_bytes(b"matching board module")
             (base / "out/rootfs-overlay/etc/modules-load.d/ath12k.conf").write_text("ath12k\n")
             for name in ("ubuntu-gts9u-companion", "ubuntu-gts9u-device"):
                 stage = base / name / "DEBIAN"
                 stage.mkdir(parents=True)
                 (stage / "control").write_text("Package: " + name + "\nVersion: 1\nArchitecture: arm64\nMaintainer: Test <test@example.invalid>\nDescription: Test\n")
+                if name == "ubuntu-gts9u-device":
+                    modules = stage.parent / "usr/lib/modules/test"
+                    modules.mkdir(parents=True)
+                    for module_name in ("qcom_spss_irq.ko", "tun.ko"):
+                        (modules / module_name).write_bytes(b"matching board module")
                 subprocess.run(["dpkg-deb", "-b", str(stage.parent), str(base / "out/local-debs" / (name + "_1_arm64.deb"))], check=True, capture_output=True)
             original = subprocess.check_output
             def output(argv, **kwargs):
@@ -558,10 +587,25 @@ class PackagingTests(unittest.TestCase):
             with patch.object(sys, "argv", ["build-update", "--base", str(base), "--version", "1.1", "--bootstrap", str(bootstrap)]), patch.object(module.subprocess, "check_output", side_effect=output):
                 module.main()
             self.assertEqual(json.loads((base / "out/update-payload/metadata.json").read_text())["tag"], "v1.1")
-            hardware = base / "out/update-payload/debs/ubuntu-gts9u-hardware_1.1_arm64.deb"
+            hardware = base / "out/update-payload/debs/ubuntu-gts9u-hardware_1.1-1_arm64.deb"
             listing = subprocess.check_output(["dpkg-deb", "-c", str(hardware)], text=True)
             self.assertIn("ath12k.ko", listing)
+            self.assertNotIn("tun.ko", listing)
+            self.assertNotIn("qcom_spss_irq.ko", listing)
             self.assertNotIn("/home/", listing)
+            if os.geteuid() == 0:
+                isolated = base / "installed"
+                (isolated / "var/lib/dpkg").mkdir(parents=True)
+                (isolated / "var/lib/dpkg/status").touch()
+                device = base / "out/local-debs/ubuntu-gts9u-device_1_arm64.deb"
+                result = subprocess.run(["dpkg", "--root=" + str(isolated), "--force-architecture",
+                                         "-i", str(device), str(hardware)], capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                for name in ("tun.ko", "qcom_spss_irq.ko"):
+                    owner = subprocess.check_output(["dpkg-query", "--admindir=" + str(isolated / "var/lib/dpkg"),
+                                                     "-S", "/usr/lib/modules/test/" + name], text=True)
+                    self.assertEqual(owner.split(": ", 1)[0].split(":", 1)[0], "ubuntu-gts9u-device")
+                    self.assertEqual(owner.split(": ", 1)[1].strip(), "/usr/lib/modules/test/" + name)
             output = subprocess.check_output([sys.executable, str(bootstrap), "--status"], text=True)
             self.assertIn("state", json.loads(output))
             # The offline runner is frozen from source, including inside zipapp.

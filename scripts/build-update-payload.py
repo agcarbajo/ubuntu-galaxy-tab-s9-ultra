@@ -8,8 +8,31 @@ import re
 import shutil
 import subprocess
 import tempfile
+import tarfile
 import zipapp
 from pathlib import Path
+
+
+def validate_package_ownership(debs):
+    """Reject overlapping files before dpkg can encounter them on a tablet."""
+    owners = {}
+    for deb in sorted(debs):
+        with subprocess.Popen(["dpkg-deb", "--fsys-tarfile", str(deb)], stdout=subprocess.PIPE) as process:
+            with tarfile.open(fileobj=process.stdout, mode="r|") as archive:
+                for member in archive:
+                    if member.isdir():
+                        continue
+                    name = member.name.removeprefix("./")
+                    previous = owners.get(name)
+                    if previous is not None:
+                        # Drain the producer before raising, avoiding an orphan
+                        # dpkg-deb process blocked on a full pipe.
+                        process.stdout.read()
+                        process.wait()
+                        raise ValueError(f"Overlapping update file {name}: {previous.name} and {deb.name}")
+                    owners[name] = deb
+            if process.wait() != 0:
+                raise ValueError("Cannot inspect update package: " + deb.name)
 
 
 def main():
@@ -38,6 +61,7 @@ def main():
     debs.mkdir(parents=True)
     kernel = a.base / "out/kernel-gts9uwifi"
     kernel_release = (kernel / "kernel.release").read_text().strip()
+    hardware_version = a.version + "-1"
     # local-debs is the exact selection installed in this build, not a directory
     # of stale packages from previous releases.
     for source in (a.base / "out/local-debs").glob("*.deb"):
@@ -71,20 +95,23 @@ def main():
         control = stage / "DEBIAN"
         control.mkdir()
         (control / "control").write_text(
-            "Package: ubuntu-gts9u-hardware\nVersion: " + a.version +
+            "Package: ubuntu-gts9u-hardware\nVersion: " + hardware_version +
             "\nArchitecture: arm64\nMaintainer: Ubuntu gts9uwifi port contributors <noreply@example.invalid>\n"
             "Description: Firmware, modules and boot files matching the SM-X910 release\n")
         (control / "conffiles").write_text("".join(
             "/" + f.relative_to(stage).as_posix() + "\n" for f in sorted((stage / "etc").rglob("*"))
             if f.is_file() and not f.is_symlink()))
-        # The SPSS module is owned by ubuntu-gts9u-device, never duplicate it.
-        for file in (stage / "usr/lib/modules").rglob("qcom_spss_irq.ko"):
-            file.unlink()
+        # These signed board modules belong to ubuntu-gts9u-device. Duplicating
+        # either makes dpkg reject a real update even when the bytes match.
+        for name in ("qcom_spss_irq.ko", "tun.ko"):
+            for file in (stage / "usr/lib/modules").rglob(name):
+                file.unlink()
         for file in sorted(stage.rglob("*"), reverse=True):
             os.utime(file, (0, 0), follow_symlinks=False)
         os.utime(stage, (0, 0))
         subprocess.run(["dpkg-deb", "--root-owner-group", "--build", str(stage),
-                        str(debs / ("ubuntu-gts9u-hardware_" + a.version + "_arm64.deb"))], check=True)
+                        str(debs / ("ubuntu-gts9u-hardware_" + hardware_version + "_arm64.deb"))], check=True)
+    validate_package_ownership(debs.glob("*.deb"))
     identity = {"device": "gts9uwifi", "version": a.version, "tag": "v" + a.version,
                 "kernel_release": kernel_release}
     (rootfs / "usr/lib/gts9u-release.json").write_text(json.dumps(identity) + "\n")

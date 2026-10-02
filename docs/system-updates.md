@@ -105,6 +105,21 @@ the code already responsible for staging it.
 
 Physical end-to-end installation with the corrected trigger remains pending.
 
+### Module ownership in update packages
+
+The hardware payload omits both `qcom_spss_irq.ko` and `tun.ko`, which are owned
+by the matching Device package. The initial 1.3.0 payload excluded only the IRQ
+module, so dpkg rejected the duplicated TUN file during a physical update. The
+corrected hardware package uses Debian version `1.3.0-1`; the port version stays
+1.3.0. The builder now rejects any overlapping non-directory path among its
+selected update packages. The regression installs the Device and generated
+hardware packages together through real dpkg in an isolated root and checks
+that Device owns both board modules.
+
+If the offline journal is absent after a failure, `/var/log/apt/term.log` retains
+APT's exact dpkg error. Complete pending package configuration before preparing
+another update; never bypass file conflicts with `--force-overwrite`.
+
 The updater never executes the TWRP installer, writes `rootfs.img`, formats
 storage, or writes `userdata`, `linuxroot`, `super`, `recovery` or `vbmeta`.
 It installs Debian packages through APT with removal and unauthenticated

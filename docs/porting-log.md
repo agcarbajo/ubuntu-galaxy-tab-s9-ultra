@@ -7657,3 +7657,30 @@ Saved and hash-verified all four current boot partitions plus the original modul
 archive; recorded the untouched Android saved-set hashes in root-only diagnostic
 storage. Battery is 47% and charging. Offline execution, its required owner
 authorization and replacement of the public ZIP remain pending.
+
+The owner explicitly authorized the offline reinstall and its boot-image writes.
+The installer ran, but APT stopped during unpack. /var/log/apt/term.log records
+ubuntu-gts9u-hardware 1.3.0 trying to overwrite updates/tun.ko, already owned by
+Device 2.83. The unit journal was not retained. An inventory of all 22 payload
+DEBs found exactly one overlapping non-directory path: this TUN module. The
+installer restored all four baseline boot images and modules, then returned on
+boot 755e7d15-2753-4994-bab8-c6a386774eb0 with failed status. Readback matches the
+pre-test backups; kernel #3 remains active. This also explains the owner's
+earlier visible installation error, although that earlier transaction's error
+log was not independently attributed. The separate PackageKit trigger-loss bug
+explains the later unexecuted ready state.
+
+Temporarily returned public 1.3.0 to draft after confirming the shipping-package
+defect. Corrected the builder to exclude both board modules and use hardware
+package revision 1.3.0-1. Added a generic ownership collision gate, actual isolated
+dpkg co-installation/owner checks, and a deliberate duplicate-file rejection case.
+The three focused packaging cases pass.
+
+On the tablet, configured the pending same-version packages with automatic
+service actions temporarily denied and SYSTEMD_OFFLINE=1; restored the original
+policy afterward. Preserved the exact failed APT log root-only. The retained
+baseline module backup was copied back and reindexed; IRQ/TUN hashes still match
+the original #3 set. APT check/dpkg audit are clean, GDM and Wi-Fi remain active,
+and no additional reboot or boot-image write occurred. The existing private
+update recovery backups remain intact. A corrected full ZIP and successful
+physical offline retry are still required before republication.
