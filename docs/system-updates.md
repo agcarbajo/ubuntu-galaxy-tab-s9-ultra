@@ -66,6 +66,11 @@ and restarts automatically only after successful preparation. Any other answer
 cancels; an already-current installation does not restart. This script is
 maintained in the repository, not attached to releases.
 
+To reinstall the recorded build with the current backend, append `--repair`
+to the command's final `sudo python3 "$d/update.py"` invocation. This also
+repairs the older updater's lost restart trigger before reinstalling its build.
+It requires release metadata and never guesses a version from the kernel.
+
 After upgrading, the installed command is:
 
 ```sh

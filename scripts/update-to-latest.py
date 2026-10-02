@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Interactive updater for any installed SM-X910 Ubuntu port version."""
 import importlib
+import argparse
 import json
 import os
 from pathlib import Path
@@ -24,28 +25,34 @@ def fetch(url, limit):
     return data
 
 
-def update(core, bundle):
-    release = bundle.release()
+def update(core, bundle, repair=False):
+    tag = bundle.current().get('tag') if repair else None
+    if repair and not tag:
+        raise ValueError('This installation has no recorded GitHub build. Repair is unavailable.')
+    release = bundle.release(tag) if repair else bundle.release()
     state = bundle.release_state(release)
-    if state in ('current', 'older'):
+    if not repair and state in ('current', 'older'):
         print('You already have the latest published version or a newer build.')
         return
     if state == 'unsupported':
         raise ValueError('The latest release does not support system updates.')
-    print('Latest release: ' + release['tag'])
+    print(('Reinstalling: ' if repair else 'Latest release: ') + release['tag'])
     print('Save your work. This will prepare the update and restart to install it.')
     print('Your data and settings will be preserved.')
     if input('Are you ready? Type y to update [y/N]: ').strip().lower() != 'y':
         print('Cancelled. No update was prepared.')
         return
-    core.main(['--latest'])
+    core.main(['--repair'] if repair else ['--latest'])
     if core.status().get('state') != 'ready':
         raise RuntimeError('Update preparation did not complete; not restarting.')
     print('Update ready. Restarting to install...')
     subprocess.run(['systemctl', 'reboot'], check=True)
 
 
-def main():
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--repair', action='store_true', help='Reinstall the recorded build with the current updater backend')
+    args = parser.parse_args(argv)
     if os.geteuid() != 0:
         raise SystemExit('Run this script with sudo.')
     # Resolve main once so every backend module comes from the same revision.
@@ -64,7 +71,7 @@ def main():
         sys.path.insert(0, directory)
         core = importlib.import_module('tab_companion.update_core')
         bundle = importlib.import_module('tab_companion.update_bundle')
-        update(core, bundle)
+        update(core, bundle, repair=args.repair)
 
 
 if __name__ == '__main__':

@@ -7631,3 +7631,18 @@ either pending trigger. Full corrected artifact and physical offline acceptance
 remain pending. The exact process that removed the original trigger was not
 recorded; PackageKit cancellation is a reproduced mechanism, not a captured
 syscall attribution for that earlier deletion.
+
+Built Companion 1.5.5 from b6500f2; package SHA-256
+148342807bf46705485450902f4077ff121a7a5daec5411cdef3ae430cafc315.
+The fresh Noble rootfs installed this exact package with one upgrade and no
+additions/removals, and the full image/ZIP rebuild reuses the verified kernel.
+On the tablet, preserved the original staged transaction under the root-only
+diagnostic directory, cancelled its status and installed the hash-verified
+package. APT selected one upgrade and no additions/removals; audit/check are
+clean and state is idle. Device 2.83 and the live signed IRQ/TUN modules remain
+unchanged. Preflight reports 39% battery while charging, writable root and
+244 GiB free. No reboot or partition write occurred.
+
+The repository bootstrap additionally accepts --repair to reinstall the
+recorded release using the fixed current backend even when the installed app
+is older. Eight launcher tests and 18 future-update readiness tests pass.

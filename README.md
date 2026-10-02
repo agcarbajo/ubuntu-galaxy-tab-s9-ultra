@@ -124,6 +124,10 @@ d=$(mktemp -d) && curl -fL https://raw.githubusercontent.com/agcarbajo/ubuntu-ga
 Updates preserve your data and settings. See [system updates](docs/system-updates.md)
 for local ZIP installation, repair and troubleshooting.
 
+If an older updater returns to the desktop still showing **Ready to restart**,
+use the command above to load the current updater. To reinstall your recorded
+build, add `--repair` after `"$d/update.py"`. This preserves your data and settings.
+
 ## Known issues
 
 - Regarding the official cover keyboard, as I said, only EF-DX920 cover keyboard has been tested. EF-DX900, EF-DX910, EF-DX915 and

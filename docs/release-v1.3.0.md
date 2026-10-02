@@ -22,6 +22,7 @@
 - S Pen actions and shortcuts can now send modifier keys on their own, including Ctrl, Shift and Super.
 - Prepared the updater for future kernel and Ubuntu upgrades, preserving user data and settings. Ubuntu version upgrades will use the migration backend included in the corresponding validated release.
 - Added optional automatic weekly update checks and notifications.
+- Fixed prepared updates being skipped after restarting.
 
 ### Updating an existing installation
 

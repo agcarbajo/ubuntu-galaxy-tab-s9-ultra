@@ -30,7 +30,7 @@ class LauncherTests(TestCase):
             for name in tuple(sys.modules):
                 if name == 'tab_companion' or name.startswith('tab_companion.'):
                     del sys.modules[name]
-            launcher.main()
+            launcher.main([])
             core, bundle = update.call_args.args
             self.assertTrue(callable(core.prepare))
             self.assertTrue(callable(bundle.inspect))
@@ -77,6 +77,24 @@ class LauncherTests(TestCase):
         ask.assert_not_called()
         run.assert_not_called()
         self.core.main.assert_not_called()
+
+    def test_repair_uses_recorded_tag_and_current_backend(self):
+        self.bundle.current.return_value = {'tag': 'v1.3.0'}
+        self.bundle.release_state.return_value = 'current'
+        with patch('builtins.input', return_value='y'), patch.object(launcher.subprocess, 'run') as run:
+            launcher.update(self.core, self.bundle, repair=True)
+        self.bundle.release.assert_called_once_with('v1.3.0')
+        self.core.main.assert_called_once_with(['--repair'])
+        run.assert_called_once_with(['systemctl', 'reboot'], check=True)
+
+    def test_repair_unknown_build_never_prepares_or_reboots(self):
+        self.bundle.current.return_value = {}
+        with patch.object(launcher.subprocess, 'run') as run:
+            with self.assertRaisesRegex(ValueError, 'no recorded'):
+                launcher.update(self.core, self.bundle, repair=True)
+        self.bundle.release.assert_not_called()
+        self.core.main.assert_not_called()
+        run.assert_not_called()
 
 
 if __name__ == '__main__':
