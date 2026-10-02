@@ -81,6 +81,25 @@ and staging errors are reported without starting the installation.
 
 ## Data and configuration
 
+### Restart trigger coexistence (Companion 1.5.5)
+
+Prepared updates use `/etc/system-update`, recognized by Noble's systemd
+generator alongside `/system-update`. PackageKit unconditionally removes the
+latter when cancelling its own offline update, including a trigger belonging
+to another updater. A physical probe reproduced that deletion while Companion
+still recorded `ready`; the alternative trigger survived the same cancellation
+and the actual generator selected `system-update.target`.
+
+The backend still recognizes and cancels its own legacy trigger, preserves
+foreign triggers at either location, and blocks preparation while either is
+present. A missing trigger produces a failed status with instructions to cancel
+and prepare again instead of an endless ready screen. Readiness is recorded only
+after the trigger is synced. Older installed Companion versions must obtain the
+fixed backend before preparing; replacing a release ZIP alone does not change
+the code already responsible for staging it.
+
+Physical end-to-end installation with the corrected trigger remains pending.
+
 The updater never executes the TWRP installer, writes `rootfs.img`, formats
 storage, or writes `userdata`, `linuxroot`, `super`, `recovery` or `vbmeta`.
 It installs Debian packages through APT with removal and unauthenticated

@@ -17,7 +17,11 @@ from . import update_policy as policy
 
 STATE = Path("/var/lib/tab-companion-update")
 TRANSACTION = STATE / "transaction"
-MARKER = Path("/system-update")
+# PackageKit clears /system-update even when another updater owns it.
+# systemd also recognizes /etc/system-update; keep the legacy path readable
+# so an already prepared transaction can still be applied or cancelled.
+MARKER = Path("/etc/system-update")
+LEGACY_MARKER = Path("/system-update")
 UNIT = "gts9u-offline-update.service"
 LOCK = "/run/lock/gts9u-boot.lock"
 PROGRESS_JSON = False
@@ -71,7 +75,11 @@ def write_json(path, value):
 
 def status():
     try:
-        return json.loads((STATE / "status.json").read_text())
+        value = json.loads((STATE / "status.json").read_text())
+        if value.get("state") == "ready" and not marker_owned():
+            return {**value, "state": "failed", "error":
+                    "The prepared update lost its restart trigger. Cancel it and prepare the update again."}
+        return value
     except (OSError, ValueError):
         return {"state": "idle"}
 
@@ -149,13 +157,15 @@ def owned_directory(path):
 
 
 def marker_owned():
-    return MARKER.is_symlink() and os.readlink(MARKER) == str(TRANSACTION)
+    return any(path.is_symlink() and os.readlink(path) == str(TRANSACTION)
+               for path in (MARKER, LEGACY_MARKER))
 
 
 def unmark():
-    if marker_owned():
-        MARKER.unlink()
-        os.sync()
+    for path in (MARKER, LEGACY_MARKER):
+        if path.is_symlink() and os.readlink(path) == str(TRANSACTION):
+            path.unlink()
+    os.sync()
 
 
 def cache_local_packages(transaction, plan):
@@ -296,7 +306,7 @@ def prepare(args):
     progress("preflight")
     device_check()
     power_check()
-    if MARKER.exists() or MARKER.is_symlink() or status()["state"] in ("ready", "applying"):
+    if any(path.exists() or path.is_symlink() for path in (MARKER, LEGACY_MARKER)) or status()["state"] in ("ready", "applying"):
         raise ValueError("An update is already pending. Cancel it first.")
     if TRANSACTION.exists():
         if (TRANSACTION / "backup/complete").exists():
@@ -385,13 +395,13 @@ def prepare(args):
         (TRANSACTION / "dpkg.sha256").write_text(bundle.sha256("/var/lib/dpkg/status"))
         install_runner()
         archive.unlink()
-        set_status("ready", version=manifest["version"], tag=manifest["tag"])
-        os.sync()
         MARKER.symlink_to(TRANSACTION)
         os.sync()
+        set_status("ready", version=manifest["version"], tag=manifest["tag"])
         progress("ready", 1, 1)
         emit("Update prepared. Save your work and restart to install it.")
     except Exception as error:
+        unmark()
         set_status("failed", error=str(error))
         raise
 

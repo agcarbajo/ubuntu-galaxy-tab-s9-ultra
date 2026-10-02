@@ -7603,3 +7603,31 @@ https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/releases/tag/v1.3.0
 
 No additional tablet changes or physical full-ZIP installation occurred.
 The runtime tag identifies the shipped code; this documentation follows it.
+
+### 2026-10-02: prepared reinstall never entered offline installation
+
+The owner used Companion's Restart and install action for the installed 1.3.0
+build. The verified SM-X910 still runs baseline kernel #3 and Companion 1.5.4 /
+Device 2.83. The retained transaction was prepared at 01:53:28 CEST and status
+remains ready, but /system-update is absent. No offline-installer journal entry
+appears in the last six boots; this is not evidence of an attempted APT or boot
+write failure. Package audit is clean.
+
+A bounded physical probe recreated only the owned trigger and invoked the
+PackageKit Offline.Cancel method with no PackageKit prepared update/upgrade.
+It removed Companion's /system-update trigger without changing Companion state.
+The same method left /etc/system-update untouched, and the actual installed
+systemd generator selected system-update.target in temporary output directories.
+Both temporary triggers were removed afterward; no reboot or partition write
+occurred. The original status is preserved root-only under
+/var/lib/gts9u-diagnostics/update-marker-20261002.
+
+Companion 1.5.5 uses the alternate trigger, retains owned legacy-trigger support,
+blocks foreign pending updates and reports a lost trigger honestly. Readiness
+is recorded after syncing the marker. Four new marker regressions and the full
+43-case system-update suite pass, including real isolated APT/dpkg checks and
+simulated boot restore/data preservation. Matched-boot diagnostics now reject
+either pending trigger. Full corrected artifact and physical offline acceptance
+remain pending. The exact process that removed the original trigger was not
+recorded; PackageKit cancellation is a reproduced mechanism, not a captured
+syscall attribution for that earlier deletion.

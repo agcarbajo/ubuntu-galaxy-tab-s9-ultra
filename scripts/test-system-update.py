@@ -188,6 +188,58 @@ class PayloadTests(unittest.TestCase):
         self.assertEqual(target.read_text(), "keep me")
 
 
+class RestartMarkerTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.transaction = self.root / "transaction"
+        self.transaction.mkdir()
+        self.marker = self.root / "etc-system-update"
+        self.legacy = self.root / "system-update"
+        self.patches = [patch.object(c, "STATE", self.root),
+                        patch.object(c, "TRANSACTION", self.transaction),
+                        patch.object(c, "MARKER", self.marker),
+                        patch.object(c, "LEGACY_MARKER", self.legacy),
+                        patch.object(c.os, "sync")]
+        for p in self.patches:
+            p.start()
+
+    def tearDown(self):
+        for p in reversed(self.patches):
+            p.stop()
+        self.tmp.cleanup()
+
+    def test_packagekit_cancel_does_not_disarm_update(self):
+        self.marker.symlink_to(self.transaction)
+        self.legacy.symlink_to(self.root / "PackageKit")
+        c.set_status("ready", tag="v1.3.0")
+        # PackageKit unconditionally unlinks its /system-update trigger.
+        self.legacy.unlink()
+        self.assertEqual(c.status()["state"], "ready")
+        self.assertTrue(c.marker_owned())
+
+    def test_missing_trigger_reports_failure_without_changing_record(self):
+        c.set_status("ready", tag="v1.3.0")
+        self.assertEqual(c.status()["state"], "failed")
+        self.assertIn("restart trigger", c.status()["error"])
+        self.assertEqual(json.loads((self.root / "status.json").read_text())["state"], "ready")
+
+    def test_legacy_prepared_update_is_recognized_and_cancelled(self):
+        self.legacy.symlink_to(self.transaction)
+        c.set_status("ready", tag="v1.2.0")
+        self.assertEqual(c.status()["state"], "ready")
+        c.unmark()
+        self.assertFalse(self.legacy.is_symlink())
+
+    def test_foreign_triggers_are_never_removed_or_claimed(self):
+        for path in (self.marker, self.legacy):
+            path.symlink_to(self.root / "another-updater")
+        self.assertFalse(c.marker_owned())
+        c.unmark()
+        self.assertTrue(self.marker.is_symlink())
+        self.assertTrue(self.legacy.is_symlink())
+
+
 class ReleaseTests(unittest.TestCase):
     def test_future_ubuntu_asset_discovery_and_protocol(self):
         data = self.release_data()
