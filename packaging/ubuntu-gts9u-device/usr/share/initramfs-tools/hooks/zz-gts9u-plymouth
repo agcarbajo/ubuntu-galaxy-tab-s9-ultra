@@ -1,0 +1,20 @@
+#!/bin/sh
+# Samsung's bootloader appends serial consoles. Keep the early splash graphical
+# even with those consoles present, including after a normal initramfs rebuild.
+set -eu
+PREREQ=""
+case "${1:-}" in
+	prereqs) echo "$PREREQ"; exit 0 ;;
+esac
+
+script="${DESTDIR:?}/scripts/init-premount/plymouth"
+launch=$(grep '^[[:space:]]*/usr/sbin/plymouthd[[:space:]]' "$script") || {
+	echo 'gts9u: Plymouth initramfs launcher is missing' >&2
+	exit 1
+}
+for flag in --graphical-boot --ignore-serial-consoles; do
+	case "$launch" in
+		*"$flag"*) ;;
+		*) sed -i "/^[[:space:]]*\/usr\/sbin\/plymouthd[[:space:]]/s/\$/ $flag/" "$script" ;;
+	esac
+done

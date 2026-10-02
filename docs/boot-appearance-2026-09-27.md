@@ -115,3 +115,26 @@ e2fsck, dependency closure, theme and the 8,314,880-byte budget. The regenerated
 archive passes validation: e2fsck is present, all 72 ELF
 dependency closures are complete, and the 8,273,061-byte payload fits the
 8,314,880-byte budget. No tablet change was required for this fix.
+
+## 2026-10-02: generated splash regression
+
+After installing the published full 1.3.0 ZIP, the owner reported verbose boot
+instead of the animation. Active and saved Ubuntu boot hashes match that ZIP,
+and /proc/cmdline retains quiet splash loglevel=3 and hidden systemd status.
+The panel recovery succeeds. Inspection of the actual release init_boot found
+that scripts/init-premount/plymouth launches the daemon without --graphical-boot
+or --ignore-serial-consoles. The retained, physically validated previous
+init_boot includes both options. The live rootfs script still has that local
+modification (dpkg -V identifies it), but regenerating the image from the clean
+rootfs did not inherit it. This omission explains selection of verbose output
+with the serial consoles appended by Samsung's bootloader; the boot cmdline and
+saved-set synchronization are not missing.
+
+Device 2.84 packages an initramfs hook which preserves the existing launcher
+and adds the two options when absent. It accepts an already patched launcher,
+is idempotent and rejects a missing launcher rather than building silently.
+The real initramfs validator now requires those options as well as artwork,
+ELF closure, fsck and the partition budget. Three focused hook tests pass,
+including normal/partially patched launchers, duplicate prevention, prerequisite
+query and missing-launcher failure. A generated image and physical deployment
+remain pending. No partition was changed during diagnosis.

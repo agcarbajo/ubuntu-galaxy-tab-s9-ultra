@@ -40,5 +40,11 @@ with tempfile.TemporaryDirectory(prefix='gts9u-initrd-check-') as directory:
     for name, size in [('watermark.png', (248, 88)), ('throbber-0001.png', (32, 32))]:
         assert struct.unpack('>II', (theme / name).read_bytes()[16:24]) == size
     assert (root / 'usr/sbin/e2fsck').exists()
+    launcher = (root / 'scripts/init-premount/plymouth').read_text()
+    commands = [line for line in launcher.splitlines()
+                if line.lstrip().startswith('/usr/sbin/plymouthd ')]
+    assert len(commands) == 1, 'Expected one early Plymouth daemon launcher'
+    for flag in ('--graphical-boot', '--ignore-serial-consoles'):
+        assert flag in commands[0].split(), 'Early Plymouth launcher lacks ' + flag
     assert (root / 'usr/share/plymouth/themes/default.plymouth').readlink() == Path('/usr/share/plymouth/themes/gts9u-ubuntu/gts9u-ubuntu.plymouth')
     print(f'OK: {checked} ELF files, no missing DT_NEEDED libraries; theme, sizes, fsck and AVB budget verified')
