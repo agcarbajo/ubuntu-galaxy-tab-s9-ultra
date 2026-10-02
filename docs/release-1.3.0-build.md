@@ -164,3 +164,52 @@ Companion package SHA-256:
 148342807bf46705485450902f4077ff121a7a5daec5411cdef3ae430cafc315.
 The Windows ZIP copy matches the Linux artifact digest. Earlier artifacts remain
 preserved; physical offline acceptance and GitHub replacement are pending.
+
+## 2026-10-02: corrected package ownership candidate
+
+Runtime source: 82264fcf8dd2a2bcfb3065421c73793084acccf7. The trigger-only
+candidate above failed physical offline installation because its hardware
+package duplicated Device's signed TUN module. The installer restored the
+original boot images; pending packages were configured and the baseline
+modules restored before retrying. That candidate was never uploaded.
+
+Regenerated the update payload with hardware package 1.3.0-1 and the generic
+non-directory ownership collision gate. Reused the verified clean ext4 image
+49c27af523d4d5790ab9d83c4cba429e6c672bbf23a379917cc8f93d2a427351 and matching
+boot bundle from the Companion 1.5.5 build: their source inputs did not change.
+The exact repository payload and TWRP ZIP builders were used. Bundle validation
+must receive UBUNTU_WORKDIR for this build; a first invocation without it read
+the unrelated default bundle and was discarded. Validation with the actual
+build inputs passes, as does complete payload hashing.
+
+Final candidate: 1,406,414,137 bytes; SHA-256
+2364644bff1fb0e5e8371a5833d2b31fbd2bbfe86958d9f0d56b6f057cf6640d.
+The 787 tracked source input hashes, manifest and audit are retained beside
+artifacts/release-v1.3.0-updatefix-final. All 21 selected local package versions
+match the clean rootfs and ZIP. All 129 signed module/release checks, actual
+shipped kernel certificate, 1.2 reader, fresh-account and APT/dpkg checks pass.
+No overlapping package file remains. The 44 focused updater, launcher and
+future-readiness cases pass, including real dpkg co-installation of the two
+module packages. Windows copy and unchanged APK/split digests are verified.
+Physical retry and republication remain pending at this point.
+
+The exact final ZIP was transferred and verified on the tablet. Preparation
+completed with authenticated dependency downloads and a clean APT audit.
+PackageKit Offline.Cancel again left the ready trigger intact. At 74% charging,
+all staged payload bytes and retained baseline boot backups passed verification.
+The explicitly authorized offline retry completed and returned in 211 seconds:
+boot ID 147dfb1b-7eea-4af7-88a0-fd5d0e3529b4, state complete, Companion 1.5.5,
+Device 2.83 and hardware 1.3.0-1. All four boot partitions and Ubuntu's saved
+set match the final payload. Android's saved set and seven recorded private
+identity/account/network/fingerprint files match their original hashes.
+APT/dpkg are clean and root is writable. GDM, NetworkManager, ADSP, pd-mapper,
+S Pen pairing and the audio-session helper are active. The helper recovered
+an incomplete initial graph and exposed the native HiFi sink; PipeWire has
+four native camera sources and fprintd exposes its device. IRQ/TUN signing keys
+match the shipped 4E7E2D2DAD2473CB62E428FF13BEC8366ADDA0EB kernel certificate.
+Physical owner hardware confirmation and release republication follow separately.
+The exact clean-install image remains in the ZIP; a fresh TWRP installation of
+this replacement was not physically performed. Backups remain root-only under
+/var/lib/tab-companion-update/transaction/backup, with earlier completed backups
+archived under /var/lib/tab-companion-update/backups. Private diagnostic copies
+remain under /var/lib/gts9u-diagnostics/update-marker-20261002.

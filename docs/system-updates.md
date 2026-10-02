@@ -103,7 +103,11 @@ after the trigger is synced. Older installed Companion versions must obtain the
 fixed backend before preparing; replacing a release ZIP alone does not change
 the code already responsible for staging it.
 
-Physical end-to-end installation with the corrected trigger remains pending.
+The corrected full ZIP completed physical offline reinstallation on 2026-10-02.
+Its protected trigger survived PackageKit cancellation before the authorized
+reboot. All four boot readbacks and the Ubuntu saved set match the payload;
+Android's saved set and recorded account/network/fingerprint data are unchanged.
+APT and dpkg are clean. See release-1.3.0-build.md for artifact and boot evidence.
 
 ### Module ownership in update packages
 
@@ -191,6 +195,10 @@ The GTK4/Adwaita page was instantiated and exercised on the physical tablet
 from `/tmp`, including the hidden repair control and progress display. The
 read-only device, boot-partition identity and charging preflights passed on
 the physical tablet, including its separate S Pen battery.
-The Companion Debian package builds successfully. A full physical system upgrade
-and post-upgrade hardware regression remain release gates; they have not been
-performed by the non-destructive UI and transaction tests.
+The Companion Debian package builds successfully. The corrected 1.3.0 ZIP
+completed the physical offline update path on 2026-10-02, including package
+installation, boot writes/readback, saved-set update and return to the desktop.
+Post-update hardware enumeration and audio-session recovery pass; physical
+audio/camera/fingerprint confirmation is recorded separately. A fresh TWRP
+installation of this exact replacement ZIP and power-loss recovery have not
+been physically exercised.

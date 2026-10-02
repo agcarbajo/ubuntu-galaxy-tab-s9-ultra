@@ -7684,3 +7684,24 @@ the original #3 set. APT check/dpkg audit are clean, GDM and Wi-Fi remain active
 and no additional reboot or boot-image write occurred. The existing private
 update recovery backups remain intact. A corrected full ZIP and successful
 physical offline retry are still required before republication.
+
+The exact final ZIP was transferred and verified on the tablet. Preparation
+completed with authenticated dependency downloads and a clean APT audit.
+PackageKit Offline.Cancel again left the ready trigger intact. At 74% charging,
+all staged payload bytes and retained baseline boot backups passed verification.
+The explicitly authorized offline retry completed and returned in 211 seconds:
+boot ID 147dfb1b-7eea-4af7-88a0-fd5d0e3529b4, state complete, Companion 1.5.5,
+Device 2.83 and hardware 1.3.0-1. All four boot partitions and Ubuntu's saved
+set match the final payload. Android's saved set and seven recorded private
+identity/account/network/fingerprint files match their original hashes.
+APT/dpkg are clean and root is writable. GDM, NetworkManager, ADSP, pd-mapper,
+S Pen pairing and the audio-session helper are active. The helper recovered
+an incomplete initial graph and exposed the native HiFi sink; PipeWire has
+four native camera sources and fprintd exposes its device. IRQ/TUN signing keys
+match the shipped 4E7E2D2DAD2473CB62E428FF13BEC8366ADDA0EB kernel certificate.
+Physical owner hardware confirmation and release republication follow separately.
+The exact clean-install image remains in the ZIP; a fresh TWRP installation of
+this replacement was not physically performed. Backups remain root-only under
+/var/lib/tab-companion-update/transaction/backup, with earlier completed backups
+archived under /var/lib/tab-companion-update/backups. Private diagnostic copies
+remain under /var/lib/gts9u-diagnostics/update-marker-20261002.
