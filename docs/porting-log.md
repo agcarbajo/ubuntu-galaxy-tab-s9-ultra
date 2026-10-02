@@ -7766,3 +7766,16 @@ Deployment and reboot require the owner's explicit authorization, requested
 before any active partition write or package installation. Physical animation
 acceptance and any replacement full release artifact remain pending. The public
 1.3.0 ZIP is unchanged at this checkpoint.
+
+The owner explicitly authorized Device 2.84 installation, replacement of only
+init_boot and its Ubuntu saved copy, and one reboot. Live APT installed one
+upgrade with zero removals; audit/check pass. Verified both signed board modules
+are byte-identical before and after package installation. Wrote only init_boot,
+read its full hash back, refreshed the Ubuntu saved copy and matching filesystem
+/boot initrd through atomic writes. Preserved the prior filesystem initrd in the
+root-only backup as well. All other partition hashes and Android saved-set hashes
+remain unchanged. Returned on boot f80f652c-c39d-44c1-a755-2570e8ce009d with Device
+2.84, writable root, active GDM/NetworkManager and successful panel recovery.
+The active/saved init_boot hash is the validated ce1ddfad candidate above.
+Owner-visible animation confirmation has been requested; the published full ZIP
+has not yet been replaced with this later fix.
