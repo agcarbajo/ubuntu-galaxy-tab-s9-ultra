@@ -64,6 +64,8 @@ def main() -> None:
     parser.add_argument("output", type=Path)
     parser.add_argument("--update-payload", type=Path,
                         help="non-destructive update packages produced by build-update-payload.py")
+    parser.add_argument("--update-only", action="store_true",
+                        help="omit the TWRP installer, vbmeta and clean-install assets")
     parser.add_argument(
         "--project", type=Path, default=Path(__file__).resolve().parents[1]
     )
@@ -92,8 +94,11 @@ def main() -> None:
         default="Ubuntu 24.04 for SM-X910",
     )
     args = parser.parse_args()
+    if args.update_only and (not args.update_payload or args.rootfs or args.rootfs_overlay or args.enable_unit):
+        parser.error("--update-only requires a payload and forbids clean-install or overlay assets")
+    images = {name: size for name, size in IMAGES.items() if not args.update_only or name != "vbmeta.img"}
 
-    for name, expected_size in IMAGES.items():
+    for name, expected_size in images.items():
         path = args.bundle / name
         if not path.is_file():
             raise SystemExit(f"missing {path}")
@@ -116,7 +121,7 @@ def main() -> None:
         enable_lines.append(f"{target} {unit}\n")
 
     manifest = "".join(
-        f"{digest(args.bundle / name)}  {name}\n" for name in IMAGES
+        f"{digest(args.bundle / name)}  {name}\n" for name in images
     )
 
     rootfs_manifest = ""
@@ -176,18 +181,29 @@ def main() -> None:
             (args.update_payload / "debs").glob("*.deb"))}
         if not update_files:
             raise SystemExit("Update payload has no packages")
+        if update_manifest.get("update_kind") == "distribution":
+            backend = args.update_payload / "updater.pyz"
+            if (update_manifest.get("backend_file") != "UPDATE/updater.pyz"
+                    or not backend.is_file() or backend.is_symlink()
+                    or backend.stat().st_size > 32 * 1024**2):
+                raise SystemExit("Missing or invalid release migration backend")
+            with zipfile.ZipFile(backend) as program:
+                if "__main__.py" not in program.namelist():
+                    raise SystemExit("Release backend must be a Python zip application")
+            update_files["UPDATE/updater.pyz"] = backend
         all_files = {**{n: args.bundle / n for n in IMAGES if n != "vbmeta.img"}, **update_files}
         update_manifest["files"] = {name: {"sha256": digest(path), "size": path.stat().st_size}
                                     for name, path in all_files.items()}
     with zipfile.ZipFile(
         args.output, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6
     ) as zf:
-        for name in IMAGES:
+        for name in images:
             add_file(zf, args.bundle / name, name)
-        add_file(
-            zf, update_binary, "META-INF/com/google/android/update-binary", 0o755
-        )
-        add_file(zf, updater_script, "META-INF/com/google/android/updater-script")
+        if not args.update_only:
+            add_file(
+                zf, update_binary, "META-INF/com/google/android/update-binary", 0o755
+            )
+            add_file(zf, updater_script, "META-INF/com/google/android/updater-script")
         zf.writestr(zip_info("BUNDLE-LABEL"), args.label + "\n")
         zf.writestr(zip_info("SHA256SUMS"), manifest)
         if update_manifest:

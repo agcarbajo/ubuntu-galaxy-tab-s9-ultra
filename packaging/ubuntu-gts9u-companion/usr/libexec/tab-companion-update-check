@@ -1,0 +1,17 @@
+#!/usr/bin/python3
+# Request a read-only check through D-Bus activation. The app is not a child of
+# the timer service, so opening a window cannot keep the timer service running.
+from gi.repository import Gio, GLib
+import sys
+
+if not Gio.Settings.new("io.github.agcarbajo.TabCompanion").get_boolean("weekly-update-checks"):
+    raise SystemExit(0)
+sys.path.insert(0, "/usr/lib/tab-companion")
+from tab_companion import update_monitor
+if not update_monitor.due(update_monitor.load()):
+    raise SystemExit(0)
+bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+bus.call_sync("io.github.agcarbajo.TabCompanion", "/io/github/agcarbajo/TabCompanion",
+              "org.freedesktop.Application", "ActivateAction",
+              GLib.Variant("(sava{sv})", ("check-updates", [], {})), None,
+              Gio.DBusCallFlags.NONE, 30000, None)

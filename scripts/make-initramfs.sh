@@ -10,6 +10,7 @@
 # stdout.  Nothing is flashed.
 set -euo pipefail
 
+repo=$(cd "$(dirname "$0")/.." && pwd)
 base=${UBUNTU_WORKDIR:-/root/ubuntu-gts9u}
 rootfs=${ROOTFS_DIR:-$base/rootfs}
 kernel_out=${KERNEL_OUT_DIR:-$base/out/kernel-gts9uwifi}
@@ -47,13 +48,18 @@ if [ "$magic" != 02214c18 ]; then
 fi
 
 size=$(stat -c %s "$initramfs")
-limit=$((8388608 - 8192))
+# mkbootimg adds a 4 KiB header; avbtool needs 68 KiB for the padded vbmeta
+# and footer. Check the payload budget, not merely the partition size.
+limit=$((8388608 - 4096 - 69632))
 echo "initramfs: $size bytes (init_boot budget $limit)" >&2
 if [ "$size" -gt "$limit" ]; then
 	echo 'initramfs does not fit init_boot minus its AVB footer' >&2
 	echo 'reduce MODULES or move modules to the boot partition' >&2
 	exit 1
 fi
+
+# Catch stale themes and pruning mistakes before any release image is packed.
+python3 "$repo/scripts/check-visible-boot-initramfs.py" "$initramfs" >&2
 
 unmount_pseudo
 trap - EXIT

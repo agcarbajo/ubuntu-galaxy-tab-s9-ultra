@@ -1,9 +1,12 @@
 # System updates
 
-> Ubuntu 26.04/GNOME 50 and Linux 7.2.8 are under assessment. The current
-> updater supports same-suite Noble releases only. See the
-> [26.04 upgrade assessment](upgrade-26.04-assessment.md); no 26.04 ZIP is
-> approved for installation or update.
+> The experimental Ubuntu 26.04/GNOME 50/Linux 7.2.9 v1.4.0 ZIP contains
+> both the normal TWRP clean installer and the non-destructive update payload.
+> Local release migration requires Companion 1.5.8 first: its normal ZIP action
+> explicitly confirms the complete file's SHA-256. GitHub authentication remains
+> unchanged. The final exact-ZIP inactive-root transaction passes; physical boot,
+> peripherals and recovery remain unvalidated. See the
+> [26.04 upgrade assessment](upgrade-26.04-assessment.md).
 
 Tab Companion 1.3 adds an **Updates** page for the complete Ubuntu port, not
 just the application. Release v1.1.0 is the first release with the update
@@ -11,6 +14,18 @@ payload. The v1.0.0 ZIP predates that format and cannot be installed through
 this updater; existing v1.0.0 installations can upgrade using the command below.
 
 ## Updating
+
+Companion 1.5.0, intended for port 1.3.0, adds an opt-in **Check for updates
+weekly** switch. It marks Updates in the bottom bar and sends a desktop
+notification for a newer published build, without downloading or installing it.
+Its format 2 contract and remaining distribution-migration requirements are in
+[the 1.3.0 roadmap](companion-1.3.0-update-roadmap.md). Build the 1.3.0 bridge
+with format 1; format 2 updates require that bridge first. GitHub migrations
+hand off to a backend inside the exact official stable ZIP authenticated against
+its published digest. Companion 1.5.8 also supports a locally selected migration
+ZIP after explicit confirmation of the complete SHA-256. Both use the same
+inactive-root engine and preserve the old system root; physical recovery is
+still a separate acceptance requirement.
 
 Open **Tab Companion → Updates**; it checks GitHub when opened. You can also
 use **Check for updates** to refresh, then download and
@@ -39,6 +54,34 @@ factory reset. Installations without release metadata cannot infer their
 version from the kernel or the app version, so repair stays unavailable until
 their first update.
 
+## Trying the local Ubuntu 26.04 ZIP
+
+For the unpublished v1.4.0 trial, install the matching
+`ubuntu-gts9u-companion_1.5.8_all.deb` first on the existing 1.3.0 system, then
+close and reopen Tab Companion. This updates the app/updater, not the OS or boot
+images. The package is also included in the combined ZIP; it is supplied
+separately because an older installed updater cannot accept the new local
+migration protocol before its own code is updated.
+
+```sh
+sudo apt-get --no-remove install ./ubuntu-gts9u-companion_1.5.8_all.deb
+```
+
+Use **Tab Companion → Updates → Install from a ZIP → Choose file** and select
+`ubuntu-26.04-sm-x910-v1.4.0.zip`. Review the migration warning and SHA-256, then
+confirm preparation and authenticate. Save your work before **Restart and
+install**. The privileged copied archive must match the confirmed digest; a
+changed file is rejected before backend execution. GitHub updates still use the
+published asset's digest rather than local trust confirmation.
+
+Do not run the TWRP installer to update an existing system while preserving its
+data: that installer is for clean installation and replaces the target root.
+The app never extracts or writes `rootfs.img`, nor executes `META-INF`.
+The migration stages packages in an inactive root, shares the existing `/home`,
+keeps the original root and boot backups, and changes boot only after package
+and preservation checks. A failed trial can restore the old boot set from the
+first-stage bootstrap; power-loss/physical recovery is not yet established.
+
 ## Older installations without the Updates page
 
 The repository script `scripts/update-to-latest.py` works on the original
@@ -55,6 +98,11 @@ and restarts automatically only after successful preparation. Any other answer
 cancels; an already-current installation does not restart. This script is
 maintained in the repository, not attached to releases.
 
+To reinstall the recorded build with the current backend, append `--repair`
+to the command's final `sudo python3 "$d/update.py"` invocation. This also
+repairs the older updater's lost restart trigger before reinstalling its build.
+It requires release metadata and never guesses a version from the kernel.
+
 After upgrading, the installed command is:
 
 ```sh
@@ -69,6 +117,45 @@ sudo gts9u-update --cancel
 and staging errors are reported without starting the installation.
 
 ## Data and configuration
+
+### Restart trigger coexistence (Companion 1.5.5)
+
+Prepared updates use `/etc/system-update`, recognized by Noble's systemd
+generator alongside `/system-update`. PackageKit unconditionally removes the
+latter when cancelling its own offline update, including a trigger belonging
+to another updater. A physical probe reproduced that deletion while Companion
+still recorded `ready`; the alternative trigger survived the same cancellation
+and the actual generator selected `system-update.target`.
+
+The backend still recognizes and cancels its own legacy trigger, preserves
+foreign triggers at either location, and blocks preparation while either is
+present. A missing trigger produces a failed status with instructions to cancel
+and prepare again instead of an endless ready screen. Readiness is recorded only
+after the trigger is synced. Older installed Companion versions must obtain the
+fixed backend before preparing; replacing a release ZIP alone does not change
+the code already responsible for staging it.
+
+The corrected full ZIP completed physical offline reinstallation on 2026-10-02.
+Its protected trigger survived PackageKit cancellation before the authorized
+reboot. All four boot readbacks and the Ubuntu saved set match the payload;
+Android's saved set and recorded account/network/fingerprint data are unchanged.
+APT and dpkg are clean. See release-1.3.0-build.md for artifact and boot evidence.
+
+### Module ownership in update packages
+
+The hardware payload omits both `qcom_spss_irq.ko` and `tun.ko`, which are owned
+by the matching Device package. The initial 1.3.0 payload excluded only the IRQ
+module, so dpkg rejected the duplicated TUN file during a physical update. The
+ownership correction used Debian version `1.3.0-1`; the subsequent graphical
+initramfs fix uses `1.3.0-2`, since its packaged boot files changed. The port
+version stays 1.3.0. The builder now rejects any overlapping non-directory path among its
+selected update packages. The regression installs the Device and generated
+hardware packages together through real dpkg in an isolated root and checks
+that Device owns both board modules.
+
+If the offline journal is absent after a failure, `/var/log/apt/term.log` retains
+APT's exact dpkg error. Complete pending package configuration before preparing
+another update; never bypass file conflicts with `--force-overwrite`.
 
 The updater never executes the TWRP installer, writes `rootfs.img`, formats
 storage, or writes `userdata`, `linuxroot`, `super`, `recovery` or `vbmeta`.
@@ -105,7 +192,7 @@ another update; the updater does not silently discard that failure.
 
 `build-release.sh` produces the installation ZIP and a local validation
 manifest. Publish only the installation ZIP, the dual-boot APK and the split
-ZIP. Put their SHA-256 checksums in the release notes, together with the hidden
+ZIP. GitHub displays each asset SHA-256 digest; retain the hidden
 compatibility marker `<!-- gts9u-update-format: 1 -->`. The updater script lives
 in `scripts/update-to-latest.py`. Do not routinely replace published builds;
 use a new version when distributing subsequent changes. The app selects the latest non-prerelease GitHub
@@ -141,6 +228,11 @@ The GTK4/Adwaita page was instantiated and exercised on the physical tablet
 from `/tmp`, including the hidden repair control and progress display. The
 read-only device, boot-partition identity and charging preflights passed on
 the physical tablet, including its separate S Pen battery.
-The Companion Debian package builds successfully. A full physical system upgrade
-and post-upgrade hardware regression remain release gates; they have not been
-performed by the non-destructive UI and transaction tests.
+The Companion Debian package builds successfully. The corrected 1.3.0 ZIP
+completed the physical offline update path on 2026-10-02, including package
+installation, boot writes/readback, saved-set update and return to the desktop.
+Post-update hardware enumeration and audio-session recovery pass. The owner
+confirmed physical audio, camera and fingerprint operation before republication.
+A fresh TWRP
+installation of this exact replacement ZIP and power-loss recovery have not
+been physically exercised.

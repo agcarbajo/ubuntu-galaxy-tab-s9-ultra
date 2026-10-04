@@ -15,10 +15,19 @@ repo=$(cd "$(dirname "$0")/.." && pwd)
 base=${UBUNTU_WORKDIR:-/root/ubuntu-gts9u}
 version=${RELEASE_VERSION:-$(tr -d '[:space:]' < "$repo/VERSION")}
 suite=${UBUNTU_SUITE:-noble}
-if [ "$suite" != noble ]; then
-	echo "unsupported release suite: $suite; the port packages and updater are still pinned to noble" >&2
-	exit 2
-fi
+migration_backend=${MIGRATION_BACKEND:-}
+case "$suite" in
+	noble) ubuntu_version=24.04; update_format=1 ;;
+	resolute)
+		ubuntu_version=26.04; update_format=2
+		if [ -z "$migration_backend" ] || [ ! -f "$migration_backend" ]; then
+			echo 'Resolute requires the tested release-specific migration backend' >&2
+			exit 2
+		fi
+		;;
+	*) echo "unsupported release suite: $suite" >&2; exit 2 ;;
+esac
+export UBUNTU_SUITE="$suite"
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
 	echo "invalid release version: $version" >&2
 	exit 2
@@ -26,13 +35,19 @@ fi
 profile=${GTS9U_PROFILE:-desktop}
 artifacts=${ARTIFACTS_DIR:-$repo/artifacts}
 
-kernel_out=$base/out/kernel-gts9uwifi
-rootfs=$base/rootfs
-overlay=$base/out/rootfs-overlay
-initramfs_overlay=$base/out/initramfs-overlay
-bundle=$base/out/bundle
-image=$base/out/ubuntu-gts9uwifi-v$version-ufs.img
-zip=$artifacts/ubuntu-24.04-sm-x910-v$version.zip
+kernel_out=${KERNEL_OUT_DIR:-$base/out/kernel-gts9uwifi}
+rootfs=${ROOTFS_DIR:-$base/rootfs}
+overlay=${OVERLAY_OUT_DIR:-$base/out/rootfs-overlay}
+initramfs_overlay=${INITRAMFS_OVERLAY_DIR:-$base/out/initramfs-overlay}
+bundle=${BUNDLE_OUT_DIR:-$base/out/bundle}
+image=${IMAGE_OUT:-$base/out/ubuntu-gts9uwifi-v$version-ufs.img}
+payload=${UPDATE_PAYLOAD_OUT_DIR:-$base/out/update-payload}
+zip=$artifacts/ubuntu-$ubuntu_version-sm-x910-v$version.zip
+export ROOTFS_DIR="$rootfs" BUNDLE_OUT_DIR="$bundle" KERNEL_OUT_DIR="$kernel_out"
+if [ -e "$zip" ] || [ -e "$image" ]; then
+	echo 'refusing to overwrite an existing release ZIP or filesystem image' >&2
+	exit 2
+fi
 
 # No secret is needed to build a shipping image any more: it has no account,
 # and the owner creates theirs in the first-boot wizard.  GTS9U_PW is only for
@@ -51,8 +66,8 @@ kernel_release=$(cat "$kernel_out/kernel.release")
 
 step "2/7 Ubuntu $profile rootfs"
 if [ "${SKIP_ROOTFS:-0}" = 1 ] && [ -d "$rootfs/etc" ]; then
-	if ! grep -qx 'VERSION_ID="24.04"' "$rootfs/etc/os-release"; then
-		echo 'refusing to reuse a rootfs that is not Ubuntu 24.04' >&2
+	if ! grep -qx "VERSION_ID=\"$ubuntu_version\"" "$rootfs/etc/os-release"; then
+		echo "refusing to reuse a rootfs that is not Ubuntu $ubuntu_version" >&2
 		exit 2
 	fi
 	echo 'reusing the existing rootfs'
@@ -66,7 +81,13 @@ fi
 python3 "$repo/scripts/sanitize-release-rootfs.py" "$rootfs"
 
 step "3/7 firmware and module overlay, and early Bluetooth firmware"
-bash "$repo/scripts/build-rootfs-overlay.sh"
+if [ "${SKIP_OVERLAY:-0}" = 1 ]; then
+	test -d "$overlay/usr/lib/modules/$kernel_release"
+	test -d "$overlay/usr/lib/firmware"
+	test -d "$initramfs_overlay/usr/lib/firmware/qca"
+else
+	bash "$repo/scripts/build-rootfs-overlay.sh"
+fi
 
 step "4/7 UFS root filesystem image and Ubuntu initramfs"
 python3 - "$rootfs" "$version" "$kernel_release" <<'PY'
@@ -89,26 +110,41 @@ INITRAMFS_OVERLAY_DIR="$initramfs_overlay" \
 
 step "6/7 TWRP ZIP"
 mkdir -p "$artifacts"
+payload_options=(--suite "$suite" --update-format "$update_format" --rootfs "$rootfs")
+if [ -n "${LOCAL_DEBS_INPUT_DIR:-}" ]; then payload_options+=(--local-debs "$LOCAL_DEBS_INPUT_DIR"); fi
+if [ -n "$migration_backend" ]; then
+	payload_options+=(--migration-backend "$migration_backend" --hardware-revision "${HARDWARE_REVISION:-3}")
+fi
+if [ -n "${UPDATE_PAYLOAD_OUT_DIR:-}" ]; then payload_options+=(--output "$payload"); fi
 python3 "$repo/scripts/build-update-payload.py" --base "$base" --version "$version" \
-	--bootstrap "$base/out/gts9u-update.pyz"
+	--bootstrap "$base/out/gts9u-update-v$version.pyz" "${payload_options[@]}"
 python3 "$repo/scripts/make-twrp-zip.py" "$bundle" "$zip" \
 	--project "$repo" \
-	--update-payload "$base/out/update-payload" \
+	--update-payload "$payload" \
 	--rootfs "$image" \
-	--label "Ubuntu 24.04 LTS v$version for SM-X910 (mainline $kernel_release)"
+	--label "Ubuntu $ubuntu_version LTS v$version for SM-X910 (mainline $kernel_release)"
 
 step "7/7 static validation and manifest"
 bash "$repo/scripts/validate-bundle.sh" "$zip"
 python3 "$repo/scripts/validate-update-zip.py" "$zip"
 
 {
-	printf 'Ubuntu 24.04 LTS for Samsung Galaxy Tab S9 Ultra Wi-Fi (SM-X910)\n'
+	printf 'Ubuntu %s LTS for Samsung Galaxy Tab S9 Ultra Wi-Fi (SM-X910)\n' "$ubuntu_version"
 	printf 'release: v%s (%s profile)\n' "$version" "$profile"
 	printf 'generated: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 	printf 'kernel_release: %s\n' "$kernel_release"
 	printf 'kernel_source: %s\n' \
 		"$(git -C "$base/linux-mainline" rev-parse HEAD)"
-	printf 'port_revision: %s\n' "$(git -C "$repo" rev-parse HEAD)"
+	if [ -f "$repo/BUILD-SOURCE.json" ]; then
+		python3 - "$repo/BUILD-SOURCE.json" <<'PY'
+import json, pathlib, sys
+source = json.loads(pathlib.Path(sys.argv[1]).read_text())
+print('port_revision:', source['port_revision'])
+print('port_source_tree_sha256:', source['source_tree_sha256'])
+PY
+	else
+		printf 'port_revision: %s\n' "$(git -C "$repo" rev-parse HEAD)"
+	fi
 	printf '\n'
 	printf 'install_target: internal UFS, linuxroot if present, else userdata\n'
 	printf 'rootfs_image_sha256: %s\n' \

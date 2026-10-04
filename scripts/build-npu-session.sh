@@ -22,7 +22,7 @@ test -f "$build_dir/Module.symvers" || {
 }
 patch_file=$repo/kernel/patches/fastrpc-prepared-cdsp-module.patch
 case "$(cat "$build_dir/include/config/kernel.release")" in
-    7.2.8*) patch_file=$repo/kernel/patches/fastrpc-prepared-cdsp-module-7.2.8.patch ;;
+    7.2.8*|7.2.9*) patch_file=$repo/kernel/patches/fastrpc-prepared-cdsp-module-7.2.8.patch ;;
 esac
 # Check compatibility before doing any compilation.  This patch intentionally
 # targets the exact upstream FastRPC source used by the running kernel.

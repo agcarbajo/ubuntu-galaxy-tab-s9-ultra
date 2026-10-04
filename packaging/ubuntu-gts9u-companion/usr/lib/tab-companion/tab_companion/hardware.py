@@ -24,6 +24,9 @@ class HardwareState:
     last_special_key: str = ""
     button_actions_available: bool = False
     bluetooth_available: bool = False
+    pen_bluetooth_paired: bool = False
+    pen_bluetooth_connected: bool = False
+    pen_pairing_active: bool = False
     gesture_available: bool = False
     haptics_available: bool = False
 
@@ -76,6 +79,9 @@ class HardwareClient(GObject.Object):
             last_special_key=self._value("LastSpecialKey", ""),
             button_actions_available=self._value("ButtonActionsAvailable", False),
             bluetooth_available=self._value("BluetoothAvailable", False),
+            pen_bluetooth_paired=self._value("PenBluetoothPaired", False),
+            pen_bluetooth_connected=self._value("PenBluetoothConnected", False),
+            pen_pairing_active=self._value("PenPairingActive", False),
             gesture_available=self._value("GestureAvailable", False),
             haptics_available=self._value("HapticsAvailable", False),
         )

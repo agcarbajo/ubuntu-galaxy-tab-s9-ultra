@@ -1,0 +1,4 @@
+# The supported root filesystem is ext4, including image builds without its device.
+FSTYPE=ext4
+MODULES=list
+COMPRESS=lz4

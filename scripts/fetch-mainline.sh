@@ -7,11 +7,11 @@
 set -euo pipefail
 
 base=${UBUNTU_WORKDIR:-/root/ubuntu-gts9u}
-tag=${LINUX_TAG:-v7.2-rc3}
-commit=${LINUX_COMMIT:-a13c140cc289c0b7b3770bce5b3ad42ab35074aa}
+tag=${LINUX_TAG:-v7.2.9}
+commit=${LINUX_COMMIT:-5fce161649b4d779d1b76d9fcd52dc77779774b8}
 reference=${PMOS_LINUX_SRC:-/root/pmos-gts9u/linux-mainline}
 target=$base/linux-mainline
-upstream=https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git
+upstream=${LINUX_UPSTREAM:-https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git}
 
 mkdir -p "$base"
 

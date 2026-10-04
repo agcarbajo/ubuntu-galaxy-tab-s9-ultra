@@ -12,7 +12,8 @@ assessment; this patch is deliberately specific to the Resolute source.
 diff --git a/spa/plugins/libcamera/libcamera-source.cpp b/spa/plugins/libcamera/libcamera-source.cpp
 --- a/spa/plugins/libcamera/libcamera-source.cpp
 +++ b/spa/plugins/libcamera/libcamera-source.cpp
-@@ -1233,7 +1233,7 @@
+@@ -1232,10 +1232,10 @@
+ 
  		b->videotransform = (struct spa_meta_videotransform*)spa_buffer_find_meta_data(
  			buffers[i], SPA_META_VideoTransform, sizeof(*b->videotransform));
  		if (b->videotransform) {
@@ -22,3 +23,5 @@ diff --git a/spa/plugins/libcamera/libcamera-source.cpp b/spa/plugins/libcamera/
 +			b->videotransform->transform = SPA_META_TRANSFORMATION_None;
  			spa_log_debug(impl->log, "Setting videotransform for buffer %u to %u",
  				i, b->videotransform->transform);
+ 
+ 		}

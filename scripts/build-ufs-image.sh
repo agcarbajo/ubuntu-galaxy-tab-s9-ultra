@@ -58,9 +58,20 @@ esac
 # Ubuntu initramfs
 # ---------------------------------------------------------------------------
 
-initramfs=$(ROOTFS_DIR="$rootfs" KERNEL_OUT_DIR="$kernel_out" \
-	KERNEL_RELEASE="$kernel_release" \
-	bash "$repo/scripts/make-initramfs.sh")
+if [ -n "${INITRAMFS_INPUT:-}" ]; then
+	test -f "$INITRAMFS_INPUT"
+	test "$(head -c4 "$INITRAMFS_INPUT" | od -An -tx1 | tr -d ' \n')" = 02214c18
+	python3 "$repo/scripts/check-visible-boot-initramfs.py" "$INITRAMFS_INPUT"
+	initramfs=$rootfs/boot/initrd.img-$kernel_release
+	install -d "$rootfs/boot"
+	if ! cmp -s "$INITRAMFS_INPUT" "$initramfs"; then
+		install -m0644 "$INITRAMFS_INPUT" "$initramfs"
+	fi
+else
+	initramfs=$(ROOTFS_DIR="$rootfs" KERNEL_OUT_DIR="$kernel_out" \
+		KERNEL_RELEASE="$kernel_release" \
+		bash "$repo/scripts/make-initramfs.sh")
+fi
 
 # ---------------------------------------------------------------------------
 # Filesystem geometry

@@ -16,8 +16,8 @@ libfprint_commit=bebe8565cd7e2c89c0b0c5e6ee7353b80d6a51e1
 quic_teec_commit=736419e25a2036aac3292a10a93e394a90750ca3
 qcbor_commit=4ace4620d549f22c1163c5b00d3ae0c0dae1d207
 case "$suite" in
-  noble) default_version=1:1.94.7+tod1-0ubuntu5~24.04.8+gts9u51 ;;
-  resolute) default_version=1:1.95.1+tod1-0ubuntu2+gts9u1 ;;
+  noble) default_version=1:1.94.7+tod1-0ubuntu5~24.04.8+gts9u52 ;;
+  resolute) default_version=1:1.95.1+tod1-0ubuntu2+gts9u2 ;;
   *) echo "unsupported libfprint build suite: $suite" >&2; exit 2 ;;
 esac
 package_version=${LIBFPRINT_EL721_VERSION:-$default_version}

@@ -9,10 +9,13 @@ from . import boot_sets
 from .actions import action_for, action_label, actions_for
 from .fingerprint_page import FingerprintPage
 from .update_page import UpdatePage
+from . import update_monitor
+from . import system_summary
 from .hardware import HardwareClient
 from .i18n import _, N_
 from .key_selector import KeyChooser, chord_label
 from .keyboard_diagnostics_ui import add_to_about as add_keyboard_diagnostics
+from .spen_status import remote_status_phase
 
 
 GESTURES = (
@@ -208,9 +211,10 @@ class CompanionWindow(Adw.ApplicationWindow):
             self.fingerprint_page, "fingerprint", _("Fingerprint"), "auth-fingerprint-symbolic"
         )
         self.update_page = UpdatePage(self)
-        self.view_stack.add_titled_with_icon(
+        self.update_stack_page = self.view_stack.add_titled_with_icon(
             self.update_page, "updates", _("Updates"), "software-update-available-symbolic"
         )
+        self.refresh_update_badge()
         switcher = Adw.ViewSwitcherBar(stack=self.view_stack, reveal=True)
         toolbar.set_content(self.view_stack)
         toolbar.add_bottom_bar(switcher)
@@ -221,6 +225,9 @@ class CompanionWindow(Adw.ApplicationWindow):
         initial = os.environ.get("TAB_COMPANION_PAGE")
         if initial and self.view_stack.get_child_by_name(initial) is not None:
             self.view_stack.set_visible_child_name(initial)
+
+    def refresh_update_badge(self):
+        self.update_stack_page.set_needs_attention(update_monitor.available(update_monitor.load()))
 
     @staticmethod
     def _page():
@@ -647,6 +654,10 @@ class CompanionWindow(Adw.ApplicationWindow):
         hero_box.append(picture)
         self.pen_status = Gtk.Label(css_classes=["title-2"], wrap=True, justify=Gtk.Justification.CENTER)
         hero_box.append(self.pen_status)
+        self.pen_remote_status = Gtk.Label(
+            css_classes=["dim-label"], wrap=True, justify=Gtk.Justification.CENTER
+        )
+        hero_box.append(self.pen_remote_status)
         hero.add(hero_box)
         page.add(hero)
 
@@ -745,7 +756,7 @@ class CompanionWindow(Adw.ApplicationWindow):
         self.pointer_group = pointer
         pointer.add(self._scale_setting_row(
             "pointer-sensitivity", _("Sensitivity"),
-            _("Controls how far the pointer moves."), 25, 300, 5,
+            _("Controls how far the pointer moves."), 25, 500, 5,
             "preferences-system-symbolic",
         ))
         pointer.add(self._scale_setting_row(
@@ -1117,13 +1128,38 @@ class CompanionWindow(Adw.ApplicationWindow):
             state.bluetooth_available
             and self.settings.get_boolean("spen-remote-enabled")
         )
+        pointer = self.settings.get_string("spen-remote-mode") == "pointer"
+        phase = remote_status_phase(
+            bluetooth=state.bluetooth_available,
+            enabled=self.settings.get_boolean("spen-remote-enabled"),
+            docked=state.pen_state == "docked",
+            paired=state.pen_bluetooth_paired,
+            connected=state.pen_bluetooth_connected,
+            ready=state.gesture_available,
+            pairing_active=state.pen_pairing_active,
+        )
+        remote_status = {
+            "bluetooth-off": _("Bluetooth is off; remote gestures are unavailable"),
+            "remote-off": _("Bluetooth remote features are off"),
+            "preparing": _("Bluetooth connected · Preparing remote features"),
+            "reconnecting": _("Paired · Reconnecting"),
+            "sleeping": _("Paired · Insert the S Pen to reconnect"),
+            "pairing": _("Pairing S Pen…"),
+            "pairing-needed": _("Could not pair · Remove and reinsert S Pen"),
+            "unpaired": _("Not paired · Insert the S Pen to pair"),
+        }.get(phase)
+        if phase == "ready":
+            remote_status = (
+                _("Connected and ready for pointer mode") if pointer
+                else _("Connected and ready for air gestures")
+            )
+        self.pen_remote_status.set_label(remote_status)
         if not remote_enabled:
             status = _("Inserted") if state.pen_state == "docked" else _("Not inserted")
         else:
-            pointer = self.settings.get_string("spen-remote-mode") == "pointer"
             status = {
                 "docked": _("Docked and charging") if state.pen_charging else _("Docked"),
-                "nearby": _("Connected and ready for pointer mode") if pointer else _("Connected and ready for air gestures"),
+                "nearby": _("Connected"),
                 "paired": _("Insert the S Pen to reconnect it"),
                 "unpaired": _("Not paired"),
                 "unavailable": _("Hardware service unavailable"),
@@ -1157,6 +1193,7 @@ class CompanionWindow(Adw.ApplicationWindow):
 
     def _show_about(self, _button):
         state = self.hardware.state
+        summary = system_summary.rows()
         debug = (
             f"Application version: {VERSION}\n"
             f"Kernel: {os.uname().release}\n"
@@ -1177,8 +1214,8 @@ class CompanionWindow(Adw.ApplicationWindow):
             website="https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra",
             issue_url="https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/issues",
             license_type=Gtk.License.MIT_X11,
-            comments=_("S Pen, keyboard and fingerprint settings for the Galaxy Tab S9 Ultra.") + "\n" + _("Kernel") + ": " + os.uname().release,
-            debug_info=debug,
+            comments=GLib.markup_escape_text(_("S Pen, keyboard and fingerprint settings for the Galaxy Tab S9 Ultra.")) + "\n\n" + system_summary.markup(summary),
+            debug_info=system_summary.text(summary) + "\n\n" + debug,
             debug_info_filename="tab-companion-hardware.txt",
         )
         about.add_credit_section(

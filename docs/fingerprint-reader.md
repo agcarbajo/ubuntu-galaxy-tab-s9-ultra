@@ -2178,9 +2178,11 @@ A post-install no-contact verification waited 20.249 seconds and cancelled
 cleanly. The new rejection wording still needs a physical different-finger test.
 
 The installed GNOME/GDM configuration already enables both fingerprint and
-password authentication. `/etc/pam.d/gdm-fingerprint` uses `pam_fprintd.so`, while
-`gdm-password` and `common-auth` retain the separate password path. All three
-files remained byte-for-byte unchanged during this update. No broad PAM
+password authentication. `/etc/pam.d/gdm-fingerprint` uses `pam_fprintd.so`.
+The then-assumed separation of `gdm-password` from fingerprint was disproved
+by the live `common-auth` inspection on 2026-09-27: it runs `pam_fprintd`
+before `pam_unix` in the password service. All three files remained
+byte-for-byte unchanged during this update. No broad PAM
 modification or fingerprint-only login policy was introduced.
 
 Device package **2.39**, overlay **8**, removes the accelerometer dependency.
@@ -2679,3 +2681,47 @@ this physical confirmation, not long-run stability or general crash-recovery
 safety. Fresh-image builders must still provide the
 validated private runtime at the manifest's documented location; this feature
 does not fetch or copy Android credentials or user biometric data.
+
+## Lock password independence and capture latency (2026-09-27 candidate)
+
+On the installed Device 2.69 / libfprint gts9u51 baseline, the owner reproduced
+that the lock screen accepted password keystrokes but did not unlock until the
+background fingerprint attempt ended. GNOME 46 starts password and fingerprint
+as separate GDM services, but its `AuthPrompt.begin()` disables the field until
+a PAM question arrives, `ShellUserVerifier.answerQuery()` may await queued
+fingerprint messages, and `AuthPrompt.finish()` waits for the shared message
+queue even after password verification succeeds. Device 2.70 / overlay 23
+enables the existing preemptive password input as soon as the password service
+is selected, sends an explicitly submitted password to GDM without waiting for
+fingerprint-only messages, and discards those messages when the validated
+password completes. GDM and `pam_unix` still decide whether the password is
+correct; PAM policy and biometric match results are unchanged. The owner found
+that this improves perceived fingerprint speed but does not resolve the delayed
+password completion on the tablet.
+
+The live `/etc/pam.d/common-auth` starts with `pam_fprintd.so max-tries=1
+timeout=10`. `/etc/pam.d/gdm-password` includes `common-auth`, so its own PAM
+worker waits for fingerprint before reaching `pam_unix`, even if GDM has already
+sent the password. This is the primary cause of the remaining delay. The
+`libpam-fprintd` gts9u2 module returns `PAM_IGNORE` immediately only when
+`PAM_SERVICE` is `gdm-password`. The existing `[success=2 default=ignore]`
+control then reaches `pam_unix` without a scan. `gdm-fingerprint` and other
+services retain the original biometric path. The module and matched fprintd
+daemon are packaged together at `1.94.3-1+gts9u2`; `/etc/pam.d` files,
+enrolments and saved prints are not rewritten. After installation the owner
+confirmed immediate password unlock on Intro and successful unlock with both
+saved fingers.
+
+Baseline journal timing for a successful first gallery candidate spans about
+0.28–0.31 s from contact to capture start, then 0.49–0.85 s in secure capture
+and matching. The installed two-print gallery also produced a second-candidate
+success after a secure no-match on the first; both identities require separate
+TA transactions. Libfprint gts9u52 reduces only the post-panel settling wait
+from 180 to 100 ms and the contact polling interval from 45 to 20 ms. The
+Shell's two-presented-frame acknowledgement and 35 ms fallback, panel command,
+secure `IdentifyDo`/`IdentifyFinal`, retries, all saved prints and password
+fallback stay in place. This candidate should save roughly 80–105 ms before
+the first capture. It does not remove the extra secure transaction when the
+second print matches. Physical acceptance requires both enrolled fingers,
+wrong-finger rejection and a capture-quality check over repeated attempts;
+password submission and both enrolled fingers passed the first live test.

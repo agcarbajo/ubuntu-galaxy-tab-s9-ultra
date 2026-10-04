@@ -1,0 +1,8 @@
+[Unit]
+Description=Accept the booted Resolute root-slot migration
+ConditionPathExists=/.gts9u-base/.gts9u-root/pending
+After=gdm3.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/ubuntu-gts9u-root-accept

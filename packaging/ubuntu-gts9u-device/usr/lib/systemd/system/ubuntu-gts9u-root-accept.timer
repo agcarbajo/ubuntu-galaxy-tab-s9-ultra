@@ -1,0 +1,9 @@
+[Unit]
+Description=Check the newly selected Resolute system after boot
+
+[Timer]
+OnBootSec=180s
+Unit=ubuntu-gts9u-root-accept.service
+
+[Install]
+WantedBy=timers.target

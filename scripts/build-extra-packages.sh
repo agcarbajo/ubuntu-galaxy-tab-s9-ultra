@@ -23,6 +23,10 @@ fastfetch_ver=${FASTFETCH_VERSION:-2.66.0}
 fastfetch_pkgver=${fastfetch_ver}-gts9u1
 v4l2_relayd_commit=80e8f54563f624fe2f80a954af8cce27cc3a9636
 v4l2_relayd_version=0.1.2-gts9u16
+if [ "$suite" = resolute ]; then
+	fastfetch_pkgver=${fastfetch_ver}-gts9u2
+	v4l2_relayd_version=0.1.2-gts9u17
+fi
 only=${ONLY_EXTRA_PACKAGE:-all}
 
 case "$only" in

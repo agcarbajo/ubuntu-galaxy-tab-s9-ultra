@@ -140,7 +140,7 @@ overlay._seat = {get_touch_mode: () => true};
 overlay._physicalKeyboard = true;
 overlay._session = {Active: true};
 const diagnostics = JSON.parse(overlay.GetDiagnostics());
-assert.equal(diagnostics.version, 22);
+assert.equal(diagnostics.version, 23);
 assert.equal(diagnostics.sessionActive, true);
 assert.equal(diagnostics.targetReactive, false);
 assert.equal(diagnostics.keyboardExists, false);

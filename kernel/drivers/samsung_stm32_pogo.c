@@ -98,6 +98,7 @@ struct samsung_pogo {
 	DECLARE_BITMAP(keys_down, KEY_MAX + 1);
 	u8 model;
 	u8 caps_request;
+	atomic_t caps_on_defer_header;
 	u8 flash_version[4];
 	u8 app_version[4];
 	u16 last_key_event;
@@ -654,7 +655,12 @@ static int samsung_pogo_app_recv(struct samsung_pogo *pogo, void *data,
 
 static int samsung_pogo_send_header(struct samsung_pogo *pogo)
 {
-	u8 header[] = { 3, 0, READ_ONCE(pogo->caps_request) };
+	u8 caps = READ_ONCE(pogo->caps_request);
+	u8 header[] = { 3, 0, caps };
+
+	/* The next IRQ completes the cover's own Caps-on transition. */
+	if (caps == 2 && atomic_cmpxchg(&pogo->caps_on_defer_header, 1, 0) == 1)
+		header[2] = 1;
 
 	return samsung_pogo_app_send(pogo, header, sizeof(header));
 }
@@ -1234,6 +1240,7 @@ static void samsung_pogo_connection_work(struct work_struct *work)
 		pogo->attached = false;
 		pogo->model = 0;
 		pogo->caps_request = 1;
+		atomic_set(&pogo->caps_on_defer_header, 0);
 		pogo->lid_closed = false;
 		samsung_pogo_power_off(pogo);
 		dev_info(dev, "keyboard physically disconnected\n");
@@ -1285,6 +1292,7 @@ static int samsung_pogo_input_event(struct input_dev *input,
 		return -EINVAL;
 
 	/* The vendor protocol puts the desired Caps LED state in the next poll. */
+	atomic_set(&pogo->caps_on_defer_header, !!value);
 	WRITE_ONCE(pogo->caps_request, value ? 2 : 1);
 	return 0;
 }
@@ -1366,6 +1374,7 @@ static int samsung_pogo_probe(struct i2c_client *client)
 
 	pogo->client = client;
 	pogo->caps_request = 1;
+	atomic_set(&pogo->caps_on_defer_header, 0);
 	atomic64_set(&pogo->data_irq_count, 0);
 	atomic64_set(&pogo->data_irq_deasserted, 0);
 	atomic64_set(&pogo->connection_irq_high, 0);

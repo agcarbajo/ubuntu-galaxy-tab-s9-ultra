@@ -1,0 +1,80 @@
+#!/bin/sh
+set -eu
+PREREQ=""
+case "${1:-}" in
+    prereqs) echo "$PREREQ"; exit 0 ;;
+esac
+
+. /scripts/functions
+store="$rootmnt/.gts9u-root"
+[ -d "$store" ] || exit 0
+[ ! -L "$store" ] && [ "$(busybox stat -c %u "$store")" = 0 ] && [ "$(busybox stat -c %a "$store")" = 700 ] ||
+    panic 'Unsafe root-slot store'
+mount -o remount,rw "$rootmnt" || panic 'Cannot make the retained root writable'
+
+valid_slot() {
+    [ "${#1}" = 32 ] || return 1
+    case "$1" in *[!a-f0-9]*) return 1 ;; esac
+}
+
+restore_boot() {
+    directory="$store/slots/$1/backup"
+    [ ! -L "$directory" ] && [ -f "$directory/SHA256SUMS" ] || panic 'Missing boot recovery set'
+    (cd "$directory" && busybox sha256sum -c SHA256SUMS) || panic 'Boot recovery checksum failure'
+    for part in init_boot boot vendor_boot dtbo; do
+        case "$part" in
+            boot|vendor_boot) size=100663296 ;;
+            init_boot) size=8388608 ;;
+            dtbo) size=16777216 ;;
+        esac
+        device="/dev/disk/by-partlabel/$part"
+        [ -b "$device" ] || panic 'Missing recovery boot partition'
+        [ "$(blockdev --getsize64 "$device")" = "$size" ] || panic 'Recovery partition size mismatch'
+        [ "$(busybox stat -c %s "$directory/$part.img")" = "$size" ] || panic 'Recovery image size mismatch'
+        busybox dd if="$directory/$part.img" of="$device" bs=1048576 conv=fsync || panic 'Boot restore write failed'
+        want=$(busybox sha256sum "$directory/$part.img")
+        got=$(busybox sha256sum "$device")
+        [ "${want%% *}" = "${got%% *}" ] || panic 'Boot restore readback failed'
+    done
+    rm -f "$store/selected" "$store/pending"
+    if [ "$(readlink "$rootmnt/etc/system-update" 2>/dev/null || true)" = /var/lib/tab-companion-update/transaction ]; then
+        rm -f "$rootmnt/etc/system-update"
+    fi
+    printf '{"state":"failed","error":"The trial system was not accepted; the original root and boot images were restored."}\n' > "$rootmnt/var/lib/tab-companion-update/status.json"
+    printf 'rolled-back\n' > "$store/slots/$1/result"
+    sync
+    reboot -f
+    panic 'Restart after recovery did not complete'
+}
+
+selected=
+if [ -f "$store/selected" ]; then
+    [ ! -L "$store/selected" ] || panic 'Unsafe root selector'
+    read -r selected < "$store/selected"
+    valid_slot "$selected" || panic 'Invalid root selector'
+fi
+if [ -f "$store/pending" ]; then
+    [ ! -L "$store/pending" ] || panic 'Unsafe migration marker'
+    read -r pending < "$store/pending"
+    valid_slot "$pending" || panic 'Invalid migration marker'
+    if [ "$pending" != "$selected" ] || [ -f "$store/slots/$pending/tried" ]; then
+        restore_boot "$pending"
+    fi
+    printf 'trial\n' > "$store/slots/$pending/tried"
+    sync
+fi
+[ -n "$selected" ] || exit 0
+slot="$store/slots/$selected"
+[ -f "$slot/ready" ] && [ -d "$slot/root" ] && [ ! -L "$slot/root" ] || panic 'Incomplete selected system'
+[ -f "$slot/root/usr/lib/os-release" ] && [ -x "$slot/root/usr/lib/systemd/systemd" ] || panic 'Selected system has no init'
+read -r release < "$slot/ready"
+[ "$(uname -r)" = "$release" ] || restore_boot "$selected"
+[ -d "$slot/root/.gts9u-base" ] && [ ! -L "$slot/root/.gts9u-base" ] || panic 'Unsafe base mountpoint'
+[ -d "$slot/root/home" ] && [ ! -L "$slot/root/home" ] || panic 'Unsafe shared home mountpoint'
+newmnt="${rootmnt}.gts9u-next"
+mkdir -p "$newmnt"
+mount --bind "$slot/root" "$newmnt" || panic 'Cannot mount the selected system'
+mount --move "$rootmnt" "$newmnt/.gts9u-base" || panic 'Cannot retain the previous system root'
+mkdir -p "$rootmnt"
+mount --move "$newmnt" "$rootmnt" || panic 'Cannot activate the selected system'
+mount --bind "$rootmnt/.gts9u-base/home" "$rootmnt/home" || panic 'Cannot mount preserved home data'

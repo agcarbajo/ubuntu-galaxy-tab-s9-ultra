@@ -1,6 +1,10 @@
 # SPDX-License-Identifier: MIT
 """French, German, Italian and European Portuguese update messages."""
 TRANSLATIONS = {
+    "Check for updates weekly": ("Rechercher les mises à jour chaque semaine", "Wöchentlich nach Aktualisierungen suchen", "Controlla aggiornamenti ogni settimana", "Procurar atualizações semanalmente"),
+    "Notify me when a new build is available.": ("M’avertir lorsqu’une nouvelle version est disponible.", "Benachrichtigen, wenn eine neue Version verfügbar ist.", "Avvisami quando è disponibile una nuova versione.", "Avisar quando uma nova versão estiver disponível."),
+    "Update available": ("Mise à jour disponible", "Aktualisierung verfügbar", "Aggiornamento disponibile", "Atualização disponível"),
+    "Build {version} is available. Open Tab Companion to review it.": ("La version {version} est disponible. Ouvrez Tab Companion pour la consulter.", "Version {version} ist verfügbar. Öffne Tab Companion, um sie anzusehen.", "La versione {version} è disponibile. Apri Tab Companion per consultarla.", "A versão {version} está disponível. Abra o Tab Companion para consultá-la."),
     "No compatible update published": ("Aucune mise à jour compatible publiée", "Keine kompatible Aktualisierung veröffentlicht", "Nessun aggiornamento compatibile pubblicato", "Nenhuma atualização compatível publicada"),
     "The published ZIP is an older installer, not a safe update for this tablet.": ("Le ZIP publié est un ancien programme d’installation, pas une mise à jour sûre pour cette tablette.", "Die veröffentlichte ZIP-Datei ist ein älteres Installationspaket und keine sichere Aktualisierung für dieses Tablet.", "Lo ZIP pubblicato è un vecchio programma di installazione, non un aggiornamento sicuro per questo tablet.", "O ZIP publicado é um instalador antigo, não uma atualização segura para este tablet."),
     "Your build is newer": ("Votre version est plus récente", "Deine Version ist neuer", "La tua versione è più recente", "A tua versão é mais recente"),

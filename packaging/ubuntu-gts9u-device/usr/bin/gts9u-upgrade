@@ -31,6 +31,7 @@ for tool in rsync unzip losetup sha256sum e2fsck; do
 done
 
 root_dev=$(findmnt -no SOURCE /)
+root_dev=${root_dev%%\[*}
 [ "$(blkid -o value -s LABEL "$root_dev")" = "$label" ] || \
 	die "/ is $root_dev, which is not a $label installation"
 

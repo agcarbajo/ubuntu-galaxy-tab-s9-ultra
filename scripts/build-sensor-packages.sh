@@ -27,6 +27,10 @@ mirror=${UBUNTU_MIRROR:-http://ports.ubuntu.com/ubuntu-ports}
 libssc_ver=${LIBSSC_VERSION:-0.4.4}
 hexagonrpc_ver=${HEXAGONRPC_VERSION:-0.4.0}
 isp_ver=${IIO_SENSOR_PROXY_VERSION:-3.9}
+hexagonrpc_pkgver=$hexagonrpc_ver
+if [ "$suite" = resolute ]; then
+	hexagonrpc_pkgver=${hexagonrpc_ver}-gts9u1
+fi
 # Keep patched package versions distinct from the pinned upstream source tags.
 libssc_pkgver=${LIBSSC_PACKAGE_VERSION:-${libssc_ver}-gts9u3}
 isp_pkgver=${IIO_SENSOR_PROXY_PACKAGE_VERSION:-${isp_ver}-gts9u3}
@@ -282,7 +286,7 @@ esac
 exit 0
 POSTINST
 
-package_tree /build/stage-hexagonrpcd hexagonrpcd "$hexagonrpc_ver" \
+package_tree /build/stage-hexagonrpcd hexagonrpcd "$hexagonrpc_pkgver" \
 	'libc6, adduser' \
 	'Qualcomm FastRPC daemon exposing the DSP sensor protection domain' \
 	"$buildroot/build/stage-hexagonrpcd-DEBIAN"

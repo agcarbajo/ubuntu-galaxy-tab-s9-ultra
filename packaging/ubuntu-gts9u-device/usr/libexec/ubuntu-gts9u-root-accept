@@ -1,0 +1,38 @@
+#!/usr/bin/python3
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+
+base = Path('/.gts9u-base/.gts9u-root')
+if not base.exists():
+    sys.exit(0)
+info = base.lstat()
+if info.st_uid != 0 or info.st_mode & 0o022 or base.is_symlink():
+    raise SystemExit('Unsafe retained system root')
+pending = base / 'pending'
+if not pending.exists():
+    sys.exit(0)
+if pending.is_symlink():
+    raise SystemExit('Unsafe root-slot trial marker')
+identifier = pending.read_text().strip()
+if not re.fullmatch(r'[a-f0-9]{32}', identifier):
+    raise SystemExit('Invalid root-slot identifier')
+if (base / 'selected').read_text().strip() != identifier:
+    raise SystemExit('The active system is not the selected trial')
+slot = base / 'slots' / identifier
+if (slot / 'ready').read_text().strip() != os.uname().release:
+    raise SystemExit('The active kernel does not match the selected system')
+release = Path('/usr/lib/os-release').read_text()
+if not re.search(r'^VERSION_ID="26\.04"$', release, re.M):
+    raise SystemExit('The selected system is not Ubuntu 26.04')
+subprocess.run(['systemctl', 'is-active', '--quiet', 'gdm3.service'], check=True)
+if subprocess.check_output(['dpkg', '--audit']):
+    raise SystemExit('The selected system has an inconsistent package database')
+subprocess.run(['apt-get', '-o', 'Debug::NoLocking=true', 'check'], check=True)
+(slot / 'result').write_text('accepted\n')
+pending.unlink()
+os.sync()
+print('Selected Resolute root accepted; the previous root and boot set remain retained.')

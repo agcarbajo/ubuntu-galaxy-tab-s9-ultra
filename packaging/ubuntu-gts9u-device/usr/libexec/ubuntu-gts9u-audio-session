@@ -1,0 +1,98 @@
+#!/usr/bin/python3
+"""Recover the owner's incomplete ALSA profile during bounded boot startup."""
+import json
+import os
+from pathlib import Path
+import pwd
+import subprocess
+import sys
+import time
+
+CARD = "alsa_card.platform-sound"
+RETRY_DELAYS = (0, 15, 30)
+
+
+def ready(cards, sinks):
+    """Require the board's UCM profile and an output belonging to this card."""
+    card = next((c for c in cards if c.get("name") == CARD), None)
+    if not card or "HiFi" not in card.get("profiles", {}):
+        return False
+    return card.get("active_profile") != "off" and any(
+        (s.get("properties", {}).get("device.name") == CARD
+         or (s.get("card") is not None and str(s["card"]) == str(card["index"])))
+        and s.get("name") != "auto_null" for s in sinks
+    )
+
+
+class Session:
+    def __init__(self, uid):
+        self.uid = uid
+        self.name = pwd.getpwuid(uid).pw_name
+        self.runtime = Path("/run/user") / str(uid)
+
+    def command(self, *args):
+        return subprocess.check_output(
+            ["runuser", "-u", self.name, "--", "env",
+             "XDG_RUNTIME_DIR=" + str(self.runtime),
+             "DBUS_SESSION_BUS_ADDRESS=unix:path=" + str(self.runtime / "bus"),
+             *args], text=True, stderr=subprocess.DEVNULL, timeout=6,
+        )
+
+    def available(self):
+        return Path("/dev/snd/controlC0").exists() and (self.runtime / "bus").is_socket()
+
+    def state(self):
+        return (json.loads(self.command("pactl", "-f", "json", "list", "cards")),
+                json.loads(self.command("pactl", "-f", "json", "list", "sinks")))
+
+    def restart(self):
+        self.command("systemctl", "--user", "restart", "wireplumber.service")
+
+    def select_hifi(self):
+        self.command("pactl", "set-card-profile", CARD, "HiFi")
+
+
+def recover(session, *, clock=time.monotonic, sleep=time.sleep, duration=120):
+    start = clock()
+    retries = 0
+    next_restart = start
+    no_output_since = None
+    while clock() - start < duration:
+        try:
+            if not session.available():
+                sleep(2)
+                continue
+            cards, sinks = session.state()
+            if ready(cards, sinks):
+                print("ubuntu-gts9u: HiFi card and output ready", flush=True)
+                return True
+            card = next((c for c in cards if c.get("name") == CARD), None)
+            if card and "HiFi" in card.get("profiles", {}) and card.get("active_profile") == "off":
+                session.select_hifi()
+                no_output_since = None
+            elif card and "HiFi" in card.get("profiles", {}) and no_output_since is None:
+                # Node creation is asynchronous after a profile selection.
+                no_output_since = clock()
+            elif (retries < len(RETRY_DELAYS) and clock() >= next_restart
+                  and (no_output_since is None or clock() - no_output_since >= 10)):
+                # Rebuilding the device is necessary when the early ALSA probe
+                # cached only off/pro-audio. Re-selecting HiFi cannot fix that.
+                retries += 1
+                if retries < len(RETRY_DELAYS):
+                    next_restart = clock() + RETRY_DELAYS[retries]
+                print(f"ubuntu-gts9u: rebuilding incomplete audio session ({retries}/3)", flush=True)
+                session.restart()
+        except (subprocess.SubprocessError, OSError, ValueError, KeyError):
+            # PipeWire/user bus/card may still be starting. Never treat a failed
+            # query or successful profile command alone as successful recovery.
+            pass
+        sleep(2)
+    print("ubuntu-gts9u: audio startup timed out; no further restarts", file=sys.stderr)
+    return False
+
+
+if __name__ == "__main__":
+    uid = int(sys.argv[1])
+    if os.geteuid() != 0 or uid == 0:
+        raise SystemExit("Expected root caller and a non-root desktop UID")
+    raise SystemExit(0 if recover(Session(uid)) else 1)

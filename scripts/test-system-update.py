@@ -64,6 +64,14 @@ class PayloadTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "predates"):
             b.inspect(path)
 
+    def test_protocol2_payload_keeps_bounded_extraction(self):
+        path = self.archive(lambda m: m.update(format=2, minimum_updater_protocol=2,
+            minimum_port_version="1.3.0", suite="resolute", source_suites=["resolute"],
+            update_kind="kernel", data_policy="preserve"))
+        manifest = b.extract(path, self.root / "out")
+        self.assertEqual(manifest["suite"], "resolute")
+        self.assertEqual(len(list((self.root / "out").rglob("*.img"))), 4)
+
     def test_wrong_device_suite_arch_format(self):
         for field, value in (("device", "gts9"), ("suite", "jammy"), ("architecture", "amd64"), ("format", 2)):
             with self.subTest(field=field):
@@ -180,7 +188,68 @@ class PayloadTests(unittest.TestCase):
         self.assertEqual(target.read_text(), "keep me")
 
 
+class RestartMarkerTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.transaction = self.root / "transaction"
+        self.transaction.mkdir()
+        self.marker = self.root / "etc-system-update"
+        self.legacy = self.root / "system-update"
+        self.patches = [patch.object(c, "STATE", self.root),
+                        patch.object(c, "TRANSACTION", self.transaction),
+                        patch.object(c, "MARKER", self.marker),
+                        patch.object(c, "LEGACY_MARKER", self.legacy),
+                        patch.object(c.os, "sync")]
+        for p in self.patches:
+            p.start()
+
+    def tearDown(self):
+        for p in reversed(self.patches):
+            p.stop()
+        self.tmp.cleanup()
+
+    def test_packagekit_cancel_does_not_disarm_update(self):
+        self.marker.symlink_to(self.transaction)
+        self.legacy.symlink_to(self.root / "PackageKit")
+        c.set_status("ready", tag="v1.3.0")
+        # PackageKit unconditionally unlinks its /system-update trigger.
+        self.legacy.unlink()
+        self.assertEqual(c.status()["state"], "ready")
+        self.assertTrue(c.marker_owned())
+
+    def test_missing_trigger_reports_failure_without_changing_record(self):
+        c.set_status("ready", tag="v1.3.0")
+        self.assertEqual(c.status()["state"], "failed")
+        self.assertIn("restart trigger", c.status()["error"])
+        self.assertEqual(json.loads((self.root / "status.json").read_text())["state"], "ready")
+
+    def test_legacy_prepared_update_is_recognized_and_cancelled(self):
+        self.legacy.symlink_to(self.transaction)
+        c.set_status("ready", tag="v1.2.0")
+        self.assertEqual(c.status()["state"], "ready")
+        c.unmark()
+        self.assertFalse(self.legacy.is_symlink())
+
+    def test_foreign_triggers_are_never_removed_or_claimed(self):
+        for path in (self.marker, self.legacy):
+            path.symlink_to(self.root / "another-updater")
+        self.assertFalse(c.marker_owned())
+        c.unmark()
+        self.assertTrue(self.marker.is_symlink())
+        self.assertTrue(self.legacy.is_symlink())
+
+
 class ReleaseTests(unittest.TestCase):
+    def test_future_ubuntu_asset_discovery_and_protocol(self):
+        data = self.release_data()
+        data['body'] = '<!-- gts9u-update-format: 2 -->'
+        data['assets'][0]['name'] = 'ubuntu-26.04-sm-x910-v1.4.0.zip'
+        with patch.object(b, 'request', return_value=self.response(data)):
+            info = b.release()
+        self.assertTrue(info['supports_updates'])
+        self.assertEqual(info['name'], 'ubuntu-26.04-sm-x910-v1.4.0.zip')
+
     def test_three_asset_release_uses_notes_format_marker(self):
         data = self.release_data()
         data['body'] = '<!-- gts9u-update-format: 1 -->'
@@ -258,7 +327,7 @@ class OfflineTransactionTests(unittest.TestCase):
             device.write_bytes(self.old)
             self.devices[part] = device
             (self.transaction / (part + ".img")).write_bytes(self.new)
-        self.plan = {"files": {p + ".img": {"sha256": hashlib.sha256(self.new).hexdigest()}
+        self.plan = {"format": 1, "suite": "noble", "files": {p + ".img": {"sha256": hashlib.sha256(self.new).hexdigest()}
                                 for p in b.PARTITIONS}, "apt_packages": [],
                      "device": "gts9uwifi", "version": "1.1.0", "tag": "v1.1.0", "kernel_release": "test"}
         (self.transaction / "plan.json").write_text(json.dumps(self.plan))
@@ -269,6 +338,7 @@ class OfflineTransactionTests(unittest.TestCase):
             patch.object(c, "MARKER", self.marker), patch.object(b, "IDENTITY", self.identity),
             patch.dict(b.PARTITIONS, {p: 32 for p in b.PARTITIONS}),
             patch.object(c, "device_check"), patch.object(c, "power_check"),
+            patch.object(c.policy, "ubuntu_suite", return_value="noble"),
             patch.object(c, "partitions", return_value=self.devices),
             patch.object(c.subprocess, "run", return_value=subprocess.CompletedProcess([], 3)),
             patch.object(c, "Path", side_effect=lambda p: self.root / "saved-ubuntu" if
@@ -313,6 +383,21 @@ class OfflineTransactionTests(unittest.TestCase):
             c.apply_offline()
         self.assertEqual(c.status()["state"], "failed")
         self.assertFalse(any(a[0] == "apt-get" for a in self.commands))
+        self.assertTrue(all(d.read_bytes() == self.old for d in self.devices.values()))
+
+    def test_unimplemented_crossgrade_aborts_before_backup_or_apt(self):
+        self.plan.update(format=2, suite="resolute", source_suites=["noble"],
+                         minimum_updater_protocol=2, minimum_port_version="1.3.0",
+                         update_kind="distribution", data_policy="preserve",
+                         backend_strategy="official-release-backend-v1", backend_entry_protocol=1,
+                         backend_file="UPDATE/updater.pyz", recovery="full-system-root-v1")
+        (self.transaction / "plan.json").write_text(json.dumps(self.plan))
+        with patch.object(c, "run", side_effect=self.execute), patch.object(c.policy.subprocess, "run",
+                side_effect=lambda argv, **_kw: subprocess.CompletedProcess(argv, 3 if argv[0] == "systemctl" else 0)):
+            c.apply_offline()
+        self.assertEqual(c.status()["state"], "failed")
+        self.assertIn("verified release backend", c.status()["error"])
+        self.assertFalse(any(a[0] in ("apt-get", "cp") for a in self.commands))
         self.assertTrue(all(d.read_bytes() == self.old for d in self.devices.values()))
 
     def test_completed_transaction_is_not_rolled_back_after_power_loss(self):
@@ -440,6 +525,28 @@ class ConffileTests(unittest.TestCase):
 
 
 class PackagingTests(unittest.TestCase):
+    def test_builder_rejects_duplicate_package_file_ownership(self):
+        if not shutil.which("dpkg-deb"):
+            self.skipTest("Needs dpkg-deb")
+        spec = importlib.util.spec_from_file_location("build_update", REPO / "scripts/build-update-payload.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            debs = []
+            for name in ("owner-one", "owner-two"):
+                stage = base / name
+                (stage / "DEBIAN").mkdir(parents=True)
+                (stage / "DEBIAN/control").write_text(
+                    f"Package: {name}\nVersion: 1\nArchitecture: all\nMaintainer: Test <test@example.invalid>\nDescription: Test\n")
+                (stage / "usr/lib/modules/test").mkdir(parents=True)
+                (stage / "usr/lib/modules/test/tun.ko").write_bytes(b"same bytes still conflict")
+                deb = base / (name + ".deb")
+                subprocess.run(["dpkg-deb", "-b", str(stage), str(deb)], check=True, capture_output=True)
+                debs.append(deb)
+            with self.assertRaisesRegex(ValueError, "Overlapping update file.*tun.ko"):
+                module.validate_package_ownership(debs)
+
     def test_payload_builder_and_legacy_bootstrap(self):
         if not shutil.which("dpkg-deb"):
             self.skipTest("Needs dpkg-deb")
@@ -460,11 +567,18 @@ class PackagingTests(unittest.TestCase):
             (base / "out/kernel-gts9uwifi/kernel.release").write_text("test\n")
             (base / "out/kernel-gts9uwifi/sm8550-samsung-gts9uwifi.dtb").write_bytes(b"test dtb")
             (base / "out/rootfs-overlay/usr/lib/modules/test/ath12k.ko").write_bytes(b"matching module")
+            for name in ("qcom_spss_irq.ko", "tun.ko"):
+                (base / "out/rootfs-overlay/usr/lib/modules/test" / name).write_bytes(b"matching board module")
             (base / "out/rootfs-overlay/etc/modules-load.d/ath12k.conf").write_text("ath12k\n")
             for name in ("ubuntu-gts9u-companion", "ubuntu-gts9u-device"):
                 stage = base / name / "DEBIAN"
                 stage.mkdir(parents=True)
                 (stage / "control").write_text("Package: " + name + "\nVersion: 1\nArchitecture: arm64\nMaintainer: Test <test@example.invalid>\nDescription: Test\n")
+                if name == "ubuntu-gts9u-device":
+                    modules = stage.parent / "usr/lib/modules/test"
+                    modules.mkdir(parents=True)
+                    for module_name in ("qcom_spss_irq.ko", "tun.ko"):
+                        (modules / module_name).write_bytes(b"matching board module")
                 subprocess.run(["dpkg-deb", "-b", str(stage.parent), str(base / "out/local-debs" / (name + "_1_arm64.deb"))], check=True, capture_output=True)
             original = subprocess.check_output
             def output(argv, **kwargs):
@@ -473,10 +587,25 @@ class PackagingTests(unittest.TestCase):
             with patch.object(sys, "argv", ["build-update", "--base", str(base), "--version", "1.1", "--bootstrap", str(bootstrap)]), patch.object(module.subprocess, "check_output", side_effect=output):
                 module.main()
             self.assertEqual(json.loads((base / "out/update-payload/metadata.json").read_text())["tag"], "v1.1")
-            hardware = base / "out/update-payload/debs/ubuntu-gts9u-hardware_1.1_arm64.deb"
+            hardware = base / "out/update-payload/debs/ubuntu-gts9u-hardware_1.1-2_arm64.deb"
             listing = subprocess.check_output(["dpkg-deb", "-c", str(hardware)], text=True)
             self.assertIn("ath12k.ko", listing)
+            self.assertNotIn("tun.ko", listing)
+            self.assertNotIn("qcom_spss_irq.ko", listing)
             self.assertNotIn("/home/", listing)
+            if os.geteuid() == 0:
+                isolated = base / "installed"
+                (isolated / "var/lib/dpkg").mkdir(parents=True)
+                (isolated / "var/lib/dpkg/status").touch()
+                device = base / "out/local-debs/ubuntu-gts9u-device_1_arm64.deb"
+                result = subprocess.run(["dpkg", "--root=" + str(isolated), "--force-architecture",
+                                         "-i", str(device), str(hardware)], capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                for name in ("tun.ko", "qcom_spss_irq.ko"):
+                    owner = subprocess.check_output(["dpkg-query", "--admindir=" + str(isolated / "var/lib/dpkg"),
+                                                     "-S", "/usr/lib/modules/test/" + name], text=True)
+                    self.assertEqual(owner.split(": ", 1)[0].split(":", 1)[0], "ubuntu-gts9u-device")
+                    self.assertEqual(owner.split(": ", 1)[1].strip(), "/usr/lib/modules/test/" + name)
             output = subprocess.check_output([sys.executable, str(bootstrap), "--status"], text=True)
             self.assertIn("state", json.loads(output))
             # The offline runner is frozen from source, including inside zipapp.
@@ -506,6 +635,31 @@ class PackagingTests(unittest.TestCase):
             self.assertEqual(result["tag"], "v1.1")
             self.assertFalse((base / "extracted/vbmeta.img").exists())
             self.assertFalse((base / "extracted/META-INF").exists())
+            metadata = json.loads((payload / "metadata.json").read_text())
+            metadata.update(format=2, minimum_updater_protocol=2, minimum_port_version="1.3.0",
+                suite="resolute", source_suites=["noble"], update_kind="distribution", data_policy="preserve",
+                backend_file="UPDATE/updater.pyz", backend_entry_protocol=1,
+                backend_strategy="official-release-backend-v1", recovery="full-system-root-v1")
+            (payload / "metadata.json").write_text(json.dumps(metadata))
+            with zipfile.ZipFile(payload / "updater.pyz", "w") as program:
+                program.writestr("__main__.py", "raise RuntimeError('fixture never executed')")
+            with patch.dict(module.IMAGES, {n: 32 for n in module.IMAGES}), patch.dict(b.PARTITIONS, {n: 32 for n in b.PARTITIONS}), patch.object(sys, "argv", ["make-twrp-zip", str(images), str(archive), "--update-payload", str(payload)]):
+                module.main()
+                result = b.extract(archive, base / "migration-extracted")
+            self.assertIn("UPDATE/updater.pyz", result["files"])
+            self.assertEqual((base / "migration-extracted/UPDATE/updater.pyz").read_bytes(), (payload / "updater.pyz").read_bytes())
+            with patch.dict(module.IMAGES, {n: 32 for n in module.IMAGES}), patch.dict(b.PARTITIONS, {n: 32 for n in b.PARTITIONS}), patch.object(sys, "argv", ["make-twrp-zip", str(images), str(archive), "--update-payload", str(payload), "--update-only"]):
+                module.main()
+                result = b.extract(archive, base / "update-only-extracted")
+            with zipfile.ZipFile(archive) as source:
+                self.assertNotIn("vbmeta.img", source.namelist())
+                self.assertFalse(any(name.startswith("META-INF/") for name in source.namelist()))
+                self.assertNotIn("rootfs.img", source.namelist())
+                self.assertEqual(len([name for name in source.namelist() if name.endswith(".img")]), 4)
+            self.assertEqual(result["update_kind"], "distribution")
+            for options in (["--update-only"], ["--update-only", "--update-payload", str(payload), "--rootfs", str(base / "rootfs.img")], ["--update-only", "--update-payload", str(payload), "--rootfs-overlay", str(base)]):
+                with self.subTest(options=options), patch.object(sys, "argv", ["make-twrp-zip", str(images), str(archive), *options]), self.assertRaises(SystemExit):
+                    module.main()
 
 
 if __name__ == "__main__":

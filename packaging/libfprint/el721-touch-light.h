@@ -2,11 +2,11 @@
 #pragma once
 #include <glib.h>
 
-/* Allow the 50 ms Shell observer and several compositor frames to present
- * the white target before the synchronous secure capture. This is a bounded
- * settling interval, not an acknowledgement from the compositor. */
-#define EL721_LIGHT_SETTLE_US (180 * 1000)
-#define EL721_POLL_MS 45
+/* Shell now acknowledges two presented panel frames before HBM is enabled.
+ * Allow a further 100 ms of optical settling after the panel write completes.
+ * A shorter poll avoids adding another near-full interval to that deadline. */
+#define EL721_LIGHT_SETTLE_US (100 * 1000)
+#define EL721_POLL_MS 20
 #define EL721_PRESENT_POLL_MS 5
 
 static inline guint

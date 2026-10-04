@@ -1,0 +1,17 @@
+#!/bin/sh
+# Existing installations may have enabled Tailscale's proxy-only mode because
+# this port did not ship its modular TUN driver. Migrate only that exact flag;
+# leave every other daemon option and the authenticated node state intact.
+set -eu
+
+defaults=/etc/default/tailscaled
+[ -f "$defaults" ] || exit 0
+command -v tailscale >/dev/null 2>&1 || exit 0
+systemctl is-active --quiet tailscaled.service || exit 0
+grep -q -- '--tun=userspace-networking' "$defaults" || exit 0
+modprobe tun || exit 0
+[ -c /dev/net/tun ] || exit 0
+
+sed -i 's/--tun=userspace-networking/--tun=tailscale0/g' "$defaults"
+systemctl restart tailscaled.service
+tailscale set --accept-dns=true

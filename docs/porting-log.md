@@ -7252,6 +7252,808 @@ The owner reported another black screen and reboot. The verified new boot is `6d
 
 The v6 marker from the failed second cycle (archived page SHA-256 `4d5d154813a58e937d3f7371bf71978bbd729eb60cf9e0ffab6a31de1db44036`; 768 raw bit errors recovered) again shows the ath12k PCIe callback nested down to `mhi_sync_power_up()` active at reset. The one-shot isolation had already been consumed by the first successful cycle. The temporary hook was removed from `/usr/lib/systemd/system-sleep` on the new boot; the Wi-Fi driver is bound and `/run` contains no isolation marker.
 
-To cover every sleep cycle, the Noble `ubuntu-gts9u-device` package was bumped from 2.64 to 2.65 (Resolute recipe 2.65 to 2.66). Its new `/usr/lib/systemd/system-sleep/ubuntu-gts9u-ath12k-sleep` hook (SHA-256 `1ee6e6929fa86f22ab03aac5510ca84abedd6d508dcf6c675379d504bfdd4946`) unbinds the bound ath12k PCIe endpoint on every sleep `pre`, then rebinds it on `post`; a marker in `/run` preserves the endpoint identity across sleep. The package was built on the Linux filesystem with the repository builder; package SHA-256 is `5dadb8c18f1dc215d40c573bb722a40150f19c02330ef15cf56d1af5357df75b`. An APT simulation selected one upgrade with no additions or removals. The live tablet accepted the upgrade without reboot, and `dpkg --audit`, `dpkg -V`, installed-hook hash, GDM/fingerprint/camera service status, writable root, and deep sleep selection checked out.
+To cover every sleep cycle, the Noble `ubuntu-gts9u-device` package was bumped from 2.64 to 2.65 (the separate Resolute upgrade branch bumps its recipe from 2.65 to 2.66). Its new `/usr/lib/systemd/system-sleep/ubuntu-gts9u-ath12k-sleep` hook (SHA-256 `1ee6e6929fa86f22ab03aac5510ca84abedd6d508dcf6c675379d504bfdd4946`) unbinds the bound ath12k PCIe endpoint on every sleep `pre`, then rebinds it on `post`; a marker in `/run` preserves the endpoint identity across sleep. The package was built on the Linux filesystem with the repository builder; package SHA-256 is `5dadb8c18f1dc215d40c573bb722a40150f19c02330ef15cf56d1af5357df75b`. An APT simulation selected one upgrade with no additions or removals. The live tablet accepted the upgrade without reboot, and `dpkg --audit`, `dpkg -V`, installed-hook hash, GDM/fingerprint/camera service status, writable root, and deep sleep selection checked out.
 
 The owner then repeated the cover/charger/Power sequence three times and reported a successful wake every time. All three happened on boot `6daaa798-1bd8-4588-ae8e-8164fa18b4a9`, so no reboot was hidden between attempts. The journal shows matching hook unbind/bind pairs at 00:38:13/00:38:54, 00:39:20/00:39:52, and 00:40:11/00:42:11 CEST; the kernel logged `PM: suspend entry (deep)` followed by `PM: suspend exit` on each cycle. Afterwards the `ath12k_wifi7_pci` driver was bound, `wlp1s0` was connected, the gateway answered 2/2 pings, the `/run` marker was gone, GDM was active, root was `rw,noatime`, and `dpkg --audit` and `dpkg -V` remained clean. The temporary v6 trace module was unloaded after collecting this evidence. This validates the packaged workaround for three consecutive repetitions of the original fault; longer-term suspend reliability and the underlying MHI/reset mechanism remain open.
+
+## EF-DX920 Caps Lock indicator, 2026-09-27
+
+The owner reported that the physical Caps Lock LED sometimes goes out 2–3 seconds after a lone press even though uppercase typing remains active, and can light while uppercase is off after another lone press. The attached cover identifies as EF-DX920 (`model=0xd6`, STM32 application V37). With uppercase active and the light visibly off, the pogo and virtual input LEDs both reported brightness 1, and the driver reported `caps=2`; the LED state in Linux was correct. The driver only sent its three-byte `{3, 0, caps_request}` header while reading a queued accessory event. A manual `event_poll` sent that header and the owner saw the light turn on and stay on at least five seconds. The subsequent read failed with no event queued and incremented `read_retry_releases` by three, so polling an empty queue is not suitable as the fix. The mainline pogo driver now schedules a separate header-only I²C write on `EV_LED/LED_CAPSL`, serializes it against the event path, and lets a pending event IRQ transmit the state instead. The modified driver compiled as an external module against the installed 7.2.0 kernel object tree with Clang 22. A complete isolated kernel build and physical validation are pending; no live kernel, partition, GDM session or keyboard firmware was changed.
+
+The isolated Noble kernel build then completed. Its configuration is byte-identical to the running build (`67930b19…6aaa651`), the board DTB is byte-identical (`613b3bb7…58ccc4`), and `vmlinux.symvers` is byte-identical (`8c33c0a8…8a39b3`). The final link was redone with the existing module-signing certificate (`56fba5de…46a0ff18`) and pinned build identity; the raw arm64 Image is `11233ffd…f82078b5`. `prepare-matched-boot.py` verified the current 96 MiB boot container (`fa3f9e86…25fae7d`), preserved its header and appended DTB, replaced only the kernel and regenerated/verified the unsigned AVB hash footer. The resulting candidate is `4b90cbb5…32dd1c16b`, copied to `/tmp/boot-caps-led.img` on the tablet with the same hash. Device package 2.66 (`76755eb2…81d6811`) was built for Noble and installed after an APT simulation selected one upgrade, no additions or removals. Its installed files, GDM, fingerprint UI, camera relays and writable root checked out. The tablet is still on the original boot. Root-only backups of active `boot` and the saved Ubuntu `boot.img` under `/var/lib/gts9u-kernel-backups/caps-led-20260927/` both match `fa3f9e86…25fae7d`. A boot-partition write, reboot, saved-image refresh and owner-visible Caps LED checks require separate authorization/validation.
+
+The owner then explicitly authorized writing only `boot`, refreshing the saved Ubuntu Dualboot image and rebooting. The candidate was copied into the root-only backup directory and checked against its expected 96 MiB size and full SHA-256. The active `boot` partition was written and read back in full, then `scripts/refresh-saved-ubuntu-boot.sh` atomically replaced `/var/lib/gts9u-boot-sets/ubuntu/boot.img` after creating another recovery copy. Both now hash to `4b90cbb5abd7ff0f471f266490147e5df76ffa8605e90e8c4ee656032dd1c16b`. A normal reboot changed the boot ID and came up with `7.2.0-rc3-dirty #1`, Device 2.66, writable root, GDM and NetworkManager active, and the EF-DX920 detected as model `0xd6`. `dpkg --audit` and `dpkg -V ubuntu-gts9u-device` were clean. The owner verified that an isolated Caps Lock press leaves the light on with uppercase enabled, and the next isolated press leaves it off with uppercase disabled after five seconds in each state. Turning it on still causes a brief blink before the light settles. During active cover use, the controller logged some connection pulses and empty-event read failures (`-6`); these stopped when the keyboard was left idle, with zero application recoveries. The original active and saved boot images remain in the root-only backup directory.
+
+The owner then found a regression missed by that idle-LED check: immediately after Caps Lock, text keys were not accepted until the blink ended. During a reproduction, the new standalone LED worker logged `cannot update Caps Lock LED: -6` while the STM32 repeatedly signalled connection changes and reinitialised; `evtest` on the original input device ended with `No such device` because the device was removed and recreated. The owner's second attempt reproduced the loss. The worker had split Samsung's event-header write from its paired read and could collide with a new key event. The owner explicitly authorised rollback. The 96 MiB pre-fix `boot` backup (`fa3f9e86c5080ab3373077b8a573115c752f54b9c2746a67da1eb92ed25fae7d`) was restored to only the active `boot` partition and verified by full readback; the same image replaced the saved Ubuntu Dualboot `boot.img` through `refresh-saved-ubuntu-boot.sh` and was verified again. The trial image remains backed up as `candidate-boot.img` (`4b90cbb5…32dd1c16b`). After the authorised normal reboot, boot ID `77cdd1bf-5d25-49b1-b071-af8ec7901634` ran the previous `7.2.0-rc3-dirty #2`. The owner repeated Caps Lock followed immediately by typing and confirmed it behaved as before. The driver then counted 62 key events with zero connection changes, read retries or application recoveries after the boot-time attach. The standalone LED worker is removed from both Noble and Resolute source trees; the LED mismatch remains open. Device recipe 2.67 (Resolute 2.68) updates the package documentation to prevent this unsafe trial from reaching future builds. Noble 2.67 built with the matched kernel configuration and signing certificate as `ubuntu-gts9u-device_2.67_arm64.deb` (SHA-256 `1e0ab19b915d8177b9da8eb3850749584f059cd534d838f5bf0d97cc7aca0667`); its tablet-side APT simulation selected exactly this upgrade, no new packages and no removals. It was not installed because it changes only documentation; live Device remains 2.66. No other boot partitions or Android boot set were modified.
+
+A later passive trace used a private tracefs instance (`scripts/diagnostics/pogo-caps-led-trace.sh`) to record only I²C writes to the pogo controller and periodic Linux LED/driver state, without key codes. During an owner-confirmed lone Caps Lock press, Linux went from `led=0 caps=1` to `led=1 caps=2` and stayed there. The two normal interrupt reads sent `{03 00 01}` and then `{03 00 02}` 250 ms apart; there were no further STM32 writes while idle, yet the owner saw the physical light go out. Samsung's reference driver likewise puts the LED value in its interrupt-read header and has no independent LED write in its `EV_LED` callback. A single manually triggered full poll on the restored kernel re-lit the LED for at least five seconds, but failed with `-EIO` after 1.086 s, added three `read_retry_releases`, and caused one connection low/high cycle and application reinitialisation. This confirms that idle polling cannot be used without harming keyboard responsiveness. The diagnostic instance was removed after capture; no polling service or trial kernel remains active.
+
+The owner booted stock Android 16 with the same EF-DX920. Both systems reported controller firmware V37 and application `EF-DX920_v1.5.1.4`. Android's first two I²C event headers after a Caps-on press retained the old off value, while the physical light stayed on; later event headers carried the on value. A five-second deferral trial on Ubuntu fixed the lone-press case and preserved immediate typing, but repeated old-value headers while typing caused an on–off–on light sequence. The driver now defers only the first header after Caps-on and otherwise uses the original paired write/read event protocol. The isolated complete kernel retained the known-good DTB, config, exported symbol CRCs and module-signing certificate. After explicit authorization, the 96 MiB boot image `b82b66be360c12512768bf95e17c5c044a3b57900105e924bc19e67856a687b5` was written only to `boot`, verified by full readback, copied into the saved Ubuntu Dualboot set and rebooted normally. The owner confirmed the light remained on after a lone press and while typing immediately, with all letters appearing without delay. Diagnostics showed no read retries, reconnections or application recoveries. The known-good pre-fix and five-second trial boot images remain in root-only verified backups. Other keyboard cover models and longer-term use remain untested.
+
+## Tailscale and stable LAN address, 2026-09-27
+
+On the verified SM-X910 running Ubuntu 24.04.5, the authenticated Tailscale daemon was healthy enough for `tailscale ping`, but it started with `--tun=userspace-networking`. The running kernel had `CONFIG_TUN=m` and no installed `tun.ko`, so there was no `/dev/net/tun`, `tailscale0` or route for ordinary applications. The local preference also had `CorpDNS=false`; the system resolver used only the Wi-Fi DNS servers, and the requested tailnet hostname failed to resolve. Enabling the preference alone did not help while the daemon remained in proxy-only mode. The Wi-Fi connection received changing LAN addresses from DHCP; later inspection showed the driver's reported permanent MAC also changed across boots.
+
+`scripts/build-tailscale-tun.sh` built `tun.ko` against the exact installed kernel object tree with Clang 22. Its configuration hash `67930b19…6aaa651`, release, `vermagic` and signing-key serial matched the live kernel/module set; signed module SHA-256 is `52e75fb58a96a7e8f0ae7a83d0316d95588dc76c9433c8c72cfd07d5c9ce286e`. The module was transferred with a matching readback hash, installed under the current release's `updates` directory, indexed with `depmod` and loaded. The normal kernel build now stages the module for clean images, and `build-device-package.sh` verifies and includes it for existing installations. Device package 2.68 also adds a one-shot service that changes only an existing proxy-only Tailscale flag, restarts the daemon and enables tailnet DNS; it leaves the logged-in node state intact. The original Wi-Fi netplan profile was saved root-only, then that network's NetworkManager profile was changed to a static IPv4 address with the observed gateway and DNS. Reapplying it kept SSH and public DNS available. No LAN address or account is hardcoded in shipped source.
+
+An initial ad hoc package build lost executable modes when cloned from the Windows checkout. APT's first installation unpacked 2.68 but postinst failed on an existing helper; the installed device package was temporarily unconfigured. The repository's `build-device-package.sh` then rebuilt it with normalized modes and the signed TUN module. The corrected package SHA-256 is `7d793f0cc2fd0eb67a66461ab10293422c8227606a529b8670ef84be704966f5`. Transfer hash matched; APT simulation selected one upgrade, zero additions and removals. APT's reinstall of the half-configured same-version package returned an internal filename error, so `dpkg -i` completed configuration from the already validated local package. `dpkg --audit` and `dpkg -V ubuntu-gts9u-device` were clean afterward. Starting the packaged migration service yielded `tailscale0`, split DNS through the Tailscale resolver, the tailnet peer's address from `getent`, and HTTP 200 from the exact HTTPS login URL. GDM, NetworkManager and the writable root remained available.
+
+The owner explicitly authorized a normal reboot to check persistence. Boot ID changed from `77cdd1bf-5d25-49b1-b071-af8ec7901634` to `11c651b9-38c4-4aa9-b493-e857b6b0a143`; the verified SSH host key and SM-X910/Ubuntu identity matched. The Wi-Fi interface returned with the then-configured static address and `tailscale0` returned with its previous Tailscale address. `tun` was loaded, the migration unit reported success, Tailscale accepted DNS, the hostname resolved and the same HTTPS login URL again returned HTTP 200. GDM and NetworkManager were active, the updater reported `complete`, and package audit/verification stayed clean. No partition was written or saved boot set changed.
+
+The owner clarified that the LAN connection should behave like an ordinary DHCP client without a static address or router reservation. The Wi-Fi profile was restored to `ipv4.method auto` and DHCP client ID `mac`. Its initial NetworkManager `stable` cloned address produced a locally generated MAC, not the tablet's native address. Read-only inspection of Samsung EFS found two agreeing valid Wi-Fi address copies, whereas the ath12k driver's reported permanent MAC differed and had changed between boots. Device package 2.69 therefore adds a pre-NetworkManager service that reads the matching EFS copies from a temporary read-only, `noload` mount, validates them, unmounts EFS and writes only a runtime NetworkManager Wi-Fi MAC default. The address itself is never embedded in the repository or package. The installed Wi-Fi profile no longer specifies a cloned MAC and inherits that default. After reconnection, the active interface matched the EFS-derived default, received its address dynamically through DHCP, and the tailnet HTTPS login still returned HTTP 200. The official package build included the same verified signed TUN module; its SHA-256 was `76493f7eca47909fbc7403de255d2158ba6d6f6e77018b4d3e58b1132eab9f5a` and installation configured successfully. A router remains free to change the DHCP lease, so this setup does not guarantee a particular numeric LAN address.
+
+A second authorized normal reboot changed boot ID from `11c651b9-38c4-4aa9-b493-e857b6b0a143` to `1856c95b-6384-4c34-b576-2ba473b84d71`. The same DHCP lease returned, and a post-boot comparison confirmed that NetworkManager loaded the runtime default, the active Wi-Fi interface matched the EFS address, and the IPv4 address was dynamic. The Wi-Fi address unit and Tailscale migration unit both reported success; NetworkManager, Tailscale and GDM were active; `tailscale0` retained its address; the exact HTTPS login URL returned HTTP 200. `dpkg --audit` and `dpkg -V ubuntu-gts9u-device` reported no issues. No boot image or EFS content was written.
+
+Focused shell syntax and `git diff --check` passed. The signed module build and the official device-package build passed; a fresh full release/rootfs build was not run for this network-only change.
+
+Date: 2026-09-27 CEST. The owner reported that lock-screen password entry sometimes remains disabled while fingerprint is reading, and that a typed password often waits until the fingerprint interval ends before unlocking. On the installed Device 2.69 / libfprint gts9u51 baseline, the owner reproduced the latter with the password field accepting keystrokes. The tablet journal showed concurrent `gdm-password` and `gdm-fingerprint` conversations; baseline valid first-candidate captures took about 0.28–0.31 s from contact to capture start and another 0.49–0.85 s to a secure result. A second-candidate match required an additional secure no-match and capture. GNOME 46's upstream `AuthPrompt` disables input at begin, routes preemptive answers only after the PAM question, and waits for its shared message queue at completion. The project extension now permits immediate password input when password is the foreground service, submits an explicitly entered password without waiting for fingerprint-only messages and finishes a verified password without retaining those biometric messages. GDM/PAM still authenticate the answer. The driver keeps separate secure identities and all matching/retry logic; it changes the post-panel optical wait from 180 to 100 ms and normal polling from 45 to 20 ms. The native two-presented-frame light gate remains intact.
+
+Focused password/fingerprint mock, overlay state, cancellation recovery and optical timer tests passed. The actual pinned Noble ARM64 libfprint compiled with `drivers_el721.c` and passed its protocol/gallery/lease tests; libfprint gts9u52 SHA-256 is `32b16c8cfd0a1edede048c278dbfcaa3b4e764d00990cf19a68a8c50218b4f02`. Device 2.70 SHA-256 is `4087ea23c0488b098fb3aa46c752e7d8b8cdf28a58dea9b62ead1cfcbcb76b1f`; extracted file comparison against Device 2.69 differed only in `authParallel.js`, `extension.js` and `metadata.json`. The builder reused the unchanged signed TUN module from the verified 2.69 package and checked both it and the signed SPSS IRQ module against the matching released-kernel certificate, configuration and release. JS and shell syntax, `git diff --check` and package metadata checks passed. A full rootfs/release build was not run; its existing builder consumes these sources and versions.
+
+The tablet was again identified as the SM-X910 on Ubuntu 24.04.5 through the previously pinned SSH host key. Before installation it had 77% battery, 258 GiB free, writable root, complete update state and clean package audit. The two transferred package hashes matched the local artifacts; previous 2.69/gts9u51 packages were retained in the private transfer directory for rollback. APT simulation and installation selected exactly two upgrades, zero new packages and zero removals, with unauthenticated archive packages rejected. Installed extension/library hashes match the package build, `dpkg -V` and `dpkg --audit` are clean, and GDM, fingerprint UI, secure owner and camera relays are active. With the owner's explicit authorization, GDM was restarted without rebooting; the greeter's private-bus diagnostics report overlay 23 active. No partition, boot image, Android state or saved print was written. Physical password timing, capture quality, both enrolled fingers and wrong-finger rejection still require owner testing in the new session.
+
+The owner then tested overlay 23: fingerprint detection felt somewhat faster, but a typed password still waited until the fingerprint timeout. Inspection of the live PAM stack found `pam_fprintd.so max-tries=1 timeout=10` as the first `common-auth` rule and confirmed that `gdm-password` includes that stack. Thus its own PAM worker blocked before `pam_unix`; the GNOME queue changes alone cannot make the password finish promptly. The original documentation's claim of a separate password PAM path was corrected. A narrow patch to the pinned fprintd 1.94.3 `pam_fprintd` module returns `PAM_IGNORE` for the exact `PAM_SERVICE` value `gdm-password` before opening the reader. The independent `gdm-fingerprint` and other PAM services retain the original path. No `/etc/pam.d` file or print is rewritten.
+
+Matched `fprintd` and `libpam-fprintd` `1.94.3-1+gts9u2` packages were compiled for Noble ARM64 from the pinned source. The daemon still contains the private matched-finger signal; the rebuilt PAM package differs from Ubuntu's original only in its module and documented patch within the payload, while PAM profile and maintainer scripts are unchanged. Eight package/dependency regression tests passed, including isolated APT acceptance of the pair and rejection of mismatches. SHA-256: daemon `a1d4fbf712b009ac59af5a7da174bbbad9005facf2b94099ff3dd80f95684a17`, PAM `1782658ef90c39601330db75eb7007eed8e372304bbd87c97673a76c6b5ab2de`. Transfer hashes matched. Tablet APT simulation and installation selected only those two upgrades, zero removals; `apt-get check`, `dpkg --audit` and `dpkg -V fprintd libpam-fprintd` completed cleanly. Installed module SHA-256 is `fb3c4deb813951a1db956093344f3f80edac10ae432be61bc49dcae93d2e2b22` and matches the package payload. Device 2.70 and libfprint gts9u52 remain installed. No second GDM restart was performed. The owner then locked the tablet and confirmed that Intro unlocked immediately with the password, and that each of the two saved fingers unlocked successfully. Fingerprint detection felt somewhat faster than the baseline. Extended wrong-finger and repeated capture-quality checks were not reported.
+
+At the owner's request, the local port version was advanced from 1.2.0 to 1.3.0 in `VERSION` and the live tablet's `/usr/lib/gts9u-release.json`. The latter retained its device and kernel-release fields and was changed atomically after a root-only copy was saved at `/root/gts9u-release.json.pre-local-1.3.0-20260927` (original SHA-256 `6bcc257c3275576ba4726b87b53b77dd6bdf1064cb5d9fe03cfcf3e15fc48812`). The same pinned SSH identity, `agcar` hostname, SM-X910 model and Ubuntu 24.04 arm64 were confirmed before the write; root was writable, 259 GiB free, battery 73%, and the updater state was `complete`. Companion's own `update_bundle.current()` now reads `version=1.3.0`, `tag=v1.3.0`, `kernel_release=7.2.0-rc3-dirty`. `gts9u-update --status` still reports the last completed installation as 1.2.0; that is historical transaction state, not the current release identity. A future clean rootfs build selects the current Device 2.70, libfprint gts9u52 and fprintd/PAM gts9u2 inputs, and `build-release.sh` writes the selected version to the image and update payload. A full 1.3.0 release image has not been built or published. Companion will regard a future published `v1.3.0` with the same tag as current; a local ZIP or repair action will be needed to install that exact release on this tablet.
+
+## S Pen reconnect and docked status, 2026-09-27
+
+The owner found that re-enabling S Pen Bluetooth remote features and inserting the previously unpaired pen did not reconnect promptly. The installed Companion 1.4.2 showed only the docked/charging state while the pen was inserted, so it offered no way to tell whether Bluetooth was connected and air gestures were ready. Inspection found a stale BlueZ bond: paired, bonded and trusted, but disconnected. The pairing service first attempted two failing `Connect` calls before removing that bond and opening the docked pairing window. In a controlled baseline cycle, remote features were disabled for more than 20 seconds and re-enabled at 15:41:35 CEST; the bond was removed at 15:41:49, and the first observed `GestureAvailable=true` was at 15:42:18, 43 seconds after re-enable.
+
+Companion 1.4.3 now invokes the existing S Pen-only stale-bond recovery when remote features are re-enabled after at least 15 seconds off, provided the pen is docked and its Bluetooth bond is disconnected. Short toggles, an undocked pen and an already connected pen do not trigger that recovery. The hardware D-Bus API now publishes separate `PenBluetoothPaired` and `PenBluetoothConnected` properties alongside the existing GATT-validated `GestureAvailable` property. The app shows a second S Pen status below the image and reports readiness only when the Bluetooth link and gesture service are both ready; it distinguishes pairing, reconnection, sleeping and disabled states. Translations were updated for all supported app languages. These source changes are included in the Companion package used by future clean builds and updates.
+
+The focused reconnect/status regression, Companion efficiency test, Python compilation, package builder metadata checks and `git diff --check` passed. The translation suite passed its runnable cases; its GTK session case was skipped in WSL. The ARM64 Companion 1.4.3 package SHA-256 is `146f82a30548dc22115264ac450cf678b3221b64d881d21e660a94f4e40413c8`; transfer hash matched. Before installation, the verified SM-X910 had a writable Ubuntu 24.04 root, 69% battery, ample free disk and a complete update state. A root-only rollback archive of the relevant 1.4.2 files was saved at `/root/tab-companion-1.4.2-pre-spen-1.4.3-20260927.tar.gz` (SHA-256 `3348631a85b990fe523577f6902aff506a8182e886e2d7c1e72513b86fe97bc4`). APT simulation and installation selected one upgrade, no new packages and no removals; installation disallowed removals and unauthenticated archives. The pairing and user hardware services loaded the new code. `apt-get check` and `dpkg --audit` are clean. The only `dpkg -V` difference is the generated shared `gschemas.compiled` file, which changes when GLib compiles schemas.
+
+In the new controlled cycle, remote features were disabled at 15:52:09 and re-enabled at 15:52:44. The pairing service removed the stale S Pen bond and opened pairing at 15:52:45 without waiting for the two failed connects; the first observed paired, connected and gesture-ready state was at 15:53:03, 19 seconds after re-enable. These are single observed cycles, not a general timing benchmark. The remote preference remained enabled. The owner reopened Tab Companion with the pen inserted and confirmed that it displays «conectado y listo»; after undocking, an air gesture worked. GDM was not restarted, the tablet was not rebooted and no partition or boot image was changed.
+
+The owner noticed that the temporary pairing status read «Sin emparejar · Emparejando mientras está insertado», which was technically the unpaired-to-paired transition but needlessly confusing. Companion 1.4.4 changes only that status to «Emparejando S Pen…» and updates its five translations. The state-machine logic is unchanged. The focused S Pen regression and translation suite passed (one GTK session test skipped in WSL), and the package builder passed. Package SHA-256 is `a77a297276f42e8b9ce44abf40b8b876f2703c0cce851c861af72822a2c9568b`. Transfer hash matched on the same verified SM-X910, which had 68% battery, 259 GiB free, writable root and complete updater state. APT simulation and installation selected exactly one upgrade, no additions or removals, with unauthenticated archives disallowed. A root-only rollback archive was saved at `/root/tab-companion-1.4.3-pre-text-1.4.4-20260927.tar.gz` (SHA-256 `7a3c2612308ae9e290f6053fefcf156cd40aac9ebd579dde27779ce1c2e94d17`). The installed version and strings match; pairing and hardware services are active, package audit and dependency check clean. The old UI process had exited, so the app was launched under a transient user service and is running with the new code. No GDM restart, tablet reboot or partition write occurred. The transient status itself has not been physically observed again after the wording change.
+
+Later the owner disabled the remote option, rebooted Ubuntu, removed the S Pen, enabled the option and docked it. Tab Companion 1.4.4 remained on «Emparejando S Pen…». The verified post-reboot SM-X910 had the remote preference and pairing-state file enabled, with the pen physically docked, but BlueZ had no S Pen object and `GestureAvailable=false`. The service's two failed connects ended in stale-bond removal at 18:07:35 CEST; it opened advertising windows at 18:07:36 and 18:08:43 without finding a pen. After the bounded windows, it left `reset_for_dock=true` and would not retry until a physical undock, yet the UI labelled every docked unpaired state as active pairing. The owner removed and reinserted the pen while observed. A new window opened at 18:23:59 and BlueZ then showed `Paired`, `Connected` and `ServicesResolved` true; the user hardware service reported `GestureAvailable=true`.
+
+Companion 1.4.5 re-arms the dock on remote re-enable, permits one bounded retry after an expired pairing window, and exposes the actual pairing activity over D-Bus to the app. Once the window ends without a bond, the app instructs the user to remove and reinsert the S Pen rather than displaying an indefinite progress state. Companion 1.4.6 additionally carries the stale-bond repair across an undocked re-enable so the next dock need not wait for two failed connects. The focused service/state regression covers re-enable, deferred repair, first and final timeout and honest UI status. Translation tests passed with one WSL GTK skip; efficiency and syntax tests, package-builder checks and `git diff --check` passed. Package 1.4.5 SHA-256 is `c71c8b48122a4bcd0fe3769ba95de491b2dfa8ba29ce0f68164e795686dfcd9a`; package 1.4.6 SHA-256 is `63e12e984f17aebe68f7f5cf92bb8d15d32755fcfcd8823b010e94937429adca`. Each transfer hash matched. Before installation the tablet had a writable root, 41% battery, 258 GiB free, complete updater state and clean package audit. A root-only rollback archive for 1.4.4 was saved at `/root/tab-companion-1.4.4-pre-pairing-1.4.5-20260927.tar.gz` (SHA-256 `4c557287f6a2e7fddb55aa9fca94ce992fa705aeffe73918cd9642bd5ec4bd47`), and the 1.4.5 package remains available locally for rollback. Both APT simulations/installations selected only one upgrade with no new packages or removals; removals and unauthenticated archives were disallowed. Installed 1.4.6 has active pairing/hardware services and clean `apt-get check`/`dpkg --audit`. A short live remote-option disable/re-enable subsequently recovered to `GestureAvailable=true`; its stale bond still needed the normal two failed connects because the pause was under 15 seconds. The app was relaunched with 1.4.6. GDM was not restarted and no further reboot or partition write was performed. Owner validation of a gesture after this final install and an exact repeat of the reboot sequence remain pending.
+
+
+## 2026-09-28 — visible Ubuntu boot survives Android switching
+
+The owner reproduced the old verbose boot after returning from Android. Device 2.76 was installed, but active init_boot/vendor_boot matched the old files in /var/lib/gts9u-boot-sets/ubuntu; /proc/cmdline again had loglevel=7. The previous direct deployment had not refreshed those saved images. Both were backed up and synchronized with the visible-boot images, leaving Android's saved set and the unchanged boot/dtbo untouched.
+
+Device 2.78 makes the early splash pruning part of the package's normal initramfs hook. It removes the Pango/X11/font stack, unused graphics, early DHCP and desktop snap rules while retaining e2fsck and the details renderer. update-initramfs generated an 8,273,631-byte legacy-LZ4 stream. All 72 retained ELF objects had complete DT_NEEDED dependencies; the theme symlink and original artwork sizes were verified. make-initramfs.sh now enforces the correct 8,314,880-byte ramdisk budget including the v4 header and AVB reservation and checks the generated archive before packing. The rootfs builder rebuilds this device package, the bundle reads the current quiet/splash cmdline, and installation/update code seeds or replaces Ubuntu's saved set from the matching payload. Thirty-six updater tests and the installer boot-set seeding tests passed.
+
+APT simulation and installation selected only Device 2.78, zero removals. Package SHA-256 is b6b1b2891f533f388b96cb5460a5261b13a838c72f923034f690ca05a11226d3. The generated init_boot hashes to 41aabac1788012ffc2f4a3945aa963da742e6cd64c90e236cf67f504ce3f7428; vendor_boot hashes to a1bdabe2cf5c954f9defae58f4c52bf7cc44a2b8d21017a7310e1ef1260ec7b3. Both active and saved copies were read back and verified. An actual Ubuntu-to-Android switch via Tab Companion followed by Android-to-Ubuntu through the Android app preserved all four expected image hashes. OBS showed the current small Ubuntu splash followed by GDM. The final cmdline retains quiet splash loglevel=3, package audit/verification are clean and disable-user-extensions remains false. The known panel-black interval and Samsung bootloader warning screens remain. No full release ZIP was built or published.
+
+## Companion integrated into main for port 1.3.0, 2026-09-28
+
+The owner requested merging the finished Companion changes into main before
+the final release fix. Integrated the app tree from
+`feature/companion-future-updates-1.3.0` at `14bfa9e`, together with its update
+payload/bootstrap/ZIP support, tests, isolated preview and documentation.
+Broader Ubuntu 26.04/kernel build experiments were not merged. The existing
+S Pen 1.4.6 code is retained. Main's VERSION remains 1.3.0; the bridge update
+payload defaults to format 1 and validates Noble rootfs/APT inputs.
+
+The available-update subtitle stays hidden. Catalogue validation exposed an
+empty message passed to translation through _hero; using None for an absent
+description and translating only nonempty descriptions fixes that test without
+restoring the removed text. The GTK fixture intercepts user-scheduler launch,
+avoiding a missing installed helper on the isolated test host. These source
+changes bump the app to 1.5.3 rather than changing an existing package version.
+
+On a separate WSL copy of main, all 76 unit cases and both GTK scripts passed.
+The initial ZIP fixture run lacked the copied TWRP configs; it passed after the
+reference inputs were copied, with no product-code change for that setup issue.
+The package builder's Python/schema/resource/Desktop/AppStream checks passed.
+The built DEB SHA-256 is
+`b4d190b18eee25cfd60ffcb0a622622d6372692b405ff3242af1ecdbd4d30855`.
+No tablet access/change, full release ZIP or publication was part of this
+integration. The publisher intends subsequent port builds to target Ubuntu
+26.04 with one common update UI; the migration engine/full-system recovery and
+hardware-validation gates remain separate unfinished work for those releases.
+
+## 2026-09-28: Companion pointer range and S Pen reconnection review
+
+The owner requested pointer sensitivity up to 500 and an audit of About's
+hardware details, then reported a pen apparently depleted and stuck reconnecting.
+The live tablet had Companion 1.5.2; this change uses the integrated main app
+tree, rather than the older 1.4.2 source in the upgrade checkout. Companion
+1.5.4 raises both the slider maximum and backend clamp to 500, retaining the
+25 minimum and 100 default. Package and About versions agree.
+
+The installed system-summary code reads uname, os-release, MemTotal, proc
+uptime and installed release identity. Processor naming uses a static lookup
+after detecting qcom,sm8550 in the running device tree. The live tablet reported
+that compatible, MemTotal 14913628 kB and Ubuntu 24.04.5. Thus the system values
+are device-derived; the commercial CPU label is translated, not directly read.
+Peripheral state comes from sysfs/evdev/BlueZ, with a saved last-reading fallback
+for S Pen battery while asleep.
+
+The owner confirmed roughly five minutes on the charging area. Sysfs reported
+docked/charging, BlueZ Paired/Trusted but not Connected/ServicesResolved, and
+the session backend exposed battery 0. A bounded direct BlueZ Connect answered
+successfully but did not immediately restore valid GATT. Review found a repair
+latch can remain set when replacement pairing becomes Paired without Connected:
+consider() closes the pairing window but previously cleared the latch only
+for Connected. It now releases the latch for Paired during the replacement
+window; a regression verifies that state and preserves protection during removal
+before a replacement window starts. However, the old process subsequently
+logged another stale-bond recovery at 14:32:15 before installation, so this
+source defect is not established as the cause of the owner's specific stall.
+
+The focused efficiency/proximity and new repair-state regressions passed, as
+did package syntax/resource/schema/Desktop/AppStream checks and diff checking.
+The DEB SHA-256 is d03ff3dc1d585baf3004f507a259ec5b5fec13fa8a42dc1d840887aa4ba2ad2d.
+Host identity matched the known SSH key and model; battery was 63%, root rw,
+256 GiB free, updater complete and package audit empty. Transfer hash matched;
+APT simulation and installation selected one upgrade, zero removals, and
+rejected unauthenticated archives. Companion 1.5.4 is installed, both pen
+services active after the session backend restart. Installed slider/backend
+source shows 500; GestureAvailable became true and the pen battery read 80.
+This contradicts treating the earlier 0 as proof of actual depletion. Package
+verification found only the expected shared regenerated gschemas.compiled
+checksum difference. No GDM restart, tablet reboot or partition write occurred.
+The owner reopened Companion and confirmed the slider reaches 500, the pen
+appears connected and the requested physical gesture/pointer check works.
+Recurrence after real depletion remains untested.
+
+## 2026-09-30: prepare port 1.3.0 publication
+
+The owner requested an English grouped release announcement, the full clean-
+installation ZIP and unchanged Android/split assets, and removal of checksum
+sections from published notes. Updated all three previous GitHub release bodies;
+retained the format-1 update markers and linked the README update instructions.
+The APK and split ZIP match the v1.2.0 published digests exactly. New notes are
+in release-v1.3.0.md. The owner explicitly authorised committing/pushing these
+changes and the already tested Companion 1.5.4 adjustments on main.
+
+Reviewed format-2 policy and official-backend handoff: kernel releases are not
+hardcoded, format 1 bridges installed v1.2.0 updaters, data replacement and
+cross-suite use of the old APT path are rejected. A future approved distribution
+ZIP can carry its authenticated migration/full-root-recovery engine. This does
+not implement or validate the Noble-to-Resolute engine itself.
+
+Found the legacy README launcher omitted update_policy.py, now imported by the
+backend. Added that module to its single-revision download set and a real
+backend-import regression with network/update actions intercepted. Six launcher
+cases pass. Also passed readiness 18, system update 39, shipping privacy 10 and
+build-info 7 cases (80 total), plus the S Pen efficiency/proximity/repair-state
+checks and actual Companion 1.5.4 packaging. The Ubuntu build host lacked the
+Pango typelib for build-info tests; those seven cases passed on the separate
+Ubuntu-24.04 host. No tablet writes or restarts were part of these tests.
+
+A Linux source snapshot of main and its pending Companion changes is staged
+under /root/ubuntu-gts9u-release130. A fresh pinned rc3 kernel built successfully:
+Image.gz c64174a9fc8663eee3af29cf3d824d94582ea4855f26fc8e1c11ba08eb3244d9,
+config 67930b1997348bca2d8f1210667fa58b848872f2b1611bf29a84ac4969aaa651,
+and the unchanged booted DTB 613b3bb7729d55d1c60aaeda348a098163b79aed1efbf24cdcc582ff0d58ccc4.
+Matching modules and packages are built for this kernel. Fresh rootfs/ZIP
+construction is in progress; this entry does not claim final artifact validation
+or publication. The source snapshot does not include the upgrade checkout's
+uncommitted kernel work.
+
+## 2026-09-30: USB experiment rollback before port 1.3.0
+
+The owner reported that the USB-C hub's USB devices and HDMI no longer worked
+with the phone-reset experimental kernel and explicitly requested restoration
+of the pre-experiment state, followed by a physical hub check before publication.
+The experiment is not accepted as a phone-reset fix; causal attribution of the
+hub failure remains pending the owner's comparison.
+
+The tablet was identified by its known ED25519 key, hardware model and Ubuntu
+24.04.5. It ran candidate #5 at 72% battery, writable root, clean dpkg audit and
+completed update state. The verified original #3 image in
+/var/lib/gts9u-kernel-backups/pre-usb-policy-20260929/boot.img was restored:
+b82b66be360c12512768bf95e17c5c044a3b57900105e924bc19e67856a687b5.
+Before writing, its complete digest, Android v4 header, zero ramdisk, appended
+original DTB and AVB descriptor were verified. Its decompressed kernel matches
+the preserved original object tree. The running config and module signing key
+match that original build; previous experiments introduced no exported CRC
+changes. The Caps Lock correction remains in #3.
+
+Only the active boot partition and Ubuntu's saved Dualboot boot image changed.
+Both were verified by full readback. Root-only backups of candidate #5 are in
+/var/lib/gts9u-kernel-backups/pre-usb-rollback-20260930-k798J2hx.
+The active/saved vendor_boot and every Android saved image retained their hashes.
+After the authorized reboot, the same host key returned at a new address with
+kernel #3 and boot ID e5013723-8bbe-402e-bfa1-37a97ec9bde1. Both boot hashes
+match the restored image; NetworkManager/GDM are active, root is writable,
+dpkg audit is clean, Fprint returns its device, and OTG selector is the original 3.
+Physical USB/HDMI acceptance is still pending the owner.
+
+The uncommitted charger initialization experiment and its test are preserved
+under ignored work/usb-rollback-20260930 in the upgrade checkout; its tracked
+driver is restored to the original source. The 1.3.0 main source snapshot and
+the actual compiled kernel source already use this exact baseline driver,
+SHA-256 cb3d538098862861b91a9632191540cabe10a39e13802d6f94d91aa7f2139098.
+No experimental USB policy or discharge initialization entered the release build.
+Release notes are unchanged. Publication is paused for the physical hub result.
+
+The owner subsequently confirmed that the hub works after this rollback.
+This is owner-confirmed physical recovery of USB/HDMI, and publication may resume.
+
+## 2026-09-30: deterministic ext4 checking in release initramfs
+
+The fresh 1.3.0 build reached initramfs validation, which correctly rejected an
+archive without e2fsck. Ubuntu's fsck hook defaults to FSTYPE=auto and probes the
+root fstab device even when its type is specified. The label device does not
+exist inside the WSL image-building chroot, so it emitted "Couldn't identify
+type of root file system" and omitted the checker. The supported SD/UFS root
+is always ext4. Device 2.79 therefore packages an initramfs-tools conf.d setting
+FSTYPE=ext4, applying both to clean images and subsequent package updates.
+The existing real-initramfs checker remains the required regression gate for
+e2fsck, dependency closure, theme and the 8,314,880-byte budget. Validation of
+the regenerated archive is pending; no tablet change is required for this fix.
+
+## 2026-09-30: release 1.3.0 built and published
+
+Built the release from main runtime revision
+517d41b0086ecf50c6bb336940b93e5f5ebdca8d using a fresh pinned kernel
+and Noble rootfs, with matching signed modules and Companion 1.5.4 / Device 2.79.
+The ext4 initramfs fix passes the actual image gate: e2fsck is included, all
+72 ELF dependencies resolve, and the payload is 8,273,061 bytes within budget.
+Boot and update bundle validators, rootfs filesystem checking, APT dependency
+checks and dpkg audit pass. The actual 1.2 updater reads the format-1 ZIP;
+all 21 selected local packages match the rootfs and update payload. All 129
+module files inspected match the signing key embedded in the shipped kernel.
+The 80 focused updater/readiness/privacy/launcher/build-info cases and S Pen /
+Companion packaging checks passed; see release-1.3.0-build.md for details.
+
+Published v1.3.0 as latest with exactly three verified assets:
+https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/releases/tag/v1.3.0
+The new ZIP is 1,406,562,255 bytes, SHA-256
+057c4537ebb8996efa901331d749d950aaa968724eee7d3da70b5400936c065d.
+The Android APK and partition split ZIP retain their previous release digests.
+GitHub's published asset digests match the local files. Release notes are in
+English, grouped by component, link the README update instructions and omit
+SHA-256 sections; those sections were also removed from older releases.
+
+Both clean installation and data-preserving update payloads remain in the ZIP.
+The new ZIP itself has not been physically installed on the development tablet.
+The owner confirmed physical USB/HDMI recovery with the baseline kernel rollback;
+release code retains that pre-experiment driver. Future Ubuntu suite changes
+require the validated release's migration backend and recovery implementation;
+this release does not claim a physically tested Ubuntu 26 migration.
+
+## 2026-10-01: recover late audio initialization across boots
+
+The owner reproduced Dummy Output after the 1.3.0 publication; the release was
+returned to draft and 1.2.0 remains latest. On the development tablet, Device
+2.78 with the baseline kernel reproduced the failure: ALSA card 0 was present,
+but WirePlumber exposed only off/pro-audio, the helper exhausted ten seconds
+and exited without a subsequent retry. The package files matched their hashes.
+
+Device 2.81 retains ALSA restore ordering and dynamically queues a per-owner
+oneshot that verifies both UCM HiFi and an actual board sink. It allows at most
+three spaced WirePlumber restarts within 120 seconds, leaves healthy sessions
+untouched and never restarts ADSP or PipeWire. The 2.80 development iteration
+recovered sound but failed to recognize Noble's sink JSON lacking a top-level
+card index; it was stopped and 2.81 uses device.name, covered by an actual-shape
+regression. Nine behavioral regressions, speaker routing, shell syntax and
+ShellCheck pass. The live ARM64 package SHA-256 is
+a1bce3a6ca4eb81d0a1799bb07fd3090b9360f89914c86caa7fb98a3ee691284.
+It preserves the exact installed fingerprint owner, presentation bridge and
+signed IRQ/TUN modules. APT selected one upgrade and no removals. The incomplete
+September 30 update download had no running/prepared install and was cancelled
+with the official updater before APT. Root-only recovery files are retained at
+/var/lib/gts9u-diagnostics/audio-startup-20261001.
+
+Two owner-authorized test reboots returned on IDs
+63abd2b3-c8ef-43c3-8e12-5d71e920b2a2 and
+ac50e25a-7caa-4d55-bcb7-77f5866ff8bd. Each automatically restored HiFi and the
+default speaker output after one restart in roughly four seconds. Right DACs
+remain ASP_RX2, ADSP/pd-mapper/GDM/camera relays are active, four video endpoints
+and the Fprint device are present, and dpkg audit is clean. The owner confirmed
+speaker audio and camera capture after the second reboot. The reboot noticed
+just after login matches the second scheduled test reboot; no extra boot ID
+appears in the history. No kernel or partition changed. The replacement 1.3.0
+ZIP must incorporate this package for both clean installs and existing updates;
+publication remains deferred. Detailed recovery contract: audio-startup.md.
+
+### Camera duplicates revealed during audio validation
+
+The owner then reported four broken (V4L2) camera choices alongside the working
+native sources. pw-dump confirmed eight Video/Source nodes: four libcamera inputs
+and the port's four output loopbacks. Device 2.83 filters only the named board
+relays on virtual V4L2 paths during WirePlumber device creation; direct V4L2
+clients keep /dev/video20-23. The 2.82 development rule used capability properties
+that were populated only after rule evaluation, so it did not match; the final
+rule uses the device name/description established before evaluation. With Camera
+closed, reloading WirePlumber produced exactly four native Video/Source objects.
+A direct V4L2 capture delivered five frames and retained no images. The actual
+Lua 5.4 configuration passes the native/board-relay/other-loopback/USB predicate
+regression. Package verification/audit are clean. Live Device 2.83 SHA-256:
+14fcd6a3ce49f6c6d128ff4341dac955a4a05a6d842bfe4729dfe9c30e33d9f0.
+Its audio helper is unchanged from the two reboot-tested 2.81 runs. No further
+reboot, kernel or partition write occurred. The owner confirmed the duplicates disappeared and the native cameras work.
+The final replacement build must use Device 2.83 and remains unpublished.
+
+### Corrected 1.3.0 candidate completed, publication deferred
+
+Rebuilt the complete clean-install/update ZIP from runtime revision
+68b1963b6cdeed50989174498550881c7bee6371 with Device 2.83, retaining the verified
+kernel and completed fresh Noble rootfs and upgrading only its Device package.
+Package SHA-256 c4261d742628d5c3b37ed9c309fc238a67ee89942b4be3c620e1f7b3f17c2794;
+ZIP SHA-256 49ea916f5229529a537ef6e7dddcc6a130d913a0cfbbc4b8b6121dc501214dcf,
+1,406,825,122 bytes. Clean ext4 image, actual bundled audio helpers/unit/camera
+rules, initramfs 72-ELF dependency/budget checks, boot/update validators, published
+1.2 bundle reader, matched signed module set, all 21 local package payloads and
+installed versions, APT/dpkg and privacy checks pass. The corrected shipping
+assets and manifest/audit are retained in artifacts/release-v1.3.0-corrected.
+The owner confirmed audio, native cameras and removal of duplicate choices.
+The complete corrected ZIP was not physically installed. No new release upload,
+tag movement or publication occurred; 1.3.0 remains hidden with its original
+asset, and 1.2.0 remains the public latest. Replace the draft asset/notes and
+retag the new runtime revision before eventual publication. Full evidence and
+remaining publication steps are in release-1.3.0-build.md.
+
+The corrected Windows ZIP/APK/split copies match their expected hashes after
+transfer. A full live-vs-release Device 2.83 payload/control-file comparison
+shows differences only in the IRQ/TUN modules for their respective matched
+kernel signing sets; the native helpers and all remaining files are identical.
+The draft still reports hidden. The publication script's guard was updated to
+require the corrected candidate digest and new runtime revision before it can
+publish, so it rejects the old retained draft.
+
+### Corrected 1.3.0 published (2026-10-01)
+
+The owner authorized uploading the validated full ZIP and publishing the build.
+Replaced the withdrawn draft ZIP, updated the English release notes and moved
+v1.3.0 to runtime revision 68b1963b6cdeed50989174498550881c7bee6371.
+Before publication, GitHub reported the corrected ZIP at 1,406,825,122 bytes with
+SHA-256 49ea916f5229529a537ef6e7dddcc6a130d913a0cfbbc4b8b6121dc501214dcf.
+The APK and split ZIP retained their previous hashes. The publication guard
+verified exactly three uploaded assets and the notes/update-format contract,
+then published the draft as latest. The public latest-release API confirmed
+v1.3.0 and all three matching artifact digests.
+
+https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/releases/tag/v1.3.0
+
+No additional tablet changes or physical full-ZIP installation occurred.
+The runtime tag identifies the shipped code; this documentation follows it.
+
+### 2026-10-02: prepared reinstall never entered offline installation
+
+The owner used Companion's Restart and install action for the installed 1.3.0
+build. The verified SM-X910 still runs baseline kernel #3 and Companion 1.5.4 /
+Device 2.83. The retained transaction was prepared at 01:53:28 CEST and status
+remains ready, but /system-update is absent. No offline-installer journal entry
+appears in the last six boots; this is not evidence of an attempted APT or boot
+write failure. Package audit is clean.
+
+A bounded physical probe recreated only the owned trigger and invoked the
+PackageKit Offline.Cancel method with no PackageKit prepared update/upgrade.
+It removed Companion's /system-update trigger without changing Companion state.
+The same method left /etc/system-update untouched, and the actual installed
+systemd generator selected system-update.target in temporary output directories.
+Both temporary triggers were removed afterward; no reboot or partition write
+occurred. The original status is preserved root-only under
+/var/lib/gts9u-diagnostics/update-marker-20261002.
+
+Companion 1.5.5 uses the alternate trigger, retains owned legacy-trigger support,
+blocks foreign pending updates and reports a lost trigger honestly. Readiness
+is recorded after syncing the marker. Four new marker regressions and the full
+43-case system-update suite pass, including real isolated APT/dpkg checks and
+simulated boot restore/data preservation. Matched-boot diagnostics now reject
+either pending trigger. Full corrected artifact and physical offline acceptance
+remain pending. The exact process that removed the original trigger was not
+recorded; PackageKit cancellation is a reproduced mechanism, not a captured
+syscall attribution for that earlier deletion.
+
+Built Companion 1.5.5 from b6500f2; package SHA-256
+148342807bf46705485450902f4077ff121a7a5daec5411cdef3ae430cafc315.
+The fresh Noble rootfs installed this exact package with one upgrade and no
+additions/removals, and the full image/ZIP rebuild reuses the verified kernel.
+On the tablet, preserved the original staged transaction under the root-only
+diagnostic directory, cancelled its status and installed the hash-verified
+package. APT selected one upgrade and no additions/removals; audit/check are
+clean and state is idle. Device 2.83 and the live signed IRQ/TUN modules remain
+unchanged. Preflight reports 39% battery while charging, writable root and
+244 GiB free. No reboot or partition write occurred.
+
+The repository bootstrap additionally accepts --repair to reinstall the
+recorded release using the fixed current backend even when the installed app
+is older. Eight launcher tests and 18 future-update readiness tests pass.
+
+The complete b6500f2 ZIP passed final artifact auditing: 1,406,677,123 bytes,
+SHA-256 12fc1b5496a8de583c9f81973fab2b49723bfea0c5cc6fc90471ab06b21edd6a.
+The Windows transfer and physical tablet copy match. The tablet staged that
+exact ZIP successfully, including 140 MB of authenticated cached APT downloads.
+The real PackageKit Offline.Cancel call now leaves /etc/system-update intact
+and the reported state ready. Preparation's package checksum still matches.
+Saved and hash-verified all four current boot partitions plus the original module
+archive; recorded the untouched Android saved-set hashes in root-only diagnostic
+storage. Battery is 47% and charging. Offline execution, its required owner
+authorization and replacement of the public ZIP remain pending.
+
+The owner explicitly authorized the offline reinstall and its boot-image writes.
+The installer ran, but APT stopped during unpack. /var/log/apt/term.log records
+ubuntu-gts9u-hardware 1.3.0 trying to overwrite updates/tun.ko, already owned by
+Device 2.83. The unit journal was not retained. An inventory of all 22 payload
+DEBs found exactly one overlapping non-directory path: this TUN module. The
+installer restored all four baseline boot images and modules, then returned on
+boot 755e7d15-2753-4994-bab8-c6a386774eb0 with failed status. Readback matches the
+pre-test backups; kernel #3 remains active. This also explains the owner's
+earlier visible installation error, although that earlier transaction's error
+log was not independently attributed. The separate PackageKit trigger-loss bug
+explains the later unexecuted ready state.
+
+Temporarily returned public 1.3.0 to draft after confirming the shipping-package
+defect. Corrected the builder to exclude both board modules and use hardware
+package revision 1.3.0-1. Added a generic ownership collision gate, actual isolated
+dpkg co-installation/owner checks, and a deliberate duplicate-file rejection case.
+The three focused packaging cases pass.
+
+On the tablet, configured the pending same-version packages with automatic
+service actions temporarily denied and SYSTEMD_OFFLINE=1; restored the original
+policy afterward. Preserved the exact failed APT log root-only. The retained
+baseline module backup was copied back and reindexed; IRQ/TUN hashes still match
+the original #3 set. APT check/dpkg audit are clean, GDM and Wi-Fi remain active,
+and no additional reboot or boot-image write occurred. The existing private
+update recovery backups remain intact. A corrected full ZIP and successful
+physical offline retry are still required before republication.
+
+The exact final ZIP was transferred and verified on the tablet. Preparation
+completed with authenticated dependency downloads and a clean APT audit.
+PackageKit Offline.Cancel again left the ready trigger intact. At 74% charging,
+all staged payload bytes and retained baseline boot backups passed verification.
+The explicitly authorized offline retry completed and returned in 211 seconds:
+boot ID 147dfb1b-7eea-4af7-88a0-fd5d0e3529b4, state complete, Companion 1.5.5,
+Device 2.83 and hardware 1.3.0-1. All four boot partitions and Ubuntu's saved
+set match the final payload. Android's saved set and seven recorded private
+identity/account/network/fingerprint files match their original hashes.
+APT/dpkg are clean and root is writable. GDM, NetworkManager, ADSP, pd-mapper,
+S Pen pairing and the audio-session helper are active. The helper recovered
+an incomplete initial graph and exposed the native HiFi sink; PipeWire has
+four native camera sources and fprintd exposes its device. IRQ/TUN signing keys
+match the shipped 4E7E2D2DAD2473CB62E428FF13BEC8366ADDA0EB kernel certificate.
+Physical owner hardware confirmation and release republication follow separately.
+The exact clean-install image remains in the ZIP; a fresh TWRP installation of
+this replacement was not physically performed. Backups remain root-only under
+/var/lib/tab-companion-update/transaction/backup, with earlier completed backups
+archived under /var/lib/tab-companion-update/backups. Private diagnostic copies
+remain under /var/lib/gts9u-diagnostics/update-marker-20261002.
+
+### Owner acceptance and republication (2026-10-02)
+
+The owner confirmed physical audio, fingerprint and camera operation after the
+complete offline reinstall, then explicitly requested publication. Published
+v1.3.0 as the latest stable release with the exact physically tested replacement
+ZIP (1,406,414,137 bytes, SHA-256
+2364644bff1fb0e5e8371a5833d2b31fbd2bbfe86958d9f0d56b6f057cf6640d).
+Verified GitHub's sizes/digests and uploaded state for exactly three assets:
+this ZIP, unchanged Dualboot-v1.1.0.apk and unchanged gts9u-split.zip.
+The public latest API reports v1.3.0, not a draft. The source tag points to
+82264fcf8dd2a2bcfb3065421c73793084acccf7; subsequent evidence commits do not
+change the artifact source. Notes retain the release heading, format-1 marker
+and README updating link, with no SHA-256 section.
+
+https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/releases/tag/v1.3.0
+
+## 2026-10-02: generated splash regression
+
+After installing the published full 1.3.0 ZIP, the owner reported verbose boot
+instead of the animation. Active and saved Ubuntu boot hashes match that ZIP,
+and /proc/cmdline retains quiet splash loglevel=3 and hidden systemd status.
+The panel recovery succeeds. Inspection of the actual release init_boot found
+that scripts/init-premount/plymouth launches the daemon without --graphical-boot
+or --ignore-serial-consoles. The retained, physically validated previous
+init_boot includes both options. The live rootfs script still has that local
+modification (dpkg -V identifies it), but regenerating the image from the clean
+rootfs did not inherit it. This omission explains selection of verbose output
+with the serial consoles appended by Samsung's bootloader; the boot cmdline and
+saved-set synchronization are not missing.
+
+Device 2.84 packages an initramfs hook which preserves the existing launcher
+and adds the two options when absent. It accepts an already patched launcher,
+is idempotent and rejects a missing launcher rather than building silently.
+The real initramfs validator now requires those options as well as artwork,
+ELF closure, fsck and the partition budget. Three focused hook tests pass,
+including normal/partially patched launchers, duplicate prevention, prerequisite
+query and missing-launcher failure. A generated image and physical deployment
+remain pending. No partition was changed during diagnosis.
+
+The normal rootfs/package pipeline generated Device 2.84 from committed source
+f5794d751dc59bee14264339ce2322a526579df3. Package SHA-256:
+4bd94aaa41cb72674de69f0d77b0f7b5343f8848fbe41e30f2ef1c19cbec53c7.
+APT simulation selects only Device 2.84, zero removals. The normal initramfs
+builder produced an 8,273,117-byte legacy-LZ4 stream, below the 8,314,880-byte
+budget. All 72 ELF dependency closures, artwork, fsck and both graphical
+launcher options pass. The strengthened validator rejects the previous release
+initramfs specifically for its missing --graphical-boot option.
+
+The normal Android bundle builder produced init_boot SHA-256
+ce1ddfad3d33b5265d4cd1f5936c10b86b5263a72cae4f0a56358c848f8dc1da.
+The other boot, vendor_boot and dtbo images are byte-identical to the published
+release. Bundle validation passes. The staged tablet image/package hashes and
+both signed board modules match the running release; no kernel replacement is
+needed. Root-only active and saved init_boot backups are hash-verified under
+/var/lib/gts9u-diagnostics/plymouth-20261002/backup, with other partition and
+Android saved-set hashes recorded. Battery is 21% charging; preflight passes.
+Deployment and reboot require the owner's explicit authorization, requested
+before any active partition write or package installation. Physical animation
+acceptance and any replacement full release artifact remain pending. The public
+1.3.0 ZIP is unchanged at this checkpoint.
+
+The owner explicitly authorized Device 2.84 installation, replacement of only
+init_boot and its Ubuntu saved copy, and one reboot. Live APT installed one
+upgrade with zero removals; audit/check pass. Verified both signed board modules
+are byte-identical before and after package installation. Wrote only init_boot,
+read its full hash back, refreshed the Ubuntu saved copy and matching filesystem
+/boot initrd through atomic writes. Preserved the prior filesystem initrd in the
+root-only backup as well. All other partition hashes and Android saved-set hashes
+remain unchanged. Returned on boot f80f652c-c39d-44c1-a755-2570e8ce009d with Device
+2.84, writable root, active GDM/NetworkManager and successful panel recovery.
+The active/saved init_boot hash is the validated ce1ddfad candidate above.
+Owner-visible animation confirmation has been requested; the published full ZIP
+has not yet been replaced with this later fix.
+
+The owner confirmed the Ubuntu animation is displayed again and verbose boot
+text has disappeared after the authorized reboot. This closes the physical
+visible-boot reproduction for the new initramfs hook.
+
+## 2026-10-02: graphical boot replacement ZIP
+
+Final runtime revision: 95e0f5235bf37a18f90f1d315ca65dd213127769. Device 2.84
+ships the persistent graphical Plymouth initramfs hook; hardware revision
+1.3.0-2 includes the corrected generated filesystem boot archive. Companion
+remains 1.5.5. The clean rootfs and selected update DEBs contain the same exact
+Device package physically installed on the tablet. Its animation was confirmed
+by the owner after the authorized reboot.
+
+The normal complete release pipeline rebuilt the clean ext4 image, boot bundle
+and ZIP. The final payload was repacked with incremented hardware revision -2;
+no further rootfs/kernel/boot change was required for that packaging revision.
+Clean image: 4,769,972,224 bytes, SHA-256
+3b33a5a2597e44a0c40e75decd21faee867f1051c6e01ad84c67347e71079b92.
+Generated initramfs: 8,273,096 bytes, 72 complete ELF closures, graphical options,
+artwork, fsck and budget all pass. The resulting init_boot hashes to
+4825041321594bb977fe59daa4fddc45089ec549983527215fcf7ab7b378714a.
+Its archive timestamps differ from the physically tested ce1ddfad image, but an
+extracted comparison found zero differences in file contents, symlink targets
+or permissions. Kernel/boot, vendor_boot and dtbo are byte-identical to the
+previously shipped artifact. All 129 matching signature/release checks pass.
+
+Final ZIP: 1,406,567,258 bytes, SHA-256
+8f0e964f5627db1a6a31f80bf33844aecbfdf4bc037a1ea93244036fbf792f8d.
+Full bundle/CRC and update payload hashing pass; all 21 local package versions
+match the rootfs and ZIP, no payload ownership collision remains, the original
+1.2 reader accepts format 1, and fresh-account/APT/dpkg checks pass. The packaged
+hook was read from the real ext4 image and matches source. Three Plymouth hook
+regressions, the negative gate against the old release initramfs, and all three
+packaging tests pass. The Windows copy matches the Linux ZIP hash. Artifacts,
+manifest, audit and 789 tracked-source hashes are preserved locally under
+artifacts/release-v1.3.0-plymouthfix. The changed package/animation path was
+physically validated separately; neither a fresh TWRP install nor a second
+complete offline reinstall of this exact final ZIP was performed. The unchanged
+offline backend had already passed the complete 1.3.0 reinstall earlier today.
+
+Replaced the public v1.3.0 ZIP with the audited graphical-boot artifact after
+owner confirmation of the animation. GitHub reports the exact new size and
+SHA-256 digest above, plus the unchanged APK and split ZIP, all uploaded.
+v1.3.0 remains the latest stable public release with exactly three assets.
+The source tag and release target now both point to
+95e0f5235bf37a18f90f1d315ca65dd213127769. Release notes remain unchanged,
+including the existing boot-animation feature, format-1 marker and README
+updating link; no SHA-256 section was added. Prior ZIPs/manifests remain retained
+locally. No further tablet reboot or partition write occurred during rebuilding
+or publication.
+
+## Ubuntu 26.04 continuation from the public 1.3.0 bridge, 2026-10-03
+
+Cloned `upgrade/ubuntu-26.04-gnome50` and merged main at
+`916e2f13de00d0b5eba6c02c1a9d6e395e6b909e` without committing. Resolved the
+Device version, fprintd/PAM build-path, libfprint-version and chronological-log
+conflicts while retaining both Resolute work and main's later fixes. The owner
+subsequently chose no agent commits or push; the merge is resolved in the
+working tree but remains uncommitted. No repository collaborators or permissions
+were changed.
+
+After the owner confirmed the ED25519 host key and corrected the SSH username,
+read-only inspection identified the SM-X910 on Ubuntu 24.04.5 and
+`7.2.0-rc3-dirty`, complete updater state at port 1.3.0, Companion 1.5.5 and
+Device 2.84. Root was writable ext4 with 233 GiB free, cgroups v2, empty package
+audit and a successful lock-free APT dependency check. The installed updater
+reports protocol 2 and official-release backend handoff, but no distribution
+migration implementation. The exact stable-release tag/size/SHA-256 check also
+applies to local migration ZIPs. No tablet packages, partition, boot set,
+service, desktop session or configuration were modified.
+
+Installed WSL Ubuntu-24.04 with owner authorization and prepared isolated
+Linux sources/builds under `/root/ubuntu-gts9u-2604-source` and
+`/root/ubuntu-gts9u-2604`. Stable Linux 7.2.9 was pinned to the official peeled
+tag commit `5fce161649b4d779d1b76d9fcd52dc77779774b8`. The full repository kernel
+build completed with Clang 18.1.3. All 62 staged modules, including compressed
+modules, have matching `7.2.9-dirty` release and build-certificate serial, and
+the staged config matches the object tree. Kernel Image.gz SHA-256 is
+`9d3d475f92cd920f2a7d6e640c0f5d8c2d74ae5ffe50d1210064057d5fd85480`;
+config is `8404b06a4404750171187caa32d2ef47a112f6ad22b632696094408a122c0eeb`;
+Module.symvers is
+`9606ae924919ab4958ba8fbc2e6a45360134af4fc14b45e9940297a1d8e357dd`.
+The final board DTB passed the existing booted-reference hash gate
+`613b3bb7729d55d1c60aaeda348a098163b79aed1efbf24cdcc582ff0d58ccc4`.
+The prepared-CDSP patch also passed zero-fuzz applicability against the actual
+patched 7.2.9 FastRPC source, and its builder now selects that patch for 7.2.9.
+These are build/static facts, not a new-kernel boot or hardware validation.
+
+Device's Resolute recipe is now 2.85 and preserves main's Plymouth dependencies;
+Resolute's paired fprintd/PAM and libfprint are bumped to their `+gts9u2`
+revisions for the newer password/touch changes. The rootfs pipeline previously
+selected Noble-only Mutter, power, camera and fprintd inputs despite a Resolute
+suite. A regression failed for this mismatch before the fix. It now dispatches
+suite-specific camera/fingerprint inputs, includes the TOD library, uses archive
+GNOME 50/Mutter 18, explicitly requests Ubuntu's consolidated extensions, and
+separates build-input caches by suite. Reusing a Noble chroot for Resolute is
+rejected before staging. The release/payload crossgrade gates remain intact;
+no unimplemented engine is packaged or claimed to preserve a system root.
+
+Downloaded the exact public v1.3.0 ZIP and verified its SHA-256
+`8f0e964f5627db1a6a31f80bf33844aecbfdf4bc037a1ea93244036fbf792f8d` and every
+bounded update payload hash. The new trusted-release fixture helper extracted
+its clean ext4 root into
+`/root/ubuntu-gts9u-2604/migration-v130-fixture/root` without invoking TWRP or
+copying private tablet data. Its installed Companion/Device match 1.5.5/2.84.
+The clean image has no `ubuntu-gts9u-hardware` dpkg entry, unlike an already
+updated installation; a generic migration must handle both inventories.
+
+Verification passed 44 updater tests, 18 readiness/handoff tests, 2 release-suite
+guards, 10 upgrade-input/fixture tests, 2 PCIe-map tests, fingerprint overlay and
+parallel-password JavaScript mocks, shell syntax, Python compilation and staged
+and unstaged whitespace checks. The fixture's debugfs unit test is simulated;
+its separate extraction of the real published image also succeeded. Canonical's
+live LTS upgrade index now marks Resolute 26.04.1 `Supported: 1`, superseding the
+September enablement blocker. New arm64 archive-root and EL721 libfprint builds
+are still in progress. A frozen offline distribution transaction, complete
+system-root recovery and fault-injection tests, remaining userspace packages,
+Android v4 bundle, update ZIP and GNOME 50/new-kernel physical acceptance remain
+outstanding. No new update ZIP was produced, published or installed. Current
+state and remaining distribution gates are in `upgrade-26.04-assessment.md`.
+
+## Ubuntu 26.04 update-only validation candidate, 2026-10-04
+
+Continued the existing uncommitted upgrade branch without replacing any prior
+tracked/untracked work. Reused the isolated Linux 7.2.9 build only after checking
+its configuration, signing certificate, all 62 staged module releases and
+signatures, symbol-CRC manifest and unchanged board DTB. The Resolute root has
+the exact selected Companion 1.5.6, Device 2.86, matched fprintd/PAM gts9u2,
+libfprint/TOD gts9u2, camera, sensor and NPU package inputs. Its `dpkg --audit`
+and `apt-get check` pass. This is build/package evidence, not hardware evidence.
+
+Reproduced the resolver blockage on the public 1.3.0 clean-root fixture:
+native APT 2.8 simulation returns 100 with broken configuration ordering for
+`coreutils-from-uutils` and `sudo-common`, even with deferred immediate
+configuration. Proposed library/keybox removals also exceed the current reviewed
+list. No packages were removed, no force options/authentication bypasses were
+added, and the production backend still aborts on an unsuccessful plan.
+CPU-bound emulated simulations were stopped; a separate bounded emulated run
+timed out at 180 seconds. Logs remain under the existing isolated
+`signed-migration-probe` directory. The new reproducible probe script distinguishes
+native diagnostics from the required completed arm64 transaction.
+
+Added update-only packaging to the existing ZIP builder. A regression first
+failed because the option was absent, then passed with no TWRP `META-INF`,
+`vbmeta.img`, `rootfs.img` or filesystem overlay in the update-only output.
+Added the candidate builder to check inputs, build a fresh isolated resolver
+backend and update payload, validate the package, and export with hash checking
+without overwriting any earlier artifact.
+
+Produced `artifacts/ubuntu-26.04-sm-x910-v1.4.0-candidate.zip`, 185,205,284 bytes,
+SHA-256 `4ac11bf93955b040c6f1febedbb315dfceb4bc104366ac6df1443a0f872df0d5`.
+The adjacent validation JSON explicitly refuses installation approval. All
+Android v4 bundle checks pass; the compatible legacy-LZ4 initramfs has 73 ELF
+files with complete dependencies, the expected splash/fsck and a valid size
+budget. Exact installed local-package versions, no duplicate package ownership,
+21 payload hashes, ZIP CRCs and the embedded backend's read-only probe pass.
+The Windows export matches the original Linux artifact's hash. A further check
+extracted all 67 modules from the actual selected Debian packages and verified
+their release and signing certificate. No old tablet modules may be reused
+with this intentionally new ABI/signing certificate.
+
+Focused verification passes 44 system-updater tests, 18 readiness/handoff tests,
+13 migration/root-retention tests and the real ext4 root-slot mount flow in a
+private namespace, preserving the original root and shared-home inode. Boot
+write/rollback fault injection uses synthetic files, not physical partitions.
+Python compilation and diff whitespace checks pass.
+
+This ZIP is a validation artifact, not an installable update. The full frozen
+Noble-to-Resolute transaction, real boot/recovery and GNOME 50/peripheral
+acceptance remain outstanding. The exact official stable-release digest gate
+is unchanged and prevents installing this unpublished migration through the
+bridge. Nothing was published, committed, pushed or deployed; the tablet was
+not accessed, modified, flashed or rebooted. Existing trusted release fixtures
+and build outputs remain intact for recovery/testing.
+
+## Combined Ubuntu 26.04 clean/update build and normal local ZIP path, 2026-10-04
+
+The owner clarified that the validation-only ZIP was insufficient: the same
+file must contain the clean TWRP image and work through the app's ordinary
+local-ZIP action and the GitHub update path. Continued without tablet access,
+commit, push or publication.
+
+An isolated actual coreutils/sudo transition succeeded under the exported
+Resolute APT 3.2 runtime. The earlier `Conf Broken` reports came from APT's
+configuration-order simulation, not the completed dpkg operation. Migration now
+uses a bounded versioned dependency selection and compares exact pinned package
+versions and the reviewed removal set again offline. Named ABI replacements
+must appear in the same plan. Signature/checksum, no-downgrade and no-archive-
+kernel controls remain active. The generated migration metapackage is cached
+under APT's canonical filename too; a failed first full fixture exposed its
+missing cache entry before that correction.
+
+Two complete full package applications reached Resolute with 1,311 upgrades,
+260 new packages and 16 reviewed substitutions, clean dpkg/APT and unchanged
+accounts. Their preservation check correctly rejected activation: tzdata removed
+`/etc/timezone`, and additionally rewrote the localtime symlink representation.
+The generic migration restores the selected timezone representation and the
+removed compatibility file before verification. Rechecking the already inactive
+fixture then found equal protected-state inventories. Other protected-state
+changes still abort. A fresh full transaction is running against the exact final
+ZIP with the compatibility restoration included in its frozen backend.
+
+Extending the real ext4 activation test to an initially read-only filesystem
+reproduced a failure writing `tried`. Device 2.87 fixes it by remounting the
+retained filesystem writable after checking its private store. Trial activation,
+shared-home inode retention and writable home now pass. The real early recovery
+script also restored all four partition-sized images on new loop devices and
+verified their complete readback hashes. Neither test used a tablet partition.
+
+The clean root was built with the existing mmdebstrap hooks from an explicit
+hash-locked package set, with 514 language packages and no ordinary account.
+Editing its running Bash file caused a post-mmdebstrap continuation parse error;
+mmdebstrap itself had completed. Resumed the completed root and refreshed its
+local packages using an immutable Linux source snapshot. Added the snapshot
+helper and recorded the durable instruction in AGENTS.md rather than relying
+on mutable Windows scripts for long jobs.
+
+Companion 1.5.8 extends the normal app ZIP picker: it hashes the complete archive
+in a worker, displays its digest/migration warning, then passes the explicitly
+confirmed digest through the existing polkit updater. The privileged copied ZIP
+must match. A private root-owned authorization record binds ZIP origin, size,
+digest/tag and backend digest; the child validates that record. GitHub still
+requires its exact published stable digest and tag. Unconfirmed local handoff
+retains the previous official-release requirement. Tests reject a wrong local
+digest, mixed GitHub/local origin and changed approval records. The owner did not
+request publishing a test release to bypass the old installed bridge. The
+existing Companion 1.5.5/1.5.7 therefore needs the supplied 1.5.8 application
+package before it can select the unpublished migration normally.
+
+Built `ubuntu-26.04-sm-x910-v1.4.0.zip`, 1,624,800,564 bytes, SHA-256
+`4d4fdd909aae9501b23039c63451b5ce96f7b5f7d5626f1d46b6c053d601fdbb`.
+Its clean image is 5,205,131,264 bytes (4,964 MiB), SHA-256
+`33e87b9c4c4ed0b988ab87133fd83ea87ddae048b2d6a6fa5493468625779c4a`.
+It includes the original TWRP installer and update format 2; updater extraction
+still excludes rootfs.img, META-INF and vbmeta. Selected packages include
+Companion 1.5.8, Device 2.87 and hardware 1.4.0-4. The immutable source tree is
+SHA-256 `dcccecfc0660b3ea0e8a87bc00b442c65625ee93ef076c7567996c0e5f0e51fb`.
+
+The matching kernel remains `7.2.9-dirty` with the previously recorded config,
+certificate and exported-symbol CRC hash. All 62 staged and 67 packaged modules
+match it. The compatible bootstrap is 7,929,784 bytes, SHA-256
+`c2d1c1aa3dc8410d1aae35529451d55f7206ccbcdb7b1ed3a59411bd14756e52`;
+all 73 unique ELF dependency closures, splash/fsck and v4 budget checks pass.
+Boot is `50aa3dfa36b46d9b7fbd4316e2ac67aa5238861a512be6d217c25a82f8f5088c`,
+init_boot `32f4d7d96f439a95c7354c6cd43a30db9ba0596d18b62b83f0129b657da07ad3`,
+vendor_boot `92332a3d028c355c3c52ba4cc304670fa777dfa8560a35e868041995f1e948ed`,
+and dtbo `c17418be08365c03a5ce3a220af734b14ec2e6b03c0cbc1ed9721be6f21d3ef3`.
+
+Static combined-ZIP CRC, root-image digest, all update payload hashes, installer
+contracts, module signing, clean-root dpkg/APT and the embedded read-only probe
+pass. Focused tests pass 44 updater cases, 20 readiness/handoff cases, 16
+migration/root-retention cases, 11 build-input/fixture cases and 3 release-suite
+guards, plus actual ext4 activation/recovery. GTK4/Adwaita normal local confirmation
+passes in WSLg using memory GSettings and the package's compiled schemas. Its
+first attempts exposed absent host GTK namespaces and schema search paths;
+build dependencies and an explicit test schema path resolved those environment
+issues without tablet changes.
+
+Physical Linux 7.2.9/GNOME 50 boot, clean TWRP installation, full update/recovery
+and peripheral acceptance remain pending. The exact final fixture transaction
+subsequently passed against ZIP SHA-256
+`4d4fdd909aae9501b23039c63451b5ce96f7b5f7d5626f1d46b6c053d601fdbb`:
+all 1,571 installed package versions match the frozen plan, 1,577 archive hashes
+are retained, dpkg/APT are clean, protected identity/configuration are unchanged,
+and original-root status and synthetic shared-home data are preserved.
+Its result explicitly says physical boot is unvalidated. Final Windows export
+is hash-checked; no physical validation is inferred from compilation, package
+installation or loop-device recovery. The separately supplied prerequisite
+Companion 1.5.8 is SHA-256
+`eb1e927b92bdc56305a125e9425480d875ca1f454bbd6453f6cbb38c57471559`.

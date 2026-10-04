@@ -6,6 +6,13 @@ Ubuntu 24.04 LTS arm64 for the Samsung Galaxy Tab S9 Ultra Wi-Fi
 (`SM-X910`, `gts9uwifi`), running GNOME 46 on Wayland and upstream Linux
 7.2-rc3.
 
+The `upgrade/ubuntu-26.04-gnome50` branch builds an experimental combined
+Ubuntu 26.04/GNOME 50/Linux 7.2.9 installation/update ZIP. Its physical hardware
+acceptance is separate from the Ubuntu 24.04 table below. An unpublished local
+migration needs Companion 1.5.8 first; see the
+[upgrade assessment](docs/upgrade-26.04-assessment.md) and
+[local ZIP instructions](docs/system-updates.md#trying-the-local-ubuntu-2604-zip).
+
 ## Hardware compatibility
 
 | Component | Status | Summary |
@@ -23,7 +30,7 @@ Ubuntu 24.04 LTS arm64 for the Samsung Galaxy Tab S9 Ultra Wi-Fi
 | Power and volume buttons | ✅ | Power, wake and volume controls |
 | Wi-Fi | ✅ | WCN7850 / ath12k |
 | Bluetooth | ✅ | Controller, audio and S Pen BLE |
-| Speakers and microphones | 🟡 | Stereo routing persisted through an Ubuntu reboot; listening balance and Android parity remain open |
+| Speakers and microphones | ✅ | All four speakers and microphones work fine |
 | Vibration / haptics | ✅ | On-screen keyboard feedback |
 | Motion sensors | ✅ | Rotation, accelerometer, gyroscope and compass |
 | Battery telemetry | ✅ | Charge, voltage, current and temperature |
@@ -57,7 +64,8 @@ Tab Companion provides:
 - remapping for compatible Samsung Book Cover Keyboard keys;
 - adjustable vibration feedback for GNOME's on-screen keyboard and optional notification vibration;
 - fingerprint enrolment with progress, deletion and recognition tests, using the same fingerprints as Ubuntu Settings and login;
-- dual boot to Android, with an optional toggle in quick settings.
+- dual boot to Android, with an optional toggle in quick settings;
+- updater for future builds of the port directly from the app.
 
 The air-pointer concept is inspired by
 [PenMouse S](https://github.com/jojczak/PenMouseS) by Jakub J (`@jojczak`).
@@ -122,6 +130,10 @@ d=$(mktemp -d) && curl -fL https://raw.githubusercontent.com/agcarbajo/ubuntu-ga
 
 Updates preserve your data and settings. See [system updates](docs/system-updates.md)
 for local ZIP installation, repair and troubleshooting.
+
+If an older updater returns to the desktop still showing **Ready to restart**,
+use the command above to load the current updater. To reinstall your recorded
+build, add `--repair` after `"$d/update.py"`. This preserves your data and settings.
 
 ## Known issues
 

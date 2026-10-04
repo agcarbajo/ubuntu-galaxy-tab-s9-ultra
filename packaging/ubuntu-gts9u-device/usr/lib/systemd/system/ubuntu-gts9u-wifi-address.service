@@ -1,0 +1,12 @@
+[Unit]
+Description=Read native Wi-Fi address before NetworkManager starts
+After=systemd-udev-trigger.service
+Before=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/ubuntu-gts9u-wifi-address
+TimeoutStartSec=25
+
+[Install]
+WantedBy=NetworkManager.service

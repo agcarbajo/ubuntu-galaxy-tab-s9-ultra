@@ -15,6 +15,32 @@ base=${UBUNTU_WORKDIR:-/root/ubuntu-gts9u}
 rootfs=${ROOTFS_DIR:-$base/rootfs}
 profile=${GTS9U_PROFILE:-desktop}
 suite=${UBUNTU_SUITE:-noble}
+export UBUNTU_SUITE="$suite"
+case "$suite" in
+	noble)
+		ubuntu_version=24.04
+		camera_package=libcamera-gts9u
+		camera_builder=$repo/scripts/build-camera-packages.sh
+		fingerprint_tod_package=
+		fprintd_version=$(cat "$repo/packaging/fprintd/version")
+		gnome_local_packages='gnome-settings-daemon gnome-settings-daemon-common gir1.2-mutter-14 libmutter-14-0 mutter mutter-common mutter-common-bin'
+		;;
+	resolute)
+		ubuntu_version=26.04
+		camera_package=libcamera0.7
+		camera_builder=$repo/scripts/build-resolute-camera-packages.sh
+		fingerprint_tod_package=libfprint-2-tod1
+		fprintd_version=$(cat "$repo/packaging/fprintd/version-resolute")
+		gnome_local_packages=
+		;;
+	*) echo "unsupported rootfs suite: $suite" >&2; exit 2 ;;
+esac
+buildroot=${BUILDROOT_DIR:-$base/buildroot}
+if [ -f "$buildroot/etc/os-release" ] &&
+   ! grep -qx "VERSION_ID=\"$ubuntu_version\"" "$buildroot/etc/os-release"; then
+	echo "buildroot does not match $suite; use a separate BUILDROOT_DIR" >&2
+	exit 2
+fi
 mirror=${UBUNTU_MIRROR:-http://ports.ubuntu.com/ubuntu-ports}
 hostname=${GTS9U_HOSTNAME:-ubuntu-gts9u}
 username=${GTS9U_USER:-ubuntu}
@@ -118,6 +144,9 @@ gnome-software,gnome-software-plugin-snap
 packages=$(printf '%s' "$base_packages" | tr -d ' \n')
 if [ "$profile" = desktop ]; then
 	packages="$packages,$(printf '%s' "$desktop_packages" | tr -d ' \n')"
+	if [ "$suite" = resolute ]; then
+		packages="$packages,gnome-shell-ubuntu-extensions,gir1.2-mutter-18"
+	fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -235,11 +264,12 @@ chmod +x "$hooks/configure.sh"
 # Local packages: the device integration, plus the three sensor pieces Ubuntu
 # does not ship at all.  All are installed inside the same mmdebstrap
 # invocation, so the rootfs never depends on a manual dpkg run afterwards.
+if [ -z "${LOCAL_DEBS_INPUT_DIR:-}" ]; then
 bash "$repo/scripts/build-companion-package.sh" >/dev/null
 
 # libfprint has no upstream EL721 driver.  Build the full runtime with this
 # board's secure QTEE backend; it replaces Noble's ABI-compatible package.
-fingerprint_stamp=$base/out/packages/.gts9u-libfprint-inputs.sha256
+fingerprint_stamp=$base/out/packages/.gts9u-libfprint-$suite-inputs.sha256
 fingerprint_fingerprint=$(
 	{
 		sha256sum "$repo/scripts/build-libfprint-el721.sh"
@@ -251,6 +281,10 @@ fingerprint_cached=$(cat "$fingerprint_stamp" 2>/dev/null || true)
 fingerprint_missing=0
 ls "$base"/out/packages/libfprint-2-2_*+gts9u*_arm64.deb \
 	>/dev/null 2>&1 || fingerprint_missing=1
+if [ -n "$fingerprint_tod_package" ]; then
+	ls "$base"/out/packages/libfprint-2-tod1_*+gts9u*_arm64.deb \
+		>/dev/null 2>&1 || fingerprint_missing=1
+fi
 if [ "$fingerprint_missing" = 1 ] || \
    [ "$fingerprint_cached" != "$fingerprint_fingerprint" ]; then
 	echo 'EL721 libfprint inputs changed or package is missing; rebuilding it'
@@ -258,6 +292,7 @@ if [ "$fingerprint_missing" = 1 ] || \
 	printf '%s\n' "$fingerprint_fingerprint" > "$fingerprint_stamp"
 fi
 
+if [ "$suite" = noble ]; then
 # Cache the patched GNOME ambient controller by source inputs, not filename.
 power_stamp=$base/out/packages/.gts9u-gnome-power-inputs.sha256
 power_fingerprint=$(sha256sum "$repo/scripts/build-gnome-power-package.sh" \
@@ -283,6 +318,7 @@ if [ "$mutter_missing" = 1 ] || \
     bash "$repo/scripts/build-mutter-package.sh" >/dev/null
     printf '%s\n' "$mutter_fingerprint" > "$mutter_stamp"
 fi
+fi
 
 # The device package embeds the native boot owner and matching signed IRQ
 # module. Build these after libfprint has provided the pinned QTEE dependencies.
@@ -307,9 +343,9 @@ fi
 
 
 # Companion's one-touch named test needs the additive matched-finger signal.
-# Keep the original fprintd/PAM protocol and libfprint matcher unchanged.
-fprintd_stamp=$base/out/packages/.gts9u-fprintd-inputs.sha256
-fprintd_version=$(cat "$repo/packaging/fprintd/version")
+# The paired PAM module skips only gdm-password; gdm-fingerprint and all other
+# services retain the original biometric path and libfprint matcher.
+fprintd_stamp=$base/out/packages/.gts9u-fprintd-$suite-inputs.sha256
 fprintd_fingerprint=$(
 	{
 		sha256sum "$repo/scripts/build-fprintd-matched.sh" \
@@ -342,7 +378,7 @@ fi
 # iio-sensor-proxy deliberately keeps its upstream version, so changing one of
 # our patches used to leave an old .deb silently embedded in a fresh rootfs.
 # Hash every input owned by this repository and rebuild when it changes.
-sensor_stamp=$base/out/packages/.gts9u-sensor-inputs.sha256
+sensor_stamp=$base/out/packages/.gts9u-sensor-$suite-inputs.sha256
 sensor_fingerprint=$(
 	{
 		sha256sum "$repo/scripts/build-sensor-packages.sh"
@@ -361,29 +397,30 @@ if [ "$sensor_missing" = 1 ] || [ "$sensor_cached" != "$sensor_fingerprint" ]; t
 	printf '%s\n' "$sensor_fingerprint" > "$sensor_stamp"
 fi
 
-camera_stamp=$base/out/packages/.gts9u-camera-inputs.sha256
+camera_stamp=$base/out/packages/.gts9u-camera-$suite-inputs.sha256
 camera_fingerprint=$(
 	{
-		sha256sum "$repo/scripts/build-camera-packages.sh"
+		sha256sum "$camera_builder"
 		find "$repo/packaging/libcamera" "$repo/packaging/pipewire" \
 			-type f -print0 | sort -z | xargs -0 sha256sum
 	} | sha256sum | awk '{print $1}'
 )
 camera_cached=$(cat "$camera_stamp" 2>/dev/null || true)
 camera_missing=0
-for pkg in libcamera-gts9u libspa-0.2-libcamera-gts9u; do
+for pkg in "$camera_package" libspa-0.2-libcamera-gts9u; do
 	ls "$base"/out/packages/${pkg}_*.deb >/dev/null 2>&1 || camera_missing=1
 done
 if [ "$camera_missing" = 1 ] || [ "$camera_cached" != "$camera_fingerprint" ]; then
 	echo 'camera package inputs changed or packages are missing; rebuilding them'
-	bash "$repo/scripts/build-camera-packages.sh" >/dev/null
+	BUILDROOT_DIR="$buildroot" DEB_OUT_DIR="$base/out/packages" \
+		bash "$camera_builder" >/dev/null
 	printf '%s\n' "$camera_fingerprint" > "$camera_stamp"
 fi
 
 # Noble lacks fastfetch and this port also carries the camera relay. Hash those
 # inputs so a clean image cannot silently reuse the old manual GStreamer
 # integration from a previous build.
-extra_stamp=$base/out/packages/.gts9u-extra-inputs.sha256
+extra_stamp=$base/out/packages/.gts9u-extra-$suite-inputs.sha256
 extra_fingerprint=$(
 	{
 		sha256sum "$repo/scripts/build-extra-packages.sh"
@@ -407,12 +444,10 @@ stage_debs=$base/out/local-debs
 rm -rf -- "$stage_debs"
 mkdir -p "$stage_debs"
 for pkg in libssc hexagonrpcd iio-sensor-proxy \
-	libfprint-2-2 $fingerprint_firmware_package \
-	libcamera-gts9u libspa-0.2-libcamera-gts9u \
+	libfprint-2-2 $fingerprint_tod_package $fingerprint_firmware_package \
+	$camera_package libspa-0.2-libcamera-gts9u \
 	ubuntu-gts9u-device ubuntu-gts9u-companion fastfetch v4l2-relayd-gts9u \
-    gnome-settings-daemon gnome-settings-daemon-common \
-    gir1.2-mutter-14 libmutter-14-0 mutter mutter-common mutter-common-bin \
-    $npu_package; do
+    $gnome_local_packages $npu_package; do
 	deb=$(ls -t "$base"/out/packages/${pkg}_*.deb 2>/dev/null | head -1 || true)
 	if [ -z "$deb" ]; then
 		echo "missing local package: $pkg" >&2
@@ -426,6 +461,17 @@ done
 # by file mtime: a cached daemon/PAM from different builds can break all of APT.
 cp "$base/out/packages/fprintd_${fprintd_version}_arm64.deb" \
 	"$base/out/packages/libpam-fprintd_${fprintd_version}_arm64.deb" "$stage_debs/"
+else
+	stage_debs=${LOCAL_DEBS_STAGE_DIR:-$base/out/local-debs}
+	prebuilt_options=()
+	if [ "${GTS9U_INCLUDE_NPU:-1}" = 0 ]; then prebuilt_options+=(--without-npu); fi
+	python3 "$repo/scripts/stage-rootfs-package-inputs.py" \
+		--source "$LOCAL_DEBS_INPUT_DIR" --manifest "${LOCAL_DEBS_INPUT_MANIFEST:?set the exact local package hash lock}" \
+		--destination "$stage_debs" --suite "$suite" "${prebuilt_options[@]}"
+	bash "$repo/scripts/check-fprintd-package-pair.sh" \
+		"$stage_debs/fprintd_${fprintd_version}_arm64.deb" \
+		"$stage_debs/libpam-fprintd_${fprintd_version}_arm64.deb"
+fi
 
 cat > "$hooks/local-packages.sh" <<HOOK
 #!/bin/sh
@@ -561,6 +607,10 @@ if [ "${RESUME_ROOTFS:-0}" = 1 ]; then
 	chroot "$rootfs" dpkg --audit
 	chroot "$rootfs" apt-get check
 	echo "resuming completed $profile rootfs: $rootfs"
+	if [ "${REFRESH_ROOTFS_PACKAGES:-0}" = 1 ]; then
+		SYSTEMD_OFFLINE=1 "$hooks/local-packages.sh" "$rootfs"
+		SYSTEMD_OFFLINE=1 "$hooks/chroot-setup.sh" "$rootfs"
+	fi
 else
 	rm -rf -- "$rootfs"
 	mkdir -p "$rootfs" "$base"

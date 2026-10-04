@@ -1,5 +1,30 @@
 # Book Cover Keyboard support and diagnostics
 
+## Caps Lock indicator
+
+On the EF-DX920, Caps Lock itself can stay active while its physical LED goes
+out after a few idle seconds. The opposite visual mismatch can also occur.
+During a reported mismatch, both the physical input device and Tab Companion's
+virtual keyboard exposed `LED_CAPSL=1`, and the pogo driver retained `caps=2`,
+while the owner saw the light off. One manual `event_poll` sent the pending
+three-byte LED header and restored the light for more than five seconds, but
+its subsequent read failed because no input event was queued. A trial kernel
+sent the header alone when Linux changed `LED_CAPSL`. Although that kept the
+light in its final state, the owner found that text keys were lost immediately
+after Caps Lock. The controller logged failed LED writes (`-6`) and repeatedly
+reconnected; the input device disappeared during a timed capture. That trial
+kernel was rolled back. The current driver sends the LED state only with a
+queued accessory event, as Samsung's driver does, so the visual mismatch
+remained open until the later event-header timing change. Comparing the same
+EF-DX920 under Android 16 showed the same V37 controller/application firmware;
+its first event header after Caps Lock still carried the old LED value. Ubuntu
+now retains that old value for exactly one subsequent event header, then sends
+the new value with later queued events. It adds no independent I²C transfer.
+The owner confirmed that the light stays on after a lone Caps Lock press and
+while typing immediately, with no lost letters. The controller reported no
+read retries or reconnections during that validation. The same behavior on
+other cover models has not been measured.
+
 ## EF-DX915: reconnecting cover and missing touchpad
 
 The driver now runs Samsung's application initialization for every recognized

@@ -72,6 +72,11 @@ compiler and signing certificate before reusing them.
 Do not pass complex Bash through PowerShell or Git Bash command strings. Put
 complex logic in a script with LF line endings and execute that script in WSL.
 
+Run long build jobs from an immutable Linux source snapshot. Do not edit a
+Bash script or generated hook while it is executing: Bash can read subsequent
+parts of the changed file after a long-running child exits. Use
+`scripts/snapshot-build-source.py` and retain its source-tree hash.
+
 Use repository build scripts and inspect their inputs first. Never assume a
 library or build dependency is available. Patched userspace packages must be
 built from the exact pinned Ubuntu source and receive a Debian version newer

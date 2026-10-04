@@ -33,5 +33,41 @@ rm -f "${DESTDIR}/usr/lib/udev/hwdb.bin" "${DESTDIR}/lib/udev/hwdb.bin"
 rm -f "${DESTDIR}"/usr/lib/modules/*/modules.builtin.alias.bin
 rm -f "${DESTDIR}"/lib/modules/*/modules.builtin.alias.bin
 
+# The 8 MiB init_boot cannot carry Pango's X11/font stack. The graphical
+# splash uses pre-rendered PNGs; Plymouth's details renderer remains for
+# diagnostics and prompts. This is the same minimal renderer set validated
+# on the tablet, now applied by the normal image builder too.
+rm -f "${DESTDIR}/usr/lib/aarch64-linux-gnu/plymouth/label-pango.so"
+rm -rf "${DESTDIR}/etc/fonts" "${DESTDIR}/usr/share/fonts" \
+	"${DESTDIR}/var/cache/fontconfig"
+for soname in \
+	libX11 libXau libXdmcp libXext libXrender \
+	libbrotlicommon libbrotlidec libbsd libbz2 libcairo \
+	libdatrie libexpat libffi libfontconfig libfreetype \
+	libfribidi libgio-2.0 libglib-2.0 libgmodule-2.0 \
+	libgobject-2.0 libgraphite2 libharfbuzz libmd \
+	libpango-1.0 libpangocairo-1.0 libpangoft2-1.0 \
+	libpixman-1 libthai libxcb libxcb-render libxcb-shm; do
+	rm -f "${DESTDIR}/usr/lib/aarch64-linux-gnu/${soname}.so"*
+done
+
+# Only this theme is selected by default. Retain the details/text fallback
+# themes, but omit other PNG sets that are never displayed on this board.
+rm -rf "${DESTDIR}/usr/share/plymouth/themes/bgrt" \
+	"${DESTDIR}/usr/share/plymouth/themes/spinner"
+
+# The root filesystem is always an internal ext4 partition selected by label.
+# Early DHCP is unused, as are snap's desktop udev rules in this stage.
+rm -f "${DESTDIR}/usr/sbin/dhcpcd" \
+	"${DESTDIR}"/usr/lib/udev/rules.d/70-snap.*
+rm -rf "${DESTDIR}/usr/lib/dhcpcd"
+
+# Build/source artwork and keyboard-layout previews are not read by the
+# animated splash. Regulatory data is only needed after the real root mounts.
+rm -f "${DESTDIR}/usr/share/plymouth/themes/gts9u-ubuntu/ubuntu-logo-source.svg" \
+	"${DESTDIR}/usr/share/plymouth/themes/gts9u-ubuntu/keymap-render.png" \
+	"${DESTDIR}/usr/lib/firmware/regulatory.db" \
+	"${DESTDIR}/usr/lib/firmware/regulatory.db.p7s"
+
 after=$(du -sk "${DESTDIR}" 2>/dev/null | cut -f1)
 echo "gts9u: pruned initramfs from ${before} KiB to ${after} KiB"

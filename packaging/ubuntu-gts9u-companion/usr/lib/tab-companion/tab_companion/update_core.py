@@ -4,18 +4,25 @@ import argparse
 import fcntl
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
 import sys
 import time
+import zipfile
 from pathlib import Path
 
 from . import update_bundle as bundle
+from . import update_policy as policy
 
 STATE = Path("/var/lib/tab-companion-update")
 TRANSACTION = STATE / "transaction"
-MARKER = Path("/system-update")
+# PackageKit clears /system-update even when another updater owns it.
+# systemd also recognizes /etc/system-update; keep the legacy path readable
+# so an already prepared transaction can still be applied or cancelled.
+MARKER = Path("/etc/system-update")
+LEGACY_MARKER = Path("/system-update")
 UNIT = "gts9u-offline-update.service"
 LOCK = "/run/lock/gts9u-boot.lock"
 PROGRESS_JSON = False
@@ -69,7 +76,11 @@ def write_json(path, value):
 
 def status():
     try:
-        return json.loads((STATE / "status.json").read_text())
+        value = json.loads((STATE / "status.json").read_text())
+        if value.get("state") == "ready" and not marker_owned():
+            return {**value, "state": "failed", "error":
+                    "The prepared update lost its restart trigger. Cancel it and prepare the update again."}
+        return value
     except (OSError, ValueError):
         return {"state": "idle"}
 
@@ -84,9 +95,7 @@ def device_check():
         raise ValueError("Updates are only supported on the SM-X910")
     if run(["dpkg", "--print-architecture"], True) != "arm64":
         raise ValueError("Expected arm64 Ubuntu")
-    release = Path("/etc/os-release").read_text()
-    if '\nID=ubuntu\n' not in '\n' + release or 'VERSION_ID="24.04"' not in release:
-        raise ValueError("Only Ubuntu 24.04 is supported")
+    policy.ubuntu_suite()
     if run(["findmnt", "-n", "-o", "LABEL", "/"], True) != "UBTS9U_UFS":
         raise ValueError("The installed root filesystem is not this port's UFS installation")
     # Do not overwrite a saved switch to Android while Linux is still running.
@@ -149,13 +158,15 @@ def owned_directory(path):
 
 
 def marker_owned():
-    return MARKER.is_symlink() and os.readlink(MARKER) == str(TRANSACTION)
+    return any(path.is_symlink() and os.readlink(path) == str(TRANSACTION)
+               for path in (MARKER, LEGACY_MARKER))
 
 
 def unmark():
-    if marker_owned():
-        MARKER.unlink()
-        os.sync()
+    for path in (MARKER, LEGACY_MARKER):
+        if path.is_symlink() and os.readlink(path) == str(TRANSACTION):
+            path.unlink()
+    os.sync()
 
 
 def cache_local_packages(transaction, plan):
@@ -208,7 +219,7 @@ def install_runner():
     package = TRANSACTION / "tab_companion"
     package.mkdir()
     (package / "__init__.py").write_text("")
-    for name in ("update_core.py", "update_bundle.py"):
+    for name in ("update_core.py", "update_bundle.py", "update_policy.py"):
         # get_source also works when the legacy bootstrap runs as a zipapp.
         module = sys.modules[__package__ + "." + name[:-3]]
         source = module.__loader__.get_source(module.__name__)
@@ -240,11 +251,98 @@ StandardError=journal+console
     run(["systemctl", "daemon-reload"])
 
 
+def handoff_release_backend(archive, manifest, info=None, trusted_local_sha256=None):
+    """Execute a published backend or one explicitly trusted by its local SHA-256.
+
+    Metadata is a contract, not proof of publisher identity or migration safety.
+    GitHub downloads retain the exact stable tag, size and digest requirement.
+    Local approval applies only to the complete ZIP confirmed before staging.
+    No APT, boot or installed application change precedes this handoff.
+    """
+    digest = bundle.sha256(archive)
+    local = trusted_local_sha256 is not None
+    if local:
+        if info is not None or trusted_local_sha256 != digest:
+            raise ValueError("The local ZIP differs from the explicitly trusted SHA-256")
+    else:
+        info = info or bundle.release(manifest["tag"])
+        if (not info.get("supports_updates") or info.get("tag") != manifest["tag"]
+                or info.get("size") != archive.stat().st_size or info.get("sha256") != digest):
+            raise ValueError("Release migration backends require the exact official stable ZIP and its published digest")
+    if os.environ.get("GTS9U_UPDATER_HANDOFF") == digest:
+        raise ValueError("The release backend did not implement this migration; refusing a recursive handoff")
+    with zipfile.ZipFile(archive) as source:
+        data = source.read("UPDATE/updater.pyz")
+    import hashlib
+    entry = manifest["files"]["UPDATE/updater.pyz"]
+    if len(data) != entry["size"] or hashlib.sha256(data).hexdigest() != entry["sha256"]:
+        raise ValueError("Release backend checksum mismatch")
+    # These immutable public inputs live outside transaction: the new backend
+    # can replace staging without deleting the ZIP it is about to read.
+    handoffs = STATE / "handoff"
+    owned_directory(handoffs)
+    os.chmod(handoffs, 0o700)
+    directory = handoffs / str(time.time_ns())
+    directory.mkdir(mode=0o700)
+    backend = directory / "updater.pyz"
+    with backend.open("xb") as stream:
+        stream.write(data)
+    os.chmod(backend, 0o600)
+    with zipfile.ZipFile(backend) as program:
+        if "__main__.py" not in program.namelist():
+            raise ValueError("Release backend is not a Python zip application")
+    source_zip = directory / "release.zip"
+    shutil.copyfile(archive, source_zip)
+    os.chmod(source_zip, 0o600)
+    if bundle.sha256(source_zip) != digest:
+        raise ValueError("Release ZIP changed while being retained for migration")
+    approval = directory / "authorization.json"
+    write_json(approval, {"origin": "local-confirmed" if local else "github-verified",
+        "sha256": digest, "size": source_zip.stat().st_size, "tag": manifest["tag"],
+        "backend_sha256": entry["sha256"]})
+    os.chmod(approval, 0o600)
+    os.sync()
+    emit("Starting the verified release migration backend…")
+    os.environ["GTS9U_UPDATER_HANDOFF"] = digest
+    # boot_lock is CLOEXEC: the new backend acquires its own lock and performs
+    # its own model/power/source/backup checks. Keep the UI's progress protocol.
+    command = ["/usr/bin/python3", str(backend), "--zip", str(source_zip)]
+    if PROGRESS_JSON:
+        command.append("--progress-json")
+    os.execv(command[0], command)
+    raise RuntimeError("Release backend handoff did not replace the process")
+
+
+def verified_handoff(archive, manifest, program):
+    digest = bundle.sha256(archive)
+    if (os.environ.get("GTS9U_UPDATER_HANDOFF") != digest or archive.parent != program.parent
+            or not archive.parent.is_relative_to(STATE / "handoff")):
+        return False
+    parent = archive.parent.lstat()
+    if not stat.S_ISDIR(parent.st_mode) or parent.st_uid != 0 or stat.S_IMODE(parent.st_mode) != 0o700:
+        raise ValueError("Unsafe release authorization directory")
+    approval = archive.parent / "authorization.json"
+    if not approval.exists():
+        return False
+    fd = os.open(approval, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as source:
+        info = os.fstat(source.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or stat.S_IMODE(info.st_mode) != 0o600 or info.st_size > 65536:
+            raise ValueError("Unsafe release authorization record")
+        value = json.loads(source.read(65537))
+    if (value.get("origin") not in ("local-confirmed", "github-verified") or value.get("sha256") != digest
+            or value.get("size") != archive.stat().st_size or value.get("tag") != manifest["tag"]
+            or value.get("backend_sha256") != bundle.sha256(program)
+            or value.get("backend_sha256") != manifest["files"]["UPDATE/updater.pyz"]["sha256"]):
+        raise ValueError("Release authorization no longer matches the ZIP and backend")
+    return True
+
+
 def prepare(args):
     progress("preflight")
     device_check()
     power_check()
-    if MARKER.exists() or MARKER.is_symlink() or status()["state"] in ("ready", "applying"):
+    if any(path.exists() or path.is_symlink() for path in (MARKER, LEGACY_MARKER)) or status()["state"] in ("ready", "applying"):
         raise ValueError("An update is already pending. Cancel it first.")
     if TRANSACTION.exists():
         if (TRANSACTION / "backup/complete").exists():
@@ -302,12 +400,19 @@ def prepare(args):
                     emit(f"Download: {done * 100 // total}%")
             bundle.download(info, archive, downloaded)
         progress("verify")
+        trusted_digest = getattr(args, "trust_local_sha256", None)
+        if trusted_digest is not None and bundle.sha256(archive) != trusted_digest:
+            raise ValueError("The selected ZIP changed after its local trust confirmation")
         manifest = bundle.inspect(archive)
+        policy.check_installed(manifest, allow_handoff=True)
         payload_size = sum(f["size"] for f in manifest["files"].values())
         if shutil.disk_usage(STATE).free < payload_size * 3 + 3 * 1024**3:
             raise ValueError("Not enough free space for packages, module backup and APT dependencies")
         if info and manifest["tag"] != info["tag"]:
             raise ValueError("The payload version does not match the GitHub release")
+        if manifest.get("update_kind") == "distribution":
+            handoff_release_backend(archive, manifest, info,
+                trusted_local_sha256=getattr(args, "trust_local_sha256", None))
         emit("Verifying and extracting the update payload…")
         manifest = bundle.extract(archive, TRANSACTION)
         validate_packages(TRANSACTION, manifest)
@@ -330,13 +435,13 @@ def prepare(args):
         (TRANSACTION / "dpkg.sha256").write_text(bundle.sha256("/var/lib/dpkg/status"))
         install_runner()
         archive.unlink()
-        set_status("ready", version=manifest["version"], tag=manifest["tag"])
-        os.sync()
         MARKER.symlink_to(TRANSACTION)
         os.sync()
+        set_status("ready", version=manifest["version"], tag=manifest["tag"])
         progress("ready", 1, 1)
         emit("Update prepared. Save your work and restart to install it.")
     except Exception as error:
+        unmark()
         set_status("failed", error=str(error))
         raise
 
@@ -382,6 +487,7 @@ def apply_offline():
         if previous["state"] != "applying" and bundle.sha256("/var/lib/dpkg/status") != (TRANSACTION / "dpkg.sha256").read_text():
             raise ValueError("Packages changed after preparation. Prepare the update again.")
         plan = json.loads((TRANSACTION / "plan.json").read_text())
+        policy.check_installed(plan)
         for name, entry in plan["files"].items():
             if bundle.sha256(TRANSACTION / name) != entry["sha256"]:
                 raise ValueError("Staged payload changed: " + name)
@@ -466,16 +572,24 @@ def main(argv=None):
     global PROGRESS_JSON
     parser = argparse.ArgumentParser(description="Update the SM-X910 Ubuntu port without replacing user data")
     parser.add_argument("--progress-json", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--trust-local-sha256", metavar="SHA256")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--latest", action="store_true")
     group.add_argument("--zip", metavar="FILE")
     group.add_argument("--repair", action="store_true", help=argparse.SUPPRESS)
     group.add_argument("--check", action="store_true")
     group.add_argument("--status", action="store_true")
+    group.add_argument("--capabilities", action="store_true")
     group.add_argument("--cancel", action="store_true")
     group.add_argument("--apply-offline", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
+    if args.trust_local_sha256 is not None and (not args.zip or not re.fullmatch(
+            r"[a-f0-9]{64}", args.trust_local_sha256)):
+        parser.error("--trust-local-sha256 requires --zip and its exact lowercase SHA-256")
     PROGRESS_JSON = args.progress_json
+    if args.capabilities:
+        print(json.dumps(policy.capabilities()))
+        return
     if args.check:
         print(json.dumps({"current": bundle.current(), "latest": bundle.release()}))
         return

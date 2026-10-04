@@ -8,8 +8,31 @@ import re
 import shutil
 import subprocess
 import tempfile
+import tarfile
 import zipapp
 from pathlib import Path
+
+
+def validate_package_ownership(debs):
+    """Reject overlapping files before dpkg can encounter them on a tablet."""
+    owners = {}
+    for deb in sorted(debs):
+        with subprocess.Popen(["dpkg-deb", "--fsys-tarfile", str(deb)], stdout=subprocess.PIPE) as process:
+            with tarfile.open(fileobj=process.stdout, mode="r|") as archive:
+                for member in archive:
+                    if member.isdir():
+                        continue
+                    name = member.name.removeprefix("./")
+                    previous = owners.get(name)
+                    if previous is not None:
+                        # Drain the producer before raising, avoiding an orphan
+                        # dpkg-deb process blocked on a full pipe.
+                        process.stdout.read()
+                        process.wait()
+                        raise ValueError(f"Overlapping update file {name}: {previous.name} and {deb.name}")
+                    owners[name] = deb
+            if process.wait() != 0:
+                raise ValueError("Cannot inspect update package: " + deb.name)
 
 
 def main():
@@ -17,29 +40,48 @@ def main():
     p.add_argument("--base", type=Path, required=True)
     p.add_argument("--version", required=True)
     p.add_argument("--bootstrap", type=Path, required=True)
+    p.add_argument("--update-format", type=int, choices=(1, 2), default=1)
+    p.add_argument("--suite", choices=("noble", "resolute"), default="noble")
+    p.add_argument("--migration-backend", type=Path)
+    p.add_argument("--rootfs", type=Path)
+    p.add_argument("--output", type=Path)
+    p.add_argument("--hardware-revision", type=int, default=2)
+    p.add_argument("--local-debs", type=Path)
     a = p.parse_args()
     if not re.fullmatch(r"[0-9][A-Za-z0-9.+~]*", a.version):
         p.error("version must be a Debian-compatible release number without a leading v")
     repo = Path(__file__).resolve().parents[1]
-    rootfs = a.base / "rootfs"
+    rootfs = a.rootfs or a.base / "rootfs"
     os_release = (rootfs / "etc/os-release").read_text()
+    expected_version = "24.04" if a.suite == "noble" else "26.04"
     if not re.search(r'^ID=ubuntu$', os_release, re.M) or not re.search(
-            r'^VERSION_ID="24\.04"$', os_release, re.M):
-        raise SystemExit("Refusing update payload: this builder only supports Ubuntu 24.04/Noble")
+            r'^VERSION_ID="' + re.escape(expected_version) + '"$', os_release, re.M):
+        raise SystemExit("Refusing update payload: this builder only supports Ubuntu 24.04/Noble by default; rootfs does not match the selected suite")
+    if a.suite == "resolute" and a.update_format != 2:
+        raise SystemExit("Resolute requires update format 2 and the published 1.3.0 bridge")
+    if a.migration_backend and (a.suite != "resolute" or a.update_format != 2
+            or not a.migration_backend.is_file() or a.migration_backend.stat().st_size > 32 * 1024**2):
+        raise SystemExit("Invalid release-specific migration backend")
     sources = (rootfs / "etc/apt/sources.list.d/ubuntu.sources").read_text()
-    if not re.search(r'^Suites: noble noble-updates noble-backports$', sources, re.M) or not re.search(
-            r'^Suites: noble-security$', sources, re.M):
-        raise SystemExit("Refusing update payload: APT sources are not the expected Noble pockets")
-    out = a.base / "out/update-payload"
+    expected_suites = a.suite + " " + a.suite + "-updates " + a.suite + "-backports"
+    if not re.search(r'^Suites: ' + re.escape(expected_suites) + '$', sources, re.M) or not re.search(
+            r'^Suites: ' + re.escape(a.suite) + '-security$', sources, re.M):
+        raise SystemExit("Refusing update payload: APT sources are not the expected suite pockets")
+    if a.hardware_revision < 1:
+        p.error("hardware revision must be positive")
+    out = a.output or a.base / "out/update-payload"
+    if a.output and out.exists():
+        p.error("choose a new explicit payload output directory")
     if out.exists():
         shutil.rmtree(out)
     debs = out / "debs"
     debs.mkdir(parents=True)
     kernel = a.base / "out/kernel-gts9uwifi"
     kernel_release = (kernel / "kernel.release").read_text().strip()
+    hardware_version = a.version + "-" + str(a.hardware_revision)
     # local-debs is the exact selection installed in this build, not a directory
     # of stale packages from previous releases.
-    for source in (a.base / "out/local-debs").glob("*.deb"):
+    for source in (a.local_debs or a.base / "out/local-debs").glob("*.deb"):
         fields = subprocess.check_output(["dpkg-deb", "-f", str(source), "Package", "Version"], text=True)
         values = dict(line.split(": ", 1) for line in fields.splitlines())
         installed = subprocess.check_output(["chroot", str(rootfs), "dpkg-query", "-W",
@@ -70,35 +112,48 @@ def main():
         control = stage / "DEBIAN"
         control.mkdir()
         (control / "control").write_text(
-            "Package: ubuntu-gts9u-hardware\nVersion: " + a.version +
+            "Package: ubuntu-gts9u-hardware\nVersion: " + hardware_version +
             "\nArchitecture: arm64\nMaintainer: Ubuntu gts9uwifi port contributors <noreply@example.invalid>\n"
             "Description: Firmware, modules and boot files matching the SM-X910 release\n")
         (control / "conffiles").write_text("".join(
             "/" + f.relative_to(stage).as_posix() + "\n" for f in sorted((stage / "etc").rglob("*"))
             if f.is_file() and not f.is_symlink()))
-        # The SPSS module is owned by ubuntu-gts9u-device, never duplicate it.
-        for file in (stage / "usr/lib/modules").rglob("qcom_spss_irq.ko"):
-            file.unlink()
+        # These signed board modules belong to ubuntu-gts9u-device. Duplicating
+        # either makes dpkg reject a real update even when the bytes match.
+        for name in ("qcom_spss_irq.ko", "tun.ko"):
+            for file in (stage / "usr/lib/modules").rglob(name):
+                file.unlink()
         for file in sorted(stage.rglob("*"), reverse=True):
             os.utime(file, (0, 0), follow_symlinks=False)
         os.utime(stage, (0, 0))
         subprocess.run(["dpkg-deb", "--root-owner-group", "--build", str(stage),
-                        str(debs / ("ubuntu-gts9u-hardware_" + a.version + "_arm64.deb"))], check=True)
+                        str(debs / ("ubuntu-gts9u-hardware_" + hardware_version + "_arm64.deb"))], check=True)
+    validate_package_ownership(debs.glob("*.deb"))
     identity = {"device": "gts9uwifi", "version": a.version, "tag": "v" + a.version,
                 "kernel_release": kernel_release}
     (rootfs / "usr/lib/gts9u-release.json").write_text(json.dumps(identity) + "\n")
     # Generated from the same rootfs input list; do not copy dpkg's database or
     # reinstall every application the image happened to pull in as a dependency.
     required = (rootfs / "usr/lib/gts9u-required-packages.txt").read_text().split()
-    (out / "metadata.json").write_text(json.dumps({**identity, "format": 1,
-        "architecture": "arm64", "suite": "noble", "apt_packages": required}, indent=2) + "\n")
+    metadata = {**identity, "format": a.update_format,
+        "architecture": "arm64", "suite": a.suite, "apt_packages": required}
+    if a.update_format == 2:
+        metadata.update(minimum_updater_protocol=2, minimum_port_version="1.3.0",
+                        source_suites=[a.suite], update_kind="port", data_policy="preserve")
+    if a.migration_backend:
+        shutil.copyfile(a.migration_backend, out / "updater.pyz")
+        metadata.update(source_suites=["noble", "resolute"], update_kind="distribution",
+            backend_file="UPDATE/updater.pyz", backend_entry_protocol=1,
+            backend_strategy="official-release-backend-v1", recovery="full-system-root-v1",
+            minimum_local_updater_version="1.5.8")
+    (out / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
     with tempfile.TemporaryDirectory() as tmp:
         app = Path(tmp)
         package = app / "tab_companion"
         package.mkdir()
         (package / "__init__.py").write_text("")
         source = repo / "packaging/ubuntu-gts9u-companion/usr/lib/tab-companion/tab_companion"
-        for name in ("update_core.py", "update_bundle.py"):
+        for name in ("update_core.py", "update_bundle.py", "update_policy.py"):
             shutil.copyfile(source / name, package / name)
         (app / "__main__.py").write_text(
             "from tab_companion.update_core import main\n"

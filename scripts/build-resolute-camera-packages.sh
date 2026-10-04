@@ -7,7 +7,7 @@ repo=$(cd "$(dirname "$0")/.." && pwd)
 base=${UBUNTU_WORKDIR:-/root/ubuntu-gts9u-2604}
 buildroot=${BUILDROOT_DIR:-$base/resolute-probe}
 out=${DEB_OUT_DIR:-$base/out/camera-resolute}
-camver=0.7.2+53.g62d4bfc-gts9u10
+camver=0.7.2+53.g62d4bfc-gts9u11
 spaver=1.6.2-1ubuntu1.2+gts9u1
 cam_stage=$buildroot/build/stage-libcamera
 spa_stage=$buildroot/build/stage-pipewire-camera
@@ -18,6 +18,11 @@ grep -qx 'VERSION_ID="26.04"' "$buildroot/etc/os-release" || {
 }
 test "$(chroot "$buildroot" dpkg --print-architecture)" = arm64
 mkdir -p "$out" "$buildroot/build" "$base/cache"
+if [ -L "$buildroot/etc/resolv.conf" ]; then
+    rm -f "$buildroot/etc/resolv.conf"
+fi
+cp /etc/resolv.conf "$buildroot/etc/resolv.conf"
+chroot "$buildroot" apt-get update
 
 if [ "${REUSE_LIBCAMERA_STAGE:-0}" != 1 ]; then
     chroot "$buildroot" /bin/bash -ec '
@@ -123,8 +128,8 @@ Priority: optional
 Maintainer: Ubuntu gts9uwifi port contributors <noreply@example.invalid>
 Depends: libc6, libstdc++6, libgcc-s1, libgnutls30t64, libudev1, libyaml-0-2, libegl1, libgles2, libtiff6, libevent-2.1-7t64, libevent-pthreads-2.1-7t64, libdw1t64
 Provides: libcamera-gts9u (= $camver), libcamera-ipa (= $camver), libcamera-tools (= $camver), gstreamer1.0-libcamera (= $camver)
-Conflicts: libcamera-ipa, libcamera-tools, libcamera-dev, gstreamer1.0-libcamera
-Replaces: libcamera-ipa, libcamera-tools, libcamera-dev, gstreamer1.0-libcamera
+Conflicts: libcamera-gts9u, libcamera-ipa, libcamera-tools, libcamera-dev, gstreamer1.0-libcamera
+Replaces: libcamera-gts9u, libcamera-ipa, libcamera-tools, libcamera-dev, gstreamer1.0-libcamera
 Description: SM-X910 libcamera 0.7.2 with simple software ISP and GPU backend"
 pack "$spa_stage" libspa-0.2-libcamera-gts9u "$spaver" "Package: libspa-0.2-libcamera-gts9u
 Version: $spaver

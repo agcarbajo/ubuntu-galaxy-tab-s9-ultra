@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
 """Reject a mislabeled cross-release payload before touching staged files."""
+import os
 import subprocess
 import sys
 import tempfile
@@ -13,6 +14,16 @@ BUILDER = REPO / "scripts/build-update-payload.py"
 
 
 class ReleaseSuiteGuardTests(unittest.TestCase):
+    def test_resolute_release_requires_the_migration_backend_before_any_build(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            result = subprocess.run(['bash', str(REPO / 'scripts/build-release.sh')],
+                env={**os.environ, 'UBUNTU_WORKDIR': str(base), 'UBUNTU_SUITE': 'resolute',
+                     'MIGRATION_BACKEND': ''}, text=True, capture_output=True)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn('migration backend', result.stderr)
+            self.assertEqual(list(base.iterdir()), [])
+
     def test_rejects_resolute_without_replacing_existing_payload(self):
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary)

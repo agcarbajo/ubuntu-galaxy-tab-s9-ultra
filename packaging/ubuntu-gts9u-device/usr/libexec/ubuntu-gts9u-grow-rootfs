@@ -18,6 +18,7 @@ ufs_label=UBTS9U_UFS
 sd_label=UBTS9U_ROOT
 
 root_dev=$(findmnt -no SOURCE /)
+root_dev=${root_dev%%\[*}
 found=$(blkid -o value -s LABEL "$root_dev" 2>/dev/null || echo '')
 
 grow_filesystem() {

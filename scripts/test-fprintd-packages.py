@@ -46,14 +46,21 @@ class PackageTests(unittest.TestCase):
                                  str(DAEMON), str(ORIGINAL)], capture_output=True)
         self.assertNotEqual(result.returncode, 0)
 
-    def test_pam_payload_unchanged(self):
-        # Includes module bytes, PAM profile, manpages, modes and symlinks.
-        self.assertEqual(archive(PAM, "--fsys-tarfile"), archive(ORIGINAL, "--fsys-tarfile"))
+    def test_pam_payload_change_is_limited_to_module_and_patch(self):
+        old, new = archive(ORIGINAL, "--fsys-tarfile"), archive(PAM, "--fsys-tarfile")
+        module = "./usr/lib/aarch64-linux-gnu/security/pam_fprintd.so"
+        patch = "./usr/share/doc/libpam-fprintd/0002-gdm-password-bypass-fingerprint.patch"
+        self.assertNotEqual(old.pop(module), new.pop(module))
+        self.assertIn(b'gdm-password', archive(PAM, "--fsys-tarfile")[module][-1])
+        self.assertIn(b'PAM_IGNORE', new.pop(patch)[-1])
+        self.assertEqual(old, new)
 
     def test_maintainer_scripts_unchanged(self):
         old, new = archive(ORIGINAL, "--ctrl-tarfile"), archive(PAM, "--ctrl-tarfile")
         old.pop("./control")
         new.pop("./control")
+        old.pop("./md5sums")
+        new.pop("./md5sums")
         self.assertEqual(old, new)
 
     def apt_check(self, daemon_version, pam):

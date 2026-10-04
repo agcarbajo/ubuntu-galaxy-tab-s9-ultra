@@ -65,7 +65,8 @@ def main():
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         update.device_check()
         update.power_check()
-        require(not os.path.lexists('/system-update'), 'A system update is already pending')
+        require(not any(os.path.lexists(path) for path in ('/system-update', '/etc/system-update')),
+                'A system update is already pending')
         require(update.status().get('state') in ('idle', 'complete'), 'Resolve the existing update state first')
         devices = update.partitions()
         candidate = directory / 'boot.img'

@@ -1,0 +1,11 @@
+[Unit]
+Description=Migrate Tailscale from proxy-only mode after TUN becomes available
+After=tailscaled.service
+ConditionPathExists=/etc/default/tailscaled
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh /usr/libexec/ubuntu-gts9u-tailscale-tun
+
+[Install]
+WantedBy=multi-user.target

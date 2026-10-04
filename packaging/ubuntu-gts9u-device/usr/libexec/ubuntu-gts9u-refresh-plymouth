@@ -1,0 +1,7 @@
+#!/bin/sh
+# The panel becomes usable only after the platform recovery. Plymouth may
+# have drawn to a dead DRM device earlier, so ask it to repaint at this point.
+set -eu
+if /usr/bin/plymouth --ping; then
+	/usr/bin/plymouth reload
+fi

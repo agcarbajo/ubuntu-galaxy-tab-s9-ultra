@@ -1,5 +1,10 @@
 # SPDX-License-Identifier: MIT
 ES = {
+    "This ZIP upgrades the Ubuntu release. The previous system root is retained for recovery.": "Este ZIP actualiza la versión de Ubuntu. La raíz del sistema anterior se conserva para recuperación.",
+    "Check for updates weekly": "Buscar actualizaciones cada semana",
+    "Notify me when a new build is available.": "Avisarme cuando haya una nueva versión disponible.",
+    "Update available": "Actualización disponible",
+    "Build {version} is available. Open Tab Companion to review it.": "La versión {version} está disponible. Abre Tab Companion para consultarla.",
     "No compatible update published": "No hay una actualización compatible publicada",
     "The published ZIP is an older installer, not a safe update for this tablet.": "El ZIP publicado es un instalador antiguo, no una actualización segura para esta tablet.",
     "Your build is newer": "Tu build es más reciente",

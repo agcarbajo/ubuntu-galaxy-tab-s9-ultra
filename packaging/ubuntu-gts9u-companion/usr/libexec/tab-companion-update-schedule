@@ -1,0 +1,5 @@
+#!/bin/sh
+# Runs as the desktop user; the preference is checked again by the app.
+set -e
+systemctl --user daemon-reload
+systemctl --user start tab-companion-update-check.timer tab-companion-update-check.service

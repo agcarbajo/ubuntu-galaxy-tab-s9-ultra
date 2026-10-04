@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+PREREQ=""
+case "${1:-}" in
+    prereqs) echo "$PREREQ"; exit 0 ;;
+esac
+. /usr/share/initramfs-tools/hook-functions
+copy_exec /usr/sbin/blockdev /usr/sbin/blockdev

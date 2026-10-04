@@ -18,7 +18,7 @@ from tab_companion import update_page
 update_page._ = lambda text: text
 
 Adw.init()
-with patch.object(update_page.bundle, "current", return_value={}), patch.object(
+with patch.object(update_page.Gio.Subprocess, "new"), patch.object(update_page.bundle, "current", return_value={}), patch.object(
         update_page, "status", return_value={"state": "idle"}):
     window = Adw.Window(title="Tab Companion — update preview", default_width=760, default_height=740)
     page = update_page.UpdatePage(window)
@@ -61,12 +61,35 @@ with patch.object(update_page.bundle, "current", return_value={}), patch.object(
     with patch.object(page, "_confirm") as confirm:
         page._repair_result("v1.0.0", None)
         confirm.assert_called_once_with(["--repair"], "v1.0.0")
+    with patch.object(page, "_confirm") as confirm:
+        page._local_verified('/tmp/trusted-fixture.zip', {'update_kind': 'distribution'}, 'a' * 64, None)
+        args, label = confirm.call_args.args
+        assert args == ['--zip', '/tmp/trusted-fixture.zip', '--trust-local-sha256', 'a' * 64]
+        assert 'SHA-256: ' + 'a' * 64 in label and 'upgrades the Ubuntu release' in label
+        confirm.reset_mock()
+        page._local_verified('/tmp/trusted-fixture.zip', None, None, 'invalid fixture')
+        confirm.assert_not_called()
     page._checked({"tag": "v1.0.0", "supports_updates": False}, None)
     assert not page.install.get_visible()
     page._checked({"tag": "v9.9.9", "supports_updates": True}, None)
     assert page.install.get_sensitive()
     page._checked(None, "Offline test")
     assert not page.install.get_sensitive()
+    with patch.object(update_page.bundle, "current", return_value={"tag":"v1.2.0", "version":"1.2.0"}), \
+         patch.object(update_page.threading, "Thread"):
+        current = {"tag":"v1.2.0", "supports_updates":True, "notes":"## Installed\n**Old fix**"}
+        page._checked(current, None)
+        assert not page.notes.get_visible()
+        assert "Old fix" in page.installed_notes.get_text()
+        newer = {"tag":"v1.3.0", "supports_updates":True, "notes":"## Update\n**New fix**"}
+        page._checked(newer, None)
+        assert page.notes.get_visible()
+        assert "New fix" in page.notes_text.get_text()
+        assert "New fix" not in page.installed_notes.get_text()
+        assert "Old fix" in page.installed_notes.get_text()
+        page._checked(None, "Offline")
+        assert not page.notes.get_visible()
+        assert "Old fix" in page.installed_notes.get_text()
     page._line('{"event":"progress","stage":"download","completed":52428800,"total":104857600}')
     assert page.progress_bar.get_fraction() == 0.5
     assert page.progress_bar.get_text() == "50%"
@@ -83,6 +106,23 @@ with patch.object(update_page.bundle, "current", return_value={}), patch.object(
         assert page.restart.get_visible() and not page.local.get_sensitive()
     page._finished(False)
     assert page.details.get_expanded()
+    from tab_companion import window as window_module
+    from types import SimpleNamespace
+    window.hardware = SimpleNamespace(state=SimpleNamespace(
+        pen_state="nearby", pen_orientation="tip-left", pen_battery=70,
+        keyboard_model="EF-DX920", remapping_available=True,
+        button_actions_available=True, haptics_available=True))
+    with patch.object(window_module.Adw, "AboutWindow") as about, \
+         patch.object(window_module, "add_keyboard_diagnostics"), \
+         patch.object(window_module.system_summary, "rows", return_value=[
+             ("Port version", "v1.2.0"), ("Kernel", "7.2"), ("Ubuntu", "Ubuntu 24.04"),
+             ("Processor", "SM8550"), ("RAM", "12 GiB"), ("Uptime", "1 h")]):
+        window_module.CompanionWindow._show_about(window, None)
+        comments = about.call_args.kwargs["comments"]
+        for value in ("v1.2.0", "7.2", "Ubuntu 24.04", "SM8550", "12 GiB", "1 h"):
+            assert value in comments
+        assert "<b>" in comments
+        about.return_value.present.assert_called_once()
     window.present()
     loop = GLib.MainLoop()
     def finish():

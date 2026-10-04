@@ -1,8 +1,231 @@
 # Ubuntu 26.04 / GNOME 50 upgrade assessment
 
-Status: **blocked for distribution**, 2026-09-26. No 26.04 ZIP is approved for
-Tab Companion or TWRP. This assessment uses the `upgrade/ubuntu-26.04-gnome50`
-branch; the virtualisation worktree and branch are independent.
+Status: **combined clean-install/update trial ZIP built and exact-ZIP inactive-root
+transaction passed**, 2026-10-04. Physical boot and hardware acceptance are
+not established. This assessment uses `upgrade/ubuntu-26.04-gnome50`; the
+virtualisation worktree and branch are independent.
+
+## Combined trial build and local ZIP support, 2026-10-04
+
+The current combined file is `ubuntu-26.04-sm-x910-v1.4.0.zip`, SHA-256
+`4d4fdd909aae9501b23039c63451b5ce96f7b5f7d5626f1d46b6c053d601fdbb`.
+Unlike the earlier validation-only candidate, it includes the normal TWRP
+installer and a clean ext4 `rootfs.img`, together with format-2 update packages
+and the release-specific migration backend. The clean filesystem is
+5,205,131,264 bytes (4,964 MiB), SHA-256
+`33e87b9c4c4ed0b988ab87133fd83ea87ddae048b2d6a6fa5493468625779c4a`.
+It was built with the repository's mmdebstrap customization hooks, 514 language
+packages, Device 2.87, Companion 1.5.8 and the exact locked local package set.
+The final ZIP is 1,624,800,564 bytes; its adjacent validation JSON binds the full
+migration result to this exact SHA-256. The prerequisite Companion package is
+SHA-256 `eb1e927b92bdc56305a125e9425480d875ca1f454bbd6453f6cbb38c57471559`.
+No ordinary account, personal configuration or build SSH host keys enter the
+shipping image.
+
+The APT configuration-order simulation failure was reproduced independently.
+An actual arm64 coreutils/sudo transaction in a new Noble fixture succeeds,
+including clean dpkg/APT and protected-identity checks. The release engine now
+freezes APT's bounded, versioned dependency selection separately from dpkg's
+configuration-order simulation. Both preparation and offline application compare
+the complete selected package/version/removal sets. Ubuntu archive signatures,
+package checksums, downgrade rejection and the archive-kernel protection remain
+active. Generated migration metapackages are placed in APT's canonical offline
+cache too. The nine additional ABI/keybox replacements have named replacements
+required in the same plan, not an unrestricted removal exception.
+
+Two complete package transactions reached Resolute with 1,311 upgrades, 260 new
+packages and 16 reviewed substitutions, but their preservation gate correctly
+rejected activation: Resolute's tzdata removes `/etc/timezone` and rewrites
+`/etc/localtime`. The engine restores the selected timezone representation and
+the removed compatibility file before checking preservation. Rechecking the
+inactive fixture then reports equal protected paths and account identities;
+other changed protected state still aborts. The final exact-ZIP transaction was
+repeated with this fix rather than treating the earlier rejected runs as
+successful installations. The exact final ZIP's fresh full transaction then
+passed: all 1,571 installed versions match the frozen plan, 1,577 cached archives
+are hash-verified, all 16 reviewed substitutions are complete, dpkg/APT are clean,
+protected identities/configuration match, and the original root/status database
+and synthetic shared-home data remain unchanged. The result explicitly records
+`physical_boot_validated: false`.
+
+The real ext4 trial activation test was extended to start with a read-only
+root. It failed writing the trial marker before the fix. Device 2.87's hook now
+remounts the retained filesystem writable after checking its private store.
+Trial activation, retained original root, shared-home inode identity and writable
+home then pass. The actual early rollback script also restored all four boot
+images with complete readback checks on newly created loop devices. These are
+Linux filesystem/loop tests, not physical Samsung boot or power-loss evidence.
+
+The compatible first-stage bootstrap retains the trusted published 1.3.0 early
+runtime, removes every old module, and adds the current root-slot hook. It is
+7,929,784 bytes, SHA-256
+`c2d1c1aa3dc8410d1aae35529451d55f7206ccbcdb7b1ed3a59411bd14756e52`.
+Its 73 unique ELF dependency closures, Plymouth and fsck pass, and it fits the
+8 MiB init_boot budget in legacy LZ4. The full root is Resolute; this small
+kernel-independent bootstrap avoids the oversized native Resolute initramfs.
+
+Companion 1.5.8 extends the existing **Install from a ZIP** action. It hashes the
+complete selected archive off the GTK thread, shows that digest and the release
+migration warning, then sends the explicitly confirmed SHA-256 through polkit.
+The privileged staging copy must still match. A private root-owned handoff record
+binds origin, ZIP size/digest/tag and backend digest; the child rechecks it.
+GitHub downloads still require the exact published stable tag, size and digest.
+The same combined ZIP and migration engine support both origins. Old Companion
+1.5.5/1.5.7 cannot learn this local authorization from a ZIP they already refuse;
+install the supplied architecture-independent Companion 1.5.8 package first
+for an unpublished local trial. No developer flag, fabricated Noble metadata,
+publication or tablet change is needed to choose the ZIP afterward.
+
+Readiness/authentication tests pass 20 cases, including locally confirmed handoff,
+wrong digest/origin rejection and unchanged GitHub rejection. The GTK4/Adwaita
+page test passes in WSLg with a memory GSettings backend and the built schemas;
+its assertions never prepare an update. The complete trial build remains
+experimental pending the final fixture result and physical cold boot, GNOME 50,
+peripheral, clean-install and recovery acceptance.
+
+## Earlier validation-only candidate, 2026-10-04 (superseded)
+
+
+`artifacts/ubuntu-26.04-sm-x910-v1.4.0-candidate.zip` contains the Resolute
+arm64 local packages, Linux `7.2.9-dirty`, four Android v4 boot images and the
+release-specific migration backend. Its size is 185,205,284 bytes and SHA-256
+is `4ac11bf93955b040c6f1febedbb315dfceb4bc104366ac6df1443a0f872df0d5`.
+The adjacent `.validation.json` records build checks and explicitly says
+`installation_approved: false` and `physical_validation: false`.
+
+The new `scripts/build-migration-candidate.py` verifies the reused kernel
+configuration, all 62 staged module releases/signing certificates and the
+unchanged booted-reference DTB. It checks the Android v4 bundle, the compatible
+legacy-LZ4 initramfs (73 ELF dependency closures, Plymouth, fsck and size),
+dpkg/APT consistency in the isolated Resolute root, exact installed local
+package versions, package-file ownership, every update-payload digest, ZIP
+CRCs and the backend's read-only `--probe`. Export to Windows checks hashes
+again and refuses to overwrite existing artifacts. `--verify-existing` also
+checks every module extracted from the actual selected Debian packages; all
+67 packaged modules passed the matching-release/certificate check.
+
+`make-twrp-zip.py --update-only` omits `META-INF`, `vbmeta.img`, `rootfs.img`
+and filesystem overlays. This candidate cannot accidentally execute the
+clean-install TWRP route. It does not make the installed bridge accept an
+unpublished migration: the official stable tag/size/digest gate is unchanged.
+Do not publish this ZIP to bypass that gate before the transaction is fixed.
+
+The actual native APT 2.8 resolver over the isolated arm64 package inventory
+still exits 100 with `Conf Broken coreutils-from-uutils:arm64` and
+`Conf Broken sudo-common:arm64`, including with deferred immediate
+configuration. It proposes additional library/keybox removals outside the
+existing reviewed list. No removals were authorized or applied. Two emulated
+arm64 resolver runs were stopped after extended CPU-bound simulation; a
+separate 180-second bounded run timed out. None constitutes a completed arm64
+migration or a successful offline transaction. The new
+`probe-migration-transaction.py` retains isolated simulation output, accepts
+only fixture roots rather than `/`, and supports bounded native/emulated
+comparisons. The production migration remains fail-closed.
+
+Verification passed 44 updater cases (including the new update-only packaging
+regression), 18 readiness/authenticated-handoff cases, 13 migration/root-retention
+cases and the real ext4 root-slot mount test in a private namespace. The
+update-only regression failed before implementing the builder option and passed
+afterward. Root-slot and boot-error tests use synthetic data and file-backed
+partition substitutes, not tablet partitions. Full root upgrade, physical
+recovery, GNOME 50, new-kernel boot and peripheral acceptance remain pending.
+No tablet access, installation, partition write, reboot, publication, commit
+or push was performed in this continuation.
+
+Read-only package validation from the repository on Linux/WSL:
+
+```sh
+python3 scripts/validate-update-zip.py artifacts/ubuntu-26.04-sm-x910-v1.4.0-candidate.zip
+```
+
+Candidate construction requires existing isolated, verified build inputs and
+new output/workspace paths:
+
+```sh
+python3 scripts/build-migration-candidate.py --base "$build_base" \
+  --rootfs "$resolute_root" --workspace "$new_workspace" \
+  --output "$candidate_zip" --export-dir "$artifact_directory"
+```
+
+## Continuation from the published 1.3.0 bridge, 2026-10-03
+
+The branch has been integrated with main at `916e2f13de00d0b5eba6c02c1a9d6e395e6b909e`,
+with merge conflicts resolved but no commit or push, as the owner subsequently
+requested. The Resolute recipes retain the later PAM/password, Caps Lock,
+Plymouth, audio-session, TUN and Companion changes. Device 2.85 is newer than
+the installed Noble 2.84; the Resolute fprintd/PAM pair and libfprint runtime
+move to their respective `+gts9u2` revisions. These are build inputs, not
+packages validated on hardware.
+
+Read-only SSH inspection identified the SM-X910 on Ubuntu 24.04.5, port
+1.3.0, Companion 1.5.5, Device 2.84 and `7.2.0-rc3-dirty`. Root was ext4 and
+writable, with 233 GiB available; cgroups use v2. Package audit and a lock-free
+APT dependency check passed. No tablet package, service, session, partition,
+network configuration or boot image was changed.
+
+The installed updater reports protocol 2, `distribution_migration: false`
+and `release_backend_handoff: true`. It accepts the future release-specific
+engine only after matching the complete local or downloaded ZIP to the exact
+published stable GitHub tag, size and SHA-256. Being prepared for a backend is
+not an implementation of the migration, and an unpublished local crossgrade
+ZIP is not compatible with this bridge. That integrity gate remains intact.
+
+Canonical's `meta-release-lts` now lists Resolute 26.04.1 with `Supported: 1`;
+the earlier disabled LTS upgrade observation below is superseded. The proposed
+migration must still freeze authenticated dependencies, review named obsolete
+package removals, preserve third-party configuration and accounts, and recover
+the old complete system root from an independent environment. No such backend
+has been implemented or validated by this continuation.
+
+The default kernel fetch now pins stable Linux 7.2.9 to official commit
+`5fce161649b4d779d1b76d9fcd52dc77779774b8`, verified from the peeled upstream tag.
+The per-board DTB gate remains unchanged. The prepared-CDSP 7.2.8 patch applies
+with zero fuzz to the actual patched 7.2.9 FastRPC source; the NPU builder now
+selects it for both exact stable releases. Kernel and arm64 userspace builds
+are isolated in a newly installed WSL Ubuntu-24.04 under
+`/root/ubuntu-gts9u-2604`, with the source snapshot under
+`/root/ubuntu-gts9u-2604-source`. The kernel build completed with Clang 18.1.3.
+All 62 staged modules, including compressed modules, match `7.2.9-dirty` and
+the build certificate; the installed-output and object-tree configurations
+match. `Image.gz` is SHA-256
+`9d3d475f92cd920f2a7d6e640c0f5d8c2d74ae5ffe50d1210064057d5fd85480`,
+the config is `8404b06a4404750171187caa32d2ef47a112f6ad22b632696094408a122c0eeb`,
+and `Module.symvers` is
+`9606ae924919ab4958ba8fbc2e6a45360134af4fc14b45e9940297a1d8e357dd`.
+The final DTB passed the unchanged booted-reference hash gate
+`613b3bb7729d55d1c60aaeda348a098163b79aed1efbf24cdcc582ff0d58ccc4`.
+The ABI change is intentional; none of the old tablet's signed modules may
+be reused. This is compilation and signing evidence, not device validation.
+The archive-root and libfprint arm64 builds remain in progress.
+
+The rootfs pipeline now dispatches Resolute's camera ABI, libfprint/TOD and
+fprintd/PAM versions, selects archive Mutter/GNOME Settings Daemon instead of
+Noble binaries, explicitly requests Mutter 18 and the consolidated Ubuntu
+extensions, and separates package-input caches by suite. Reusing a Noble
+buildroot for Resolute is rejected before staging. The shipping release and
+payload guards are deliberately still closed pending the migration backend.
+
+The public 1.3.0 ZIP was downloaded and its complete SHA-256 matched
+`8f0e964f5627db1a6a31f80bf33844aecbfdf4bc037a1ea93244036fbf792f8d`.
+The bounded updater validator passed every payload hash. The new
+`prepare-release-migration-fixture.py` extracts that trusted clean image into
+a separate disposable Linux fixture; it never copies the owner's tablet data
+or runs the TWRP installer. Fixture tests reject a wrong digest, wrong release
+or existing output before extraction, and test provenance using simulated
+debugfs. The real published rootfs fixture also extracted successfully and
+contains Device 2.84 and Companion 1.5.5, matching the current bridge. A clean
+installation need not have `ubuntu-gts9u-hardware` in dpkg; the updater adds
+that package, whereas the clean image already has the corresponding files.
+Migration preflight must support both inventories. A real dependency migration
+and rollback remain outstanding.
+
+Linux verification passed 44 system-update cases, 18 readiness/handoff cases,
+2 release-suite guards, 10 upgrade-input/fixture cases and 2 PCIe-DTB-transform
+cases, plus the fingerprint overlay and parallel-password JavaScript mocks.
+The rootfs suite-dispatch regression failed before the fix and passed afterward.
+Shell syntax, Python compilation and staged/unstaged diff whitespace checks
+passed. These are isolated software tests; no GNOME 50 session, new kernel
+boot, full-root recovery or Noble-to-Resolute transaction has been tested.
 
 ## Verified upstream versions
 
