@@ -45,6 +45,12 @@
 #define MAX77816_CONFIG2	0x03
 #define MAX77816_LIMIT_3P1A	0x8e
 #define MAX77816_OUTPUT_ENABLE	0x70
+#define MAX77816_VOUT		0x04
+/* VOUT = 2.60 V + 20 mV * code.  Samsung leaves the 0x23 (3.30 V) default. */
+#define MAX77816_VOUT_DEFAULT	0x23
+/* stm32,booster_power_voltage = <514000> in Samsung's X910 DT: 5.14 V. */
+#define MAX77816_VOUT_BACKLIGHT	0x7f
+#define POGO_MODEL_EF_DX915	0xf9
 #define POGO_DISCONNECT_DEBOUNCE_MS	250
 #define POGO_APP_I2C_RETRIES	3
 #define POGO_APP_ID_MCU		1
@@ -80,6 +86,7 @@ MODULE_PARM_DESC(connection_wakeup,
 struct samsung_pogo {
 	struct i2c_client *client;
 	struct i2c_client *booster;
+	bool booster_raised;
 	struct regulator *vddo;
 	struct gpio_desc *data_ready;
 	struct gpio_desc *connected;
@@ -127,6 +134,7 @@ static int samsung_pogo_input_event(struct input_dev *input,
 static void samsung_pogo_set_data_irq(struct samsung_pogo *pogo, bool enable);
 static void samsung_pogo_release_keys(struct samsung_pogo *pogo);
 static void samsung_pogo_release_touchpad(struct samsung_pogo *pogo);
+static int samsung_pogo_booster_write(struct samsung_pogo *pogo, u8 reg, u8 value);
 
 static const char *samsung_pogo_model_name(u8 protocol_model,
 					   const u8 version[4])
@@ -155,6 +163,12 @@ static const char *samsung_pogo_model_name(u8 protocol_model,
 static void samsung_pogo_power_off_locked(struct samsung_pogo *pogo)
 {
 	if (pogo->powered) {
+		if (pogo->booster_raised) {
+			/* Do not hand 5.14 V to the next, possibly unlit, cover. */
+			samsung_pogo_booster_write(pogo, MAX77816_VOUT,
+						   MAX77816_VOUT_DEFAULT);
+			pogo->booster_raised = false;
+		}
 		regulator_disable(pogo->vddo);
 		pogo->powered = false;
 	}
@@ -607,6 +621,37 @@ static int samsung_pogo_enable_power(struct samsung_pogo *pogo)
 		 "MAX77816 output enabled (config2=%#x, config1=%#x)\n",
 		 MAX77816_OUTPUT_ENABLE, MAX77816_LIMIT_3P1A);
 out_unlock:
+	mutex_unlock(&pogo->power_lock);
+	return ret;
+}
+
+/*
+ * Samsung's stm32,booster_power_models lists the covers whose keyboard
+ * backlight is fed from the MAX77816: EF-DX915 (0xf9) and EF-DX925 (0xd3).
+ * kbd_max77816_control() raises VOUT to booster_power_voltage right after the
+ * attach event has identified one of them; the other covers keep the 3.30 V
+ * default, which is also all this driver used to program.  Without the raise
+ * a DX925 enumerates and types but its backlight (and Fn+F12, which the MCU
+ * handles itself) stays dark.
+ */
+static bool samsung_pogo_model_backlit(u8 model)
+{
+	return model == POGO_MODEL_EF_DX915 || model == POGO_MODEL_EF_DX925;
+}
+
+static int samsung_pogo_power_backlight(struct samsung_pogo *pogo)
+{
+	int ret;
+
+	mutex_lock(&pogo->power_lock);
+	if (!pogo->powered) {
+		ret = -ENODEV;
+	} else {
+		ret = samsung_pogo_booster_write(pogo, MAX77816_VOUT,
+						 MAX77816_VOUT_BACKLIGHT);
+		if (!ret)
+			pogo->booster_raised = true;
+	}
 	mutex_unlock(&pogo->power_lock);
 	return ret;
 }
@@ -1076,6 +1121,16 @@ static int samsung_pogo_read_event(struct samsung_pogo *pogo)
 			dev_info(&pogo->client->dev,
 				 "keyboard attached, model %#02x (%s)\n",
 				 pogo->model, model_name);
+			if (samsung_pogo_model_backlit(pogo->model)) {
+				ret = samsung_pogo_power_backlight(pogo);
+				if (ret)
+					dev_warn(&pogo->client->dev,
+						 "cannot raise the booster for the keyboard backlight: %d\n",
+						 ret);
+				else
+					dev_info(&pogo->client->dev,
+						 "MAX77816 raised to 5.14 V for the keyboard backlight\n");
+			}
 			mod_delayed_work(system_dfl_wq, &pogo->application_work,
 					 msecs_to_jiffies(10));
 			if (!pogo->input) {

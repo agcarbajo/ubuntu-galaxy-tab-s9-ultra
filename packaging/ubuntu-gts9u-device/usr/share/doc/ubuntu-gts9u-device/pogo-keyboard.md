@@ -134,3 +134,14 @@ Nothing in this port ships a V34 image, so the downgrade does not come from
 here.  The likely source is Samsung's own `stm32_pogo_v3` driver with its
 vendor blobs, under One UI or under the Ubuntu Touch port.  If the cover stops
 working after booting one of those, check `flash_version` first.
+
+## Backlit covers: EF-DX915 and EF-DX925
+
+Samsung's X910 device tree lists `stm32,booster_power_models = <0xf9 0xd3>`
+with `stm32,booster_power_voltage = <514000>`. After the attach event names one
+of those two models, the stock driver raises the MAX77816 output from its
+3.30 V default (register 0x04 = 0x23) to 5.14 V (0x7f); the keyboard backlight
+and the MCU-handled Fn+F12 brightness key only work from that supply. The
+mainline driver now does the same and returns VOUT to 0x23 when the cover's
+power is cut, so a Slim cover never sees 5.14 V. Reported by an EF-DX925 owner
+in issue #8; no such cover is available here, so the raise is unvalidated.
