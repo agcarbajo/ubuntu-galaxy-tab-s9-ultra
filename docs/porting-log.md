@@ -7906,6 +7906,29 @@ feedback loop through the under-display STK31610 is plausible but unmeasured.
 `scripts/diagnostics/ambient-brightness-trace.sh` records lux and brightness
 for a report.
 
+**Physical validation on the development unit (evening).** With the owner's
+SSH access, Device 2.85 and libfprint gts9u53 were installed through APT after
+a simulation that selected exactly those two upgrades and no removal;
+`dpkg --audit` stayed clean, the postinst ran `depmod`, and `erofs.ko` with
+the v1.3.0 signature loaded under integrity lockdown. The first provisioning
+run failed: the calibration lives in `sec_efs`, not `efs` (Device 2.86 looks
+there first). Its runtime then matched the hand-assembled set in only 15 of
+23 files, and the provenance showed why: the validated runtime takes the
+linker from the `com.android.runtime` APEX (`bin/linker64`, also copied as
+`ld-android.so`), `libcrypto`, `libdmabufheap` and `libion` from the
+`com.android.vndk.v33` APEX in `system_ext`, and never used the vendor
+`libvmmem.so` at all but a 5 KB stub (`vmmem-compat`) whose source was not in
+the repository. Device 2.87 provisions from those sources and ships the stub
+rebuilt from `packaging/fingerprint-shim/vmmem-compat.c`: 29 of 29 firmware
+files and 20 of 23 runtime files are now byte-identical to the validated set;
+the two port libraries differ by construction and `libhardware_legacy.so` is
+the VNDK 33 build (`5feb8254…`) where the hand-copied one (`6d749b12…`) has
+no recorded origin. Every run left no mount or loop device behind. The secure
+supervisor kept running on the legacy runtime; the provisioned one is first
+used at the next boot, which was not performed without the owner's approval.
+Companion 1.5.9 was not installed: the tablet runs 1.5.8 from the Resolute
+branch.
+
 **Builds and the signing key.** Rebuilding the kernel for the POGO change
 replaced the v1.3.0 module signing key (see development-notes, "The v1.3.0
 signing key was replaced on 2026-10-17"): the pruned object directory held

@@ -17,7 +17,7 @@ hardware:
   `--wait` prerequisite times out. No device, no error visible to the user.
 - `/usr/lib/firmware/gts9u/fingerprint/` **is** shipped (package
   `ubuntu-gts9u-fingerprint-firmware` 1.1) and carries the development unit's
-  500,000-byte `calib.dat`, which is that unit's EFS
+  500,000-byte `calib.dat`, which is that unit's `sec_efs`
   `biometrics/meta/egis_calibration_data.bin`, plus the TA set of its One UI 8
   build. Another unit's `Prepare` would run with foreign calibration, and a
   tablet on a different firmware carries different signed TAs.
@@ -27,11 +27,17 @@ hardware:
 Everything the stack needs already exists on each SM-X910, so Device 2.85
 adds `ubuntu-gts9u-fingerprint-provision`, run once per boot before the secure
 supervisor. Read-only, it takes the nine `dualfp`, `skeymast` and `hwvault`
-segments from `apnhlos` (`image/`, vfat), `calib.dat` from EFS
-(`ro,noload`), `egoptbds.dat` from EFS when present (otherwise from the
-package, flagged), the two daemons and three Qualcomm libraries from the
-`vendor` image and the bootstrap Bionic and framework libraries from the
-`system` image inside `super`. The LP metadata is parsed in Python, each image
+segments from `apnhlos` (`image/`, vfat), `calib.dat` from `sec_efs`
+(`ro,noload`; Device 2.85 looked in `efs`, which has no biometrics directory,
+and 2.86 corrects it), `egoptbds.dat` from the same partition when present (otherwise from the
+package, flagged), the two daemons and two Qualcomm libraries from the
+`vendor` image, the Bionic linker from the `com.android.runtime` APEX (it also
+serves as its own `ld-android.so`, as in the validated set), the bootstrap
+Bionic and framework libraries from `system`, and the VNDK 33 `libcrypto`,
+`libdmabufheap`, `libion` and `libhardware_legacy` from the
+`com.android.vndk.v33` APEX in `system_ext`, which is where the hand-assembled
+runtime took them from; the vendor `libvmmem.so` is replaced by the port's own
+stub (Device 2.87, below). The LP metadata is parsed in Python, each image
 is attached as a read-only loop device and mounted with the signed `erofs.ko`
 that the device package now carries like `tun.ko`. Results land under
 `/var/lib/ubuntu-gts9u/fingerprint/{firmware,runtime}` with a generated
@@ -47,15 +53,30 @@ and local calibrations match (they do only on the development unit).
 validated binary (two exports, imports of only `vsnprintf` and `write`, no
 `NEEDED` entry, "[tag] message" lines on stderr); `build-fingerprint-log-shim.sh`
 builds it with `-nostdlib` in the arm64 buildroot and the device package ships
-it under `/usr/lib/ubuntu-gts9u/fingerprint/`. The `spdaemon-cwd`
+it under `/usr/lib/ubuntu-gts9u/fingerprint/`. The same holds for
+`libvmmem.so`: the hand-assembled runtime never used Qualcomm's vendor library
+(mainline has no `mem_buf` driver for it) but a 5 KB stub whose disassembly
+showed four exports, one import (`write`) and fixed answers (VMID 9 for
+`qcom,cp_spss_hlos_shared`, 10 for `qcom,hlos`, success for a two-VM
+read/write share request); `packaging/fingerprint-shim/vmmem-compat.c`
+reproduces it and the device package ships it next to the log shim. The `spdaemon-cwd`
 `firmware_name` file is copied from the legacy runtime when present (the
 validated bytes) and otherwise from the live attribute under the SPSS
 remoteproc (`.../remoteproc/*/spss_utils/firmware_name`, `spss1p.mdt`). Offline tests cover the
 metadata parser, validators and installer (`scripts/test-fingerprint-provision.py`).
-Nothing here has been run on a tablet yet: the first physical check is on the
-development unit, where every provisioned file must hash-match the
-hand-assembled set, followed by an owner of an undetected reader running
-`--check` and `--boot`.
+Run on the development unit on 2026-10-17 (Device 2.85 to 2.87 and libfprint
+gts9u53 installed through APT after a simulation with no removals; `erofs.ko`
+with the v1.3.0 signature loaded under integrity lockdown): all 29 provisioned
+firmware files are byte-identical to the packaged set, `calib.dat` included,
+which is the expected result on the unit the package was made from; of the 23
+runtime files, 20 are byte-identical to the hand-assembled runtime, the two
+port libraries differ only because they are rebuilt from the reconstructed
+sources, and `libhardware_legacy.so` is the VNDK 33 APEX build (`5feb8254…`)
+where the hand-copied one (`6d749b12…`) has no recorded origin on this
+tablet. No mount or loop device was left behind, and the running secure
+supervisor was not restarted: the provisioned runtime is first exercised on
+the next boot, which needs the owner's approval. After that, an owner of an
+undetected reader runs `--check` and `--boot`.
 
 ## Current status: working, owner-confirmed
 
