@@ -18,6 +18,11 @@
   <launchable type="desktop-id">io.github.agcarbajo.TabCompanion.desktop</launchable>
   <url type="homepage">https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra</url>
   <releases>
+    <release version="1.5.9" date="2026-10-17">
+      <description>
+        <p>A failed update now configures the packages it had already unpacked before restoring the previous boot images.</p>
+      </description>
+    </release>
     <release version="1.5.5" date="2026-10-02">
       <description><p>Keep prepared updates armed when PackageKit cancels its own offline updates, and report missing restart triggers instead of remaining ready indefinitely.</p></description>
     </release>

@@ -500,7 +500,17 @@ def apply_offline():
         emit("Update installed. Restarting…")
     except Exception as error:
         recovery = ""
+        note = ""
         if (backup / "complete").exists():
+            # APT can stop half-way through unpacking (the first 1.3.0 payload
+            # did so on a file conflict).  Configure whatever was unpacked
+            # before restoring the old boot set, so the retained installation
+            # still reaches the desktop instead of booting with unconfigured
+            # device packages; this is the same step the resume path runs.
+            try:
+                run(["dpkg", "--force-confold", "--configure", "-a"], offline=True)
+            except Exception as configure_error:
+                note = "; package configuration incomplete: " + str(configure_error)
             try:
                 for part, size in bundle.PARTITIONS.items():
                     copy_partition(backup / (part + ".img"), devices[part], size)
@@ -516,8 +526,8 @@ def apply_offline():
                     shutil.copytree(backup / "ubuntu-set", saved)
             except Exception as restore_error:
                 recovery = "; boot restore failed: " + str(restore_error)
-        set_status("failed", error=str(error) + recovery)
-        emit("Update failed: " + str(error) + recovery)
+        set_status("failed", error=str(error) + note + recovery)
+        emit("Update failed: " + str(error) + note + recovery)
         # Keep the device in maintenance mode if restoring boot images failed.
         if recovery:
             run(["systemctl", "--no-block", "start", "emergency.target"])

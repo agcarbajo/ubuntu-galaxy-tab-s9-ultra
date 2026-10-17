@@ -442,6 +442,22 @@ class OfflineTransactionTests(unittest.TestCase):
         self.assertEqual(c.status()["state"], "failed")
         self.assertTrue((self.transaction / "backup/complete").exists())
         self.assertTrue(all(d.read_bytes() == self.old for d in self.devices.values()))
+        # Whatever APT unpacked is configured before the old boot set returns.
+        self.assertIn(["dpkg", "--force-confold", "--configure", "-a"], self.commands)
+
+    def test_configure_failure_is_reported_without_emergency_mode(self):
+        def fail_apt_and_dpkg(argv, *args, **kwargs):
+            if argv[0] in ("apt-get", "dpkg"):
+                raise OSError("simulated " + argv[0] + " failure")
+            return self.execute(argv, *args, **kwargs)
+        with patch.object(c, "run", side_effect=fail_apt_and_dpkg):
+            c.apply_offline()
+        status = c.status()
+        self.assertEqual(status["state"], "failed")
+        self.assertIn("package configuration incomplete", status["error"])
+        self.assertNotIn("boot restore failed", status["error"])
+        self.assertTrue(all(d.read_bytes() == self.old for d in self.devices.values()))
+        self.assertNotIn(["systemctl", "--no-block", "start", "emergency.target"], self.commands)
 
 
 class ConffileTests(unittest.TestCase):

@@ -204,3 +204,13 @@ confirmed physical audio, camera and fingerprint operation before republication.
 A fresh TWRP
 installation of this exact replacement ZIP and power-loss recovery have not
 been physically exercised.
+
+### Failure path and package configuration (Companion 1.5.9)
+
+When APT stops in the middle of a transaction, the offline installer now runs
+`dpkg --force-confold --configure -a` before restoring the previous boot images
+and modules, and records a configuration failure in the status without
+entering emergency mode (that remains reserved for a failed boot restore). The
+README documents the TWRP recovery route from the saved Ubuntu boot set. The
+device package also owns `erofs.ko` from Device 2.85, so the hardware payload
+excludes it like the IRQ and TUN modules.
