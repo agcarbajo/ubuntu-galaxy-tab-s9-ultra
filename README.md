@@ -24,7 +24,7 @@ migration needs Companion 1.5.8 first; see the
 | S Pen writing | ✅ | Hover, pressure, tilt, side button and palm rejection |
 | S Pen dock | ✅ | Insertion, orientation and charging |
 | S Pen BLE | ✅ | Pairing, battery, air gestures and pointer mode |
-| Tab Companion | ✅ | Device settings, fingerprint, dual boot and system updates |
+| [Galaxy Companion](https://github.com/agcarbajo/galaxy-companion) | ✅ | Device settings, fingerprint, dual boot and system updates (formerly Tab Companion, now its own project) |
 | Keyboard cover | ✅ | EF-DX920 tested |
 | Cover switch | ✅ | Suspend on close and wake on open |
 | Power and volume buttons | ✅ | Power, wake and volume controls |
@@ -40,7 +40,7 @@ migration needs Companion 1.5.8 first; see the
 | USB host | ✅ | HID and storage, powered or unpowered |
 | USB-C DisplayPort | ✅ | External video output |
 | Cameras and flash | ✅ | Four cameras, full field of view, autofocus and flash |
-| Fingerprint reader | ✅ | Login, enrolment and recognition |
+| Fingerprint reader | 🟡 | Login, enrolment and recognition on the development tablet; other units need the self-provisioning fix (not in 1.3.0, see Known issues) |
 | Ambient light sensor | ✅ | Automatic screen brightness |
 | NPU | ✅ | Hardware acceleration support |
 | Virtual machines | 🟡 | Gunyah host support; guest VMs still in development |
@@ -55,10 +55,12 @@ The evidence and technical limitations for every component are documented in
 This table describes the current source tree; previously published installation
 ZIPs may not include the latest changes.
 
-## Tab Companion
+## Galaxy Companion
 <img width="2164" height="1764" alt="Screenshot from 2026-08-20 04-02-55" src="https://github.com/user-attachments/assets/df7cddca-46e8-438a-bcb8-be713cc93bed" />
 
-Tab Companion provides:
+[Galaxy Companion](https://github.com/agcarbajo/galaxy-companion), formerly Tab
+Companion and now a separate project that serves other Samsung devices through
+device profiles, provides on this tablet:
 
 - full S Pen settings (pairing, gestures and air-pointer mouse mode);
 - remapping for compatible Samsung Book Cover Keyboard keys;
@@ -69,7 +71,7 @@ Tab Companion provides:
 
 The air-pointer concept is inspired by
 [PenMouse S](https://github.com/jojczak/PenMouseS) by Jakub J (`@jojczak`).
-Tab Companion uses an independent native Linux implementation.
+Galaxy Companion uses an independent native Linux implementation.
 
 ## Installation
 
@@ -83,7 +85,11 @@ split the UFS first.
 
 ### Before you start
 
-1. **An unlocked bootloader.**
+1. **An unlocked bootloader.** One UI 8 and later remove the *OEM unlocking*
+   switch, so unlock while still on One UI 7 or earlier and only then update
+   ([details and the One UI 7 → 8 route](https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/issues/3)). With a screen lock set, the
+   Download Mode key combination stops at a teal *Reboot Device - D2* screen
+   that never enumerates over USB: remove the screen lock first.
 2. **Root with Magisk** (only if you want dual boot).
 3. Get `ubuntu-24.04-sm-x910-vX.X.X.zip` from the [latest release](https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/releases/latest). `gts9u-split.zip` and `Dualboot-vX.X.X.apk` only if you want dual boot.
 4. **[TWRP](https://github.com/rainbowdashh/android_device_samsung_gts9u/releases/tag/V2)** and **a `vbmeta` with AVB verification disabled** ([the one published alongside TWRP](https://xdaforums.com/attachments/vbmeta-1-tar.6077784/)). Flash both files in the AP slot using Odin or Heimdall (you will need to reboot again to download mode between flashes).
@@ -109,7 +115,7 @@ split the UFS first.
 
 ### Switching systems
 
-From **Ubuntu**, just use the toggle that you should see on quick settings or from the Tab Companion app under the Dualboot tab.
+From **Ubuntu**, just use the toggle that you should see on quick settings or from the Galaxy Companion app under the Dualboot tab.
 
 From **Android**, install the `Dualboot-vX.X.X.apk` app and give it root access, then reboot from the app or add the toggle to quick settings.
 
@@ -121,8 +127,8 @@ Liked the project? you might want to buy me a coffee, I'll be very grateful!
 
 ## Updating an existing installation
 
-Starting with v1.1.0, open **Tab Companion → Updates** to update the complete
-port. For v1.0.0 installations without the updater, run:
+Starting with v1.1.0, open **Galaxy Companion → Updates** (Tab Companion →
+Updates on older installations) to update the complete port. For v1.0.0 installations without the updater, run:
 
 ```sh
 d=$(mktemp -d) && curl -fL https://raw.githubusercontent.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/main/scripts/update-to-latest.py -o "$d/update.py" && sudo python3 "$d/update.py"
@@ -135,8 +141,35 @@ If an older updater returns to the desktop still showing **Ready to restart**,
 use the command above to load the current updater. To reinstall your recorded
 build, add `--repair` after `"$d/update.py"`. This preserves your data and settings.
 
+### If Ubuntu no longer boots after an update
+
+The updater keeps everything it needs to go back. From TWRP with `adb shell`:
+
+1. Mount the Ubuntu root: `mkdir /u && mount /dev/block/by-name/linuxroot /u`
+   (use `userdata` instead of `linuxroot` on a tablet that was never split).
+2. Read what happened: `/u/var/lib/galaxy-companion-update/status.json`
+   (`tab-companion-update` on an installation that still ran Tab Companion) and
+   `/u/var/log/apt/term.log`.
+3. Put the previous boot images back. The set that booted before the update is
+   in `/u/var/lib/galaxy-companion-update/transaction/backup/` (or the
+   last-known-good Ubuntu set in `/u/var/lib/gts9u-boot-sets/ubuntu/`):
+   `for p in boot init_boot vendor_boot dtbo; do dd if=/u/var/lib/gts9u-boot-sets/ubuntu/$p.img of=/dev/block/by-name/$p bs=4M; done; sync`
+4. If packages were left half-installed, finish them from the booted Ubuntu
+   (SSH or a terminal): `sudo dpkg --configure -a && sudo apt-get check`.
+
+Reflashing the installation ZIP also works, but erases Ubuntu's data.
+
 ## Known issues
 
+- **The fingerprint reader only works on the development tablet so far.**
+  Release 1.3.0 ships without the per-unit secure runtime and with that
+  unit's factory calibration, so other tablets never see the reader
+  ([#8](https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/issues/8), [#9](https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/issues/9)). The next build provisions both from each
+  tablet's own partitions at boot; this is written but not yet validated on a
+  second unit.
+- **EF-DX925 keyboard backlight and Fn+F12 stay dark** ([#8](https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/issues/8)): the
+  MAX77816 booster was left at 3.3 V. The next kernel raises it to Samsung's
+  5.14 V for the DX915/DX925, untested here without that cover.
 - Regarding the official cover keyboard, as I said, only EF-DX920 cover keyboard has been tested. EF-DX900, EF-DX910, EF-DX915 and
 EF-DX925 are untested as I don't have them, so they might not work.
 - Guest virtual machines remain under development; initial Gunyah host support is included.
@@ -149,7 +182,7 @@ EF-DX925 are untested as I don't have them, so they might not work.
 | [Boot strategy](docs/boot-strategy.md) | Requirements, partitions, the boot chain and recovery |
 | [Dual boot](docs/dual-boot.md) | How switching systems works, and what it never touches |
 | [Hardware status](docs/hardware-status.md) | Evidence, limitations and pending hardware tests |
-| [Tab Companion](docs/tab-companion.md) | S Pen, keyboard and fingerprint settings, architecture and diagnostics |
+| [Galaxy Companion](docs/tab-companion.md) | The settings application, now in its own repository and pinned here as the `external/galaxy-companion` submodule |
 | [System updates](docs/system-updates.md) | GitHub and local ZIP updates, current-build repair and the updater for older installations |
 | [Ubuntu userspace](docs/ubuntu-userspace.md) | Root filesystem and desktop integration |
 | [Fingerprint reader](docs/fingerprint-reader.md) | Working EL721/UDFPS integration, validation evidence and maintenance constraints |

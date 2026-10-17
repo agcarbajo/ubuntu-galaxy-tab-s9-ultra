@@ -12,8 +12,11 @@ import unittest
 from unittest.mock import patch
 
 REPO = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO / "packaging/ubuntu-gts9u-companion/usr/lib/tab-companion"))
-from tab_companion import migration_core as migration, migration_plan as plans, update_core as core
+__import__("os").environ.setdefault("GALAXY_COMPANION_DEVICE", "gts9uwifi")
+sys.path.insert(0, str(REPO / "external/galaxy-companion/packaging/galaxy-companion/usr/lib/galaxy-companion"))
+sys.path.insert(0, str(REPO / "packaging/gts9u-migration"))
+from galaxy_companion import update_core as core
+from gts9u_migration import migration_core as migration, migration_plan as plans
 
 
 class PackagePlanTests(unittest.TestCase):
@@ -231,7 +234,7 @@ class HandoffTests(unittest.TestCase):
             digest = hashlib.sha256(archive.read_bytes()).hexdigest()
             with patch.object(core, "TRANSACTION", transaction), \
                     patch.object(core, "status", return_value={"state": "preparing"}), \
-                    patch.dict(os.environ, {"GTS9U_UPDATER_HANDOFF": digest}):
+                    patch.dict(os.environ, {core.HANDOFF_ENV: digest}):
                 migration.adopt_handoff(archive)
             self.assertEqual((handoff / "bridge-staging/release.zip").read_bytes(), b"public fixture")
             self.assertEqual(list(transaction.iterdir()), [])

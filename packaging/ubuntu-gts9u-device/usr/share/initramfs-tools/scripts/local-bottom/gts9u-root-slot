@@ -37,10 +37,18 @@ restore_boot() {
         [ "${want%% *}" = "${got%% *}" ] || panic 'Boot restore readback failed'
     done
     rm -f "$store/selected" "$store/pending"
-    if [ "$(readlink "$rootmnt/etc/system-update" 2>/dev/null || true)" = /var/lib/tab-companion-update/transaction ]; then
-        rm -f "$rootmnt/etc/system-update"
-    fi
-    printf '{"state":"failed","error":"The trial system was not accepted; the original root and boot images were restored."}\n' > "$rootmnt/var/lib/tab-companion-update/status.json"
+    # Galaxy Companion's updater owns the trigger now; Tab Companion's did
+    # before.  Only our own trigger is removed, and the failure is recorded in
+    # whichever updater's state directory armed the migration.
+    pending=$(readlink "$rootmnt/etc/system-update" 2>/dev/null || true)
+    state=/var/lib/galaxy-companion-update
+    case "$pending" in
+        /var/lib/galaxy-companion-update/transaction|/var/lib/tab-companion-update/transaction)
+            rm -f "$rootmnt/etc/system-update"
+            state=${pending%/transaction} ;;
+    esac
+    mkdir -p "$rootmnt$state"
+    printf '{"state":"failed","error":"The trial system was not accepted; the original root and boot images were restored."}\n' > "$rootmnt$state/status.json"
     printf 'rolled-back\n' > "$store/slots/$1/result"
     sync
     reboot -f

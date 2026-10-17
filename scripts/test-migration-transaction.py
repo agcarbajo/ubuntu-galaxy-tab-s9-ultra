@@ -10,8 +10,11 @@ import sys
 import zipfile
 
 REPO = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO / 'packaging/ubuntu-gts9u-companion/usr/lib/tab-companion'))
-from tab_companion import migration_core as migration, migration_plan as plans, update_policy as policy
+__import__("os").environ.setdefault("GALAXY_COMPANION_DEVICE", "gts9uwifi")
+sys.path.insert(0, str(REPO / 'external/galaxy-companion/packaging/galaxy-companion/usr/lib/galaxy-companion'))
+sys.path.insert(0, str(REPO / 'packaging/gts9u-migration'))
+from galaxy_companion import update_policy as policy
+from gts9u_migration import migration_core as migration, migration_plan as plans
 
 
 def main():
@@ -31,10 +34,14 @@ def main():
     if policy.ubuntu_suite(source / 'etc/os-release') != 'noble':
         parser.error('The full transition test requires the original Noble fixture')
     if not args.resume:
-        package = REPO / 'packaging/ubuntu-gts9u-companion/usr/lib/tab-companion/tab_companion'
+        companion = REPO / 'external/galaxy-companion/packaging/galaxy-companion/usr/lib/galaxy-companion/galaxy_companion'
+        backend = REPO / 'packaging/gts9u-migration/gts9u_migration'
         with zipfile.ZipFile(args.backend) as program:
-            for name in ('migration_core.py', 'migration_plan.py', 'update_core.py', 'update_bundle.py', 'update_policy.py'):
-                if program.read('tab_companion/' + name) != (package / name).read_bytes():
+            for name in ('update_core.py', 'update_bundle.py', 'update_policy.py', 'device.py', 'boot_core.py'):
+                if program.read('galaxy_companion/' + name) != (companion / name).read_bytes():
+                    raise ValueError('The tested migration source must match the frozen release backend')
+            for name in ('migration_core.py', 'migration_plan.py'):
+                if program.read('gts9u_migration/' + name) != (backend / name).read_bytes():
                     raise ValueError('The tested migration source must match the frozen release backend')
     if not args.inside:
         subprocess.run(['unshare', '--mount', '--propagation', 'private', sys.executable,

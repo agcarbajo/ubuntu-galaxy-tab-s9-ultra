@@ -1,4 +1,5 @@
 import gzip
+import os
 from pathlib import Path
 import runpy
 import struct
@@ -8,7 +9,8 @@ import unittest
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / 'packaging/ubuntu-gts9u-companion/usr/lib/tab-companion'))
+os.environ.setdefault('GALAXY_COMPANION_DEVICE', 'gts9uwifi')
+sys.path.insert(0, str(ROOT / 'external/galaxy-companion/packaging/galaxy-companion/usr/lib/galaxy-companion'))
 module = runpy.run_path(str(ROOT / 'scripts/diagnostics/apply-matched-boot.py'))
 
 

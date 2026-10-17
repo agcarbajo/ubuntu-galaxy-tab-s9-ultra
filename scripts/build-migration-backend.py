@@ -11,6 +11,10 @@ import tempfile
 import zipapp
 
 REPO = Path(__file__).resolve().parents[1]
+DEVICE = "gts9uwifi"
+# What the backend imports from Galaxy Companion, and what this port adds.
+COMPANION_MODULES = ("update_core.py", "update_bundle.py", "update_policy.py", "device.py", "boot_core.py")
+BACKEND_MODULES = ("__init__.py", "migration_core.py", "migration_plan.py")
 
 
 def root_file(root, name):
@@ -88,16 +92,38 @@ def main():
     if args.runtime_only:
         export_runtime(args.root, args.output)
         return
+    companion = REPO / "external/galaxy-companion/packaging/galaxy-companion/usr"
+    if not (companion / "lib/galaxy-companion/galaxy_companion").is_dir():
+        parser.error("Galaxy Companion submodule is not checked out: run git submodule update --init")
     with tempfile.TemporaryDirectory() as temporary:
         app = Path(temporary)
-        source = REPO / "packaging/ubuntu-gts9u-companion/usr/lib/tab-companion/tab_companion"
-        package = app / "tab_companion"
+        # Galaxy Companion's updater, frozen at the pinned submodule commit...
+        package = app / "galaxy_companion"
         package.mkdir()
-        (package / "__init__.py").write_text("")
-        for name in ("update_core.py", "update_bundle.py", "update_policy.py",
-                     "migration_plan.py", "migration_core.py"):
-            shutil.copyfile(source / name, package / name)
-        (app / "__main__.py").write_text("from tab_companion.migration_core import main\nmain()\n")
+        (package / "__init__.py").write_text(
+            (companion / "lib/galaxy-companion/galaxy_companion/__init__.py").read_text())
+        for name in COMPANION_MODULES:
+            shutil.copyfile(companion / "lib/galaxy-companion/galaxy_companion" / name, package / name)
+        # ...this port's backend on top of it...
+        backend = app / "gts9u_migration"
+        backend.mkdir()
+        for name in BACKEND_MODULES:
+            shutil.copyfile(REPO / "packaging/gts9u-migration/gts9u_migration" / name, backend / name)
+        # ...and the device profile, which the modules read at import time.
+        (app / "devices").mkdir()
+        profile = companion / "share/galaxy-companion/devices" / (DEVICE + ".json")
+        shutil.copyfile(profile, app / "devices" / profile.name)
+        (app / "__main__.py").write_text(
+            "import os, sys, tempfile, zipfile\n"
+            "_profiles = tempfile.mkdtemp(prefix='galaxy-companion-profile-')\n"
+            "with zipfile.ZipFile(sys.argv[0]) as _archive:\n"
+            "    for _name in _archive.namelist():\n"
+            "        if _name.startswith('devices/') and _name.endswith('.json'):\n"
+            "            with open(os.path.join(_profiles, os.path.basename(_name)), 'wb') as _out:\n"
+            "                _out.write(_archive.read(_name))\n"
+            "os.environ['GALAXY_COMPANION_DEVICES_DIR'] = _profiles\n"
+            "os.environ['GALAXY_COMPANION_DEVICE'] = '" + DEVICE + "'\n"
+            "from gts9u_migration.migration_core import main\nmain()\n")
         export_runtime(args.root, app / "resources/apt")
         args.output.parent.mkdir(parents=True, exist_ok=True)
         zipapp.create_archive(app, args.output, interpreter="/usr/bin/python3", compressed=True)

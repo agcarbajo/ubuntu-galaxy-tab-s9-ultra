@@ -14,11 +14,23 @@ import subprocess
 import sys
 import time
 
-RUNTIME = Path('/var/lib/ubuntu-gts9u/android-secnvm-root')
+# The runtime provisioned from this tablet's own partitions takes precedence
+# (ubuntu-gts9u-fingerprint-provision).  The legacy path and the packaged
+# manifest describe the development unit's hand-assembled runtime only.
+PROVISIONED = Path('/var/lib/ubuntu-gts9u/fingerprint')
+LEGACY_RUNTIME = Path('/var/lib/ubuntu-gts9u/android-secnvm-root')
+LEGACY_MANIFEST = Path('/usr/share/ubuntu-gts9u/fingerprint-runtime.sha256')
+
+def select_runtime():
+    runtime, manifest = PROVISIONED / 'runtime', PROVISIONED / 'runtime.sha256'
+    if runtime.is_dir() and manifest.is_file():
+        return runtime, manifest
+    return LEGACY_RUNTIME, LEGACY_MANIFEST
+
+RUNTIME, MANIFEST = select_runtime()
 STATE = Path('/run/gts9u-fingerprint-secure')
 LOG = Path('/var/log/gts9u-fingerprint-secure')
 OWNER = '/usr/libexec/ubuntu-gts9u-fingerprint-secure-owner'
-MANIFEST = Path('/usr/share/ubuntu-gts9u/fingerprint-runtime.sha256')
 MODULES = ('qcom_spss_irq', 'qcom_sp_hlos_heap', 'qcom_glink_spss',
            'qcom_spss', 'spss_utils', 'spcom', 'snvm', 'qcomtee')
 

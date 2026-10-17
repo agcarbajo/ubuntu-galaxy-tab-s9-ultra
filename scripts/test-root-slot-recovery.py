@@ -45,9 +45,9 @@ def main():
             (slot / 'tried').write_text('trial\n')
             (store / 'selected').write_text(identifier + '\n')
             (store / 'pending').write_text(identifier + '\n')
-            (root / 'var/lib/tab-companion-update').mkdir(parents=True)
+            (root / 'var/lib/galaxy-companion-update').mkdir(parents=True)
             (root / 'etc').mkdir()
-            (root / 'etc/system-update').symlink_to('/var/lib/tab-companion-update/transaction')
+            (root / 'etc/system-update').symlink_to('/var/lib/galaxy-companion-update/transaction')
             labels = base / 'private-partlabels'
             labels.mkdir()
             hashes = {}
@@ -78,7 +78,7 @@ def main():
                 raise ValueError('Recovery did not clear its own trial/update markers')
             if (slot / 'result').read_text() != 'rolled-back\n':
                 raise ValueError('Recovery did not retain its rollback result')
-            if json.loads((root / 'var/lib/tab-companion-update/status.json').read_text())['state'] != 'failed':
+            if json.loads((root / 'var/lib/galaxy-companion-update/status.json').read_text())['state'] != 'failed':
                 raise ValueError('Recovery did not report the failed trial')
             print('PASS actual early rollback, four loop-device readbacks and retained old-root status; no physical partitions used')
         finally:

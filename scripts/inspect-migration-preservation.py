@@ -5,8 +5,10 @@ from pathlib import Path
 import sys
 
 REPO = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO / 'packaging/ubuntu-gts9u-companion/usr/lib/tab-companion'))
-from tab_companion import migration_plan as plans
+__import__("os").environ.setdefault("GALAXY_COMPANION_DEVICE", "gts9uwifi")
+sys.path.insert(0, str(REPO / 'external/galaxy-companion/packaging/galaxy-companion/usr/lib/galaxy-companion'))
+sys.path.insert(0, str(REPO / 'packaging/gts9u-migration'))
+from gts9u_migration import migration_plan as plans
 
 
 def main():

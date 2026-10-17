@@ -1763,6 +1763,53 @@ configuration byte-for-byte with the released kernel artifact, and checks the
 kernel release. This remains valid for later clean builds, whose generated key
 will intentionally differ from v1.2.0.
 
+### Tab Companion became Galaxy Companion (2026-10-17)
+
+The settings application now lives in its own repository and serves other
+Samsung devices through JSON device profiles; this port pins the commit it
+ships as the `external/galaxy-companion` submodule. Everything that used to
+import `tab_companion` from `packaging/ubuntu-gts9u-companion` (the update
+payload builder, the legacy bootstrap, `update-to-latest.py`, the ZIP
+validator and the tests) imports `galaxy_companion` from the submodule with
+`GALAXY_COMPANION_DEVICE=gts9uwifi`, and the tests that only exercised the
+application moved with it. Three compatibility points matter for installed
+tablets: updaters published before the rename require a package named
+`ubuntu-gts9u-companion` in every payload, so an empty transitional package of
+that name depends on `galaxy-companion` and stays in the payload and image;
+the legacy bootstrap embeds the device profile, because the systems it runs
+on have no `galaxy-companion` package yet; and Galaxy Companion restarted its
+numbering at 0.9.0 with Debian epoch 1 (`1:0.9.0`), which ranks above the
+installed 1.5.x/2.x packages, so the transitional package carries the same
+versioned string. Updater state moved to `/var/lib/galaxy-companion-update`.
+
+### The v1.3.0 signing key was replaced on 2026-10-17
+
+The release object directory had been pruned to a few files, among them
+`certs/signing_key.pem` (serial `4E7E2D2D…`) without its `.signing_key.pem.cmd`
+stamp. kbuild's rule for the key is `if_changed`, so the next incremental
+build, started to recompile the POGO driver, treated the missing stamp as a
+changed command and minted a new key (serial `0A67FEF5…`) over the old one.
+No other copy of the private key exists on the build machine; it is gone.
+
+What that means in practice: the tablet boots with lockdown in integrity
+mode (`/sys/kernel/security/lockdown` = `[integrity]`), so a module signed by
+any other key is rejected, and no *new* module can be signed for the kernel
+shipped in v1.3.0. Modules that already carry the original signature keep
+working: `tun.ko` and `qcom_spss_irq.ko` from the release output and the
+`erofs.ko` built that morning before the key changed. Device 2.85 was built
+against that identity, with the public certificate recovered from the released
+`Image.gz` (the DER sequence carrying the serial) and the released `config`,
+so it is installable on every v1.3.0 tablet. Any later kernel-module change
+for existing installations has to travel with a new boot image, which the
+updater already does (`matched-kernel-boot`), and the next release will carry
+whatever key its own clean build mints.
+
+`build-mainline-kernel.sh` now copies any pre-existing key to
+`certs/retained/<serial>/` before the first `make` and, if the build replaced
+it, restores the copy, drops the derived `.x509` and exits with an error, so
+this cannot happen silently again; `KERNEL_CLEAN=1` remains the way to mint a
+new key on purpose.
+
 ### And the charging pen woke it a second later
 
 Symptom: you tap the button, the screen goes off, and a few seconds later it
@@ -2714,3 +2761,23 @@ accord. The Wacom silo cannot read it again, and publishing `-1` would make it
 look as though the battery had been lost. The UI therefore distinguishes a
 stored measured level from an estimate: it invents no values and changes the
 bar only after a real Battery Level read or the discrete charge-complete state.
+
+## What ships is only what the build makes (2026-10-17)
+
+The fingerprint stack worked for a month on the development tablet while the
+published image could not start it anywhere else: its Android secure runtime
+had been assembled by hand under `/var/lib/ubuntu-gts9u/android-secnvm-root`,
+its NVM directories created by hand, and the only packaged inputs were that
+unit's own calibration and TA set. Three rules follow.
+
+- A hash manifest of files that no build step produces is a test of one
+  tablet, not of the port. If the supervisor needs a file, the repository must
+  be able to make it, on the user's tablet if the bytes are proprietary.
+- Device-specific data (`calib.dat`, `cell_id`, anything from EFS or
+  `/data/vendor`) must never enter a release package, both because it is wrong
+  on every other unit and because it identifies the development tablet.
+  Read it from the unit that needs it, read-only, as `ubuntu-gts9u-wifi-address`
+  already does for the Wi-Fi address.
+- Validate a hardware feature's packaging with a fresh image, not with the
+  tablet that was used to develop it. `ubuntu-gts9u-fingerprint-provision --check`
+  now prints exactly which inputs a unit has, so an issue report can say so.

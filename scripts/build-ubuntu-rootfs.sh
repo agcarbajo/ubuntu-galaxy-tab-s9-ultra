@@ -446,7 +446,7 @@ mkdir -p "$stage_debs"
 for pkg in libssc hexagonrpcd iio-sensor-proxy \
 	libfprint-2-2 $fingerprint_tod_package $fingerprint_firmware_package \
 	$camera_package libspa-0.2-libcamera-gts9u \
-	ubuntu-gts9u-device ubuntu-gts9u-companion fastfetch v4l2-relayd-gts9u \
+	ubuntu-gts9u-device galaxy-companion ubuntu-gts9u-companion fastfetch v4l2-relayd-gts9u \
     $gnome_local_packages $npu_package; do
 	deb=$(ls -t "$base"/out/packages/${pkg}_*.deb 2>/dev/null | head -1 || true)
 	if [ -z "$deb" ]; then

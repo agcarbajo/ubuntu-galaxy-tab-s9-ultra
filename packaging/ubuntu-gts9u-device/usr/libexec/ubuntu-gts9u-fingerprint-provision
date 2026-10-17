@@ -1,0 +1,714 @@
+#!/usr/bin/python3
+"""Provision the EL721 fingerprint stack from this tablet's own partitions.
+
+Release 1.3.0 only worked on the development unit: its root filesystem has no
+Android secure runtime (`sec_nvm`, `spdaemon` and their libraries), and the
+packaged `calib.dat` is that unit's factory calibration.  Neither can be
+redistributed, and neither is needed from outside: every SM-X910 already
+carries all of it.  This helper reads it from the tablet itself, read-only:
+
+- the signed `dualfp`, `skeymast` and `hwvault` TrustZone applications from
+  the `apnhlos` firmware partition (vfat), exactly what One UI loads from
+  `/vendor/firmware_mnt/image`;
+- this unit's EL721 factory calibration from `sec_efs` (ext4, mounted
+  `ro,noload`; it is never written; `efs` is tried as a fallback);
+- the SPU daemons and the Android libraries they link against from the
+  `vendor`, `system` and `system_ext` logical partitions inside `super`
+  (read-only loop mounts resolved from the LP metadata; nothing in `super`
+  is modified), including the Bionic linker from the `com.android.runtime`
+  APEX and the VNDK 33 `libcrypto`, `libdmabufheap` and `libion` from the
+  `com.android.vndk.v33` APEX, which is where the validated hand-assembled
+  runtime took them from;
+- this port's own three libraries from the device package: `liblog_capture.so`
+  (log shim), `libvmmem.so` (mem_buf-less sharing probe that replaces the
+  vendor library, which has no driver to talk to on mainline) and
+  `libhardware_legacy.so` (no-op wake locks; Android's needs binder).
+
+Results are installed atomically under /var/lib/ubuntu-gts9u/fingerprint and
+described in provenance.json.  `--check` only reports; it writes nothing.
+The secure startup supervisor and libfprint prefer this directory and fall
+back to the legacy packaged paths when it does not exist.
+
+The log-capture shim (`liblog_capture.so`) is this port's own LD_PRELOAD
+library, not an Android file; it is taken from the installed package or the
+legacy runtime and reported as missing otherwise.
+"""
+import argparse
+import contextlib
+import glob
+import hashlib
+import io
+import json
+import os
+from pathlib import Path
+import shutil
+import struct
+import subprocess
+import sys
+import tempfile
+import time
+import zipfile
+
+STATE = Path('/var/lib/ubuntu-gts9u/fingerprint')
+FIRMWARE = STATE / 'firmware'
+RUNTIME = STATE / 'runtime'
+MANIFEST = STATE / 'runtime.sha256'
+PROVENANCE = STATE / 'provenance.json'
+LEGACY_RUNTIME = Path('/var/lib/ubuntu-gts9u/android-secnvm-root')
+PACKAGED_FIRMWARE = Path('/usr/lib/firmware/gts9u/fingerprint')
+PACKAGED_LIBS = Path('/usr/lib/ubuntu-gts9u/fingerprint')
+PACKAGED_SHIM = PACKAGED_LIBS / 'liblog_capture.so'
+NVM_DIRS = (Path('/mnt/vendor/persist'), Path('/mnt/vendor/spunvm'))
+BY_LABEL = Path('/dev/disk/by-partlabel')
+# spdaemon reads the firmware name from a path relative to its working
+# directory; the live attribute sits under the SPSS remoteproc on this kernel.
+SPSS_UTILS_SYSFS = ('/sys/devices/platform/soc@0/*.remoteproc-spss/remoteproc/*/spss_utils/firmware_name',
+                    '/sys/devices/platform/soc@0/soc@0:qcom,spss_utils/firmware_name')
+MOUNT_ROOT = Path('/run/ubuntu-gts9u-fingerprint-provision')
+
+TA_NAMES = ('dualfp', 'skeymast', 'hwvault')
+TA_SEGMENTS = 9
+# Limits match el721-qtee.c (PREPARE_DATA_MAX and EL721_BDS_MAX).
+CALIBRATION_MAX = 0x80000
+OPTICAL_MAX = 4 * 1024 * 1024
+# Samsung keeps the biometrics metadata in sec_efs on this model; efs is
+# only a fallback for a layout that differs.
+EFS_PARTITIONS = ('sec_efs', 'efs')
+EFS_CALIBRATION = 'biometrics/meta/egis_calibration_data.bin'
+EFS_OPTICAL = 'biometrics/meta/egoptbds.dat'
+
+# Runtime files, relative to the runtime root, and where Android keeps them.
+# The bootstrap Bionic copies exist on every Android 10+ system image for
+# early init, so no APEX has to be unpacked.
+VENDOR_FILES = {
+    'bin/sec_nvm': 'bin/sec_nvm',
+    'bin/spdaemon': 'bin/spdaemon',
+    'lib64/libspcom.so': 'lib64/libspcom.so',
+    'lib64/libmdmdetect.so': 'lib64/libmdmdetect.so',
+}
+# Where each system-side file comes from, first match wins.  The order
+# reproduces the hand-assembled runtime validated on the development unit:
+# the linker from the runtime APEX (it also serves as its own ld-android.so),
+# the bootstrap Bionic from system, the VNDK 33 libraries the vendor daemons
+# were built against from the VNDK APEX in system_ext.
+RUNTIME_APEX = 'apex/com.android.runtime.apex'
+VNDK_APEX = 'apex/com.android.vndk.v33.apex'
+SYSTEM_FILES = {
+    'bin/linker64': (('runtime-apex', 'bin/linker64'), ('system', 'bin/bootstrap/linker64')),
+    'lib64/ld-android.so': (('runtime-apex', 'bin/linker64'), ('system', 'lib64/ld-android.so')),
+    'lib64/libc.so': (('system', 'lib64/bootstrap/libc.so'), ('runtime-apex', 'lib64/bionic/libc.so')),
+    'lib64/libdl.so': (('system', 'lib64/bootstrap/libdl.so'), ('runtime-apex', 'lib64/bionic/libdl.so')),
+    'lib64/libdl_android.so': (('system', 'lib64/bootstrap/libdl_android.so'),
+                               ('runtime-apex', 'lib64/bionic/libdl_android.so')),
+    'lib64/libm.so': (('system', 'lib64/bootstrap/libm.so'), ('runtime-apex', 'lib64/bionic/libm.so')),
+    'lib64/libc++.so': (('system', 'lib64/bootstrap/libc++.so'), ('system', 'lib64/libc++.so')),
+    'lib64/libbase.so': (('system', 'lib64/libbase.so'),),
+    'lib64/libcutils.so': (('system', 'lib64/libcutils.so'),),
+    'lib64/liblog.so': (('system', 'lib64/liblog.so'),),
+    'lib64/libutils.so': (('system', 'lib64/libutils.so'),),
+    'lib64/libvndksupport.so': (('system', 'lib64/libvndksupport.so'),),
+    'lib64/libcrypto.so': (('vndk-apex', 'lib64/libcrypto.so'), ('system', 'lib64/libcrypto.so')),
+    'lib64/libdmabufheap.so': (('vndk-apex', 'lib64/libdmabufheap.so'), ('system', 'lib64/libdmabufheap.so')),
+    'lib64/libion.so': (('vndk-apex', 'lib64/libion.so'), ('system', 'lib64/libion.so')),
+}
+# This port's own libraries, shipped by the device package (sources in
+# packaging/fingerprint-shim).  libvmmem.so replaces vendor/lib64/libvmmem.so;
+# libhardware_legacy.so replaces Android's, which needs binder and the suspend
+# HAL that this runtime does not have.
+PORT_LIBS = ('lib64/liblog_capture.so', 'lib64/libvmmem.so', 'lib64/libhardware_legacy.so')
+SHIM = 'lib64/liblog_capture.so'
+SPDAEMON_CWD_FILE = 'spdaemon-cwd/sys/devices/platform/soc/soc:qcom,spss_utils/firmware_name'
+RUNTIME_FILES = tuple(VENDOR_FILES) + tuple(SYSTEM_FILES) + PORT_LIBS + (SPDAEMON_CWD_FILE,)
+
+# Android logical-partition (liblp) metadata, as laid out in `super`.
+LP_RESERVED = 4096
+LP_GEOMETRY_MAGIC = 0x616c4467
+LP_GEOMETRY_SIZE = 4096
+LP_METADATA_MAGIC = 0x414C5030
+LP_SECTOR = 512
+LP_TARGET_LINEAR = 0
+
+ELF_MAGIC = b'\x7fELF'
+EM_AARCH64 = 183
+
+
+class ProvisionError(RuntimeError):
+    pass
+
+
+def log(message):
+    print(message, flush=True)
+
+
+def sha256(path):
+    digest = hashlib.sha256()
+    with open(path, 'rb') as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def run(argv, **kwargs):
+    return subprocess.run(argv, check=True, text=True, capture_output=True, **kwargs)
+
+
+# --- liblp metadata ---------------------------------------------------------
+
+def _descriptor(data, offset):
+    return struct.unpack_from('<III', data, offset)
+
+
+def parse_lp_metadata(blob, slot=0):
+    """Return {partition name: [(byte offset, byte length), ...]} from the
+    first bytes of a `super` image.  Only linear extents on the super device
+    itself are returned; anything else is rejected rather than guessed."""
+    if len(blob) < LP_RESERVED + 2 * LP_GEOMETRY_SIZE:
+        raise ProvisionError('super image too short for LP geometry')
+    geometry = blob[LP_RESERVED:LP_RESERVED + LP_GEOMETRY_SIZE]
+    magic, struct_size = struct.unpack_from('<II', geometry, 0)
+    if magic != LP_GEOMETRY_MAGIC:
+        raise ProvisionError('super has no LP geometry (magic %#x)' % magic)
+    checksum = geometry[8:40]
+    metadata_max_size, slot_count, _block_size = struct.unpack_from('<III', geometry, 40)
+    zeroed = bytearray(geometry[:struct_size])
+    zeroed[8:40] = b'\0' * 32
+    if hashlib.sha256(bytes(zeroed)).digest() != checksum:
+        raise ProvisionError('LP geometry checksum mismatch')
+    if slot >= slot_count:
+        raise ProvisionError('LP metadata slot %d out of range' % slot)
+    start = LP_RESERVED + 2 * LP_GEOMETRY_SIZE + metadata_max_size * slot
+    if len(blob) < start + metadata_max_size:
+        raise ProvisionError('super image too short for LP metadata slot')
+    header = blob[start:start + metadata_max_size]
+    magic, _major, _minor, header_size = struct.unpack_from('<IHHI', header, 0)
+    if magic != LP_METADATA_MAGIC:
+        raise ProvisionError('LP metadata has a bad magic (%#x)' % magic)
+    header_checksum = header[12:44]
+    tables_size = struct.unpack_from('<I', header, 44)[0]
+    tables_checksum = header[48:80]
+    zeroed = bytearray(header[:header_size])
+    zeroed[12:44] = b'\0' * 32
+    if hashlib.sha256(bytes(zeroed)).digest() != header_checksum:
+        raise ProvisionError('LP metadata header checksum mismatch')
+    tables = header[header_size:header_size + tables_size]
+    if len(tables) != tables_size or hashlib.sha256(tables).digest() != tables_checksum:
+        raise ProvisionError('LP metadata tables checksum mismatch')
+    part_offset, part_count, part_size = _descriptor(header, 80)
+    extent_offset, extent_count, extent_size = _descriptor(header, 92)
+    if part_size < 52 or extent_size < 24:
+        raise ProvisionError('unexpected LP table entry sizes')
+    extents = []
+    for i in range(extent_count):
+        base = extent_offset + i * extent_size
+        num_sectors, target_type, target_data, target_source = struct.unpack_from(
+            '<QIQI', tables, base)
+        extents.append((num_sectors, target_type, target_data, target_source))
+    partitions = {}
+    for i in range(part_count):
+        base = part_offset + i * part_size
+        raw_name = tables[base:base + 36]
+        name = raw_name.split(b'\0', 1)[0].decode('ascii', 'replace')
+        _attributes, first, count, _group = struct.unpack_from('<IIII', tables, base + 36)
+        ranges = []
+        for extent in extents[first:first + count]:
+            num_sectors, target_type, target_data, target_source = extent
+            if target_type != LP_TARGET_LINEAR or target_source != 0:
+                ranges = None
+                break
+            ranges.append((target_data * LP_SECTOR, num_sectors * LP_SECTOR))
+        if ranges is not None:
+            partitions[name] = ranges
+    return partitions
+
+
+def select_logical(partitions, name):
+    """Prefer the plain name; accept a single slotted variant (name_a)."""
+    if name in partitions:
+        return name, partitions[name]
+    slotted = [n for n in partitions if n.startswith(name + '_') and len(n) == len(name) + 2]
+    if len(slotted) == 1:
+        return slotted[0], partitions[slotted[0]]
+    raise ProvisionError('no %s logical partition in super (have: %s)'
+                         % (name, ', '.join(sorted(partitions)) or 'none'))
+
+
+def detect_filesystem(device, offset=0):
+    with open(device, 'rb') as handle:
+        handle.seek(offset + 1024)
+        block = handle.read(1024)
+    if block[:4] == b'\xe2\xe1\xf5\xe0':
+        return 'erofs'
+    if block[0x38:0x3a] == b'\x53\xef':
+        return 'ext4'
+    raise ProvisionError('unrecognised filesystem at %s+%d' % (device, offset))
+
+
+# --- read-only mounts -------------------------------------------------------
+
+class Mount:
+    """Read-only mount of a partition or of a byte range of `super`."""
+
+    def __init__(self, label, fstype=None, options='ro', extent=None, image=None):
+        self.label = label
+        self.fstype = fstype
+        self.options = options
+        self.extent = extent
+        self.image = image      # a filesystem image file (an APEX payload)
+        self.target = None
+        self.loop = None
+
+    def __enter__(self):
+        if self.image:
+            source = str(self.image)
+            target = MOUNT_ROOT / self.label
+        else:
+            device = BY_LABEL / self.label
+            if not device.is_block_device():
+                raise ProvisionError('partition %s is not present' % self.label)
+            source = str(device)
+            target = MOUNT_ROOT / (self.label if not self.extent else self.extent[2])
+        target.mkdir(parents=True, exist_ok=True)
+        if self.extent or self.image:
+            argv = ['losetup', '--read-only', '--find', '--show']
+            if self.extent:
+                offset, length, _name = self.extent
+                argv += ['--offset', str(offset), '--sizelimit', str(length)]
+            self.loop = run(argv + [source]).stdout.strip()
+            source = self.loop
+            fstype = detect_filesystem(source)
+            if fstype == 'erofs':
+                subprocess.run(['modprobe', 'erofs'], capture_output=True)
+            self.fstype = fstype
+            self.options = 'ro,noload' if fstype == 'ext4' else 'ro'
+        argv = ['mount', '-o', self.options + ',nodev,nosuid,noexec']
+        if self.fstype:
+            argv += ['-t', self.fstype]
+        try:
+            run(argv + [source, str(target)])
+        except subprocess.CalledProcessError as error:
+            self._detach()
+            raise ProvisionError('cannot mount %s read-only: %s'
+                                 % (self.label, error.stderr.strip()))
+        self.target = target
+        return target
+
+    def _detach(self):
+        if self.loop:
+            subprocess.run(['losetup', '--detach', self.loop], capture_output=True)
+            self.loop = None
+
+    def __exit__(self, *exc):
+        if self.target:
+            subprocess.run(['umount', str(self.target)], capture_output=True)
+            try:
+                self.target.rmdir()
+            except OSError:
+                pass
+            self.target = None
+        self._detach()
+        return False
+
+
+def super_extent(name):
+    device = BY_LABEL / 'super'
+    if not device.is_block_device():
+        raise ProvisionError('partition super is not present')
+    with open(device, 'rb') as handle:
+        blob = handle.read(LP_RESERVED + 2 * LP_GEOMETRY_SIZE + 2 * 65536)
+    partitions = parse_lp_metadata(blob)
+    found, ranges = select_logical(partitions, name)
+    if len(ranges) != 1:
+        raise ProvisionError('%s spans %d extents; refusing to assemble it'
+                             % (found, len(ranges)))
+    offset, length = ranges[0]
+    return offset, length, found
+
+
+# --- validation -------------------------------------------------------------
+
+def check_elf(path, what):
+    with open(path, 'rb') as handle:
+        header = handle.read(64)
+    if header[:4] != ELF_MAGIC or len(header) < 20:
+        raise ProvisionError('%s is not an ELF image' % what)
+    if header[4] != 2 or struct.unpack_from('<H', header, 18)[0] != EM_AARCH64:
+        raise ProvisionError('%s is not a 64-bit AArch64 ELF image' % what)
+
+
+def check_ta(directory, name):
+    """The nine split segments of a signed QTEE application."""
+    first = directory / (name + '.b00')
+    if not first.is_file():
+        raise ProvisionError('%s.b00 missing' % name)
+    with open(first, 'rb') as handle:
+        header = handle.read(64)
+    if header[:4] != ELF_MAGIC or len(header) < 64:
+        raise ProvisionError('%s.b00 is not an ELF header' % name)
+    phnum = struct.unpack_from('<H', header, 56)[0]
+    if phnum != TA_SEGMENTS:
+        raise ProvisionError('%s.b00 declares %d segments, expected %d'
+                             % (name, phnum, TA_SEGMENTS))
+    for i in range(TA_SEGMENTS):
+        segment = directory / ('%s.b%02d' % (name, i))
+        if not segment.is_file() or segment.stat().st_size == 0:
+            raise ProvisionError('%s is missing or empty' % segment.name)
+
+
+def check_size(path, maximum, what):
+    size = path.stat().st_size
+    if size == 0 or size > maximum:
+        raise ProvisionError('%s has invalid size %d (maximum %d)' % (what, size, maximum))
+
+
+# --- collection -------------------------------------------------------------
+
+def copy_into(source, destination, mode):
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(source, destination)
+    os.chmod(destination, mode)
+
+
+def collect_firmware(stage, report):
+    """TA segments from apnhlos, calibration from EFS."""
+    firmware = stage / 'firmware'
+    firmware.mkdir(mode=0o700)
+    with Mount('apnhlos', 'vfat') as root:
+        image = root / 'image'
+        for name in TA_NAMES:
+            for i in range(TA_SEGMENTS):
+                segment = '%s.b%02d' % (name, i)
+                source = image / segment
+                if not source.is_file():
+                    raise ProvisionError('apnhlos has no %s' % segment)
+                copy_into(source, firmware / segment, 0o600)
+            check_ta(firmware, name)
+            report['sources'][name] = {'from': 'apnhlos:image/%s.b00-b08' % name,
+                                       'sha256_b00': sha256(firmware / (name + '.b00'))}
+    calibrated = None
+    for label in EFS_PARTITIONS:
+        if not (BY_LABEL / label).is_block_device():
+            continue
+        with Mount(label, None, 'ro,noload') as root:
+            source = root / EFS_CALIBRATION
+            if not source.is_file():
+                continue
+            copy_into(source, firmware / 'calib.dat', 0o600)
+            check_size(firmware / 'calib.dat', CALIBRATION_MAX, 'calib.dat')
+            report['sources']['calib.dat'] = {'from': label + ':' + EFS_CALIBRATION,
+                                              'sha256': sha256(firmware / 'calib.dat')}
+            optical = root / EFS_OPTICAL
+            if optical.is_file():
+                copy_into(optical, firmware / 'egoptbds.dat', 0o600)
+                check_size(firmware / 'egoptbds.dat', OPTICAL_MAX, 'egoptbds.dat')
+                report['sources']['egoptbds.dat'] = {'from': label + ':' + EFS_OPTICAL,
+                                                     'sha256': sha256(firmware / 'egoptbds.dat')}
+            calibrated = label
+            break
+    if calibrated is None:
+        raise ProvisionError('neither %s has %s; this unit cannot be calibrated from itself'
+                             % (' nor '.join(EFS_PARTITIONS), EFS_CALIBRATION))
+    if not (firmware / 'egoptbds.dat').exists():
+        packaged = PACKAGED_FIRMWARE / 'egoptbds.dat'
+        if not packaged.is_file():
+            raise ProvisionError('no optical blob (egoptbds.dat) in EFS or in the packaged firmware')
+        copy_into(packaged, firmware / 'egoptbds.dat', 0o600)
+        check_size(firmware / 'egoptbds.dat', OPTICAL_MAX, 'egoptbds.dat')
+        report['sources']['egoptbds.dat'] = {'from': 'package:' + str(packaged),
+                                             'sha256': sha256(packaged),
+                                             'warning': 'not from this unit; One UI keeps it under '
+                                                        '/data/vendor/biometrics/meta'}
+        report['warnings'].append('egoptbds.dat taken from the packaged firmware, not from this unit')
+
+
+def apex_payload(image_root, relative, stage, name):
+    """Extract an APEX's filesystem payload next to the stage; the caller
+    mounts it read-only.  Compressed APEXes carry the real APEX inside."""
+    apex = image_root / relative
+    if not apex.is_file():
+        return None
+    with zipfile.ZipFile(apex) as archive:
+        names = archive.namelist()
+        if 'apex_payload.img' in names:
+            data = archive.read('apex_payload.img')
+        elif 'original_apex' in names:
+            with zipfile.ZipFile(io.BytesIO(archive.read('original_apex'))) as inner:
+                data = inner.read('apex_payload.img')
+        else:
+            raise ProvisionError('%s carries no apex_payload.img' % relative)
+    payload = stage / (name + '.img')
+    payload.write_bytes(data)
+    os.chmod(payload, 0o600)
+    return payload
+
+
+def collect_runtime(stage, report):
+    """SPU daemons and their Android libraries from vendor, system and the
+    APEXes, plus this port's own two libraries."""
+    runtime = stage / 'runtime'
+    runtime.mkdir(mode=0o700)
+    with Mount('super', extent=super_extent('vendor')) as root:
+        for destination, source in VENDOR_FILES.items():
+            path = root / source
+            if not path.is_file():
+                raise ProvisionError('vendor has no %s' % source)
+            copy_into(path, runtime / destination, 0o755 if destination.startswith('bin/') else 0o644)
+            check_elf(runtime / destination, source)
+            report['sources'][destination] = {'from': 'super:vendor/' + source,
+                                              'sha256': sha256(runtime / destination)}
+        build_prop = root / 'build.prop'
+        if build_prop.is_file():
+            for line in build_prop.read_text(errors='replace').splitlines():
+                if line.startswith('ro.vendor.build.fingerprint='):
+                    report['android_build'] = line.split('=', 1)[1]
+    with contextlib.ExitStack() as stack:
+        roots = {}
+        system = stack.enter_context(Mount('super', extent=super_extent('system')))
+        # Samsung's system image is mounted at its own root or under /system.
+        roots['system'] = system / 'system' if (system / 'system/lib64').is_dir() else system
+        payload = apex_payload(roots['system'], 'system/' + RUNTIME_APEX if (roots['system'] / 'system').is_dir()
+                               else RUNTIME_APEX, stage, 'runtime-apex')
+        if payload is None:
+            payload = apex_payload(roots['system'], RUNTIME_APEX, stage, 'runtime-apex')
+        if payload is not None:
+            roots['runtime-apex'] = stack.enter_context(Mount('runtime-apex', image=payload))
+        else:
+            report['warnings'].append('system has no %s; the bootstrap linker is used instead' % RUNTIME_APEX)
+        try:
+            system_ext = stack.enter_context(Mount('super', extent=super_extent('system_ext')))
+        except ProvisionError as error:
+            report['warnings'].append('%s; VNDK libraries are taken from system' % error)
+        else:
+            vndk = apex_payload(system_ext, VNDK_APEX, stage, 'vndk-apex')
+            if vndk is not None:
+                roots['vndk-apex'] = stack.enter_context(Mount('vndk-apex', image=vndk))
+            else:
+                report['warnings'].append('system_ext has no %s; VNDK libraries are taken from system' % VNDK_APEX)
+        for destination, candidates in SYSTEM_FILES.items():
+            for image, candidate in candidates:
+                if image not in roots:
+                    continue
+                path = roots[image] / candidate
+                if path.is_file():
+                    break
+            else:
+                raise ProvisionError('no source for %s among %s' % (destination, ', '.join(
+                    '%s:%s' % pair for pair in candidates)))
+            copy_into(path, runtime / destination, 0o755 if destination.startswith('bin/') else 0o644)
+            check_elf(runtime / destination, candidate)
+            report['sources'][destination] = {'from': 'super:%s/%s' % (image, candidate),
+                                              'sha256': sha256(runtime / destination)}
+    for payload in stage.glob('*.img'):
+        payload.unlink()
+    for name in PORT_LIBS:
+        for candidate in (PACKAGED_LIBS / Path(name).name, LEGACY_RUNTIME / name):
+            if candidate.is_file():
+                copy_into(candidate, runtime / name, 0o644)
+                check_elf(runtime / name, name)
+                report['sources'][name] = {'from': str(candidate), 'sha256': sha256(candidate)}
+                break
+        else:
+            report['warnings'].append('%s (this port\'s own library) is not installed; '
+                                      'the SPU daemons cannot run without it' % Path(name).name)
+            report['runtime_complete'] = False
+    cwd_file = runtime / SPDAEMON_CWD_FILE
+    # The hand-assembled runtime is the physically validated reference, so its
+    # copy wins on the development unit; elsewhere the live attribute is used.
+    candidates = [LEGACY_RUNTIME / SPDAEMON_CWD_FILE]
+    for pattern in SPSS_UTILS_SYSFS:
+        candidates.extend(sorted(Path(p) for p in glob.glob(pattern)))
+    for candidate in candidates:
+        if candidate.is_file():
+            cwd_file.parent.mkdir(parents=True, exist_ok=True)
+            cwd_file.write_bytes(candidate.read_bytes())
+            os.chmod(cwd_file, 0o644)
+            report['sources'][SPDAEMON_CWD_FILE] = {'from': str(candidate)}
+            break
+    else:
+        report['warnings'].append('spss_utils firmware_name is not readable yet (module not loaded); '
+                                  'spdaemon will read it after the first secure startup')
+        report['runtime_complete'] = False
+
+
+def write_manifest(runtime, manifest):
+    lines = []
+    for name in RUNTIME_FILES:
+        path = runtime / name
+        if path.is_file():
+            lines.append('%s  %s' % (sha256(path), name))
+    manifest.write_text(''.join(line + '\n' for line in lines))
+    os.chmod(manifest, 0o600)
+    return len(lines)
+
+
+def ensure_nvm_dirs():
+    """Ubuntu-local NVM backing directories for the SPU daemons.  They start
+    empty; HwVault restores its credentials from the K250A, not from here."""
+    for path in NVM_DIRS:
+        if path.is_symlink():
+            raise ProvisionError('%s must not be a symlink' % path)
+        path.mkdir(mode=0o700, parents=True, exist_ok=True)
+        os.chmod(path, 0o700)
+
+
+# --- state ------------------------------------------------------------------
+
+def current_state():
+    """What is installed, without touching the hardware."""
+    state = {'firmware': FIRMWARE.is_dir() and all(
+        (FIRMWARE / ('%s.b00' % n)).is_file() for n in TA_NAMES) and
+        (FIRMWARE / 'calib.dat').is_file() and (FIRMWARE / 'egoptbds.dat').is_file(),
+        'runtime': RUNTIME.is_dir() and MANIFEST.is_file(),
+        'runtime_complete': False, 'provenance': None}
+    if state['runtime']:
+        present = {line.split()[1] for line in MANIFEST.read_text().splitlines() if line.strip()}
+        state['runtime_complete'] = set(RUNTIME_FILES) <= present and all(
+            (RUNTIME / name).is_file() for name in RUNTIME_FILES)
+    if PROVENANCE.is_file():
+        try:
+            state['provenance'] = json.loads(PROVENANCE.read_text())
+        except ValueError:
+            state['provenance'] = None
+    return state
+
+
+def ta_changed_in_apnhlos(state):
+    """A One UI update replaces the TAs; compare the small first segments."""
+    recorded = (state.get('provenance') or {}).get('sources', {})
+    try:
+        with Mount('apnhlos', 'vfat') as root:
+            for name in TA_NAMES:
+                digest = sha256(root / 'image' / (name + '.b00'))
+                if recorded.get(name, {}).get('sha256_b00') != digest:
+                    return True
+    except ProvisionError:
+        return False
+    return False
+
+
+def install(stage, report):
+    STATE.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(STATE, 0o700)
+    for name in ('firmware', 'runtime'):
+        source = stage / name
+        if not source.is_dir():
+            continue
+        final = STATE / name
+        previous = STATE / (name + '.previous')
+        if previous.exists():
+            shutil.rmtree(previous)
+        if final.exists():
+            os.rename(final, previous)
+        os.rename(source, final)
+        if previous.exists():
+            shutil.rmtree(previous)
+    if (STATE / 'runtime').is_dir():
+        report['runtime_files'] = write_manifest(STATE / 'runtime', MANIFEST)
+    temporary = PROVENANCE.with_suffix('.tmp')
+    temporary.write_text(json.dumps(report, indent=2, sort_keys=True) + '\n')
+    os.chmod(temporary, 0o600)
+    temporary.replace(PROVENANCE)
+    os.sync()
+
+
+def provision(force=False, want_runtime=True):
+    if os.geteuid() != 0:
+        raise ProvisionError('root required')
+    if not (Path('/sys/bus/platform/devices/egis-el721').exists()):
+        log('no EL721 platform device; nothing to provision')
+        return 0
+    state = current_state()
+    need_firmware = force or not state['firmware'] or ta_changed_in_apnhlos(state)
+    need_runtime = want_runtime and (force or not state['runtime_complete'])
+    ensure_nvm_dirs()
+    if not need_firmware and not need_runtime:
+        log('fingerprint firmware and runtime already provisioned from this tablet')
+        return 0
+    report = {'version': 1, 'time': time.strftime('%Y-%m-%dT%H:%M:%S%z'),
+              'sources': {}, 'warnings': [], 'runtime_complete': True}
+    if state['provenance']:
+        report['sources'].update(state['provenance'].get('sources', {}))
+    STATE.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=STATE, prefix='.staging-') as staging:
+        stage = Path(staging)
+        if need_firmware:
+            collect_firmware(stage, report)
+        if need_runtime:
+            collect_runtime(stage, report)
+        install(stage, report)
+    for warning in report['warnings']:
+        log('warning: ' + warning)
+    log('provisioned: firmware=%s runtime=%s complete=%s'
+        % (need_firmware, need_runtime, report['runtime_complete']))
+    return 0
+
+
+# --- diagnostics ------------------------------------------------------------
+
+def short(digest):
+    return digest[:16] + '…' if digest else '-'
+
+
+def check():
+    """Read-only report for issue reports: what this unit has, what is
+    installed, and where they differ.  No partition is mounted and nothing
+    is written."""
+    state = current_state()
+    lines = ['EL721 provisioning status']
+    lines.append('  device node: %s' % ('present' if Path('/sys/bus/platform/devices/egis-el721').exists() else 'absent'))
+    for label in ('apnhlos', 'sec_efs', 'efs', 'super'):
+        lines.append('  partition %-8s %s' % (label, 'present' if (BY_LABEL / label).is_block_device() else 'MISSING'))
+    lines.append('  provisioned firmware: %s' % ('yes' if state['firmware'] else 'no'))
+    lines.append('  provisioned runtime:  %s%s' % ('yes' if state['runtime'] else 'no',
+                 '' if state['runtime_complete'] or not state['runtime'] else ' (incomplete)'))
+    lines.append('  legacy runtime (%s): %s' % (LEGACY_RUNTIME, 'present' if LEGACY_RUNTIME.is_dir() else 'absent'))
+    for path in NVM_DIRS:
+        lines.append('  NVM directory %s: %s' % (path, 'present' if path.is_dir() else 'absent'))
+    packaged = PACKAGED_FIRMWARE / 'calib.dat'
+    local = FIRMWARE / 'calib.dat'
+    if packaged.is_file():
+        lines.append('  packaged calib.dat: %s (another unit\'s calibration unless it matches below)' % short(sha256(packaged)))
+    if local.is_file():
+        lines.append('  this unit\'s calib.dat: %s' % short(sha256(local)))
+        if packaged.is_file():
+            lines.append('  packaged and local calibration %s'
+                         % ('MATCH (this is the development unit)' if sha256(packaged) == sha256(local) else 'differ'))
+    provenance = state['provenance'] or {}
+    if provenance:
+        lines.append('  provisioned on %s from %s' % (provenance.get('time'), provenance.get('android_build', 'unknown build')))
+        for warning in provenance.get('warnings', []):
+            lines.append('  warning: ' + warning)
+    status = Path('/run/gts9u-fingerprint-secure/status.json')
+    if status.is_file():
+        try:
+            lines.append('  secure startup: %s' % json.loads(status.read_text()).get('state'))
+        except (OSError, ValueError):
+            pass
+    print('\n'.join(lines))
+    return 0
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument('--boot', action='store_true', help='provision what is missing (idempotent)')
+    group.add_argument('--force', action='store_true', help='re-read everything from the tablet')
+    group.add_argument('--check', action='store_true', help='read-only report; writes nothing')
+    parser.add_argument('--firmware-only', action='store_true',
+                        help='skip the Android runtime (super is not touched)')
+    args = parser.parse_args(argv)
+    os.umask(0o077)
+    try:
+        if args.check:
+            return check()
+        return provision(force=args.force, want_runtime=not args.firmware_only)
+    except ProvisionError as error:
+        print('ubuntu-gts9u-fingerprint-provision: %s' % error, file=sys.stderr)
+        return 1
+    except subprocess.CalledProcessError as error:
+        print('ubuntu-gts9u-fingerprint-provision: %s failed: %s'
+              % (error.cmd[0], (error.stderr or '').strip()), file=sys.stderr)
+        return 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())

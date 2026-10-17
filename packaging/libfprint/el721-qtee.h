@@ -27,6 +27,8 @@ typedef struct
   GBytes *data;
 } El721Reply;
 
+const gchar *el721_qtee_firmware_directory (void);
+
 El721Qtee *el721_qtee_open          (const gchar  *firmware_directory,
                                     GError      **error);
 void        el721_qtee_close         (El721Qtee   *session);

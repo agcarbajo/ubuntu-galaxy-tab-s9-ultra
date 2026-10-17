@@ -5,6 +5,12 @@ transaction passed**, 2026-10-04. Physical boot and hardware acceptance are
 not established. This assessment uses `upgrade/ubuntu-26.04-gnome50`; the
 virtualisation worktree and branch are independent.
 
+> 2026-10-17: the migration backend now builds on Galaxy Companion (the
+> `external/galaxy-companion` submodule) instead of Tab Companion, lives in
+> `packaging/gts9u-migration/` and is frozen with the device profile; the
+> v1.4.0 ZIP described below predates that change and would have to be
+> rebuilt. "Companion 1.5.8" below corresponds to Galaxy Companion 0.9.0.
+
 ## Combined trial build and local ZIP support, 2026-10-04
 
 The current combined file is `ubuntu-26.04-sm-x910-v1.4.0.zip`, SHA-256

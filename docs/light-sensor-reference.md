@@ -163,3 +163,22 @@ is saved on the tablet under `/home/agcar/als-ubuntu-reference-20260908`.
 
 Return through the existing dualboot mechanism when capture is finished;
 the verified saved Ubuntu image preserves the running build 8 kernel.
+
+## Reported oscillation on another unit (2026-10)
+
+An owner of another SM-X910 reports (issue #8) that the brightness slider keeps
+going up and down with automatic brightness on. The development unit did not
+show this in the room-light tests above. One difference from One UI is
+measurable in the traces: the HAL sends message 611 with the current panel
+brightness to the light sensor, and the port never does, so the SSC's
+`auto_brightness` stream cannot compensate for the light the panel itself
+leaks into the under-display STK31610. That is a hypothesis for a feedback
+loop, not a measurement. Before changing code, ask the reporter for a trace:
+
+```sh
+scripts/diagnostics/ambient-brightness-trace.sh 60
+```
+
+It samples the SensorProxy `LightLevel` and `/sys/class/backlight/*/brightness`
+every 250 ms into a TSV and prints how often the brightness changed. A loop
+shows lux and brightness chasing each other with the room light constant.

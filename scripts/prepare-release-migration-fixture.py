@@ -10,9 +10,10 @@ import subprocess
 import sys
 import zipfile
 
+__import__("os").environ.setdefault("GALAXY_COMPANION_DEVICE", "gts9uwifi")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] /
-                      "packaging/ubuntu-gts9u-companion/usr/lib/tab-companion"))
-from tab_companion import update_bundle as bundle
+                      "external/galaxy-companion/packaging/galaxy-companion/usr/lib/galaxy-companion"))
+from galaxy_companion import update_bundle as bundle
 
 
 def prepare(archive, expected_hash, output):

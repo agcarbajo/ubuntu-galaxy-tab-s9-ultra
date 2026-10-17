@@ -8057,3 +8057,186 @@ is hash-checked; no physical validation is inferred from compilation, package
 installation or loop-device recovery. The separately supplied prerequisite
 Companion 1.5.8 is SHA-256
 `eb1e927b92bdc56305a125e9425480d875ca1f454bbd6453f6cbb38c57471559`.
+## 2026-10-17: user reports and release-content audit
+
+Three owners opened issues against 1.2.0/1.3.0 (#8, #9 on 2026-10-05/07; #3 on
+2026-09-13): the fingerprint reader is never detected on their tablets, an
+EF-DX925 has no keyboard backlight and no Fn+F12, automatic brightness keeps
+rising and falling on one unit, and one update from 1.2.0 to 1.3.0 ended
+without a display and was recovered by reflashing. Read-only audit, no tablet
+involved.
+
+**Fingerprint.** `debugfs` on the retained release image
+`ubuntu-gts9uwifi-v1.3.0-ufs.img` (4,769,972,224 bytes) shows
+`/var/lib/ubuntu-gts9u/` holding only `chromium-desktops.json`, no
+`android-secnvm-root`, and no `/mnt/vendor` entries, while
+`/usr/lib/firmware/gts9u/fingerprint/` holds the 29 files of
+`ubuntu-gts9u-fingerprint-firmware` 1.1 built from
+`GTS9U_FINGERPRINT_FIRMWARE_DIR`, including the development unit's
+`calib.dat` (SHA-256 `471221d8…`). The secure supervisor's preflight
+therefore fails on any other unit before fprintd can start; this is a
+confirmed root cause, not a hypothesis. The on-disk One UI 7 `NON-HLOS.bin`
+carries a different `dualfp.b00` (`98addc8b…` against the packaged
+`6a6cbf50…`), so the TA set is firmware-specific as well. `vendor.img` from
+the same firmware is EROFS and contains `bin/sec_nvm`, `bin/spdaemon`,
+`lib64/libspcom.so`, `libmdmdetect.so` and `libvmmem.so`; the remaining
+Bionic/framework libraries live in `system`. The kernel has
+`CONFIG_EROFS_FS=m` with all decompressors built in and `BLK_DEV_LOOP=y`.
+Added: `ubuntu-gts9u-fingerprint-provision` (+ unit, Device 2.85),
+`scripts/build-erofs-module.sh` (signed `erofs.ko` shipped by the device
+package and excluded from the hardware payload like `tun.ko`), the
+`el721_qtee_firmware_directory()` lookup in libfprint and the secure owner,
+and the supervisor's `select_runtime()`. Static checks and
+`scripts/test-fingerprint-provision.py` pass offline. Later the same day the
+development tablet was reached over SSH (SM-X910, Ubuntu 24.04.5, Device
+2.84, libfprint gts9u52, Companion 1.5.8 from the Resolute branch, root
+`rw`, `dpkg --audit` clean): the hand-assembled runtime has exactly the 23
+manifest files plus `libspss_event_proxy.so` and the `.vendor-original`/
+`compat-udmabuf` spares, `liblog_capture.so` is 6,280 bytes exporting only
+`__android_log_print`/`__android_log_buf_print` and importing only
+`vsnprintf`/`write`, and `spdaemon` reads
+`./sys/devices/platform/soc/soc:qcom,spss_utils/firmware_name` relative to
+its working directory (the retained file holds `spss1p.md`, the live
+attribute under `…/remoteproc/*/spss_utils/` reads `spss1p.mdt`). From that,
+the shim's source was reconstructed into `packaging/fingerprint-shim/` and
+built with `-nostdlib` in the arm64 buildroot (two exports, two imports, no
+`NEEDED`), the helper's sysfs lookup was corrected to the remoteproc path
+with the retained file preferred, libfprint gts9u53 and the secure owner were
+rebuilt with the firmware-directory lookup, and Device 2.85 packages the
+shim under `/usr/lib/ubuntu-gts9u/fingerprint/`.
+
+**EF-DX925 backlight.** Samsung's stock X910 DTS declares
+`stm32,booster_power_models = <0xf9 0xd3>` and
+`stm32,booster_power_voltage = <514000>`; `kbd_max77816_control()` writes
+MAX77816 register 0x04 to `(514000 - 260000) / 2000 = 0x7f` (5.14 V) right
+after the attach event identifies a DX915/DX925, and leaves the 0x23 (3.30 V)
+default otherwise. `samsung_stm32_pogo.c` programmed only CONFIG1/CONFIG2, so
+a DX925 enumerated at 3.30 V. The driver now raises VOUT for those two models
+and restores the default when the cover's power is cut. Compile-checked
+against the release object tree; no DX925 is available for physical
+validation.
+
+**Update that lost the display.** The first 1.3.0 payload failed in dpkg on
+the duplicated `tun.ko` (recorded 2026-10-02); the 1.2.0 backend restored the
+boot images but left whatever APT had unpacked unconfigured, and a device
+package unpacked over 2.53 without its postinst is a plausible dark boot.
+`update_core.apply_offline()` now runs `dpkg --force-confold --configure -a`
+before restoring the backup (Companion 1.5.9: 1.5.6 to 1.5.8 are the
+Resolute migration builds on `origin/upgrade/ubuntu-26.04-gnome50`;
+regression added), and the
+README gains a TWRP recovery procedure using the saved Ubuntu boot set.
+
+**Automatic brightness.** No code change: the port never tells the SSC the
+panel brightness (One UI's HAL sends message 611 to the light sensor), so a
+feedback loop through the under-display STK31610 is plausible but unmeasured.
+`scripts/diagnostics/ambient-brightness-trace.sh` records lux and brightness
+for a report.
+
+**Physical validation on the development unit (evening).** With the owner's
+SSH access, Device 2.85 and libfprint gts9u53 were installed through APT after
+a simulation that selected exactly those two upgrades and no removal;
+`dpkg --audit` stayed clean, the postinst ran `depmod`, and `erofs.ko` with
+the v1.3.0 signature loaded under integrity lockdown. The first provisioning
+run failed: the calibration lives in `sec_efs`, not `efs` (Device 2.86 looks
+there first). Its runtime then matched the hand-assembled set in only 15 of
+23 files, and the provenance showed why: the validated runtime takes the
+linker from the `com.android.runtime` APEX (`bin/linker64`, also copied as
+`ld-android.so`), `libcrypto`, `libdmabufheap` and `libion` from the
+`com.android.vndk.v33` APEX in `system_ext`, and never used the vendor
+`libvmmem.so` at all but a 5 KB stub (`vmmem-compat`) whose source was not in
+the repository. Device 2.87 provisions from those sources and ships the stub
+rebuilt from `packaging/fingerprint-shim/vmmem-compat.c`: 29 of 29 firmware
+files and 20 of 23 runtime files are now byte-identical to the validated set;
+the two port libraries differ by construction and `libhardware_legacy.so`
+was taken from the VNDK 33 APEX (`5feb8254…`). Every run left no mount or
+loop device behind. The owner then approved a reboot (boot
+`4ed4394a-11ba-42be-a9e2-7e9ba28dfb9a`): the provisioning unit reported the
+set already provisioned, the secure supervisor started `sec_nvm` from
+`/var/lib/ubuntu-gts9u/fingerprint/runtime` and failed with "SPSS daemon
+exited during startup"; fprintd timed out. The VNDK `libhardware_legacy.so`
+NEEDs libbinder, libbinder_ndk, libhidlbase and
+`android.system.suspend-V1-ndk.so`, none of which the runtime carries, while
+the hand-copied `6d749b12…` turned out to be a 7,872-byte stub exporting only
+`acquire_wake_lock` and `release_wake_lock` returning 0, with no imports.
+`packaging/fingerprint-shim/hardware-legacy-compat.c` reproduces it and
+Device 2.88 ships it as the third port library, dropping the VNDK copy. With
+2.88 installed (APT, one upgrade, no removal), `--force` left exactly the
+three port libraries differing from the validated set, and the second
+approved reboot (boot `5c7ee1d3-6e15-4412-a0f1-4eceb0fd950c`) started the
+secure transport from the provisioned runtime: "SPSS applications ready;
+starting listener-first secure owner", "Secure cache verified; fingerprint
+service ready", both daemons running from
+`/var/lib/ubuntu-gts9u/fingerprint/runtime`, fprintd active and listing the
+EL721. The owner then unlocked the session with an enrolled finger at the
+lock screen, so the stack is physically confirmed on this unit from the
+provisioned runtime; the first run on another owner's tablet is the real test
+of the provisioning.
+Companion 1.5.9 was not installed: the tablet runs 1.5.8 from the Resolute
+branch.
+
+**Galaxy Companion.** The owner asked for Tab Companion's successor to be
+integrated and for its updater to stay generic. Galaxy Companion gained the
+release-upgrade handoff from 1.5.6 to 1.5.9 without any device name: a
+`distribution` ZIP hands off to the backend it carries after GitHub digest
+verification or an explicit local SHA-256 confirmation shown in the page, the
+handoff variable is `GALAXY_COMPANION_HANDOFF_SHA256`, the record is
+`authorization.json` under the private handoff directory, and a failed offline
+update configures the unpacked packages before restoring boot. Reading the
+frozen offline runner showed it omitted `boot_core`, which `saved_set()`
+imports during the offline step, so every dual-boot device would have rolled
+back; it is frozen now and the tests import the frozen package from a clean
+interpreter. At the owner's request the numbering restarted at 0.9.0 with
+Debian epoch 1 (1.0.0 will be the first official release); the Dualboot
+Android app derives its versionCode with a 100000 offset for the same reason.
+Commits 7ea9fd2, 956bee8 and a824b5e on `agcarbajo/galaxy-companion`; no
+release was published because publishing needs the Docker/Android signing
+environment. The intermediate 2.5.0 build was installed on the development
+tablet over Tab Companion 1.5.8 (one declared removal, the old files retained
+under `package-backups`), detected the `gts9uwifi` profile and advertised the
+new capability. This repository now pins Galaxy Companion as the
+`external/galaxy-companion` submodule, builds `galaxy-companion` from it plus
+a transitional `ubuntu-gts9u-companion`, and every script and test that
+imported `tab_companion` imports `galaxy_companion` with the port's profile.
+
+**Builds and the signing key.** Rebuilding the kernel for the POGO change
+replaced the v1.3.0 module signing key (see development-notes, "The v1.3.0
+signing key was replaced on 2026-10-17"): the pruned object directory held
+the key without its kbuild stamp. The private key is gone; the public
+certificate was recovered from the released `Image.gz`, and Device 2.85
+(`54c25d55…`) carries `tun.ko`, `qcom_spss_irq.ko` and `erofs.ko` with the
+original signature so it installs on v1.3.0 kernels under integrity lockdown.
+The rebuilt kernel (`Image.gz` `25fd1b46…`, same `config`, new key) and its
+`bundle-polish/boot.img` (`844e3096…`) are kept as build evidence only: a
+DX925 is not available, and shipping them is a release decision. libfprint
+gts9u53 (`0aba0cef…`) and Companion 1.5.9 (`10f587ea…`) were built from the
+same tree. The kernel builder now retains any pre-existing key and fails if a
+build replaces it.
+
+**Repository state found.** The `Ubuntu-24.04` checkout sits on
+`upgrade/ubuntu-26.04-gnome50` at 0116bcc with uncommitted Caps Lock/Tailscale
+work that `main` already contains (916e2f1), and a stash from 2026-09-08 whose
+`connection_wakeup`/`pm_wakeup_irq` changes are also in `main`; the remote
+upgrade branch has one newer merge commit (d90baf9). Nothing was reset,
+switched or committed.
+
+## 2026-10-17: the 26.04 branch moves to Galaxy Companion
+
+Branch `upgrade/ubuntu-26.04-galaxy-companion`, created from
+`origin/upgrade/ubuntu-26.04-gnome50` (d90baf9) with `main` (4f04501) merged
+in. Conflicts: the noble device control version (main's 2.88 kept), the
+libfprint builder (the branch's suite switch with main's gts9u53 for Noble),
+the rootfs package list (the branch's suite-specific list plus
+`galaxy-companion`), `docs/system-updates.md` and the porting log (both
+sides kept, the branch's entries first); the Tab Companion sources the branch
+had modified are gone with main's removal. `migration_core.py` and
+`migration_plan.py` moved to `packaging/gts9u-migration/gts9u_migration/`,
+import `galaxy_companion.update_core/update_bundle/update_policy`, exclude
+both updater state directories when cloning the root, require
+`galaxy-companion` in the migration metapackage and read the handoff digest
+from `update_core.HANDOFF_ENV`. `build-migration-backend.py` freezes Galaxy
+Companion's five updater modules from the pinned submodule, this backend and
+the `gts9uwifi` profile, and its `__main__` sets the profile before importing.
+The retained-root hook accepts either updater's `/etc/system-update` target
+and writes its failure record into that updater's state directory. The
+migration tests and probes import the new packages. Nothing was built or run
+on a tablet for this change; the 26.04 ZIP must be rebuilt from this branch.

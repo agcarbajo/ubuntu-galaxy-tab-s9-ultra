@@ -1,10 +1,17 @@
 # System updates
 
+The updater is [Galaxy Companion](https://github.com/agcarbajo/galaxy-companion)'s
+(formerly Tab Companion; this port pins it as the `external/galaxy-companion`
+submodule and ships it as `galaxy-companion`, with `ubuntu-gts9u-companion` as a
+transitional package). Everything device-specific comes from the `gts9uwifi`
+profile; its state lives in `/var/lib/galaxy-companion-update/`
+(`/var/lib/tab-companion-update/` while Tab Companion was installed).
+
 > The experimental Ubuntu 26.04/GNOME 50/Linux 7.2.9 v1.4.0 ZIP contains
 > both the normal TWRP clean installer and the non-destructive update payload.
-> Local release migration requires Companion 1.5.8 first: its normal ZIP action
-> explicitly confirms the complete file's SHA-256. GitHub authentication remains
-> unchanged. The final exact-ZIP inactive-root transaction passes; physical boot,
+> Local release migration requires Galaxy Companion 0.9.0 or later: its normal
+> ZIP action explicitly confirms the complete file's SHA-256 and hands off to the
+> backend the ZIP carries. GitHub authentication remains unchanged. The final exact-ZIP inactive-root transaction passes; physical boot,
 > peripherals and recovery remain unvalidated. See the
 > [26.04 upgrade assessment](upgrade-26.04-assessment.md).
 
@@ -27,7 +34,7 @@ ZIP after explicit confirmation of the complete SHA-256. Both use the same
 inactive-root engine and preserve the old system root; physical recovery is
 still a separate acceptance requirement.
 
-Open **Tab Companion → Updates**; it checks GitHub when opened. You can also
+Open **Galaxy Companion → Updates**; it checks GitHub when opened. You can also
 use **Check for updates** to refresh, then download and
 prepare the update. Alternatively choose a local build ZIP. Authenticate when
 asked and save your work before choosing **Restart and install**. The charger
@@ -56,18 +63,19 @@ their first update.
 
 ## Trying the local Ubuntu 26.04 ZIP
 
-For the unpublished v1.4.0 trial, install the matching
-`ubuntu-gts9u-companion_1.5.8_all.deb` first on the existing 1.3.0 system, then
-close and reopen Tab Companion. This updates the app/updater, not the OS or boot
-images. The package is also included in the combined ZIP; it is supplied
-separately because an older installed updater cannot accept the new local
+For an unpublished trial ZIP, install Galaxy Companion 0.9.0 or later first on
+the existing 1.3.0 system (`galaxy-companion_<version>_all.deb` together with
+the transitional `ubuntu-gts9u-companion_<version>_all.deb`), then close and
+reopen the application. This updates the app/updater, not the OS or boot
+images. Both packages are also included in the combined ZIP; they are supplied
+separately because an older installed updater cannot accept the local
 migration protocol before its own code is updated.
 
 ```sh
-sudo apt-get --no-remove install ./ubuntu-gts9u-companion_1.5.8_all.deb
+sudo apt-get install ./galaxy-companion_<version>_all.deb ./ubuntu-gts9u-companion_<version>_all.deb
 ```
 
-Use **Tab Companion → Updates → Install from a ZIP → Choose file** and select
+Use **Galaxy Companion → Updates → Install from a ZIP → Choose file** and select
 `ubuntu-26.04-sm-x910-v1.4.0.zip`. Review the migration warning and SHA-256, then
 confirm preparation and authenticate. Save your work before **Restart and
 install**. The privileged copied archive must match the confirmed digest; a
@@ -182,8 +190,8 @@ been tested on a recoverable device.
 
 Inspect `gts9u-update --status` and
 `journalctl -u gts9u-offline-update.service` after a failure. Backups remain in
-`/var/lib/tab-companion-update/transaction/backup`; starting a later update or
-cancelling moves completed backups into `/var/lib/tab-companion-update/backups`
+`/var/lib/galaxy-companion-update/transaction/backup`; starting a later update or
+cancelling moves completed backups into `/var/lib/galaxy-companion-update/backups`
 instead of deleting them. They include private system configuration and stay
 accessible only to root. A failed APT transaction needs package repair before
 another update; the updater does not silently discard that failure.
@@ -236,3 +244,13 @@ confirmed physical audio, camera and fingerprint operation before republication.
 A fresh TWRP
 installation of this exact replacement ZIP and power-loss recovery have not
 been physically exercised.
+
+### Failure path and package configuration (Companion 1.5.9)
+
+When APT stops in the middle of a transaction, the offline installer now runs
+`dpkg --force-confold --configure -a` before restoring the previous boot images
+and modules, and records a configuration failure in the status without
+entering emergency mode (that remains reserved for a failed boot restore). The
+README documents the TWRP recovery route from the saved Ubuntu boot set. The
+device package also owns `erofs.ko` from Device 2.85, so the hardware payload
+excludes it like the IRQ and TUN modules.

@@ -18,7 +18,7 @@ def sanitize(root):
             issues.append('configured account password')
     for name in ('home', 'root/.ssh', 'etc/skel/.ssh',
                  'etc/NetworkManager/system-connections', 'var/lib/fprint',
-                 'var/lib/tab-companion-update'):
+                 'var/lib/tab-companion-update', 'var/lib/galaxy-companion-update'):
         directory = root / name
         if directory.exists() and any(p.is_file() for p in directory.rglob('*')):
             issues.append('personal data in ' + name)

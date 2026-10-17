@@ -789,8 +789,36 @@ export KBUILD_BUILD_TIMESTAMP=${KBUILD_BUILD_TIMESTAMP:-$(
 # The build counter lives in .version and increments on every link.
 printf '0\n' > "$build_dir/.version"
 
+# kbuild mints certs/signing_key.pem when the file is missing, and also when
+# its .signing_key.pem.cmd stamp is missing, because the rule is if_changed.
+# That is how the v1.3.0 key was replaced on 2026-10-17: the object directory
+# had been pruned down to the key itself, and the next incremental build
+# silently minted a new one.  The tablet runs with lockdown in integrity mode,
+# so a module signed by any other key is rejected; a lost key means every
+# later module change needs a new boot image.  Keep a copy of whatever key is
+# present before building and refuse to go on if the build replaced it.
+key_before=
+if [ -f "$build_dir/certs/signing_key.pem" ]; then
+	key_before=$(openssl x509 -in "$build_dir/certs/signing_key.pem" -noout -serial | sed 's/^serial=//')
+	retained=$build_dir/certs/retained/$key_before
+	if [ ! -f "$retained/signing_key.pem" ]; then
+		install -d -m 0700 "$retained"
+		install -m 0600 "$build_dir/certs/signing_key.pem" "$retained/signing_key.pem"
+	fi
+fi
 make -C "$kernel_tree" O="$build_dir" ARCH=arm64 LLVM=1 -j"$(nproc)" \
 	Image.gz qcom/sm8550-samsung-gts9uwifi.dtb
+if [ -n "$key_before" ]; then
+	key_after=$(openssl x509 -in "$build_dir/certs/signing_key.pem" -noout -serial | sed 's/^serial=//')
+	if [ "$key_after" != "$key_before" ]; then
+		install -m 0600 "$build_dir/certs/retained/$key_before/signing_key.pem" \
+			"$build_dir/certs/signing_key.pem"
+		rm -f "$build_dir/certs/signing_key.x509"
+		echo "kbuild replaced the module signing key ($key_before -> $key_after)." >&2
+		echo "The previous key is back in $build_dir/certs/signing_key.pem; rerun the build so the image and every module use it. Set KERNEL_CLEAN=1 only when a new key is intended." >&2
+		exit 1
+	fi
+fi
 
 if [ "${BUILD_WIFI_MODULES:-1}" = 1 ]; then
 	modules_root=$out_dir/modules-root
@@ -833,6 +861,11 @@ if [ "${BUILD_WIFI_MODULES:-1}" = 1 ]; then
 	# Tailscale needs /dev/net/tun for ordinary applications and MagicDNS.
 	# CONFIG_TUN=m is not useful unless the signed module is in the image.
 	bash "$repo/scripts/build-tailscale-tun.sh" \
+		"$kernel_tree" "$build_dir" "$release_dir/updates"
+	# The fingerprint provisioning helper mounts Android's EROFS system and
+	# vendor images inside super read-only.  CONFIG_EROFS_FS=m needs the
+	# signed module in the image for the same reason TUN does.
+	bash "$repo/scripts/build-erofs-module.sh" \
 		"$kernel_tree" "$build_dir" "$release_dir/updates"
 	# Containers need the modular NAT/filter stack too, not just ath12k.
 	# Without these modules Waydroid fails before Android starts, with

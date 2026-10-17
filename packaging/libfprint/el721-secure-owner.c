@@ -118,7 +118,7 @@ int main (int argc, char **argv)
   qcomtee_result_t result = QCOMTEE_ERROR;
   guint8 request[128] = {0};
   gboolean ready = FALSE;
-  session->firmware_directory = g_strdup ("/usr/lib/firmware/gts9u/fingerprint");
+  session->firmware_directory = g_strdup (el721_qtee_firmware_directory ());
   session->root = open_root (&error);
   if (!session->root) goto finished;
   session->client_env = open_client_env (session->root, &error);

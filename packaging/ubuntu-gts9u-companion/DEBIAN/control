@@ -1,11 +1,14 @@
 Package: ubuntu-gts9u-companion
-Version: 1.5.8
-Section: utils
+Version: 1:0.9.0
+Section: oldlibs
 Priority: optional
 Architecture: all
+Depends: galaxy-companion (>= 1:0.9.0)
 Maintainer: Ubuntu gts9uwifi port contributors <noreply@example.invalid>
-Depends: python3, python3-markdown-it, python3-dbus, python3-gi, python3-gi-cairo, gir1.2-gtk-4.0, gir1.2-adw-1, dconf-gsettings-backend, fprintd (>= 1.94.3-1+gts9u1), gnome-shell, apt, util-linux, polkitd, pkexec, ca-certificates
-Description: S Pen and cover keyboard settings for the Galaxy Tab S9 Ultra
- Tab Companion provides a native GNOME interface for S Pen status, remote
- modes, haptics, fingerprint settings and the special keys of Samsung's
- compatible keyboard covers.
+Description: Transitional package: Tab Companion is now Galaxy Companion
+ Tab Companion, this port's settings application, became Galaxy Companion and
+ moved to its own repository (https://github.com/agcarbajo/galaxy-companion),
+ where device profiles let it serve other Samsung devices too. This empty
+ package keeps the old name installable so that updaters which still require
+ ubuntu-gts9u-companion in an update payload pull galaxy-companion in. It can
+ be removed once galaxy-companion is installed.

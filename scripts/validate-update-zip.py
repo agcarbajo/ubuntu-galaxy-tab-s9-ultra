@@ -2,13 +2,15 @@
 # SPDX-License-Identifier: MIT
 """Verify the safe-update contract and every payload byte before publishing."""
 import hashlib
+import os
 from pathlib import Path
 import sys
 import zipfile
 
+os.environ.setdefault("GALAXY_COMPANION_DEVICE", "gts9uwifi")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] /
-                      "packaging/ubuntu-gts9u-companion/usr/lib/tab-companion"))
-from tab_companion.update_bundle import inspect
+                      "external/galaxy-companion/packaging/galaxy-companion/usr/lib/galaxy-companion"))
+from galaxy_companion.update_bundle import inspect
 
 
 def validate(path):

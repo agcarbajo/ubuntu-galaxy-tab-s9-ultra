@@ -1,64 +1,41 @@
 #!/bin/bash
-# Build the architecture-independent Tab Companion Debian package.
+# Build Galaxy Companion from the pinned submodule, and the transitional
+# ubuntu-gts9u-companion package that points at it.
+#
+# Tab Companion became Galaxy Companion and lives in its own repository
+# (external/galaxy-companion); this port only pins the commit it ships.  The
+# transitional package keeps the old name installable, so an updater that still
+# requires ubuntu-gts9u-companion in a payload pulls galaxy-companion in.
 set -euo pipefail
 
 repo=$(cd "$(dirname "$0")/.." && pwd)
 base=${UBUNTU_WORKDIR:-/root/ubuntu-gts9u}
-src=$repo/packaging/ubuntu-gts9u-companion
 out=${DEB_OUT_DIR:-$base/out/packages}
+companion=$repo/external/galaxy-companion
+test -f "$companion/scripts/build-companion-package.sh" || {
+	echo 'Galaxy Companion submodule is not checked out: run git submodule update --init' >&2
+	exit 1
+}
+mkdir -p "$out"
 
-version=$(awk '/^Version:/ {print $2}' "$src/DEBIAN/control")
+UBUNTU_WORKDIR=$base DEB_OUT_DIR=$out bash "$companion/scripts/build-companion-package.sh"
+
+version=$(awk '/^Version:/ {print $2}' "$companion/packaging/galaxy-companion/DEBIAN/control")
+transitional=$(awk '/^Version:/ {print $2}' "$repo/packaging/ubuntu-gts9u-companion/DEBIAN/control")
+test "$version" = "$transitional" || {
+	echo "ubuntu-gts9u-companion is $transitional but the pinned Galaxy Companion is $version" >&2
+	exit 1
+}
+# Galaxy Companion's Debian version carries epoch 1 since its numbering
+# restarted at 0.9.0; file names leave the epoch out, as dpkg does.
+upstream=${version#*:}
 staging=$base/build/deb/ubuntu-gts9u-companion
-deb=$out/ubuntu-gts9u-companion_${version}_all.deb
-
 rm -rf -- "$staging"
-mkdir -p "$staging" "$out"
-cp -a "$src/." "$staging/"
-find "$staging" -type f -name '*.pyc' -delete
-find "$staging" -type d -name '__pycache__' -empty -delete
-
-# Gio resources keep the illustration independent of the current directory.
-resource_dir=$staging/usr/share/tab-companion
-cat > "$resource_dir/io.github.agcarbajo.TabCompanion.gresource.xml" <<'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<gresources>
-  <gresource prefix="/io/github/agcarbajo/TabCompanion/images">
-    <file alias="spen-tip-left.svg">spen-tip-left.svg</file>
-    <file alias="spen-tip-right.svg">spen-tip-right.svg</file>
-  </gresource>
-</gresources>
-EOF
-glib-compile-resources --sourcedir="$resource_dir" \
-	--target="$resource_dir/io.github.agcarbajo.TabCompanion.gresource" \
-	"$resource_dir/io.github.agcarbajo.TabCompanion.gresource.xml"
-rm "$resource_dir/io.github.agcarbajo.TabCompanion.gresource.xml" \
-	"$resource_dir/spen-tip-left.svg" \
-	"$resource_dir/spen-tip-right.svg"
-
-# Load the resource before Python starts importing the UI.
-sed -i '5i\from gi.repository import Gio\nGio.resources_register(Gio.Resource.load("/usr/share/tab-companion/io.github.agcarbajo.TabCompanion.gresource"))' \
-	"$staging/usr/bin/tab-companion"
-
-glib-compile-schemas --strict "$staging/usr/share/glib-2.0/schemas"
-desktop-file-validate "$staging/usr/share/applications/io.github.agcarbajo.TabCompanion.desktop"
-appstreamcli validate --no-net "$staging/usr/share/metainfo/io.github.agcarbajo.TabCompanion.metainfo.xml"
-python3 -m compileall -q "$staging/usr/lib/tab-companion"
-# Validate syntax above, but let the target's Python build its own caches.
-find "$staging/usr/lib/tab-companion" -type f -name '*.pyc' -delete
-find "$staging/usr/lib/tab-companion" -type d -name '__pycache__' -empty -delete
-
+mkdir -p "$staging"
+cp -a "$repo/packaging/ubuntu-gts9u-companion/DEBIAN" "$staging/"
 chown -R root:root "$staging"
 find "$staging" -type d -exec chmod 0755 {} +
 find "$staging" -type f -exec chmod 0644 {} +
-chmod 0755 "$staging/usr/bin/tab-companion" \
-	"$staging/usr/bin/gts9u-update" \
-	"$staging/DEBIAN/postinst" "$staging/DEBIAN/postrm"
-# Everything in libexec is something polkit or the window runs, so mark the
-# whole directory rather than a list: the boot helpers were missing from the
-# list they were meant to be on, and shipped unexecutable because of it.
-find "$staging/usr/libexec" -type f -exec chmod 0755 {} +
 find "$staging" -exec touch -h -d '@0' {} +
-
-dpkg-deb --root-owner-group --build "$staging" "$deb"
-dpkg-deb --contents "$deb"
-sha256sum "$deb"
+dpkg-deb --root-owner-group --build "$staging" "$out/ubuntu-gts9u-companion_${upstream}_all.deb"
+sha256sum "$out/galaxy-companion_${upstream}_all.deb" "$out/ubuntu-gts9u-companion_${upstream}_all.deb"
