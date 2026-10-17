@@ -7941,9 +7941,10 @@ secure transport from the provisioned runtime: "SPSS applications ready;
 starting listener-first secure owner", "Secure cache verified; fingerprint
 service ready", both daemons running from
 `/var/lib/ubuntu-gts9u/fingerprint/runtime`, fprintd active and listing the
-EL721. The owner's own enrolment check at the lock screen is the remaining
-physical step on this unit; the first run on another owner's tablet is the
-real test of the provisioning.
+EL721. The owner then unlocked the session with an enrolled finger at the
+lock screen, so the stack is physically confirmed on this unit from the
+provisioned runtime; the first run on another owner's tablet is the real test
+of the provisioning.
 Companion 1.5.9 was not installed: the tablet runs 1.5.8 from the Resolute
 branch.
 
