@@ -16,11 +16,13 @@ carries all of it.  This helper reads it from the tablet itself, read-only:
   `vendor`, `system` and `system_ext` logical partitions inside `super`
   (read-only loop mounts resolved from the LP metadata; nothing in `super`
   is modified), including the Bionic linker from the `com.android.runtime`
-  APEX and the VNDK 33 libraries from the `com.android.vndk.v33` APEX, which
-  is where the validated hand-assembled runtime took them from;
-- this port's own two libraries from the device package: `liblog_capture.so`
-  (log shim) and `libvmmem.so` (mem_buf-less sharing probe that replaces the
-  vendor library, which has no driver to talk to on mainline).
+  APEX and the VNDK 33 `libcrypto`, `libdmabufheap` and `libion` from the
+  `com.android.vndk.v33` APEX, which is where the validated hand-assembled
+  runtime took them from;
+- this port's own three libraries from the device package: `liblog_capture.so`
+  (log shim), `libvmmem.so` (mem_buf-less sharing probe that replaces the
+  vendor library, which has no driver to talk to on mainline) and
+  `libhardware_legacy.so` (no-op wake locks; Android's needs binder).
 
 Results are installed atomically under /var/lib/ubuntu-gts9u/fingerprint and
 described in provenance.json.  `--check` only reports; it writes nothing.
@@ -108,12 +110,12 @@ SYSTEM_FILES = {
     'lib64/libcrypto.so': (('vndk-apex', 'lib64/libcrypto.so'), ('system', 'lib64/libcrypto.so')),
     'lib64/libdmabufheap.so': (('vndk-apex', 'lib64/libdmabufheap.so'), ('system', 'lib64/libdmabufheap.so')),
     'lib64/libion.so': (('vndk-apex', 'lib64/libion.so'), ('system', 'lib64/libion.so')),
-    'lib64/libhardware_legacy.so': (('vndk-apex', 'lib64/libhardware_legacy.so'),
-                                    ('system', 'lib64/libhardware_legacy.so')),
 }
 # This port's own libraries, shipped by the device package (sources in
-# packaging/fingerprint-shim).  libvmmem.so replaces vendor/lib64/libvmmem.so.
-PORT_LIBS = ('lib64/liblog_capture.so', 'lib64/libvmmem.so')
+# packaging/fingerprint-shim).  libvmmem.so replaces vendor/lib64/libvmmem.so;
+# libhardware_legacy.so replaces Android's, which needs binder and the suspend
+# HAL that this runtime does not have.
+PORT_LIBS = ('lib64/liblog_capture.so', 'lib64/libvmmem.so', 'lib64/libhardware_legacy.so')
 SHIM = 'lib64/liblog_capture.so'
 SPDAEMON_CWD_FILE = 'spdaemon-cwd/sys/devices/platform/soc/soc:qcom,spss_utils/firmware_name'
 RUNTIME_FILES = tuple(VENDOR_FILES) + tuple(SYSTEM_FILES) + PORT_LIBS + (SPDAEMON_CWD_FILE,)

@@ -7921,11 +7921,19 @@ linker from the `com.android.runtime` APEX (`bin/linker64`, also copied as
 the repository. Device 2.87 provisions from those sources and ships the stub
 rebuilt from `packaging/fingerprint-shim/vmmem-compat.c`: 29 of 29 firmware
 files and 20 of 23 runtime files are now byte-identical to the validated set;
-the two port libraries differ by construction and `libhardware_legacy.so` is
-the VNDK 33 build (`5feb8254…`) where the hand-copied one (`6d749b12…`) has
-no recorded origin. Every run left no mount or loop device behind. The secure
-supervisor kept running on the legacy runtime; the provisioned one is first
-used at the next boot, which was not performed without the owner's approval.
+the two port libraries differ by construction and `libhardware_legacy.so`
+was taken from the VNDK 33 APEX (`5feb8254…`). Every run left no mount or
+loop device behind. The owner then approved a reboot (boot
+`4ed4394a-11ba-42be-a9e2-7e9ba28dfb9a`): the provisioning unit reported the
+set already provisioned, the secure supervisor started `sec_nvm` from
+`/var/lib/ubuntu-gts9u/fingerprint/runtime` and failed with "SPSS daemon
+exited during startup"; fprintd timed out. The VNDK `libhardware_legacy.so`
+NEEDs libbinder, libbinder_ndk, libhidlbase and
+`android.system.suspend-V1-ndk.so`, none of which the runtime carries, while
+the hand-copied `6d749b12…` turned out to be a 7,872-byte stub exporting only
+`acquire_wake_lock` and `release_wake_lock` returning 0, with no imports.
+`packaging/fingerprint-shim/hardware-legacy-compat.c` reproduces it and
+Device 2.88 ships it as the third port library, dropping the VNDK copy.
 Companion 1.5.9 was not installed: the tablet runs 1.5.8 from the Resolute
 branch.
 

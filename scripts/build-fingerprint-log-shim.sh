@@ -1,7 +1,7 @@
 #!/bin/bash
 # Build this port's two Bionic-side libraries for the SPU daemons in the
-# pinned arm64 buildroot: liblog_capture.so (LD_PRELOAD log shim) and
-# libvmmem.so (mem_buf-less sharing probe).  No hardware access and no
+# pinned arm64 buildroot: liblog_capture.so (LD_PRELOAD log shim), libvmmem.so
+# (mem_buf-less sharing probe) and libhardware_legacy.so (no-op wake locks).  No hardware access and no
 # proprietary input: both sources live in packaging/fingerprint-shim/.
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
@@ -12,12 +12,14 @@ stage=$buildroot/build/fingerprint-shim
 mkdir -p "$out" "$stage"
 install -m0644 "$repo/packaging/fingerprint-shim/android-log-capture.c" "$stage/"
 install -m0644 "$repo/packaging/fingerprint-shim/vmmem-compat.c" "$stage/"
+install -m0644 "$repo/packaging/fingerprint-shim/hardware-legacy-compat.c" "$stage/"
 # -nostdlib: the daemons run under Bionic, so every import must stay an
 # unversioned, unresolved symbol and the library must not NEED glibc.
 # -fno-stack-protector/-fno-builtin: nothing else may be imported.
 chroot "$buildroot" /bin/bash -euo pipefail -c '
   cd /build/fingerprint-shim
-  for pair in android-log-capture.c:liblog_capture.so vmmem-compat.c:libvmmem.so; do
+  for pair in android-log-capture.c:liblog_capture.so vmmem-compat.c:libvmmem.so \
+      hardware-legacy-compat.c:libhardware_legacy.so; do
     cc -std=c11 -Wall -Wextra -Werror -O2 -fPIC -shared -nostdlib \
       -fno-stack-protector -fno-builtin -fno-asynchronous-unwind-tables \
       -Wl,-soname,"${pair#*:}" -Wl,--hash-style=both -Wl,-z,relro,-z,now \
@@ -43,3 +45,4 @@ check() {
 # What the validated hand-built binaries looked like.
 check liblog_capture.so '__android_log_buf_print __android_log_print ' 'vsnprintf write '
 check libvmmem.so 'CreateVmMem FindVmByName FreeVmMem ShareDmabuf ' 'write '
+check libhardware_legacy.so 'acquire_wake_lock release_wake_lock ' ''
