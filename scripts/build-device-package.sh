@@ -56,14 +56,16 @@ test "$release" = "$(cat "$kernel_out/kernel.release")" || {
 [[ "$release" =~ ^[a-zA-Z0-9.+_-]+$ ]]
 install -m0755 "$owner" "$staging/usr/libexec/"
 
-# The LD_PRELOAD log shim for the SPU daemons is this port's own source
-# (packaging/fingerprint-shim).  The provisioning helper copies it into the
-# runtime assembled from the tablet's own Android images.
-shim=${FINGERPRINT_LOG_SHIM:-$base/out/fingerprint-shim/liblog_capture.so}
-test -f "$shim" || { echo 'Run scripts/build-fingerprint-log-shim.sh first' >&2; exit 1; }
-readelf -d "$shim" | grep -q NEEDED && { echo 'liblog_capture.so must not NEED a library' >&2; exit 1; }
+# The LD_PRELOAD log shim and the libvmmem replacement for the SPU daemons
+# are this port's own sources (packaging/fingerprint-shim).  The provisioning
+# helper copies them into the runtime assembled from the tablet's own images.
+shim_dir=${FINGERPRINT_SHIM_OUT_DIR:-$base/out/fingerprint-shim}
 install -d "$staging/usr/lib/ubuntu-gts9u/fingerprint"
-install -m0644 "$shim" "$staging/usr/lib/ubuntu-gts9u/fingerprint/liblog_capture.so"
+for lib in liblog_capture.so libvmmem.so; do
+	test -f "$shim_dir/$lib" || { echo 'Run scripts/build-fingerprint-log-shim.sh first' >&2; exit 1; }
+	readelf -d "$shim_dir/$lib" | grep -q NEEDED && { echo "$lib must not NEED a library" >&2; exit 1; }
+	install -m0644 "$shim_dir/$lib" "$staging/usr/lib/ubuntu-gts9u/fingerprint/$lib"
+done
 install -d "$staging/usr/lib/modules/$release/updates"
 install -m0644 "$irq" "$staging/usr/lib/modules/$release/updates/"
 

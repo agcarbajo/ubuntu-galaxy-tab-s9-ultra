@@ -307,8 +307,23 @@ class Packaging(unittest.TestCase):
         self.assertIn('-nostdlib', builder)
         self.assertIn('android-log-capture.c', builder)
         device = (REPO / 'scripts/build-device-package.sh').read_text()
-        self.assertIn('usr/lib/ubuntu-gts9u/fingerprint/liblog_capture.so', device)
+        self.assertIn('usr/lib/ubuntu-gts9u/fingerprint', device)
         self.assertIn('build-fingerprint-log-shim.sh', device)
+        for lib in ('liblog_capture.so', 'libvmmem.so'):
+            self.assertIn(lib, device)
+            self.assertIn(lib, builder)
+        vmmem = (REPO / 'packaging/fingerprint-shim/vmmem-compat.c').read_text()
+        for symbol in ('CreateVmMem', 'FreeVmMem', 'FindVmByName', 'ShareDmabuf',
+                       'qcom,cp_spss_hlos_shared', 'qcom,hlos'):
+            self.assertIn(symbol, vmmem)
+
+    def test_runtime_sources_follow_the_validated_set(self):
+        self.assertEqual(prov.SYSTEM_FILES['bin/linker64'][0], ('runtime-apex', 'bin/linker64'))
+        self.assertEqual(prov.SYSTEM_FILES['lib64/ld-android.so'][0], ('runtime-apex', 'bin/linker64'))
+        for name in ('libcrypto.so', 'libdmabufheap.so', 'libion.so', 'libhardware_legacy.so'):
+            self.assertEqual(prov.SYSTEM_FILES['lib64/' + name][0][0], 'vndk-apex')
+        self.assertNotIn('lib64/libvmmem.so', prov.VENDOR_FILES)
+        self.assertIn('lib64/libvmmem.so', prov.PORT_LIBS)
 
     def test_erofs_module_is_device_owned(self):
         payload = (REPO / 'scripts/build-update-payload.py').read_text()
