@@ -17,7 +17,7 @@
 
 #include <glib/gstdio.h>
 
-#define EL721_FIRMWARE "/usr/lib/firmware/gts9u/fingerprint"
+/* Firmware directory: see el721_qtee_firmware_directory (). */
 #define EL721_TOUCH "/sys/bus/i2c/devices/13-005d"
 #define EL721_PANEL "/sys/class/backlight/ae94000.dsi.0"
 #define EL721_VISUAL_STATE "/run/gts9u-fingerprint/active"
@@ -1161,7 +1161,7 @@ el721_open (FpDevice *device)
     device, FPI_DEVICE_UDEV_SUBTYPE_PLATFORM));
   if (!set_sensor_power (self, TRUE, &error))
     goto fail;
-  self->qtee = el721_qtee_open (EL721_FIRMWARE, &error);
+  self->qtee = el721_qtee_open (el721_qtee_firmware_directory (), &error);
   if (!self->qtee || !el721_qtee_prepare (self->qtee, &error))
     goto fail;
   set_sensor_power (self, FALSE, NULL);

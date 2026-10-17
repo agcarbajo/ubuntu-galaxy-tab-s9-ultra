@@ -25,6 +25,7 @@ ubuntu-gts9u-desktop-user.service:multi-user.target
 ubuntu-gts9u-desktop-user.path:multi-user.target
 ubuntu-gts9u-camera-relays.service:graphical.target
 ubuntu-gts9u-fingerprint-ui.service:multi-user.target
+ubuntu-gts9u-fingerprint-provision.service:multi-user.target
 ubuntu-gts9u-fingerprint-secure.service:multi-user.target
 ubuntu-gts9u-tailscale-tun.service:multi-user.target
 '

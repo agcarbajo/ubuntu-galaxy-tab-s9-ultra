@@ -55,6 +55,15 @@ test "$release" = "$(cat "$kernel_out/kernel.release")" || {
 }
 [[ "$release" =~ ^[a-zA-Z0-9.+_-]+$ ]]
 install -m0755 "$owner" "$staging/usr/libexec/"
+
+# The LD_PRELOAD log shim for the SPU daemons is this port's own source
+# (packaging/fingerprint-shim).  The provisioning helper copies it into the
+# runtime assembled from the tablet's own Android images.
+shim=${FINGERPRINT_LOG_SHIM:-$base/out/fingerprint-shim/liblog_capture.so}
+test -f "$shim" || { echo 'Run scripts/build-fingerprint-log-shim.sh first' >&2; exit 1; }
+readelf -d "$shim" | grep -q NEEDED && { echo 'liblog_capture.so must not NEED a library' >&2; exit 1; }
+install -d "$staging/usr/lib/ubuntu-gts9u/fingerprint"
+install -m0644 "$shim" "$staging/usr/lib/ubuntu-gts9u/fingerprint/liblog_capture.so"
 install -d "$staging/usr/lib/modules/$release/updates"
 install -m0644 "$irq" "$staging/usr/lib/modules/$release/updates/"
 
@@ -70,6 +79,19 @@ test "$tun_serial" = "$cert_serial" || {
 	exit 1
 }
 install -m0644 "$tun" "$staging/usr/lib/modules/$release/updates/"
+
+# Android's system and vendor images inside super are EROFS.  The fingerprint
+# provisioning helper mounts them read-only through this signed module, so an
+# existing installation gets it through APT exactly like TUN.
+erofs=${EROFS_MODULE_OUT:-$kernel_out/modules-root/usr/lib/modules/$release/updates/erofs.ko}
+test -f "$erofs" || { echo 'Run scripts/build-mainline-kernel.sh or build-erofs-module.sh first' >&2; exit 1; }
+test "$(modinfo -F vermagic "$erofs" | cut -d' ' -f1)" = "$release"
+erofs_serial=$(modinfo -F sig_key "$erofs" | tr -d ':' | tr '[:lower:]' '[:upper:]')
+test "$erofs_serial" = "$cert_serial" || {
+	echo "EROFS module signing key does not match this kernel build" >&2
+	exit 1
+}
+install -m0644 "$erofs" "$staging/usr/lib/modules/$release/updates/"
 
 # Clutter's presented signal carries an opaque frame-info pointer that GJS
 # cannot marshal. Keep the tiny native bridge matched to Mutter 14 in this

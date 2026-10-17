@@ -1,5 +1,62 @@
 # The EL721 fingerprint reader under Ubuntu
 
+## Other tablets: not working in release 1.3.0 (2026-10-17)
+
+Two independent owners report that Ubuntu never shows the reader
+([#8](https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/issues/8),
+[#9](https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/issues/9)). An
+audit of the published 1.3.0 root filesystem image explains it without any
+hardware:
+
+- `/var/lib/ubuntu-gts9u/` contains only `chromium-desktops.json`. The
+  23-file Android secure runtime (`sec_nvm`, `spdaemon`, Bionic and VNDK
+  libraries, the log-capture shim) that `ubuntu-gts9u-fingerprint-secure`
+  hash-checks under `android-secnvm-root` was assembled by hand on the
+  development tablet and never shipped, so `runtime_preflight()` fails on
+  every other unit, the readiness lease is never published and fprintd's
+  `--wait` prerequisite times out. No device, no error visible to the user.
+- `/usr/lib/firmware/gts9u/fingerprint/` **is** shipped (package
+  `ubuntu-gts9u-fingerprint-firmware` 1.1) and carries the development unit's
+  500,000-byte `calib.dat`, which is that unit's EFS
+  `biometrics/meta/egis_calibration_data.bin`, plus the TA set of its One UI 8
+  build. Another unit's `Prepare` would run with foreign calibration, and a
+  tablet on a different firmware carries different signed TAs.
+- The Ubuntu-local NVM directories `/mnt/vendor/persist` and
+  `/mnt/vendor/spunvm` are required by the preflight and created by nobody.
+
+Everything the stack needs already exists on each SM-X910, so Device 2.85
+adds `ubuntu-gts9u-fingerprint-provision`, run once per boot before the secure
+supervisor. Read-only, it takes the nine `dualfp`, `skeymast` and `hwvault`
+segments from `apnhlos` (`image/`, vfat), `calib.dat` from EFS
+(`ro,noload`), `egoptbds.dat` from EFS when present (otherwise from the
+package, flagged), the two daemons and three Qualcomm libraries from the
+`vendor` image and the bootstrap Bionic and framework libraries from the
+`system` image inside `super`. The LP metadata is parsed in Python, each image
+is attached as a read-only loop device and mounted with the signed `erofs.ko`
+that the device package now carries like `tun.ko`. Results land under
+`/var/lib/ubuntu-gts9u/fingerprint/{firmware,runtime}` with a generated
+manifest and `provenance.json`; the supervisor prefers that runtime and
+libfprint and the secure owner prefer that firmware directory
+(`el721_qtee_firmware_directory()`), falling back to the legacy paths so the
+development unit is unaffected. `--check` prints a read-only report for issue
+threads: which partitions exist, what is provisioned, and whether the packaged
+and local calibrations match (they do only on the development unit).
+
+`liblog_capture.so`, this port's own LD_PRELOAD shim, now has its source in
+`packaging/fingerprint-shim/android-log-capture.c`, reconstructed from the
+validated binary (two exports, imports of only `vsnprintf` and `write`, no
+`NEEDED` entry, "[tag] message" lines on stderr); `build-fingerprint-log-shim.sh`
+builds it with `-nostdlib` in the arm64 buildroot and the device package ships
+it under `/usr/lib/ubuntu-gts9u/fingerprint/`. The `spdaemon-cwd`
+`firmware_name` file is copied from the legacy runtime when present (the
+validated bytes) and otherwise from the live attribute under the SPSS
+remoteproc (`.../remoteproc/*/spss_utils/firmware_name`, `spss1p.mdt`). Offline tests cover the
+metadata parser, validators and installer (`scripts/test-fingerprint-provision.py`).
+Nothing here has been run on a tablet yet: the first physical check is on the
+development unit, where every provisioned file must hash-match the
+hand-assembled set, followed by an owner of an undetected reader running
+`--check` and `--boot`.
+
 ## Current status: working, owner-confirmed
 
 On 2026-09-03 the owner accepted the Galaxy Tab S9 Ultra Wi-Fi's (`SM-X910`)

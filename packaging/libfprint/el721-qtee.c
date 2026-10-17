@@ -619,6 +619,23 @@ load_ta (El721Qtee *session, const gchar *directory, const gchar *basename,
   return TRUE;
 }
 
+/* ubuntu-gts9u-fingerprint-provision fills this directory from the tablet's
+ * own apnhlos (signed TAs) and EFS (this unit's calibration).  The packaged
+ * directory is the development unit's set and only a fallback. */
+#define EL721_PROVISIONED_FIRMWARE "/var/lib/ubuntu-gts9u/fingerprint/firmware"
+#define EL721_PACKAGED_FIRMWARE "/usr/lib/firmware/gts9u/fingerprint"
+
+const gchar *
+el721_qtee_firmware_directory (void)
+{
+  g_autofree gchar *probe = g_build_filename (EL721_PROVISIONED_FIRMWARE,
+                                              "dualfp.b00", NULL);
+
+  if (g_file_test (probe, G_FILE_TEST_IS_REGULAR))
+    return EL721_PROVISIONED_FIRMWARE;
+  return EL721_PACKAGED_FIRMWARE;
+}
+
 El721Qtee *
 el721_qtee_open (const gchar *firmware_directory, GError **error)
 {

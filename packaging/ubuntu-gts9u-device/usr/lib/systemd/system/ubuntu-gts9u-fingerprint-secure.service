@@ -1,6 +1,9 @@
 [Unit]
 Description=Galaxy Tab S9 Ultra boot-lifetime fingerprint secure transport
 After=local-fs.target systemd-udev-settle.service
+# Provision the TAs, this unit's calibration and the SPU runtime first.
+After=ubuntu-gts9u-fingerprint-provision.service
+Wants=ubuntu-gts9u-fingerprint-provision.service
 Before=fprintd.service
 ConditionPathExists=/sys/bus/platform/devices/egis-el721
 # The secure firmware can retain DMA addresses. Only a full OS reboot may

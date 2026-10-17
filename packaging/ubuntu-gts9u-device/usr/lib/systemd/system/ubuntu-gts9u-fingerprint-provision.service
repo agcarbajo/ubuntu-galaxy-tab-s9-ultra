@@ -1,0 +1,18 @@
+[Unit]
+Description=Provision the EL721 fingerprint stack from this tablet's own partitions
+After=local-fs.target systemd-udev-settle.service
+Before=ubuntu-gts9u-fingerprint-secure.service fprintd.service
+ConditionPathExists=/sys/bus/platform/devices/egis-el721
+
+[Service]
+Type=oneshot
+# Reads apnhlos, efs and super read-only; writes only under
+# /var/lib/ubuntu-gts9u/fingerprint and the empty Ubuntu-local NVM directories.
+ExecStart=/usr/libexec/ubuntu-gts9u-fingerprint-provision --boot
+TimeoutStartSec=180
+UMask=0077
+RuntimeDirectory=ubuntu-gts9u-fingerprint-provision
+RuntimeDirectoryMode=0700
+
+[Install]
+WantedBy=multi-user.target

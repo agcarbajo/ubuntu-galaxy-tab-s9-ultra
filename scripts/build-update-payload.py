@@ -103,7 +103,7 @@ def main():
             if f.is_file() and not f.is_symlink()))
         # These signed board modules belong to ubuntu-gts9u-device. Duplicating
         # either makes dpkg reject a real update even when the bytes match.
-        for name in ("qcom_spss_irq.ko", "tun.ko"):
+        for name in ("qcom_spss_irq.ko", "tun.ko", "erofs.ko"):
             for file in (stage / "usr/lib/modules").rglob(name):
                 file.unlink()
         for file in sorted(stage.rglob("*"), reverse=True):
