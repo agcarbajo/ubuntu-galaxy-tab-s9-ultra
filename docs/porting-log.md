@@ -7830,3 +7830,99 @@ including the existing boot-animation feature, format-1 marker and README
 updating link; no SHA-256 section was added. Prior ZIPs/manifests remain retained
 locally. No further tablet reboot or partition write occurred during rebuilding
 or publication.
+
+## 2026-10-17: user reports and release-content audit
+
+Three owners opened issues against 1.2.0/1.3.0 (#8, #9 on 2026-10-05/07; #3 on
+2026-09-13): the fingerprint reader is never detected on their tablets, an
+EF-DX925 has no keyboard backlight and no Fn+F12, automatic brightness keeps
+rising and falling on one unit, and one update from 1.2.0 to 1.3.0 ended
+without a display and was recovered by reflashing. Read-only audit, no tablet
+involved.
+
+**Fingerprint.** `debugfs` on the retained release image
+`ubuntu-gts9uwifi-v1.3.0-ufs.img` (4,769,972,224 bytes) shows
+`/var/lib/ubuntu-gts9u/` holding only `chromium-desktops.json`, no
+`android-secnvm-root`, and no `/mnt/vendor` entries, while
+`/usr/lib/firmware/gts9u/fingerprint/` holds the 29 files of
+`ubuntu-gts9u-fingerprint-firmware` 1.1 built from
+`GTS9U_FINGERPRINT_FIRMWARE_DIR`, including the development unit's
+`calib.dat` (SHA-256 `471221d8…`). The secure supervisor's preflight
+therefore fails on any other unit before fprintd can start; this is a
+confirmed root cause, not a hypothesis. The on-disk One UI 7 `NON-HLOS.bin`
+carries a different `dualfp.b00` (`98addc8b…` against the packaged
+`6a6cbf50…`), so the TA set is firmware-specific as well. `vendor.img` from
+the same firmware is EROFS and contains `bin/sec_nvm`, `bin/spdaemon`,
+`lib64/libspcom.so`, `libmdmdetect.so` and `libvmmem.so`; the remaining
+Bionic/framework libraries live in `system`. The kernel has
+`CONFIG_EROFS_FS=m` with all decompressors built in and `BLK_DEV_LOOP=y`.
+Added: `ubuntu-gts9u-fingerprint-provision` (+ unit, Device 2.85),
+`scripts/build-erofs-module.sh` (signed `erofs.ko` shipped by the device
+package and excluded from the hardware payload like `tun.ko`), the
+`el721_qtee_firmware_directory()` lookup in libfprint and the secure owner,
+and the supervisor's `select_runtime()`. Static checks and
+`scripts/test-fingerprint-provision.py` pass offline. Later the same day the
+development tablet was reached over SSH (SM-X910, Ubuntu 24.04.5, Device
+2.84, libfprint gts9u52, Companion 1.5.8 from the Resolute branch, root
+`rw`, `dpkg --audit` clean): the hand-assembled runtime has exactly the 23
+manifest files plus `libspss_event_proxy.so` and the `.vendor-original`/
+`compat-udmabuf` spares, `liblog_capture.so` is 6,280 bytes exporting only
+`__android_log_print`/`__android_log_buf_print` and importing only
+`vsnprintf`/`write`, and `spdaemon` reads
+`./sys/devices/platform/soc/soc:qcom,spss_utils/firmware_name` relative to
+its working directory (the retained file holds `spss1p.md`, the live
+attribute under `…/remoteproc/*/spss_utils/` reads `spss1p.mdt`). From that,
+the shim's source was reconstructed into `packaging/fingerprint-shim/` and
+built with `-nostdlib` in the arm64 buildroot (two exports, two imports, no
+`NEEDED`), the helper's sysfs lookup was corrected to the remoteproc path
+with the retained file preferred, libfprint gts9u53 and the secure owner were
+rebuilt with the firmware-directory lookup, and Device 2.85 packages the
+shim under `/usr/lib/ubuntu-gts9u/fingerprint/`.
+
+**EF-DX925 backlight.** Samsung's stock X910 DTS declares
+`stm32,booster_power_models = <0xf9 0xd3>` and
+`stm32,booster_power_voltage = <514000>`; `kbd_max77816_control()` writes
+MAX77816 register 0x04 to `(514000 - 260000) / 2000 = 0x7f` (5.14 V) right
+after the attach event identifies a DX915/DX925, and leaves the 0x23 (3.30 V)
+default otherwise. `samsung_stm32_pogo.c` programmed only CONFIG1/CONFIG2, so
+a DX925 enumerated at 3.30 V. The driver now raises VOUT for those two models
+and restores the default when the cover's power is cut. Compile-checked
+against the release object tree; no DX925 is available for physical
+validation.
+
+**Update that lost the display.** The first 1.3.0 payload failed in dpkg on
+the duplicated `tun.ko` (recorded 2026-10-02); the 1.2.0 backend restored the
+boot images but left whatever APT had unpacked unconfigured, and a device
+package unpacked over 2.53 without its postinst is a plausible dark boot.
+`update_core.apply_offline()` now runs `dpkg --force-confold --configure -a`
+before restoring the backup (Companion 1.5.9: 1.5.6 to 1.5.8 are the
+Resolute migration builds on `origin/upgrade/ubuntu-26.04-gnome50`;
+regression added), and the
+README gains a TWRP recovery procedure using the saved Ubuntu boot set.
+
+**Automatic brightness.** No code change: the port never tells the SSC the
+panel brightness (One UI's HAL sends message 611 to the light sensor), so a
+feedback loop through the under-display STK31610 is plausible but unmeasured.
+`scripts/diagnostics/ambient-brightness-trace.sh` records lux and brightness
+for a report.
+
+**Builds and the signing key.** Rebuilding the kernel for the POGO change
+replaced the v1.3.0 module signing key (see development-notes, "The v1.3.0
+signing key was replaced on 2026-10-17"): the pruned object directory held
+the key without its kbuild stamp. The private key is gone; the public
+certificate was recovered from the released `Image.gz`, and Device 2.85
+(`54c25d55…`) carries `tun.ko`, `qcom_spss_irq.ko` and `erofs.ko` with the
+original signature so it installs on v1.3.0 kernels under integrity lockdown.
+The rebuilt kernel (`Image.gz` `25fd1b46…`, same `config`, new key) and its
+`bundle-polish/boot.img` (`844e3096…`) are kept as build evidence only: a
+DX925 is not available, and shipping them is a release decision. libfprint
+gts9u53 (`0aba0cef…`) and Companion 1.5.9 (`10f587ea…`) were built from the
+same tree. The kernel builder now retains any pre-existing key and fails if a
+build replaces it.
+
+**Repository state found.** The `Ubuntu-24.04` checkout sits on
+`upgrade/ubuntu-26.04-gnome50` at 0116bcc with uncommitted Caps Lock/Tailscale
+work that `main` already contains (916e2f1), and a stash from 2026-09-08 whose
+`connection_wakeup`/`pm_wakeup_irq` changes are also in `main`; the remote
+upgrade branch has one newer merge commit (d90baf9). Nothing was reset,
+switched or committed.

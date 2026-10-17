@@ -33,7 +33,7 @@ Ubuntu 24.04 LTS arm64 for the Samsung Galaxy Tab S9 Ultra Wi-Fi
 | USB host | ✅ | HID and storage, powered or unpowered |
 | USB-C DisplayPort | ✅ | External video output |
 | Cameras and flash | ✅ | Four cameras, full field of view, autofocus and flash |
-| Fingerprint reader | ✅ | Login, enrolment and recognition |
+| Fingerprint reader | 🟡 | Login, enrolment and recognition on the development tablet; other units need the self-provisioning fix (not in 1.3.0, see Known issues) |
 | Ambient light sensor | ✅ | Automatic screen brightness |
 | NPU | ✅ | Hardware acceleration support |
 | Virtual machines | 🟡 | Gunyah host support; guest VMs still in development |
@@ -76,7 +76,11 @@ split the UFS first.
 
 ### Before you start
 
-1. **An unlocked bootloader.**
+1. **An unlocked bootloader.** One UI 8 and later remove the *OEM unlocking*
+   switch, so unlock while still on One UI 7 or earlier and only then update
+   ([details and the One UI 7 → 8 route](https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/issues/3)). With a screen lock set, the
+   Download Mode key combination stops at a teal *Reboot Device - D2* screen
+   that never enumerates over USB: remove the screen lock first.
 2. **Root with Magisk** (only if you want dual boot).
 3. Get `ubuntu-24.04-sm-x910-vX.X.X.zip` from the [latest release](https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/releases/latest). `gts9u-split.zip` and `Dualboot-vX.X.X.apk` only if you want dual boot.
 4. **[TWRP](https://github.com/rainbowdashh/android_device_samsung_gts9u/releases/tag/V2)** and **a `vbmeta` with AVB verification disabled** ([the one published alongside TWRP](https://xdaforums.com/attachments/vbmeta-1-tar.6077784/)). Flash both files in the AP slot using Odin or Heimdall (you will need to reboot again to download mode between flashes).
@@ -128,8 +132,34 @@ If an older updater returns to the desktop still showing **Ready to restart**,
 use the command above to load the current updater. To reinstall your recorded
 build, add `--repair` after `"$d/update.py"`. This preserves your data and settings.
 
+### If Ubuntu no longer boots after an update
+
+The updater keeps everything it needs to go back. From TWRP with `adb shell`:
+
+1. Mount the Ubuntu root: `mkdir /u && mount /dev/block/by-name/linuxroot /u`
+   (use `userdata` instead of `linuxroot` on a tablet that was never split).
+2. Read what happened: `/u/var/lib/tab-companion-update/status.json` and
+   `/u/var/log/apt/term.log`.
+3. Put the previous boot images back. The set that booted before the update is
+   in `/u/var/lib/tab-companion-update/transaction/backup/` (or the
+   last-known-good Ubuntu set in `/u/var/lib/gts9u-boot-sets/ubuntu/`):
+   `for p in boot init_boot vendor_boot dtbo; do dd if=/u/var/lib/gts9u-boot-sets/ubuntu/$p.img of=/dev/block/by-name/$p bs=4M; done; sync`
+4. If packages were left half-installed, finish them from the booted Ubuntu
+   (SSH or a terminal): `sudo dpkg --configure -a && sudo apt-get check`.
+
+Reflashing the installation ZIP also works, but erases Ubuntu's data.
+
 ## Known issues
 
+- **The fingerprint reader only works on the development tablet so far.**
+  Release 1.3.0 ships without the per-unit secure runtime and with that
+  unit's factory calibration, so other tablets never see the reader
+  ([#8](https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/issues/8), [#9](https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/issues/9)). The next build provisions both from each
+  tablet's own partitions at boot; this is written but not yet validated on a
+  second unit.
+- **EF-DX925 keyboard backlight and Fn+F12 stay dark** ([#8](https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/issues/8)): the
+  MAX77816 booster was left at 3.3 V. The next kernel raises it to Samsung's
+  5.14 V for the DX915/DX925, untested here without that cover.
 - Regarding the official cover keyboard, as I said, only EF-DX920 cover keyboard has been tested. EF-DX900, EF-DX910, EF-DX915 and
 EF-DX925 are untested as I don't have them, so they might not work.
 - Guest virtual machines remain under development; initial Gunyah host support is included.
