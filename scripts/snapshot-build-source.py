@@ -18,9 +18,17 @@ def main():
     if target.exists() or str(target).startswith('/mnt/') or ' ' in str(target):
         parser.error('Choose a new immutable Linux source snapshot path without spaces')
     target.mkdir(parents=True)
-    for name in ('configs', 'kernel', 'packaging', 'scripts', 'tests', 'docs'):
+    # Galaxy Companion is a submodule: its checkout travels with the snapshot
+    # (without its own .git), since the companion and the migration backend
+    # are built from it.
+    for name in ('configs', 'kernel', 'packaging', 'scripts', 'tests', 'docs',
+                 'external/galaxy-companion'):
+        if not (REPO / name / ('scripts' if name.startswith('external') else '')).exists():
+            raise SystemExit(name + ' is missing; run git submodule update --init')
         shutil.copytree(REPO / name, target / name, symlinks=True,
-            ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
+            ignore=shutil.ignore_patterns('__pycache__', '*.pyc', '.git'))
+    for name in ('.gitmodules',):
+        shutil.copyfile(REPO / name, target / name)
     for name in ('AGENTS.md', 'README.md', 'VERSION', 'LICENSE'):
         shutil.copyfile(REPO / name, target / name)
     files = {}
