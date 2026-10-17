@@ -1,5 +1,12 @@
 # System updates
 
+The updater is [Galaxy Companion](https://github.com/agcarbajo/galaxy-companion)'s
+(formerly Tab Companion; this port pins it as the `external/galaxy-companion`
+submodule and ships it as `galaxy-companion`, with `ubuntu-gts9u-companion` as a
+transitional package). Everything device-specific comes from the `gts9uwifi`
+profile; its state lives in `/var/lib/galaxy-companion-update/`
+(`/var/lib/tab-companion-update/` while Tab Companion was installed).
+
 > Ubuntu 26.04/GNOME 50 and Linux 7.2.8 are under assessment. The current
 > updater supports same-suite Noble releases only. See the
 > [26.04 upgrade assessment](upgrade-26.04-assessment.md); no 26.04 ZIP is
@@ -23,7 +30,7 @@ stable ZIP, authenticated against its published digest. The distribution-specifi
 migration and full-root recovery engine must still be implemented and tested
 before publishing that upgrade.
 
-Open **Tab Companion → Updates**; it checks GitHub when opened. You can also
+Open **Galaxy Companion → Updates**; it checks GitHub when opened. You can also
 use **Check for updates** to refresh, then download and
 prepare the update. Alternatively choose a local build ZIP. Authenticate when
 asked and save your work before choosing **Restart and install**. The charger
@@ -150,8 +157,8 @@ been tested on a recoverable device.
 
 Inspect `gts9u-update --status` and
 `journalctl -u gts9u-offline-update.service` after a failure. Backups remain in
-`/var/lib/tab-companion-update/transaction/backup`; starting a later update or
-cancelling moves completed backups into `/var/lib/tab-companion-update/backups`
+`/var/lib/galaxy-companion-update/transaction/backup`; starting a later update or
+cancelling moves completed backups into `/var/lib/galaxy-companion-update/backups`
 instead of deleting them. They include private system configuration and stay
 accessible only to root. A failed APT transaction needs package repair before
 another update; the updater does not silently discard that failure.

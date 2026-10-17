@@ -410,7 +410,7 @@ mkdir -p "$stage_debs"
 for pkg in libssc hexagonrpcd iio-sensor-proxy \
 	libfprint-2-2 $fingerprint_firmware_package \
 	libcamera-gts9u libspa-0.2-libcamera-gts9u \
-	ubuntu-gts9u-device ubuntu-gts9u-companion fastfetch v4l2-relayd-gts9u \
+	ubuntu-gts9u-device galaxy-companion ubuntu-gts9u-companion fastfetch v4l2-relayd-gts9u \
     gnome-settings-daemon gnome-settings-daemon-common \
     gir1.2-mutter-14 libmutter-14-0 mutter mutter-common mutter-common-bin \
     $npu_package; do

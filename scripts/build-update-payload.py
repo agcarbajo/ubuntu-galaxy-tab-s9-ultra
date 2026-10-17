@@ -124,17 +124,34 @@ def main():
         metadata.update(minimum_updater_protocol=2, minimum_port_version="1.3.0",
                         source_suites=["noble"], update_kind="port", data_policy="preserve")
     (out / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
+    # The legacy bootstrap is Galaxy Companion's updater with this device's
+    # profile embedded: update-to-latest.py runs it on installations that
+    # still have Tab Companion, where no profile is installed.
+    companion = repo / "external/galaxy-companion/packaging/galaxy-companion/usr"
+    source = companion / "lib/galaxy-companion/galaxy_companion"
+    if not source.is_dir():
+        raise SystemExit("Galaxy Companion submodule is not checked out: run git submodule update --init")
     with tempfile.TemporaryDirectory() as tmp:
         app = Path(tmp)
-        package = app / "tab_companion"
+        package = app / "galaxy_companion"
         package.mkdir()
         (package / "__init__.py").write_text("")
-        source = repo / "packaging/ubuntu-gts9u-companion/usr/lib/tab-companion/tab_companion"
-        for name in ("update_core.py", "update_bundle.py", "update_policy.py"):
+        for name in ("update_core.py", "update_bundle.py", "update_policy.py", "device.py", "boot_core.py"):
             shutil.copyfile(source / name, package / name)
+        (app / "devices").mkdir()
+        profile = companion / "share/galaxy-companion/devices" / (identity["device"] + ".json")
+        shutil.copyfile(profile, app / "devices" / profile.name)
         (app / "__main__.py").write_text(
-            "from tab_companion.update_core import main\n"
-            "import sys\ntry:\n    main()\nexcept Exception as e:\n    print(e, file=sys.stderr)\n    sys.exit(1)\n")
+            "import os, sys, tempfile, zipfile\n"
+            "_profiles = tempfile.mkdtemp(prefix='galaxy-companion-profile-')\n"
+            "with zipfile.ZipFile(sys.argv[0]) as _archive:\n"
+            "    for _name in _archive.namelist():\n"
+            "        if _name.startswith('devices/') and _name.endswith('.json'):\n"
+            "            with open(os.path.join(_profiles, os.path.basename(_name)), 'wb') as _out:\n"
+            "                _out.write(_archive.read(_name))\n"
+            "os.environ['GALAXY_COMPANION_DEVICES_DIR'] = _profiles\n"
+            "from galaxy_companion.update_core import main\n"
+            "try:\n    main()\nexcept Exception as e:\n    print(e, file=sys.stderr)\n    sys.exit(1)\n")
         for file in app.rglob("*"):
             os.utime(file, (315532800, 315532800))
         a.bootstrap.parent.mkdir(parents=True, exist_ok=True)

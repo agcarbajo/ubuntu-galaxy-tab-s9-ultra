@@ -1,0 +1,3 @@
+[submodule "external/galaxy-companion"]
+	path = external/galaxy-companion
+	url = https://github.com/agcarbajo/galaxy-companion.git

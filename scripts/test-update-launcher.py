@@ -13,7 +13,8 @@ spec.loader.exec_module(launcher)
 
 class LauncherTests(TestCase):
     def test_main_imports_the_complete_real_backend_from_one_revision(self):
-        source = Path(__file__).resolve().parents[1] / 'packaging/ubuntu-gts9u-companion/usr/lib/tab-companion/tab_companion'
+        companion = Path(__file__).resolve().parents[1] / 'external/galaxy-companion/packaging/galaxy-companion/usr'
+        source = companion / 'lib/galaxy-companion/galaxy_companion'
         commit = 'a' * 40
         fetched = []
         def fetch(url, limit):
@@ -21,6 +22,8 @@ class LauncherTests(TestCase):
             if url.endswith('/commits/main'):
                 return json.dumps({'sha': commit}).encode()
             self.assertIn('/' + commit + '/', url)
+            if url.endswith('.json'):
+                return (companion / 'share/galaxy-companion/devices' / url.rsplit('/', 1)[1]).read_bytes()
             return (source / url.rsplit('/', 1)[1]).read_bytes()
         # Isolate module imports as well as sys.path; no updater action runs.
         with patch.dict(sys.modules), patch.object(sys, 'path', sys.path.copy()), \
@@ -28,14 +31,16 @@ class LauncherTests(TestCase):
              patch.object(launcher, 'fetch', side_effect=fetch), \
              patch.object(launcher, 'update') as update:
             for name in tuple(sys.modules):
-                if name == 'tab_companion' or name.startswith('tab_companion.'):
+                if name == 'galaxy_companion' or name.startswith('galaxy_companion.'):
                     del sys.modules[name]
             launcher.main([])
             core, bundle = update.call_args.args
             self.assertTrue(callable(core.prepare))
             self.assertTrue(callable(bundle.inspect))
             self.assertEqual(core.policy.PROTOCOL, 2)
-        self.assertEqual(len(fetched), 4)
+            # The fetched profile, not a system package, made it this tablet's updater.
+            self.assertEqual(bundle.DEVICE.id, 'gts9uwifi')
+        self.assertEqual(len(fetched), 1 + len(launcher.MODULES) + 1)
 
     def setUp(self):
         self.core = Mock()

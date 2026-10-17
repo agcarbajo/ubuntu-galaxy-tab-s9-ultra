@@ -9,9 +9,9 @@ import sys
 import tempfile
 import zlib
 
-sys.path.insert(0, '/usr/lib/tab-companion')
-from tab_companion import update_core as update
-from tab_companion import update_bundle as bundle
+sys.path.insert(0, '/usr/lib/galaxy-companion')
+from galaxy_companion import update_core as update
+from galaxy_companion import update_bundle as bundle
 
 SIZE = 100663296
 SAVED = Path('/var/lib/gts9u-boot-sets/ubuntu/boot.img')

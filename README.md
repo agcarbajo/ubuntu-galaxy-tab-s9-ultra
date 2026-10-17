@@ -17,7 +17,7 @@ Ubuntu 24.04 LTS arm64 for the Samsung Galaxy Tab S9 Ultra Wi-Fi
 | S Pen writing | ✅ | Hover, pressure, tilt, side button and palm rejection |
 | S Pen dock | ✅ | Insertion, orientation and charging |
 | S Pen BLE | ✅ | Pairing, battery, air gestures and pointer mode |
-| Tab Companion | ✅ | Device settings, fingerprint, dual boot and system updates |
+| [Galaxy Companion](https://github.com/agcarbajo/galaxy-companion) | ✅ | Device settings, fingerprint, dual boot and system updates (formerly Tab Companion, now its own project) |
 | Keyboard cover | ✅ | EF-DX920 tested |
 | Cover switch | ✅ | Suspend on close and wake on open |
 | Power and volume buttons | ✅ | Power, wake and volume controls |
@@ -48,10 +48,12 @@ The evidence and technical limitations for every component are documented in
 This table describes the current source tree; previously published installation
 ZIPs may not include the latest changes.
 
-## Tab Companion
+## Galaxy Companion
 <img width="2164" height="1764" alt="Screenshot from 2026-08-20 04-02-55" src="https://github.com/user-attachments/assets/df7cddca-46e8-438a-bcb8-be713cc93bed" />
 
-Tab Companion provides:
+[Galaxy Companion](https://github.com/agcarbajo/galaxy-companion), formerly Tab
+Companion and now a separate project that serves other Samsung devices through
+device profiles, provides on this tablet:
 
 - full S Pen settings (pairing, gestures and air-pointer mouse mode);
 - remapping for compatible Samsung Book Cover Keyboard keys;
@@ -62,7 +64,7 @@ Tab Companion provides:
 
 The air-pointer concept is inspired by
 [PenMouse S](https://github.com/jojczak/PenMouseS) by Jakub J (`@jojczak`).
-Tab Companion uses an independent native Linux implementation.
+Galaxy Companion uses an independent native Linux implementation.
 
 ## Installation
 
@@ -106,7 +108,7 @@ split the UFS first.
 
 ### Switching systems
 
-From **Ubuntu**, just use the toggle that you should see on quick settings or from the Tab Companion app under the Dualboot tab.
+From **Ubuntu**, just use the toggle that you should see on quick settings or from the Galaxy Companion app under the Dualboot tab.
 
 From **Android**, install the `Dualboot-vX.X.X.apk` app and give it root access, then reboot from the app or add the toggle to quick settings.
 
@@ -118,8 +120,8 @@ Liked the project? you might want to buy me a coffee, I'll be very grateful!
 
 ## Updating an existing installation
 
-Starting with v1.1.0, open **Tab Companion → Updates** to update the complete
-port. For v1.0.0 installations without the updater, run:
+Starting with v1.1.0, open **Galaxy Companion → Updates** (Tab Companion →
+Updates on older installations) to update the complete port. For v1.0.0 installations without the updater, run:
 
 ```sh
 d=$(mktemp -d) && curl -fL https://raw.githubusercontent.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/main/scripts/update-to-latest.py -o "$d/update.py" && sudo python3 "$d/update.py"
@@ -138,10 +140,11 @@ The updater keeps everything it needs to go back. From TWRP with `adb shell`:
 
 1. Mount the Ubuntu root: `mkdir /u && mount /dev/block/by-name/linuxroot /u`
    (use `userdata` instead of `linuxroot` on a tablet that was never split).
-2. Read what happened: `/u/var/lib/tab-companion-update/status.json` and
+2. Read what happened: `/u/var/lib/galaxy-companion-update/status.json`
+   (`tab-companion-update` on an installation that still ran Tab Companion) and
    `/u/var/log/apt/term.log`.
 3. Put the previous boot images back. The set that booted before the update is
-   in `/u/var/lib/tab-companion-update/transaction/backup/` (or the
+   in `/u/var/lib/galaxy-companion-update/transaction/backup/` (or the
    last-known-good Ubuntu set in `/u/var/lib/gts9u-boot-sets/ubuntu/`):
    `for p in boot init_boot vendor_boot dtbo; do dd if=/u/var/lib/gts9u-boot-sets/ubuntu/$p.img of=/dev/block/by-name/$p bs=4M; done; sync`
 4. If packages were left half-installed, finish them from the booted Ubuntu
@@ -172,7 +175,7 @@ EF-DX925 are untested as I don't have them, so they might not work.
 | [Boot strategy](docs/boot-strategy.md) | Requirements, partitions, the boot chain and recovery |
 | [Dual boot](docs/dual-boot.md) | How switching systems works, and what it never touches |
 | [Hardware status](docs/hardware-status.md) | Evidence, limitations and pending hardware tests |
-| [Tab Companion](docs/tab-companion.md) | S Pen, keyboard and fingerprint settings, architecture and diagnostics |
+| [Galaxy Companion](docs/tab-companion.md) | The settings application, now in its own repository and pinned here as the `external/galaxy-companion` submodule |
 | [System updates](docs/system-updates.md) | GitHub and local ZIP updates, current-build repair and the updater for older installations |
 | [Ubuntu userspace](docs/ubuntu-userspace.md) | Root filesystem and desktop integration |
 | [Fingerprint reader](docs/fingerprint-reader.md) | Working EL721/UDFPS integration, validation evidence and maintenance constraints |

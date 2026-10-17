@@ -7948,6 +7948,30 @@ of the provisioning.
 Companion 1.5.9 was not installed: the tablet runs 1.5.8 from the Resolute
 branch.
 
+**Galaxy Companion.** The owner asked for Tab Companion's successor to be
+integrated and for its updater to stay generic. Galaxy Companion gained the
+release-upgrade handoff from 1.5.6 to 1.5.9 without any device name: a
+`distribution` ZIP hands off to the backend it carries after GitHub digest
+verification or an explicit local SHA-256 confirmation shown in the page, the
+handoff variable is `GALAXY_COMPANION_HANDOFF_SHA256`, the record is
+`authorization.json` under the private handoff directory, and a failed offline
+update configures the unpacked packages before restoring boot. Reading the
+frozen offline runner showed it omitted `boot_core`, which `saved_set()`
+imports during the offline step, so every dual-boot device would have rolled
+back; it is frozen now and the tests import the frozen package from a clean
+interpreter. At the owner's request the numbering restarted at 0.9.0 with
+Debian epoch 1 (1.0.0 will be the first official release); the Dualboot
+Android app derives its versionCode with a 100000 offset for the same reason.
+Commits 7ea9fd2, 956bee8 and a824b5e on `agcarbajo/galaxy-companion`; no
+release was published because publishing needs the Docker/Android signing
+environment. The intermediate 2.5.0 build was installed on the development
+tablet over Tab Companion 1.5.8 (one declared removal, the old files retained
+under `package-backups`), detected the `gts9uwifi` profile and advertised the
+new capability. This repository now pins Galaxy Companion as the
+`external/galaxy-companion` submodule, builds `galaxy-companion` from it plus
+a transitional `ubuntu-gts9u-companion`, and every script and test that
+imported `tab_companion` imports `galaxy_companion` with the port's profile.
+
 **Builds and the signing key.** Rebuilding the kernel for the POGO change
 replaced the v1.3.0 module signing key (see development-notes, "The v1.3.0
 signing key was replaced on 2026-10-17"): the pruned object directory held

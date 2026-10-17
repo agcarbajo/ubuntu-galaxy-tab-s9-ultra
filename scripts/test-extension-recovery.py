@@ -25,7 +25,7 @@ class RecoveryTests(unittest.TestCase):
 
 class CompanionToggleTests(unittest.TestCase):
     def test_global_and_individual_disables_are_visible_and_recoverable(self):
-        source = ROOT / 'packaging/ubuntu-gts9u-companion/usr/lib/tab-companion/tab_companion/window.py'
+        source = ROOT / 'external/galaxy-companion/packaging/galaxy-companion/usr/lib/galaxy-companion/galaxy_companion/window.py'
         names = ('_shell_extension_enabled', '_boot_tile_toggled')
         functions = [node for node in ast.walk(ast.parse(source.read_text()))
                      if isinstance(node, ast.FunctionDef) and node.name in names]

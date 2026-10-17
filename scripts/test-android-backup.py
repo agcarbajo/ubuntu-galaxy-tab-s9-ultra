@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Exercise the shipped backup transaction against files, never block devices."""
-import importlib.util
 from unittest.mock import patch
 import hashlib
 import os
@@ -76,24 +75,6 @@ class TransactionTest(unittest.TestCase):
     def test_commit_failure_rolls_back(self): self.run_case("rename")
     def test_label_only_does_not_copy(self): self.run_case(changed="0")
     def test_recovery_after_interrupted_commit(self): self.run_case(interrupted=True)
-
-class LinuxLabelTest(unittest.TestCase):
-    def test_android_is_not_named_after_running_linux(self):
-        source = SCRIPT.parents[6] / "packaging/ubuntu-gts9u-companion/usr/lib/tab-companion/tab_companion/boot_core.py"
-        spec = importlib.util.spec_from_file_location("boot_core", source)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        with tempfile.TemporaryDirectory() as temp:
-            module.SETS_DIR = temp
-            for set_id in ("android", "ubuntu"):
-                target = Path(temp) / set_id
-                target.mkdir()
-                (target / "name.txt").write_text("original")
-            with patch.object(module, "running_system_name", return_value="Ubuntu 24.04.5 LTS"):
-                module.stamp_running_name("android")
-                module.stamp_running_name("ubuntu")
-            self.assertEqual((Path(temp) / "android/name.txt").read_text(), "original")
-            self.assertEqual((Path(temp) / "ubuntu/name.txt").read_text().strip(), "Ubuntu 24.04.5 LTS")
 
 if __name__ == "__main__":
     unittest.main()

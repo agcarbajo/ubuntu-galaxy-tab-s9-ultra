@@ -1,3 +1,0 @@
-[D-BUS Service]
-Name=io.github.agcarbajo.TabCompanion
-Exec=/usr/bin/tab-companion --gapplication-service

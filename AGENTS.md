@@ -65,6 +65,14 @@ physical validation.
 
 ## Build environment
 
+The settings application is Galaxy Companion, a separate repository pinned
+here as the `external/galaxy-companion` submodule: run
+`git submodule update --init` after cloning, build its package only through
+`scripts/build-companion-package.sh`, and never edit the submodule's files from
+this repository; change Galaxy Companion in its own repository and move the
+pin. The transitional `ubuntu-gts9u-companion` must carry the pinned version,
+epoch included.
+
 Heavy builds must run on a Linux filesystem in WSL, from a path without spaces.
 Verify the actual distribution, source tree, object tree, configuration,
 compiler and signing certificate before reusing them.

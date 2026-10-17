@@ -1763,6 +1763,25 @@ configuration byte-for-byte with the released kernel artifact, and checks the
 kernel release. This remains valid for later clean builds, whose generated key
 will intentionally differ from v1.2.0.
 
+### Tab Companion became Galaxy Companion (2026-10-17)
+
+The settings application now lives in its own repository and serves other
+Samsung devices through JSON device profiles; this port pins the commit it
+ships as the `external/galaxy-companion` submodule. Everything that used to
+import `tab_companion` from `packaging/ubuntu-gts9u-companion` (the update
+payload builder, the legacy bootstrap, `update-to-latest.py`, the ZIP
+validator and the tests) imports `galaxy_companion` from the submodule with
+`GALAXY_COMPANION_DEVICE=gts9uwifi`, and the tests that only exercised the
+application moved with it. Three compatibility points matter for installed
+tablets: updaters published before the rename require a package named
+`ubuntu-gts9u-companion` in every payload, so an empty transitional package of
+that name depends on `galaxy-companion` and stays in the payload and image;
+the legacy bootstrap embeds the device profile, because the systems it runs
+on have no `galaxy-companion` package yet; and Galaxy Companion restarted its
+numbering at 0.9.0 with Debian epoch 1 (`1:0.9.0`), which ranks above the
+installed 1.5.x/2.x packages, so the transitional package carries the same
+versioned string. Updater state moved to `/var/lib/galaxy-companion-update`.
+
 ### The v1.3.0 signing key was replaced on 2026-10-17
 
 The release object directory had been pruned to a few files, among them

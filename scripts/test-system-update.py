@@ -16,9 +16,12 @@ from unittest.mock import patch
 import zipfile
 
 REPO = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO / "packaging/ubuntu-gts9u-companion/usr/lib/tab-companion"))
-from tab_companion import update_bundle as b
-from tab_companion import update_core as c
+# The updater is Galaxy Companion's, pinned as a submodule; run it with this
+# tablet's profile so partitions, identity file and asset names are the port's.
+os.environ.setdefault("GALAXY_COMPANION_DEVICE", "gts9uwifi")
+sys.path.insert(0, str(REPO / "external/galaxy-companion/packaging/galaxy-companion/usr/lib/galaxy-companion"))
+from galaxy_companion import update_bundle as b
+from galaxy_companion import update_core as c
 
 
 class PayloadTests(unittest.TestCase):
@@ -341,8 +344,7 @@ class OfflineTransactionTests(unittest.TestCase):
             patch.object(c.policy, "ubuntu_suite", return_value="noble"),
             patch.object(c, "partitions", return_value=self.devices),
             patch.object(c.subprocess, "run", return_value=subprocess.CompletedProcess([], 3)),
-            patch.object(c, "Path", side_effect=lambda p: self.root / "saved-ubuntu" if
-                         p == "/var/lib/gts9u-boot-sets/ubuntu" else Path(p))]
+            patch.object(c, "saved_set", return_value=self.root / "saved-ubuntu")]
         real_sha = b.sha256
         self.patches.append(patch.object(b, "sha256", side_effect=lambda p: real_sha(
             self.root / "dpkg-status" if str(p) == "/var/lib/dpkg/status" else p)))
@@ -625,7 +627,10 @@ class PackagingTests(unittest.TestCase):
             output = subprocess.check_output([sys.executable, str(bootstrap), "--status"], text=True)
             self.assertIn("state", json.loads(output))
             # The offline runner is frozen from source, including inside zipapp.
-            command = "import sys;sys.path.insert(0,sys.argv[1]);from tab_companion import update_core,update_bundle;assert 'def prepare' in update_core.__loader__.get_source(update_core.__name__);assert 'def inspect' in update_bundle.__loader__.get_source(update_bundle.__name__)"
+            command = "import sys;sys.path.insert(0,sys.argv[1]);from galaxy_companion import update_core,update_bundle,boot_core;assert 'def prepare' in update_core.__loader__.get_source(update_core.__name__);assert 'def inspect' in update_bundle.__loader__.get_source(update_bundle.__name__)"
+            # The embedded profile makes the bootstrap this tablet's updater
+            # even where no galaxy-companion package is installed.
+            self.assertIn("devices/gts9uwifi.json", zipfile.ZipFile(bootstrap).namelist())
             subprocess.run([sys.executable, "-c", command, str(bootstrap)], check=True)
 
     def test_zip_builder_and_reader_agree(self):
