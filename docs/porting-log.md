@@ -7933,7 +7933,17 @@ NEEDs libbinder, libbinder_ndk, libhidlbase and
 the hand-copied `6d749b12…` turned out to be a 7,872-byte stub exporting only
 `acquire_wake_lock` and `release_wake_lock` returning 0, with no imports.
 `packaging/fingerprint-shim/hardware-legacy-compat.c` reproduces it and
-Device 2.88 ships it as the third port library, dropping the VNDK copy.
+Device 2.88 ships it as the third port library, dropping the VNDK copy. With
+2.88 installed (APT, one upgrade, no removal), `--force` left exactly the
+three port libraries differing from the validated set, and the second
+approved reboot (boot `5c7ee1d3-6e15-4412-a0f1-4eceb0fd950c`) started the
+secure transport from the provisioned runtime: "SPSS applications ready;
+starting listener-first secure owner", "Secure cache verified; fingerprint
+service ready", both daemons running from
+`/var/lib/ubuntu-gts9u/fingerprint/runtime`, fprintd active and listing the
+EL721. The owner's own enrolment check at the lock screen is the remaining
+physical step on this unit; the first run on another owner's tablet is the
+real test of the provisioning.
 Companion 1.5.9 was not installed: the tablet runs 1.5.8 from the Resolute
 branch.
 

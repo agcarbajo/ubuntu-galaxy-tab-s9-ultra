@@ -81,8 +81,14 @@ port libraries differ only because they are rebuilt from the reconstructed
 sources. No mount or loop device was left behind. The first approved reboot
 on the provisioned runtime (Device 2.87) failed in the secure startup: the
 VNDK `libhardware_legacy.so` cannot be loaded without binder, which is how the
-third stub was identified; the outcome of the reboot on Device 2.88 is in the
-porting log. After that, an owner of an undetected reader runs `--check` and
+third stub was identified. On Device 2.88 the next approved reboot (boot
+`5c7ee1d3-6e15-4412-a0f1-4eceb0fd950c`) came up with the provisioning unit
+reporting the set already provisioned, `sec_nvm` and `spdaemon` running under
+`linker64` from `/var/lib/ubuntu-gts9u/fingerprint/runtime`, the supervisor
+logging "SPSS applications ready" and "Secure cache verified; fingerprint
+service ready", and fprintd active with one device: the stack now runs
+entirely from what the tablet itself provides plus the three stubs built from
+source. Next is an owner of an undetected reader running `--check` and
 `--boot`.
 
 ## Current status: working, owner-confirmed
