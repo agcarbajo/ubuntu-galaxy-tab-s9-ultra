@@ -267,7 +267,15 @@ class AptRuntime:
             core.run(["sh", "-c", 'for f in "$1"/*.deb; do dpkg-deb -f "$f" Package; done', "sh",
                       str(self.transaction / "UPDATE/debs")], True).split() if name != "ubuntu-gts9u-migration")
         self.run(["update"], capture=False)
-        plan = self.selection(["dist-upgrade"], {**installed, "ubuntu-gts9u-migration": "0"})
+        # Ask for every installed package the new release still offers, rather
+        # than dist-upgrade: its resolver may drop a requested package that is
+        # in its way, and that is how hand-installed tools were lost.  Packages
+        # with no 26.04 version are left out, so APT may remove them when they
+        # were automatic library renames; reviewed obsolete names are removed.
+        offered = self.available_names(set(installed))
+        request = sorted((offered - plans.OBSOLETE) | {"ubuntu-gts9u-migration"})
+        request += [name + "-" for name in sorted(set(installed) & plans.OBSOLETE)]
+        plan = self.selection(["install", *request], {**installed, "ubuntu-gts9u-migration": "0"})
         arguments = ["install", *[name + "=" + version for name, version in plan["install"].items()],
                      *[name + "-" for name in plan["remove"]]]
         if self.selection(arguments) != plan:
