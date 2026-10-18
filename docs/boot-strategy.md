@@ -1,5 +1,11 @@
 # Boot chain, installation and recovery
 
+For the experimental 26.04 retained-root migration, injected initramfs hooks
+must also be registered in their stage's `ORDER` file. Missing that file
+terminates `/init` before root selection or rollback. The generator, validator
+and regression test now enforce this; see the
+[2026-10-18 physical recovery](recovery-26.04-bootloop-20261018.md).
+
 Last revised: 2026-08-19. It inherits the chain physically proven by
 postmarketOS v1.71; only the root filesystem and its initramfs differ.
 

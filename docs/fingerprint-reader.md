@@ -1,5 +1,23 @@
 # The EL721 fingerprint reader under Ubuntu
 
+## Ubuntu 26.04 migration and GNOME 50, 2026-10-18
+
+Device 2.91 / overlay 24 has owner-confirmed fingerprint unlock and Galaxy
+Companion verification on Ubuntu 26.04.1, GNOME 50.1 and kernel 7.2.9.
+The migration must preserve the Ubuntu-local `/mnt/vendor/persist` and
+`/mnt/vendor/spunvm` trees even though other `/mnt` contents are excluded.
+Provisioning must also create `persist/secnvm`: the secure NVM daemon waits
+for that directory rather than creating it. None of this accesses Android's
+persist partition or replaces existing biometric templates.
+
+GNOME 50 removed the `affectsInputRegion` chrome option. Passing it makes
+`Params.parse()` reject the overlay during enable, so neither the waiting icon
+nor the required target/presentation authorization can work. The versioned
+chrome options retain GNOME 46 behavior and omit the removed option on GNOME
+50; actors stay non-reactive and the presentation gate is unchanged.
+The regression uses GNOME 50's actual `_trackActor` and parameter parser.
+See the [physical recovery evidence](recovery-26.04-bootloop-20261018.md).
+
 ## Other tablets: not working in release 1.3.0 (2026-10-17)
 
 Two independent owners report that Ubuntu never shows the reader

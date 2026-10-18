@@ -543,7 +543,9 @@ def write_manifest(runtime, manifest):
 def ensure_nvm_dirs():
     """Ubuntu-local NVM backing directories for the SPU daemons.  They start
     empty; HwVault restores its credentials from the K250A, not from here."""
-    for path in NVM_DIRS:
+    # sec_nvm waits for this backing directory; it does not create it. Merely
+    # creating /mnt/vendor/persist leaves every fresh install waiting forever.
+    for path in (*NVM_DIRS, NVM_DIRS[0] / 'secnvm'):
         if path.is_symlink():
             raise ProvisionError('%s must not be a symlink' % path)
         path.mkdir(mode=0o700, parents=True, exist_ok=True)

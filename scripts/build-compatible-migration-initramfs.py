@@ -11,6 +11,25 @@ import tempfile
 REPO = Path(__file__).resolve().parents[1]
 
 
+def install_root_slot_hook(root):
+    hook = root / 'scripts/local-bottom/gts9u-root-slot'
+    hook.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(REPO / 'packaging/ubuntu-gts9u-device/usr/share/initramfs-tools/scripts/local-bottom/gts9u-root-slot', hook)
+    hook.chmod(0o755)
+    # initramfs-tools sources ORDER; it does not enumerate executable hooks.
+    # The trusted bootstrap may have no local-bottom stage at all. Preserve
+    # its existing ordering and register the new hook exactly once.
+    order = hook.parent / 'ORDER'
+    text = order.read_text() if order.exists() else ''
+    command = '/scripts/local-bottom/gts9u-root-slot "$@"'
+    if command not in text.splitlines():
+        if text and not text.endswith('\n'):
+            text += '\n'
+        text += command + '\n[ -e /conf/param.conf ] && . /conf/param.conf\n'
+    order.write_text(text)
+    order.chmod(0o644)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--init-boot', type=Path, required=True)
@@ -41,10 +60,7 @@ def main():
         for file in root.rglob('*'):
             if '.ko' in file.suffixes:
                 raise ValueError('No previous-build module may enter the migration bootstrap')
-        hook = root / 'scripts/local-bottom/gts9u-root-slot'
-        hook.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(REPO / 'packaging/ubuntu-gts9u-device/usr/share/initramfs-tools/scripts/local-bottom/gts9u-root-slot', hook)
-        hook.chmod(0o755)
+        install_root_slot_hook(root)
         blockdev = root / 'usr/sbin/blockdev'
         if not blockdev.is_file():
             blockdev.parent.mkdir(parents=True, exist_ok=True)

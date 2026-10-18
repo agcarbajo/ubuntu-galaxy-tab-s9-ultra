@@ -7,6 +7,8 @@ import Mtk from 'gi://Mtk';
 import Gts9uPresented from 'gi://Gts9uPresented?version=1.0';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+import * as Config from 'resource:///org/gnome/shell/misc/config.js';
+import {fingerprintChromeOptions} from './chromeCompat.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import {sensorGeometry, panelMonitor} from './geometry.js';
 import {ShellUserVerifier} from 'resource:///org/gnome/shell/gdm/util.js';
@@ -124,13 +126,13 @@ export default class Gts9uFingerprintOverlay extends Extension {
         // The shade only compensates global HBM. It must never intercept the
         // password field, accessibility controls, keyboard or cancel button.
         Main.layoutManager.addTopChrome(this._shade,
-            {trackFullscreen: true, affectsInputRegion: false});
+            fingerprintChromeOptions(Config.PACKAGE_VERSION));
         // FOD contacts are consumed by Goodix, not by a Shell actor. Keep every
         // overlay element out of input picking, including during GDM handoff.
         Main.layoutManager.addTopChrome(this._actor,
-            {trackFullscreen: true, affectsInputRegion: false});
+            fingerprintChromeOptions(Config.PACKAGE_VERSION));
         Main.layoutManager.addTopChrome(this._feedback,
-            {trackFullscreen: true, affectsInputRegion: false});
+            fingerprintChromeOptions(Config.PACKAGE_VERSION));
         // addTopChrome() maps a newly-added actor regardless of its constructor
         // flag. Authentication must be the only thing that makes either actor
         // visible.
@@ -684,7 +686,7 @@ export default class Gts9uFingerprintOverlay extends Extension {
         // Read-only state for intermittent post-login input failures. No key
         // contents, finger images, credentials, user names or auth answers.
         return JSON.stringify({
-            version: 23,
+            version: 24,
             nativeGatesUsed: this._nativeGatesUsed ?? 0,
             fallbackGatesUsed: this._fallbackGatesUsed ?? 0,
             lastLightGateMs: this._lastLightGateMs ?? null,

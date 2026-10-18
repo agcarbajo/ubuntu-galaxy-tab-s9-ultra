@@ -81,6 +81,15 @@ def clone_system(source, slot):
     root = slot / "root"
     root.mkdir()
     command = ["rsync", "-aHAXS", "--numeric-ids", "--one-file-system"]
+    # These are Ubuntu-local persistent files despite their Android-style
+    # pathname. Other /mnt contents remain excluded, including mounted media.
+    command.extend(("--include=/mnt/", "--include=/mnt/vendor/"))
+    for name in plans.LOCAL_NVM:
+        path = source / name
+        if path.exists() or path.is_symlink():
+            if path.resolve() != path or not path.is_dir() or path.stat().st_dev != source.stat().st_dev:
+                raise ValueError("Fingerprint NVM must be a local directory in the source root")
+        command.append("--include=/" + name + "/***")
     command.extend("--exclude=/" + name + "/***" for name in EXCLUDES)
     command.extend("--exclude=/" + name for name in EXCLUDES)
     core.run(command + [str(source) + "/", str(root) + "/"])

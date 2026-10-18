@@ -1,5 +1,13 @@
 # SM-X910 hardware status under Ubuntu 24.04
 
+**Experimental 26.04 branch, 2026-10-18:** the migration's initramfs dispatcher
+failure was repaired and Ubuntu 26.04.1 / GNOME 50.1 / Linux 7.2.9 completed
+multiple boots on the tablet. Device 2.91 also repairs lost local fingerprint
+NVM and GNOME 50 overlay compatibility; the owner confirmed lock-screen unlock
+and Galaxy Companion verification. This does not transfer the entire Noble
+hardware matrix to Resolute. See the
+[recovery record](recovery-26.04-bootloop-20261018.md) for evidence and limits.
+
 Last updated: 2026-09-28, after the Ubuntu boot-set synchronization;
 fingerprint optical acceptance and speaker listening validation remain pending.
 

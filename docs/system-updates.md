@@ -1,5 +1,9 @@
 # System updates
 
+The 2026-10-18 v1.4.0 migration bootloop was traced to a missing initramfs
+hook dispatch table and repaired on the tablet. See the
+[recovery evidence and remaining limitations](recovery-26.04-bootloop-20261018.md).
+
 The updater is [Galaxy Companion](https://github.com/agcarbajo/galaxy-companion)'s
 (formerly Tab Companion; this port pins it as the `external/galaxy-companion`
 submodule and ships it as `galaxy-companion`, with `ubuntu-gts9u-companion` as a

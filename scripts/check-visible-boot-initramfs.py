@@ -15,6 +15,21 @@ with tempfile.TemporaryDirectory(prefix='gts9u-initrd-check-') as directory:
     data = subprocess.check_output(['lz4', '-dc', str(archive)])
     subprocess.run(['cpio', '-id', '--quiet'], input=data, cwd=root, check=True)
     paths = list(root.rglob('*'))
+    # run_scripts() sources each stage's ORDER even when a hook was injected
+    # after mkinitramfs. Missing ORDER terminates PID 1 before root selection.
+    for stage in (root / 'scripts').iterdir():
+        if not stage.is_dir():
+            continue
+        hooks = [path for path in stage.iterdir()
+                 if path.is_file() and path.name != 'ORDER' and path.stat().st_mode & 0o111]
+        if not hooks:
+            continue
+        order = stage / 'ORDER'
+        assert order.is_file(), f'Missing hook dispatch table: {order.relative_to(root)}'
+        commands = order.read_text().splitlines()
+        for hook in hooks:
+            command = '/' + hook.relative_to(root).as_posix() + ' "$@"'
+            assert command in commands, f'Undispatched initramfs hook: {hook.relative_to(root)}'
     names = {path.name for path in paths}
     seen = set()
     missing = []

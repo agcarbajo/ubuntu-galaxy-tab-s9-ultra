@@ -182,6 +182,31 @@ class RootSlotTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'protected'):
             plans.check_preservation(self.source, root)
 
+    def test_local_fingerprint_nvm_survives_while_other_mount_data_is_excluded(self):
+        for name in plans.LOCAL_NVM:
+            path = self.source / name / 'secnvm'
+            path.mkdir(parents=True)
+            path.chmod(0o700)
+            (path / 'synthetic-nvm').write_bytes(b'synthetic secure backing data')
+            (path / 'synthetic-nvm').chmod(0o600)
+        other = self.source / 'mnt/external-media'
+        other.mkdir()
+        (other / 'not-local-state').write_text('excluded')
+        root = migration.clone_system(self.source, self.slot)
+        plans.check_preservation(self.source, root)
+        self.assertFalse((root / 'mnt/external-media').exists())
+        target = root / plans.LOCAL_NVM[0] / 'secnvm/synthetic-nvm'
+        target.write_bytes(b'changed')
+        with self.assertRaisesRegex(ValueError, 'protected'):
+            plans.check_preservation(self.source, root)
+
+    def test_fingerprint_nvm_symlink_is_rejected(self):
+        path = self.source / plans.LOCAL_NVM[0]
+        path.parent.mkdir(parents=True)
+        path.symlink_to(self.source / 'home', target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, 'local directory'):
+            migration.clone_system(self.source, self.slot)
+
     def test_changed_template_or_account_aborts_validation(self):
         root = migration.clone_system(self.source, self.slot)
         (root / "var/lib/fprint/print").write_text("changed synthetic template")

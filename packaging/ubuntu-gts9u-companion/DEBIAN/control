@@ -1,9 +1,9 @@
 Package: ubuntu-gts9u-companion
-Version: 1:0.9.0
+Version: 1:1.0.0
 Section: oldlibs
 Priority: optional
 Architecture: all
-Depends: galaxy-companion (>= 1:0.9.0)
+Depends: galaxy-companion (>= 1:1.0.0)
 Maintainer: Ubuntu gts9uwifi port contributors <noreply@example.invalid>
 Description: Transitional package: Tab Companion is now Galaxy Companion
  Tab Companion, this port's settings application, became Galaxy Companion and

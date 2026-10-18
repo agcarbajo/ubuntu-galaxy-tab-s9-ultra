@@ -8240,3 +8240,86 @@ The retained-root hook accepts either updater's `/etc/system-update` target
 and writes its failure record into that updater's state directory. The
 migration tests and probes import the new packages. Nothing was built or run
 on a tablet for this change; the 26.04 ZIP must be rebuilt from this branch.
+
+## 2026-10-18: repair the Resolute migration bootloop
+
+The tablet was recovered in TWRP after the v1.4.0 inactive-root migration.
+The transaction had completed and retained Noble, but the Resolute selector
+had never created its `tried` marker. The compatible-bootstrap generator
+injected `local-bottom/gts9u-root-slot` without generating the stage's ORDER
+file. Running the real arm64 initramfs-tools dispatcher in a chroot reproduced
+the fatal missing-file error before root selection or rollback.
+
+The generator now registers the hook idempotently and preserves existing
+ordering. The validator rejects missing dispatch tables and unregistered
+executable hooks. A chroot regression covers failure, successful dispatch and
+repeated registration. Eighteen migration tests, three Plymouth tests, the
+new dispatch test, ELF closure, size, Android v4 and AVB checks passed.
+
+Only init_boot was repaired on the tablet, after backup and hash verification;
+the new root's Ubuntu saved image was synchronized. Corrected init_boot SHA-256:
+`91064d2edb82f70e1e0b78e789d6af6f7581cd2f50b2460c3eab632edda1e1f7`.
+Ubuntu 26.04.1, GNOME 50.1 and 7.2.9-dirty booted, the owner saw Ubuntu,
+and the acceptance timer succeeded. A second reboot returned to the same
+read/write Resolute root. Home remains shared with the retained original;
+dpkg audit and APT checks passed. The corrected hardware package 1.4.0-4
+simulates as one upgrade with zero removals.
+
+The combined `v1.4.0-bootfix1` ZIP is rebuilt with the repaired initramfs in
+both the Android image and the hardware package/clean filesystem. The detailed
+[evidence and recovery paths](recovery-26.04-bootloop-20261018.md) distinguish
+these successful boots from untested clean installation and rollback.
+Fingerprint SPSS application readiness and Proton split tunnelling still fail;
+full Resolute hardware acceptance is not claimed. No commit or publication.
+### Fingerprint follow-up: local NVM retention and GNOME 50 overlay
+
+The owner reported the reader unavailable. Root-authenticated read-only
+inspection found sec_nvm waiting for the missing persist/secnvm directory;
+the migrated local NVM directories were empty while the retained Noble root
+still held the original state. The clone's blanket /mnt exclusion had omitted
+those local files. They were restored and verified entirely on the tablet,
+with private backups, and the migration now explicitly copies and protects
+the local persist/spunvm trees while excluding unrelated mounted media.
+Provisioning creates the required secnvm backing directory for clean installs.
+
+Device 2.90 restored secure SPSS readiness, but physical testing exposed the
+overlay's GNOME 50 enable error: affectsInputRegion is no longer an accepted
+LayoutManager chrome option. Device 2.91 / overlay 24 retains the GNOME 46
+parameter and omits it on GNOME 50, with non-reactive actors and the secure
+presentation gate unchanged. The new test executes the exact GNOME 50
+_trackActor and Params parser extracted from the target Shell resource.
+
+After a full reboot the overlay reports ACTIVE, fprintd completed capture,
+and the owner explicitly confirmed both lock-screen fingerprint unlock and
+Galaxy Companion verification. Twenty migration tests, 25 provisioning tests,
+the overlay transition suite and the actual GNOME 50 dispatcher regression
+pass. Device 2.91 installs as one upgrade with zero removals; hardware 1.4.0-4
+also installs with no removals. dpkg audit and APT checks remain clean.
+
+The final combined artifact is v1.4.0-bootfix3, with corrected init_boot, the
+updated frozen migration backend, Device 2.91 and hardware 1.4.0-4 in the clean
+root and update payload. Source snapshot SHA-256:
+518210ed8018f5de860c491a97f1ecca6f47005cc26f72ec3c10854ff128d13a.
+No personal secure state enters the build. Destructive clean installation
+and physical rollback remain untested. Proton VPN's split-tunnelling service
+still fails independently. Detailed evidence and backups are linked in the
+recovery document.
+### Galaxy Companion 1.0.0 and release drafts
+
+At the owner's request the final ZIP advances to bootfix4 and pins Companion
+c27c006a662fc50691473158c4cb7d42d7aa60d1. Remote 564f233 was reviewed before
+fast-forwarding its own checkout. Companion 1.0.0 includes that remote work,
+stable version metadata and the GNOME 50 S Pen chrome compatibility fix.
+Seventeen Python test suites, package validation and Android unit tests passed
+in native WSL Ubuntu 24.04; Docker Desktop failed to start locally. The APK
+uses the same signing certificate as the published 0.9.0 APK. Main was pushed,
+and the 1.0.0 release was created as an unpublished draft, as requested later
+in the session. The final Ubuntu release will also remain a draft.
+
+The port's transitional package is 1:1.0.0. The Companion Debian asset in the
+ZIP is exactly the draft asset, SHA-256
+2e5e466020083d4aab224fdb66234f7a08c583c1332a655ed18a74ca8d136a51.
+Final build-source snapshot SHA-256:
+c4e372c4ed316ac5cc1acfd1d8709bce3d7e80de22e70ba4ff421d5e476f7e37.
+Further owner-reported fixes are intentionally deferred until the owner
+specifies them; this draft does not claim a destructive clean-install test.

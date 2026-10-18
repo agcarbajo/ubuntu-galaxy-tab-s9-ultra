@@ -232,11 +232,28 @@ class Installation(unittest.TestCase):
 
     def test_nvm_dirs_are_private_and_never_symlinks(self):
         prov.ensure_nvm_dirs()
+        backing = prov.NVM_DIRS[0] / 'secnvm'
+        self.assertTrue(backing.is_dir())
+        self.assertEqual(backing.stat().st_mode & 0o777, 0o700)
         for path in prov.NVM_DIRS:
             self.assertEqual(path.stat().st_mode & 0o777, 0o700)
         link = prov.NVM_DIRS[0]
+        backing.rmdir()
         os.rmdir(link)
         link.symlink_to(self.tmp.name)
+        with self.assertRaisesRegex(prov.ProvisionError, 'symlink'):
+            prov.ensure_nvm_dirs()
+
+    def test_nvm_backing_is_idempotent_and_rejects_symlinks(self):
+        prov.ensure_nvm_dirs()
+        backing = prov.NVM_DIRS[0] / 'secnvm'
+        file = backing / 'synthetic-state'
+        file.write_bytes(b'synthetic existing NVM')
+        prov.ensure_nvm_dirs()
+        self.assertEqual(file.read_bytes(), b'synthetic existing NVM')
+        file.unlink()
+        backing.rmdir()
+        backing.symlink_to(self.tmp.name)
         with self.assertRaisesRegex(prov.ProvisionError, 'symlink'):
             prov.ensure_nvm_dirs()
 

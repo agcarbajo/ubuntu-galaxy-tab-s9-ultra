@@ -28,12 +28,13 @@ OBSOLETE = frozenset(REPLACEMENTS) | frozenset((
 VERSION = re.compile(r"[0-9A-Za-z][0-9A-Za-z.+:~_-]{0,199}\Z")
 INSTALL = re.compile(r"^Inst ([a-z0-9][a-z0-9+.:~-]*)(?: \[[^\]]+\])? \(([^ ]+)")
 REMOVE = re.compile(r"^Remv ([a-z0-9][a-z0-9+.:~-]*)\b")
+LOCAL_NVM = ("mnt/vendor/persist", "mnt/vendor/spunvm")
 PRESERVED = (
     "etc/machine-id", "etc/hostname", "etc/timezone", "etc/localtime", "etc/default/locale",
     "etc/default/keyboard", "etc/NetworkManager/system-connections",
     "var/lib/fprint", "var/lib/bluetooth", "var/lib/tailscale",
     "var/lib/gts9u-boot-sets/android",
-)
+) + LOCAL_NVM
 
 
 def package_name(value):

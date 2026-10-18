@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {isTypingKeyboard} from '../packaging/ubuntu-gts9u-device/usr/share/gnome-shell/extensions/gts9u-fingerprint-overlay@agcarbajo/authKeyboard.js';
 import {visualState} from '../packaging/ubuntu-gts9u-device/usr/share/gnome-shell/extensions/gts9u-fingerprint-overlay@agcarbajo/visualState.js';
+import {fingerprintChromeOptions} from '../packaging/ubuntu-gts9u-device/usr/share/gnome-shell/extensions/gts9u-fingerprint-overlay@agcarbajo/chromeCompat.js';
 const source = readFileSync(new URL('../packaging/ubuntu-gts9u-device/usr/share/gnome-shell/extensions/gts9u-fingerprint-overlay@agcarbajo/extension.js', import.meta.url), 'utf8')
     .replace(/^import .*;\r?\n/gm, '')
     .replace('export default class', 'return class');
@@ -129,7 +130,15 @@ console.log('PASS: 5 native feedback filtering/lifetime cases (no auth methods i
 
 // No overlay actor should participate in input picking during a seat handoff.
 assert.match(source, /this\._actor = new St\.Bin\(\{[^}]*reactive: false,/);
-assert.match(source, /addTopChrome\(this\._actor,\s*\{trackFullscreen: true, affectsInputRegion: false\}\)/);
+assert.match(source, /addTopChrome\(this\._actor,\s*fingerprintChromeOptions\(Config\.PACKAGE_VERSION\)\)/);
+assert.deepEqual(fingerprintChromeOptions('46.2'), {trackFullscreen: true, affectsInputRegion: false});
+for (const version of ['50.1', '50.beta', '51']) {
+    const options = fingerprintChromeOptions(version);
+    // GNOME 50 Params.parse rejects keys absent from its defaultParams.
+    assert.deepEqual(options, {trackFullscreen: true});
+    assert(!Object.hasOwn(options, 'affectsInputRegion'));
+}
+assert.throws(() => fingerprintChromeOptions('unknown'));
 assert(!/this\._actor\.connect\('(touch|button-press|button-release)-event'/.test(source));
 Main.sessionMode = {isGreeter: false};
 Main.screenShield = {locked: false};
@@ -140,7 +149,7 @@ overlay._seat = {get_touch_mode: () => true};
 overlay._physicalKeyboard = true;
 overlay._session = {Active: true};
 const diagnostics = JSON.parse(overlay.GetDiagnostics());
-assert.equal(diagnostics.version, 23);
+assert.equal(diagnostics.version, 24);
 assert.equal(diagnostics.sessionActive, true);
 assert.equal(diagnostics.targetReactive, false);
 assert.equal(diagnostics.keyboardExists, false);
