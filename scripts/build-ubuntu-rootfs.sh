@@ -325,6 +325,9 @@ fi
 bash "$repo/scripts/build-fingerprint-secure-owner.sh" >/dev/null
 bash "$repo/scripts/build-spss-irq-module.sh" >/dev/null
 bash "$repo/scripts/build-gnome-presented-bridge.sh" >/dev/null
+# The device package ships this port's three Bionic-side stubs for the
+# fingerprint runtime (packaging/fingerprint-shim); build them first.
+bash "$repo/scripts/build-fingerprint-log-shim.sh" >/dev/null
 bash "$repo/scripts/build-device-package.sh" >/dev/null
 
 # Ship the same NPU runtime for fresh installs and in the update payload.
