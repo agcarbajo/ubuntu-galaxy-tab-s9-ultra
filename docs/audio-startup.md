@@ -87,3 +87,44 @@ package verification and audit; its live package SHA-256 is
 The owner confirmed the duplicate choices are gone and the usual cameras work.
 No new kernel or reboot was
 needed for this enumeration change; WirePlumber was restarted with Camera closed.
+
+## Installing RTKit during an existing session (Resolute follow-up)
+
+On 2026-10-18, adding the missing RTKit dependency made a stale desktop portal
+cache observable: direct RTKit RTTimeUSecMax=200000 and MaxRealtimePriority=20,
+but the previously started portal exposed zero for both. PipeWire adopted a
+zero hard/soft realtime timeout and died with SIGKILL when sound started.
+Refreshing xdg-desktop-portal and recreating the audio processes restored a
+200000 us limit and stable playback. The owner confirmed both speakers and HDMI.
+
+The existing bounded startup helper now checks for precisely this mismatch
+before declaring audio ready. It leaves inactive/healthy portals alone; an
+unavailable RTKit or portal cannot block ordinary audio recovery. A positive
+limit is verified after the one portal refresh before recreating PipeWire,
+Pulse and WirePlumber. It neither disables RT safety limits nor closes GNOME.
+Twelve tests now cover recovery plus this transition. HDMI/profile hotplug and
+the shared microphone follow-up are tracked in resolute-followup-20261018.md.
+
+## HDMI reconnect recovery (2026-10-19)
+
+The owner reconnected the capture device after the card had been probed with DP
+disconnected. DRM became connected/enabled, but ACP still offered only HiFi and
+pro-audio: its failed initial HDMI PCM probe was cached. A user service now
+listens for Mutter MonitorsChanged/name appearance, waits briefly for link
+training and rebuilds WirePlumber once if the board's HDMI profile is missing.
+Existing profiles use ALSA jack availability normally. It never repeatedly
+retries a failed rebuild, never changes an off/pro-audio card on disconnect, and
+returns an active HDMI profile to HiFi on physical disconnect. No ongoing poll
+is used. Seven behavioral tests cover the policy.
+
+The same helper, launched transiently against the actual missing-profile case,
+restored available HDMI with its internal microphone; PipeWire's restart count
+remained zero. Device audio8 installs/enables the user service on clean images
+and starts it for the discovered owner on updates. The transient validation
+service was stopped after the packaged one started. A full owner unplug/replug
+and listening cycle with the packaged service remains the acceptance step.
+
+Owner acceptance update (2026-10-19): the full five-second USB-C disconnect,
+reconnect, HDMI selection/listening and return-to-speakers cycle works with the
+packaged audio8 service. No new reboot or suspend test is implied. The internal
+microphone node is present in both profiles; no voice sample was retained.

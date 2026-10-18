@@ -8,6 +8,16 @@ and Galaxy Companion verification. This does not transfer the entire Noble
 hardware matrix to Resolute. See the
 [recovery record](recovery-26.04-bootloop-20261018.md) for evidence and limits.
 
+**Resolute follow-up, 2026-10-18:** the owner confirmed S Pen battery reporting,
+Switch Pro inputs in Eden, and OSK vibration in both an application and the lock
+screen. The owner also confirmed sound through both internal speakers and an
+HDMI capture device after refreshing stale desktop-portal realtime limits.
+Browser playback pauses when changing output and must be resumed. USB-C resume
+and HDMI hotplug persistence still need checks. A combined UCM
+profile temporarily regressed internal audio to Dummy Output; independent HDMI
+and HiFi profiles restored the speakers/microphone and survived reboot. See the
+[follow-up record](resolute-followup-20261018.md); the old ZIP is not regenerated.
+
 Last updated: 2026-09-28, after the Ubuntu boot-set synchronization;
 fingerprint optical acceptance and speaker listening validation remain pending.
 

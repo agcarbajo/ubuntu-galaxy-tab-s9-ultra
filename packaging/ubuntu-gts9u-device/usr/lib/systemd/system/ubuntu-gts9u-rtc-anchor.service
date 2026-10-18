@@ -1,0 +1,7 @@
+[Unit]
+Description=Remember the synchronized UTC/PMIC RTC relationship
+ConditionPathExists=/sys/class/rtc/rtc0/since_epoch
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/ubuntu-gts9u-rtc-time --save

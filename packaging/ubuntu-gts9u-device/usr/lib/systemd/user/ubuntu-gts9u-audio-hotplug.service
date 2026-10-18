@@ -1,0 +1,11 @@
+[Unit]
+Description=Recover missing tablet HDMI audio profiles on display connection
+After=wireplumber.service
+
+[Service]
+ExecStart=/usr/libexec/ubuntu-gts9u-audio-hotplug
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

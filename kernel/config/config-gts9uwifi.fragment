@@ -124,6 +124,16 @@ CONFIG_INPUT=y
 CONFIG_INPUT_EVDEV=y
 CONFIG_INPUT_UINPUT=y
 CONFIG_UHID=y
+# Bluetooth pairing alone does not provide gamepad input. The generic module
+# tree is intentionally absent, so controller drivers must be built in too.
+CONFIG_HID_NINTENDO=y
+CONFIG_HID_PLAYSTATION=y
+CONFIG_HID_SONY=y
+CONFIG_INPUT_JOYDEV=y
+
+# The PMK8550 RTC is described by pmk8550.dtsi. A module cannot probe here
+# without the generic module tree; retain Android's hardware clock unchanged.
+CONFIG_RTC_DRV_PM8XXX=y
 CONFIG_INPUT_TOUCHSCREEN=y
 CONFIG_TOUCHSCREEN_GOODIX_BERLIN_CORE=y
 CONFIG_TOUCHSCREEN_GOODIX_BERLIN_I2C=y

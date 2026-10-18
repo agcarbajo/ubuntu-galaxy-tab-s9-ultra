@@ -1,0 +1,64 @@
+#!/usr/bin/python3
+"""Use the PMIC's continuing counter without changing Android's RTC epoch.
+
+Samsung stores its UTC offset in Android's encrypted data. Keep Ubuntu's own
+counter/UTC anchor after synchronization instead of writing that shared RTC.
+"""
+import argparse
+import json
+from pathlib import Path
+import os
+import subprocess
+import time
+
+STATE = Path('/var/lib/gts9u-rtc-time/anchor.json')
+RESTORED = Path('/run/gts9u-rtc-time-restored')
+COUNTER = Path('/sys/class/rtc/rtc0/since_epoch')
+
+
+def restore_value(anchor, counter):
+    delta = counter - anchor['counter']
+    if delta < 0 or delta > 10 * 366 * 86400:
+        raise ValueError('RTC counter reset or implausible elapsed time')
+    value = anchor['utc'] + delta
+    if value < 1735689600:
+        raise ValueError('No trusted UTC anchor')
+    return value
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--restore', action='store_true')
+    parser.add_argument('--save', action='store_true')
+    args = parser.parse_args()
+    if not COUNTER.exists():
+        print('PMIC RTC is not available')
+        return
+    counter = int(COUNTER.read_text())
+    if args.restore:
+        if not STATE.exists():
+            print('UTC anchor will be saved after the first network synchronization')
+            return
+        value = restore_value(json.loads(STATE.read_text()), counter)
+        time.clock_settime(time.CLOCK_REALTIME, value)
+        RESTORED.touch()
+        print('Restored UTC from the continuing PMIC counter')
+    elif args.save:
+        synced = subprocess.check_output(['timedatectl', 'show', '-p', 'NTPSynchronized', '--value'], text=True).strip() == 'yes'
+        if not synced and not RESTORED.exists():
+            print('No trusted UTC to save')
+            return
+        value = time.time()
+        if value < 1735689600:
+            raise ValueError('Refusing an invalid UTC anchor')
+        STATE.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+        temporary = STATE.with_suffix('.new')
+        temporary.write_text(json.dumps({'counter': counter, 'utc': value}) + '\n')
+        temporary.chmod(0o600)
+        with temporary.open('rb') as stream:
+            os.fsync(stream.fileno())
+        temporary.replace(STATE)
+
+
+if __name__ == '__main__':
+    main()

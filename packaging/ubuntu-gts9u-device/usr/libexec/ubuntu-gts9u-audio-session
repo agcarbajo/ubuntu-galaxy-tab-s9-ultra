@@ -51,17 +51,55 @@ class Session:
     def select_hifi(self):
         self.command("pactl", "set-card-profile", CARD, "HiFi")
 
+    def repair_realtime_portal(self):
+        """Refresh limits cached before RTKit was installed in this session."""
+        if self.command("systemctl", "--user", "show", "xdg-desktop-portal.service",
+                        "--property=ActiveState", "--value").strip() != "active":
+            return False
+        args = ("get-property", "org.freedesktop.portal.Desktop",
+                "/org/freedesktop/portal/desktop", "org.freedesktop.portal.Realtime",
+                "RTTimeUSecMax")
+        if self.command("busctl", "--user", *args).strip() != "x 0":
+            return False
+        actual = self.command(
+            "busctl", "--system", "get-property", "org.freedesktop.RealtimeKit1",
+            "/org/freedesktop/RealtimeKit1", "org.freedesktop.RealtimeKit1",
+            "RTTimeUSecMax").split()
+        if len(actual) != 2 or actual[0] != "x" or int(actual[1]) <= 0:
+            return False
+        self.command("systemctl", "--user", "restart", "xdg-desktop-portal.service")
+        refreshed = self.command("busctl", "--user", *args).split()
+        if len(refreshed) != 2 or refreshed[0] != "x" or int(refreshed[1]) <= 0:
+            raise ValueError("Desktop portal still advertises zero realtime time")
+        # Existing processes have already lowered their hard RLIMIT_RTTIME to
+        # zero and cannot raise it themselves. New audio processes inherit the
+        # user manager's limits and obtain the refreshed, bounded RTKit limit.
+        self.command("systemctl", "--user", "restart", "pipewire.service",
+                     "pipewire-pulse.service", "wireplumber.service")
+        print("ubuntu-gts9u: refreshed stale realtime portal limits", flush=True)
+        return True
+
 
 def recover(session, *, clock=time.monotonic, sleep=time.sleep, duration=120):
     start = clock()
     retries = 0
     next_restart = start
     no_output_since = None
+    portal_checked = False
     while clock() - start < duration:
         try:
             if not session.available():
                 sleep(2)
                 continue
+            if not portal_checked:
+                portal_checked = True
+                try:
+                    session.repair_realtime_portal()
+                except (subprocess.SubprocessError, OSError, ValueError):
+                    # A missing/older portal must not block ordinary audio;
+                    # never repeatedly restart a portal that failed to refresh.
+                    print("ubuntu-gts9u: realtime portal refresh unavailable",
+                          file=sys.stderr, flush=True)
             cards, sinks = session.state()
             if ready(cards, sinks):
                 print("ubuntu-gts9u: HiFi card and output ready", flush=True)

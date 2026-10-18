@@ -1,0 +1,207 @@
+#!/usr/bin/python3
+"""Keep Android's Ubuntu set current and retire an accepted previous system.
+
+Never remove the filesystem root, the slot store, shared home, recovery boot
+sets or mounts. Seven days means accumulated healthy Ubuntu uptime, not an
+untrusted wall clock or time spent in Android.
+"""
+import argparse
+import fcntl
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import time
+
+BASE = Path('/.gts9u-base')
+STATE = Path('/var/lib/gts9u-root-maintenance')
+LIMIT = 7 * 86400
+TOP = ('bin', 'sbin', 'lib', 'lib32', 'lib64', 'libx32', 'usr', 'etc', 'opt', 'srv', 'boot')
+
+
+def atomic_json(path, value):
+    temporary = path.with_suffix('.new')
+    temporary.write_text(json.dumps(value) + '\n')
+    temporary.chmod(0o644)
+    with temporary.open('rb') as stream:
+        os.fsync(stream.fileno())
+    temporary.replace(path)
+
+
+def selected():
+    store = BASE / '.gts9u-root'
+    if not store.exists():
+        return None
+    if BASE.is_symlink() or store.is_symlink() or store.stat().st_uid != 0 or store.stat().st_mode & 0o077:
+        raise ValueError('Unsafe retained root')
+    marker = store / 'selected'
+    if marker.is_symlink():
+        raise ValueError('Unsafe selector')
+    identifier = marker.read_text().strip()
+    if not re.fullmatch('[a-f0-9]{32}', identifier):
+        raise ValueError('Invalid root selector')
+    slot = store / 'slots' / identifier
+    if any(p.is_symlink() for p in (store / 'slots', slot, slot / 'root')):
+        raise ValueError('Unsafe selected system')
+    if os.stat(slot / 'root').st_ino != os.stat('/').st_ino:
+        raise ValueError('Previous-system maintenance requires the selected running root')
+    if (store / 'pending').exists() or (slot / 'result').read_text().strip() != 'accepted':
+        raise ValueError('The selected system has not been accepted')
+    if (slot / 'ready').read_text().strip() != os.uname().release:
+        raise ValueError('Kernel does not match the selected system')
+    return slot
+
+
+def publish(slot):
+    """Relative link also resolves when Android mounts linuxroot elsewhere."""
+    source = slot / 'root/var/lib/gts9u-boot-sets/ubuntu'
+    for part, size in (('boot', 100663296), ('init_boot', 8388608),
+                       ('vendor_boot', 100663296), ('dtbo', 16777216)):
+        file = source / (part + '.img')
+        if file.is_symlink() or file.stat().st_size != size:
+            raise ValueError('Incomplete selected Ubuntu boot set')
+    destination = BASE / 'var/lib/gts9u-boot-sets/ubuntu'
+    target = os.path.relpath(source, destination.parent)
+    if destination.is_symlink():
+        if os.readlink(destination) != target:
+            raise ValueError('Unexpected canonical Ubuntu boot-set link')
+        return
+    previous = slot / 'previous-boot-set'
+    if destination.exists():
+        if previous.exists():
+            raise ValueError('Previous Ubuntu set already retained')
+        destination.rename(previous)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_name('.ubuntu-selected')
+    if temporary.exists() or temporary.is_symlink():
+        raise ValueError('Unexpected unfinished Ubuntu boot-set publication')
+    temporary.symlink_to(target)
+    temporary.replace(destination)
+    os.sync()
+
+
+def candidates(base=BASE):
+    """Explicit old OS paths. No general recursive deletion of the base root."""
+    result = [base / name for name in TOP if (base / name).exists() or (base / name).is_symlink()]
+    var = base / 'var'
+    if var.exists():
+        if var.is_symlink() or (var / 'lib').is_symlink():
+            raise ValueError('Unsafe previous var tree')
+        for child in var.iterdir():
+            if child.name == 'lib':
+                result.extend(p for p in child.iterdir()
+                              if p.name not in ('gts9u-boot-sets', 'gts9u-boot-backups',
+                                                'gts9u-boot-sets-backups'))
+            else:
+                result.append(child)
+    return result
+
+
+def checked_paths(paths, base=BASE):
+    # A bind mount has the same st_dev, so check mountinfo too. Decode its
+    # octal escapes without treating a path as shell code.
+    mounts = [Path(re.sub(r'\\([0-7]{3})', lambda m: chr(int(m[1], 8)), line.split()[4]))
+              for line in Path('/proc/self/mountinfo').read_text().splitlines()]
+    base = base.resolve()
+    for path in paths:
+        if not path.parent.resolve().is_relative_to(base):
+            raise ValueError('Cleanup path escapes the retained system')
+        if path.is_symlink():
+            continue  # unlink only, never follow an old absolute /lib link
+        if path.stat().st_dev != base.stat().st_dev:
+            raise ValueError('Cleanup path is on another filesystem')
+        if any(m == path or m.is_relative_to(path) for m in mounts):
+            raise ValueError('A previous-system path still contains a mount')
+    return paths
+
+
+def occupied(paths):
+    if not paths:
+        return 0
+    out = subprocess.check_output(['du', '-sx', '--block-size=1', '--total', '--',
+                                   *map(str, paths)], text=True)
+    return int(out.splitlines()[-1].split()[0])
+
+
+def healthy():
+    if Path('/etc/system-update').exists() or Path('/etc/system-update').is_symlink():
+        return False
+    if subprocess.run(['systemctl', 'is-active', '--quiet', 'gdm3.service']).returncode:
+        return False
+    if subprocess.check_output(['dpkg', '--audit']):
+        return False
+    return bool(os.statvfs('/').f_flag & os.ST_RDONLY == 0)
+
+
+def advance_health(state, boot, now, good):
+    if (not good or (state.get('boot') not in (None, boot)
+                     and state.get('clean_boot') != state.get('boot'))):
+        state['seconds'] = 0
+    if good and state.get('healthy') and state.get('boot') == boot:
+        state['seconds'] = state.get('seconds', 0) + max(0, min(900, now - state.get('uptime', now)))
+    state.update(boot=boot, uptime=now, healthy=good)
+    return state
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--cleanup', action='store_true')
+    parser.add_argument('--publish', action='store_true')
+    parser.add_argument('--shutdown', action='store_true')
+    args = parser.parse_args()
+    if os.geteuid() != 0:
+        parser.error('Administrator authentication is required')
+    STATE.mkdir(mode=0o755, parents=True, exist_ok=True)
+    with (STATE / 'lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        slot = selected()
+        if slot is None:
+            atomic_json(STATE / 'status.json', {'available': False})
+            return
+        if args.publish:
+            publish(slot)
+        path = slot / 'health.json'
+        state = json.loads(path.read_text()) if path.exists() else {}
+        boot = Path('/proc/sys/kernel/random/boot_id').read_text().strip()
+        now = time.clock_gettime(time.CLOCK_BOOTTIME)
+        if args.shutdown:
+            state['clean_boot'] = boot
+            atomic_json(path, state)
+            return
+        good = healthy()
+        # Repeated crashes must not eventually retire recovery. A failed
+        # health check or unclean restart starts the healthy period again.
+        advance_health(state, boot, now, good)
+        removed = (slot / 'previous-system-removed').exists()
+        paths = [] if removed else checked_paths(candidates())
+        # The previous root is inactive. Cache its footprint rather than
+        # walking a large old installation every ten minutes.
+        size = 0 if removed else (state.get('bytes') if state.get('preserves_boot_backups') else None)
+        if size is None:
+            size = occupied(paths)
+        state['bytes'] = size
+        state['preserves_boot_backups'] = True
+        atomic_json(path, state)
+        if (args.cleanup or state.get('seconds', 0) > LIMIT) and not removed:
+            if not good:
+                raise ValueError('The current system must be healthy before removing its predecessor')
+            publish(slot)
+            # Check all paths again immediately before deletion. The store is
+            # root-only and shutil.rmtree uses its fd-based symlink protection.
+            for candidate in checked_paths(paths):
+                if candidate.is_symlink() or candidate.is_file():
+                    candidate.unlink()
+                else:
+                    shutil.rmtree(candidate)
+            (slot / 'previous-system-removed').write_text('removed\n')
+            removed = True
+            size = 0
+        atomic_json(STATE / 'status.json', {'available': not removed, 'bytes': size,
+            'healthy_seconds': int(state.get('seconds', 0)), 'automatic_after_seconds': LIMIT})
+        print(json.dumps({'previous_system_removed': removed, 'bytes': size}))
+
+
+if __name__ == '__main__':
+    main()

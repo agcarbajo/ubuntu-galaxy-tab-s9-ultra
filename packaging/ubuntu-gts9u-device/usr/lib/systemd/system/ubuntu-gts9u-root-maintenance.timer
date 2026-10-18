@@ -1,0 +1,9 @@
+[Unit]
+Description=Retain the previous Ubuntu system for seven days of healthy use
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=10min
+
+[Install]
+WantedBy=timers.target

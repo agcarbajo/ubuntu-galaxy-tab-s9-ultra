@@ -1,0 +1,16 @@
+[Unit]
+Description=Restore UTC from Ubuntu's PMIC RTC anchor without changing Android's clock
+DefaultDependencies=no
+After=local-fs.target
+Before=time-set.target systemd-timesyncd.service shutdown.target
+Conflicts=shutdown.target
+ConditionPathExists=/sys/class/rtc/rtc0/since_epoch
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/ubuntu-gts9u-rtc-time --restore
+ExecStop=/usr/libexec/ubuntu-gts9u-rtc-time --save
+
+[Install]
+WantedBy=sysinit.target

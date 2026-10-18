@@ -1,0 +1,13 @@
+[Unit]
+Description=Record a clean shutdown of the accepted Ubuntu system
+ConditionPathExists=/.gts9u-base/.gts9u-root/selected
+After=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/true
+ExecStop=/usr/libexec/ubuntu-gts9u-root-maintenance --shutdown
+
+[Install]
+WantedBy=multi-user.target

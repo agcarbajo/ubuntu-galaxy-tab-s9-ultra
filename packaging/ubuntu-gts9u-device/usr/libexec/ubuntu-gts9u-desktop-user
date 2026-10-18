@@ -127,6 +127,12 @@ if [ -d /run/systemd/system ]; then
 		systemctl start alsa-restore.service || true
 	fi
 	systemctl start "user@$uid.service" || true
+	runuser -u "$name" -- env XDG_RUNTIME_DIR="/run/user/$uid" \
+		DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
+		systemctl --user daemon-reload || true
+	runuser -u "$name" -- env XDG_RUNTIME_DIR="/run/user/$uid" \
+		DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
+		systemctl --user start ubuntu-gts9u-audio-hotplug.service || true
 	systemctl start --no-block "ubuntu-gts9u-audio-session@$uid.service" || true
 
 	# graphical.target was reached long before the account existed, so the

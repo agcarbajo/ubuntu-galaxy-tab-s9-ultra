@@ -18,6 +18,8 @@ valid_slot() {
 }
 
 restore_boot() {
+    [ ! -e "$store/slots/$1/previous-system-removed" ] ||
+        panic 'Previous Ubuntu installation was retired; refusing to restore its boot images'
     directory="$store/slots/$1/backup"
     [ ! -L "$directory" ] && [ -f "$directory/SHA256SUMS" ] || panic 'Missing boot recovery set'
     (cd "$directory" && busybox sha256sum -c SHA256SUMS) || panic 'Boot recovery checksum failure'

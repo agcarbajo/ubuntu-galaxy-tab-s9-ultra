@@ -8323,3 +8323,88 @@ Final build-source snapshot SHA-256:
 c4e372c4ed316ac5cc1acfd1d8709bce3d7e80de22e70ba4ff421d5e476f7e37.
 Further owner-reported fixes are intentionally deferred until the owner
 specifies them; this draft does not claim a destructive clean-install test.
+### 2026-10-18: Resolute peripheral follow-up (in progress)
+
+The owner requested fixes without version increments and deferred ZIP regeneration.
+The full scope and unresolved checks are recorded in resolute-followup-20261018.md.
+The owner confirmed S Pen percentage in GNOME, OSK vibration in applications and
+lock screen, and Switch Pro inputs in Eden and diagnostic Chrome Beta 157.
+Chrome stable 155 rejects Bluetooth report lengths during initialization; the
+owner accepts waiting for the upstream fix. Beta must never enter the ZIP.
+Other-controller physical validation is not implied.
+
+HDMI required the missing DSP backend/runtime overlay, 8-byte embedded DTBO
+alignment, the CARD-interface jack predicate, and independent UCM profiles so
+an unplugged display cannot invalidate internal speakers and microphones.
+Kernel/boot hashes and root-only recovery locations are in the follow-up record.
+An earlier USB-C orientation recovery and suspend-abort PHY failure remain
+separate from a later test where the owner had physically unplugged the cable.
+
+Installing RTKit exposed a running-session portal cache: RTKit advertised
+200000 us and priority 20, while the already running desktop portal advertised
+0 for both. PipeWire inherited hard/soft RLIMIT_RTTIME=0 and repeatedly died
+with SIGKILL when processing sound. Refreshing the portal changed its properties
+to 200000/20; recreating the audio services restored bounded realtime processing.
+The new PipeWire process had a 200000 us limit and no restarts. The owner's
+existing Chrome needed a restart to resume sending audio. The owner then
+confirmed sound through both internal speakers and the HDMI capture device;
+changing output pauses the browser's media and requires resuming playback.
+Windows Camera previews the capture, with Windows input monitoring for audio.
+
+Device audio6 (still 2.91) also shares the internal Mic device between HiFi and
+HDMI. The actual tablet ALSA parser accepted both verbs from a temporary copy;
+this package's microphone change is not yet installed/physically checked.
+The audio startup helper detects exactly the stale-zero/positive-RTKit case,
+refreshes the portal once, verifies positive limits, and recreates audio only
+then. Missing/older portals do not block ordinary recovery. Twelve focused
+behavioral tests pass. Immutable source snapshot:
+5f76e59e15c532bf15990055c3451bcefc33aca1b76ab151081358153cbc7e1f.
+ARM64 package SHA-256:
+0af2d8ac365e6c2172446fcb03c3966450fbe78d265cd04aa7602eee166fbb5a.
+No new kernel, partition write or reboot occurred during this diagnosis.
+
+Audio6 post-install verification rejected both ACP profiles: moving the capture
+frontend/backend route from verb enable to device enable happens after ACP's
+PCM probe. Merely listing UCM verbs did not exercise this. Audio7 restores that
+route in both verbs while retaining the shared Mic settings. With WirePlumber
+stopped, spa-acp-tool against a temporary copy of the corrected UCM tree reports
+HiFi and HDMI available. Audio7 source snapshot:
+025d2488e3a8f99b25de3b2ac3606c18583b38cb4a3dae14904a217852df5c49.
+Package SHA-256:
+c298fe29dd63fecc413e54d2208c0cdade3dafc8f182095ea5d42db51e9bebba.
+The owner authorized its installation to restore profiles; no reboot requested.
+
+### 2026-10-19: HDMI reconnect and shared microphone integration
+
+Audio7 installed successfully; after reloading the new UCM, the internal Mic
+node appears with both HiFi and HDMI. No physical microphone recording is
+claimed. The owner then reconnected the display: DRM connected/enabled but ACP
+still lacked the cached HDMI profile. A user-level Mutter display-event helper
+reprobed WirePlumber exactly once, recovering HDMI and its Mic node without a
+PipeWire restart. Seven focused hotplug tests and changed shell syntax pass.
+
+Device audio8 retains 2.91 and installs/enables this helper for fresh and existing
+users. Immutable source snapshot:
+0abc24e90293673f7290be0b2a37e25cb676e29e60b2ff94263713a1a7e0d58b.
+Package SHA-256:
+c7b30e6f683043f02fd3da2e7709db0217439f55585517ffb121f40212d64691.
+Root-only APT simulation, previous working package/UCM and install logs are in
+/root/gts9u-audio8; zero removals, package check/audit completed. The packaged
+user service is enabled and active; its transient predecessor was stopped.
+The owner is checking a complete physical reconnect/listening cycle. The earlier
+owner-confirmed audible HDMI and speakers still stand, but do not substitute
+for this new persistence test. ZIP/assets remain unchanged and drafts unpublished.
+
+Owner acceptance update (2026-10-19): the full five-second USB-C disconnect,
+reconnect, HDMI selection/listening and return-to-speakers cycle works with the
+packaged audio8 service. No new reboot or suspend test is implied. The internal
+microphone node is present in both profiles; no voice sample was retained.
+
+Galaxy Companion source fixes and their pending physical checks are committed
+and pushed as 39ac106eb162f7fc950ae02b80568a1faaa658d3 (version remains 1.0.0).
+The port submodule now pins that commit; its working tree was clean before the
+pin move. Both remotes were fetched and had no unseen changes. A fresh issue
+listing still contains port #1/#3/#8/#9/#10 and no Companion issues. #8/#9 bodies
+were reviewed again; no comments or closures were sent. EF-DX925/other models,
+other-unit fingerprint provisioning and the automatic-brightness reproduction
+remain limited as described in the follow-up record.

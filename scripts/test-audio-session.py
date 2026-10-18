@@ -54,6 +54,55 @@ class Fake:
         self.selections += 1
         self.active = "HiFi"
 
+    def repair_realtime_portal(self):
+        return False
+
+
+class PortalTests(unittest.TestCase):
+    def session(self, *, active=True, cached=0, actual=200000, refreshed=200000):
+        session = audio["Session"].__new__(audio["Session"])
+        session.mutations = []
+        session.portal_restarted = False
+
+        def command(*args):
+            if args[:3] == ("systemctl", "--user", "show"):
+                return "active" if active else "inactive"
+            if args[:3] == ("systemctl", "--user", "restart"):
+                session.mutations.append(args[3:])
+                if args[3:] == ("xdg-desktop-portal.service",):
+                    session.portal_restarted = True
+                return ""
+            if args[:2] == ("busctl", "--user"):
+                return "x " + str(refreshed if session.portal_restarted else cached)
+            if args[:2] == ("busctl", "--system"):
+                return "x " + str(actual)
+            raise AssertionError(args)
+
+        session.command = command
+        return session
+
+    def test_stale_zero_limit_recreates_audio_processes_once(self):
+        session = self.session()
+        self.assertTrue(session.repair_realtime_portal())
+        self.assertEqual(session.mutations, [
+            ("xdg-desktop-portal.service",),
+            ("pipewire.service", "pipewire-pulse.service", "wireplumber.service")])
+        self.assertFalse(session.repair_realtime_portal())
+        self.assertEqual(len(session.mutations), 2)
+
+    def test_inactive_healthy_or_unavailable_rtkit_is_untouched(self):
+        for options in ({"active": False}, {"cached": 200000}, {"actual": 0}):
+            with self.subTest(options=options):
+                session = self.session(**options)
+                self.assertFalse(session.repair_realtime_portal())
+                self.assertEqual(session.mutations, [])
+
+    def test_failed_refresh_does_not_restart_audio_into_bad_limits(self):
+        session = self.session(refreshed=0)
+        with self.assertRaises(ValueError):
+            session.repair_realtime_portal()
+        self.assertEqual(session.mutations, [("xdg-desktop-portal.service",)])
+
 
 class RecoveryTests(unittest.TestCase):
     def run_recovery(self, fake):

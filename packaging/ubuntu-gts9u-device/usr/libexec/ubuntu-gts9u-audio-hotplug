@@ -1,0 +1,101 @@
+#!/usr/bin/python3
+"""Reprobe a cached, missing HDMI profile once per external-display connection."""
+import json
+from pathlib import Path
+import subprocess
+import sys
+
+CARD = "alsa_card.platform-sound"
+
+
+class Backend:
+    def command(self, *args):
+        return subprocess.check_output(args, text=True, timeout=8,
+                                       stderr=subprocess.DEVNULL)
+
+    def display(self):
+        connected = active = False
+        for connector in Path('/sys/class/drm').glob('card*-DP-*'):
+            try:
+                present = (connector / 'status').read_text().strip() == 'connected'
+                connected |= present
+                active |= present and (connector / 'enabled').read_text().strip() == 'enabled'
+            except OSError:
+                continue
+        return connected, active
+
+    def card(self):
+        return next((c for c in json.loads(self.command(
+            'pactl', '-f', 'json', 'list', 'cards')) if c.get('name') == CARD), None)
+
+    def restart(self):
+        self.command('systemctl', '--user', 'restart', 'wireplumber.service')
+
+    def select(self, profile):
+        self.command('pactl', 'set-card-profile', CARD, profile)
+
+
+class Recovery:
+    def __init__(self, backend):
+        self.backend = backend
+        self.attempted = False
+
+    def check(self):
+        connected, active = self.backend.display()
+        card = self.backend.card()
+        if not connected:
+            self.attempted = False
+            if (card and card.get('active_profile') == 'HDMI'
+                    and 'HiFi' in card.get('profiles', {})):
+                self.backend.select('HiFi')
+            return
+        if not active or not card or self.attempted:
+            return
+        # An existing profile's jack availability is already updated by ALSA.
+        # Never disturb working output, a USB headset, or an explicitly off card.
+        if card.get('active_profile') == 'off' or 'HDMI' in card.get('profiles', {}):
+            return
+        self.attempted = True  # also bounds failures, until a real disconnect
+        self.backend.restart()
+        print('ubuntu-gts9u: reprobed missing HDMI profile after display connection', flush=True)
+
+
+def main():
+    from gi.repository import Gio, GLib
+
+    bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+    recovery = Recovery(Backend())
+    pending = 0
+
+    def schedule(*_args):
+        nonlocal pending
+        if pending:
+            GLib.source_remove(pending)
+
+        def check(grace):
+            nonlocal pending
+            pending = 0
+            try:
+                recovery.check()
+                # Mutter's event can precede link training. One delayed check
+                # handles that ordering without an ongoing polling loop.
+                connected, active = recovery.backend.display()
+                if grace and connected and not active:
+                    pending = GLib.timeout_add_seconds(5, check, False)
+            except (subprocess.SubprocessError, OSError, ValueError, KeyError):
+                print('ubuntu-gts9u: audio hotplug query unavailable', file=sys.stderr, flush=True)
+            return GLib.SOURCE_REMOVE
+
+        pending = GLib.timeout_add_seconds(2, check, True)
+
+    bus.signal_subscribe('org.gnome.Mutter.DisplayConfig',
+                         'org.gnome.Mutter.DisplayConfig', 'MonitorsChanged',
+                         '/org/gnome/Mutter/DisplayConfig', None,
+                         Gio.DBusSignalFlags.NONE, schedule)
+    Gio.bus_watch_name_on_connection(bus, 'org.gnome.Mutter.DisplayConfig',
+                                     Gio.BusNameWatcherFlags.NONE, schedule, None)
+    GLib.MainLoop().run()
+
+
+if __name__ == '__main__':
+    main()

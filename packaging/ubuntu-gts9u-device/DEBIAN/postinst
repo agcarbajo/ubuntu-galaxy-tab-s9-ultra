@@ -29,6 +29,10 @@ ubuntu-gts9u-fingerprint-provision.service:multi-user.target
 ubuntu-gts9u-fingerprint-secure.service:multi-user.target
 ubuntu-gts9u-tailscale-tun.service:multi-user.target
 ubuntu-gts9u-root-accept.timer:timers.target
+ubuntu-gts9u-root-maintenance.timer:timers.target
+ubuntu-gts9u-root-health-boot.service:multi-user.target
+ubuntu-gts9u-rtc-time.service:sysinit.target
+ubuntu-gts9u-rtc-anchor.timer:timers.target
 '
 
 case "$1" in
@@ -37,6 +41,9 @@ case "$1" in
 		/usr/libexec/ubuntu-gts9u-chromium-desktops
 		;;
 	configure)
+		# Also applies in an offline rootfs; the user's manager starts it at
+		# first login. The desktop-user helper starts it for existing sessions.
+		systemctl --global enable ubuntu-gts9u-audio-hotplug.service >/dev/null 2>&1 || true
 		/usr/libexec/ubuntu-gts9u-chromium-launchers
 		/usr/libexec/ubuntu-gts9u-chromium-desktops
 		# Index the signed IRQ bridge for the matching installed kernel. Never
@@ -102,6 +109,7 @@ case "$1" in
 		# packaged video-group rule immediately on upgrades as well as at boot.
 		if command -v udevadm >/dev/null 2>&1; then
 			udevadm control --reload >/dev/null 2>&1 || true
+			udevadm trigger --action=change --subsystem-match=hidraw >/dev/null 2>&1 || true
 			udevadm trigger --action=add /sys/class/misc/udmabuf >/dev/null 2>&1 || true
 			udevadm trigger --action=add /sys/class/leds/white:flash >/dev/null 2>&1 || true
 		fi

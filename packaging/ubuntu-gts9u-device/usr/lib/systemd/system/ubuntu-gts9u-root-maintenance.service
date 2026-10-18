@@ -1,0 +1,10 @@
+[Unit]
+Description=Maintain the accepted Ubuntu system and its previous installation
+ConditionPathExists=/.gts9u-base/.gts9u-root/selected
+After=gdm3.service galaxy-companion-boot-capture.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/ubuntu-gts9u-root-maintenance --publish
+Nice=19
+IOSchedulingClass=idle

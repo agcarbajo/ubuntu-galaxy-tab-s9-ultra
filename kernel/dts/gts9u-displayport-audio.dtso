@@ -1,0 +1,19 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/dts-v1/;
+/plugin/;
+
+/* Linux-only: do not change the DTB Samsung ABL consumes. Port 104 is
+ * DISPLAY_PORT_RX_0 from qcom,q6dsp-lpass-ports.h. */
+/ {
+	fragment@0 {
+		target-path = "/sound";
+		__overlay__ {
+			displayport-playback-dai-link {
+				link-name = "DisplayPort0 Playback";
+				cpu { sound-dai = <&q6apmbedai 104>; };
+				codec { sound-dai = <&mdss_dp0>; };
+				platform { sound-dai = <&q6apm>; };
+			};
+		};
+	};
+};

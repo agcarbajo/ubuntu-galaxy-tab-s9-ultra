@@ -15,7 +15,7 @@ import sys
 target = Path(sys.argv[1])
 data = (target / 'gts9u-performance.dtbo').read_bytes()
 lines = ['/* Generated from kernel/dts/gts9u-performance.dtso. */',
-         'static const unsigned char gts9u_performance_overlay[] __initconst = {']
+         'static const unsigned char gts9u_performance_overlay[] __initconst __aligned(8) = {']
 for offset in range(0, len(data), 12):
     lines.append('\t' + ', '.join(f'0x{b:02x}' for b in data[offset:offset+12]) + ',')
 lines.append('};\n')

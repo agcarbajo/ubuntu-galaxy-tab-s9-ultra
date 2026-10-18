@@ -148,6 +148,7 @@ fi
 
 # Keep the ABL-facing DTB pinned; Linux adds Galaxy CPU/GPU OPPs before probe.
 bash "$repo/scripts/stage-performance-overlay.sh" "$kernel_tree"
+bash "$repo/scripts/stage-displayport-audio-overlay.sh" "$kernel_tree"
 
 apply_unless() {
 	# apply_unless <marker> <file> <patch>
