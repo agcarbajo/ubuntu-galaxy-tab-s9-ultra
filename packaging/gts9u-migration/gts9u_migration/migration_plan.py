@@ -42,8 +42,19 @@ def package_name(value):
     return value.removesuffix(":arm64")
 
 
-def parse_plan(text, installed=None, compare=None):
+def parse_plan(text, installed=None, compare=None, manual=None, protected=frozenset()):
+    """A frozen install/remove plan from APT's simulated actions.
+
+    Removals are allowed when they were reviewed (OBSOLETE), or when the
+    package was installed automatically and APT no longer needs it, which is
+    how library ABI renames between releases show up (`manual` is the set of
+    packages the user installed by hand; without it only reviewed removals
+    pass).  A package the user installed that would be removed, and any
+    package the release itself ships (`protected`), stop the migration; every
+    such name is reported at once."""
     installed = installed or {}
+    manual = None if manual is None else frozenset(manual)
+    lost, port = [], []
     compare = compare or (lambda new, old: subprocess.run(
         ["dpkg", "--compare-versions", new, "lt", old], capture_output=True).returncode == 0)
     installs, removals = {}, set()
@@ -61,9 +72,16 @@ def parse_plan(text, installed=None, compare=None):
         match = REMOVE.match(line)
         if match:
             name = package_name(match[1])
-            if name not in OBSOLETE:
-                raise ValueError("Unreviewed package removal: " + name)
+            if name in protected:
+                port.append(name)
+            elif name not in OBSOLETE and (manual is None or name in manual):
+                lost.append(name)
             removals.add(name)
+    if port:
+        raise ValueError("The migration would remove packages this release ships: " + ", ".join(sorted(port)))
+    if lost:
+        raise ValueError("Unreviewed package removal (installed by you, no Ubuntu 26.04 version from an "
+                         "enabled source): " + ", ".join(sorted(lost)))
     if not installs or len(installs) > 4096:
         raise ValueError("Missing or excessive migration package plan")
     if set(installs) & removals:
@@ -74,7 +92,7 @@ def parse_plan(text, installed=None, compare=None):
     return {"install": installs, "remove": sorted(removals)}
 
 
-def parse_selection(text, installed=None):
+def parse_selection(text, installed=None, manual=None, protected=frozenset()):
     headers = {"The following packages will be REMOVED:": "remove",
                "The following NEW packages will be installed:": "new",
                "The following packages will be upgraded:": "upgrade"}
@@ -108,7 +126,7 @@ def parse_selection(text, installed=None):
                        "Inst " + name + " (" + (match[3] or match[2]) + " selected)")
     if summary != (counts["upgrade"], counts["new"], counts["remove"]):
         raise ValueError("Missing or inconsistent package selection summary")
-    return parse_plan("\n".join(records), installed)
+    return parse_plan("\n".join(records), installed, manual=manual, protected=protected)
 
 
 def requested_packages(installed, required):
@@ -184,3 +202,83 @@ def check_preservation(source, target):
         raise ValueError("Migration changed an existing user identity or password record")
     if preservation_inventory(source) != preservation_inventory(target):
         raise ValueError("Migration changed protected system identity or application state")
+
+
+UBUNTU_ARCHIVES = ("ports.ubuntu.com", "archive.ubuntu.com", "security.ubuntu.com")
+
+
+def _entries_from_list(text):
+    for line in text.splitlines():
+        words = line.split("#", 1)[0].split()
+        if not words or words[0] != "deb":
+            continue
+        options = {}
+        if len(words) > 1 and words[1].startswith("["):
+            closing = next(i for i, word in enumerate(words) if word.endswith("]"))
+            for option in " ".join(words[1:closing + 1]).strip("[]").split():
+                key, _, value = option.partition("=")
+                options[key.lower()] = value
+            words = [words[0]] + words[closing + 1:]
+        if len(words) < 3:
+            continue
+        yield {"uris": [words[1]], "suites": [words[2]], "components": words[3:],
+               "signed_by": options.get("signed-by", ""), "architectures": options.get("arch", "").replace(",", " "),
+               "raw": None}
+
+
+def _entries_from_sources(text):
+    for stanza in [block for block in text.split("\n\n") if block.strip()]:
+        fields, current = {}, None
+        for line in stanza.splitlines():
+            if line.startswith("#"):
+                continue
+            if line[:1] in (" ", "\t") and current:
+                fields[current] += "\n" + line
+                continue
+            key, _, value = line.partition(":")
+            current = key.strip().lower()
+            fields[current] = value.strip()
+        if "deb" not in fields.get("types", "").split() or fields.get("enabled", "yes").lower() == "no":
+            continue
+        yield {"uris": fields.get("uris", "").split(), "suites": fields.get("suites", "").split(),
+               "components": fields.get("components", "").split(), "signed_by": fields.get("signed-by", ""),
+               "architectures": fields.get("architectures", ""), "raw": stanza}
+
+
+def third_party_sources(apt_dir, source="noble", target="resolute", available=None):
+    """Third-party APT sources carried across the release migration.
+
+    Entries for the Ubuntu archive are left to the migration.  An entry whose
+    suites are release-independent (`stable`, `./`) is kept as it is; one whose
+    suites name the source release is kept with the target release's name when
+    `available(uri, suite)` confirms the repository publishes it, and dropped
+    otherwise.  Returns (deb822 text, kept descriptions, dropped descriptions)."""
+    stanzas, kept, dropped = [], [], []
+    files = [apt_dir / "sources.list"] if (apt_dir / "sources.list").is_file() else []
+    files += sorted((apt_dir / "sources.list.d").glob("*.list")) + sorted((apt_dir / "sources.list.d").glob("*.sources"))
+    for file in files:
+        parse = _entries_from_sources if file.suffix == ".sources" else _entries_from_list
+        for entry in parse(file.read_text(errors="replace")):
+            if not entry["uris"] or any(host in uri for uri in entry["uris"] for host in UBUNTU_ARCHIVES):
+                continue
+            suites = entry["suites"]
+            named = [s for s in suites if s == source or s.startswith(source + "-")]
+            label = " ".join(entry["uris"]) + " " + " ".join(suites)
+            if named and len(named) != len(suites):
+                dropped.append(label)
+                continue
+            if named:
+                suites = [target + s[len(source):] for s in suites]
+                if available is None or not all(available(uri, suite) for uri in entry["uris"] for suite in suites):
+                    dropped.append(label)
+                    continue
+            lines = ["Types: deb", "URIs: " + " ".join(entry["uris"]), "Suites: " + " ".join(suites)]
+            if entry["components"]:
+                lines.append("Components: " + " ".join(entry["components"]))
+            if entry["architectures"]:
+                lines.append("Architectures: " + entry["architectures"])
+            if entry["signed_by"]:
+                lines.append("Signed-By: " + entry["signed_by"])
+            stanzas.append("\n".join(lines))
+            kept.append(" ".join(entry["uris"]) + " " + " ".join(suites))
+    return ("\n\n".join(stanzas) + "\n") if stanzas else "", kept, dropped

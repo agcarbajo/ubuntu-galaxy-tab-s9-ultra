@@ -16,6 +16,8 @@ import shutil
 import stat
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 import zipfile
 
 from galaxy_companion import update_bundle as bundle
@@ -147,6 +149,12 @@ class AptRuntime:
         if not original_preferences.is_file():
             raise ValueError("The port's archive-kernel protection is missing")
         shutil.copyfile(original_preferences, transaction / "preferences.d/no-distro-kernel")
+        third, kept, dropped = plans.third_party_sources(source_root / "etc/apt", available=release_published)
+        (transaction / "third-party.sources").write_text(third)
+        for line in kept:
+            core.emit("Keeping third-party source for Ubuntu 26.04: " + line)
+        for line in dropped:
+            core.emit("Disabling third-party source with no Ubuntu 26.04 suite: " + line)
         (transaction / "ubuntu.sources").write_text(
             "Types: deb\nURIs: https://ports.ubuntu.com/ubuntu-ports\n"
             "Suites: resolute resolute-updates resolute-backports\n"
@@ -155,9 +163,11 @@ class AptRuntime:
             "Types: deb\nURIs: https://ports.ubuntu.com/ubuntu-ports\n"
             "Suites: resolute-security\nComponents: main restricted universe multiverse\n"
             "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n")
+        (transaction / "resolver.sources").write_text(
+            (transaction / "ubuntu.sources").read_text() + ("\n" + third if third else ""))
         values = {
             "Dir::Etc::main": "/dev/null", "Dir::Etc::parts": "-",
-            "Dir::Etc::sourcelist": str(transaction / "ubuntu.sources"), "Dir::Etc::sourceparts": "-",
+            "Dir::Etc::sourcelist": str(transaction / "resolver.sources"), "Dir::Etc::sourceparts": "-",
             "Dir::Etc::preferences": "/dev/null", "Dir::Etc::preferencesparts": str(transaction / "preferences.d"),
             "Dir::State::status": str(transaction / "source-status"),
             "Dir::State::lists": str(transaction / "lists"),
@@ -184,14 +194,26 @@ class AptRuntime:
                  "DEBIAN_FRONTEND": "noninteractive"})
         return result.stdout if capture else ""
 
-    def local_repository(self, manifest):
+    def available_names(self, names):
+        """Which of `names` an enabled source (not only the dpkg status) offers."""
+        if not names:
+            return set()
+        command = self.command(["madison", *sorted(names)])
+        command[command.index(str(self.runtime / "bin/apt-get"))] = str(self.runtime / "bin/apt-cache")
+        result = subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            env={**os.environ, "APT_CONFIG": str(self.config), "LC_ALL": "C"})
+        return {line.split("|", 1)[0].strip() for line in result.stdout.splitlines() if "|" in line}
+
+    def local_repository(self, manifest, keep=()):
         transaction = self.transaction
         repository = transaction / "UPDATE/debs"
         metapackage = transaction / "migration-metapackage"
         (metapackage / "DEBIAN").mkdir(parents=True)
+        # Packages the user installed by hand are requested too, so APT keeps
+        # them (with their new dependencies) instead of dropping them.
         required = sorted({plans.package_name(name) for name in manifest["apt_packages"]} |
             {"ubuntu-gts9u-device", "galaxy-companion", "ubuntu-gts9u-companion", "ubuntu-gts9u-hardware",
-             "gnome-shell-ubuntu-extensions", "gir1.2-mutter-18"})
+             "gnome-shell-ubuntu-extensions", "gir1.2-mutter-18"} | set(keep))
         (metapackage / "DEBIAN/control").write_text(
             "Package: ubuntu-gts9u-migration\nVersion: " + manifest["version"] +
             "\nArchitecture: all\nMaintainer: Ubuntu gts9uwifi port contributors <noreply@example.invalid>\n"
@@ -223,19 +245,27 @@ class AptRuntime:
                   "--passphrase", "", "--output", str(repository / "InRelease"),
                   "--clearsign", str(release)], True)
         sources = transaction / "migration.sources"
-        sources.write_text((transaction / "ubuntu.sources").read_text() +
+        sources.write_text((transaction / "resolver.sources").read_text() +
             "\nTypes: deb\nURIs: file:" + str(repository) + "\nSuites: ./\nSigned-By: " + str(keyring) + "\n")
-        self.config.write_text(self.config.read_text().replace(str(transaction / "ubuntu.sources"), str(sources)))
+        self.config.write_text(self.config.read_text().replace(str(transaction / "resolver.sources"), str(sources)))
         with (transaction / "source-status").open("a") as stream:
             stream.write("\nPackage: ubuntu-gts9u-migration\nStatus: install ok installed\n"
                          "Architecture: all\nVersion: 0\nDescription: Resolver-only migration requirements\n\n")
 
     def selection(self, arguments, installed=None):
         text = self.run(["--print-uris", "--download-only", "-V", "-y", *arguments])
-        return plans.parse_selection(text, installed)
+        return plans.parse_selection(text, installed, manual=self.manual, protected=self.protected)
 
-    def resolve(self, manifest, installed):
-        self.local_repository(manifest)
+    manual = None
+    protected = frozenset()
+
+    def resolve(self, manifest, installed, manual=None):
+        self.manual = None if manual is None else frozenset(manual)
+        keep = sorted(self.available_names(set(self.manual or ()) & set(installed)) - plans.OBSOLETE)
+        self.local_repository(manifest, keep)
+        self.protected = frozenset(plans.package_name(name) for name in
+            core.run(["sh", "-c", 'for f in "$1"/*.deb; do dpkg-deb -f "$f" Package; done', "sh",
+                      str(self.transaction / "UPDATE/debs")], True).split() if name != "ubuntu-gts9u-migration")
         self.run(["update"], capture=False)
         plan = self.selection(["dist-upgrade"], {**installed, "ubuntu-gts9u-migration": "0"})
         arguments = ["install", *[name + "=" + version for name, version in plan["install"].items()],
@@ -243,7 +273,23 @@ class AptRuntime:
         if self.selection(arguments) != plan:
             raise ValueError("Pinning the migration changed its dependency selection")
         self.run(["-y", "--download-only", *arguments], capture=False)
+        plan["manual"] = sorted(self.manual) if self.manual is not None else None
+        plan["protected"] = sorted(self.protected)
         return plan
+
+
+def release_published(uri, suite):
+    """Whether an APT repository publishes `suite` (its Release or InRelease)."""
+    base = uri.rstrip("/") + "/dists/" + suite + "/"
+    for name in ("InRelease", "Release"):
+        try:
+            request = urllib.request.Request(base + name, method="HEAD", headers={"User-Agent": "gts9u-migration"})
+            with urllib.request.urlopen(request, timeout=20) as response:
+                if response.status == 200:
+                    return True
+        except (urllib.error.URLError, OSError, ValueError):
+            continue
+    return False
 
 
 def verify_archives(transaction, plan):
@@ -271,6 +317,9 @@ def configure_target_sources(root, transaction):
         old.rename(old.with_name("sources.list.pre-resolute"))
     directory.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(transaction / "ubuntu.sources", directory / "ubuntu.sources")
+    third = transaction / "third-party.sources"
+    if third.is_file() and third.read_text().strip():
+        shutil.copyfile(third, directory / "third-party-resolute.sources")
 
 
 def apply_packages(root, transaction, plan, runtime):
@@ -293,7 +342,8 @@ def apply_packages(root, transaction, plan, runtime):
                      *[name + "-" for name in plan["remove"]]]
         selection = core.run(["chroot", str(root), "env", "APT_CONFIG=" + str(runtime.config),
                               *runtime.command(["--print-uris", "--download-only", "-V", "-y", *arguments[2:]])], True)
-        actual = plans.parse_selection(selection)
+        actual = plans.parse_selection(selection, manual=plan.get("manual"), protected=frozenset(plan.get("protected", ())))
+        actual.update({key: plan[key] for key in ("manual", "protected") if key in plan})
         if actual != plan:
             raise ValueError("The offline resolver changed the frozen migration plan")
         core.run(["chroot", str(root), "env", "APT_CONFIG=" + str(runtime.config),
@@ -508,7 +558,8 @@ def prepare(archive, program):
         installed = installed_versions(Path("/"))
         core.emit("Resolving authenticated Resolute dependencies with the release's isolated package manager…")
         runtime.run(["update"], capture=False)
-        package_plan = runtime.resolve(manifest, installed)
+        manual = set(core.run(["apt-mark", "showmanual"], True).split())
+        package_plan = runtime.resolve(manifest, installed, {plans.package_name(name) for name in manual})
         core.write_json(transaction / "packages.json", package_plan)
         core.write_json(transaction / "archives.json", verify_archives(transaction, package_plan))
         (transaction / "dpkg.sha256").write_text(bundle.sha256("/var/lib/dpkg/status"))

@@ -26,6 +26,43 @@ class PackagePlanTests(unittest.TestCase):
         self.assertEqual(plan["remove"], ["libcamera-gts9u"])
         self.assertIn("libfprint-2-2", plan["install"])
 
+    def test_automatic_library_renames_may_go_but_manual_and_port_packages_stay(self):
+        text = ("Remv libqt6widgets6t64 [6.4.2]\nRemv libgdk-pixbuf-2.0-dev [2.42]\nRemv waydroid [1.6.2]\n"
+                "Inst libqt6widgets6 (6.9.2 Ubuntu [arm64])")
+        with self.assertRaises(ValueError) as caught:
+            plans.parse_plan(text, manual={"libgdk-pixbuf-2.0-dev", "waydroid"})
+        self.assertIn("libgdk-pixbuf-2.0-dev, waydroid", str(caught.exception))
+        self.assertNotIn("libqt6widgets6t64", str(caught.exception))
+        plan = plans.parse_plan("Remv libqt6widgets6t64 [6.4.2]\nInst libqt6widgets6 (6.9.2 Ubuntu [arm64])", manual=set())
+        self.assertEqual(plan["remove"], ["libqt6widgets6t64"])
+        with self.assertRaisesRegex(ValueError, "this release ships: ubuntu-gts9u-device"):
+            plans.parse_plan("Remv ubuntu-gts9u-device [2.88]\nInst gnome-shell (50.1 Ubuntu [arm64])",
+                             manual=set(), protected={"ubuntu-gts9u-device"})
+
+    def test_third_party_sources_follow_the_release_when_published(self):
+        with tempfile.TemporaryDirectory() as temp:
+            apt = Path(temp)
+            (apt / "sources.list.d").mkdir()
+            (apt / "sources.list.d/ubuntu.sources").write_text(
+                "Types: deb\nURIs: http://ports.ubuntu.com/ubuntu-ports\nSuites: noble noble-updates\nComponents: main\n")
+            (apt / "sources.list.d/waydroid.list").write_text(
+                "deb [signed-by=/usr/share/keyrings/waydroid.gpg] https://repo.waydro.id/ noble main\n")
+            (apt / "sources.list.d/gone.list").write_text("deb https://example.invalid/apt noble main\n")
+            (apt / "sources.list.d/chrome.sources").write_text(
+                "X-Repolib-Name: Chrome\nTypes: deb\nURIs: https://dl.google.com/linux/chrome-stable/deb/\n"
+                "Suites: stable\nComponents: main\nArchitectures: arm64\nSigned-By: /usr/share/keyrings/google-chrome.gpg\n")
+            (apt / "sources.list.d/off.sources").write_text(
+                "Enabled: no\nTypes: deb\nURIs: https://off.invalid\nSuites: noble\nComponents: main\n")
+            published = lambda uri, suite: "waydro.id" in uri and suite == "resolute"
+            text, kept, dropped = plans.third_party_sources(apt, available=published)
+        self.assertIn("URIs: https://repo.waydro.id/\nSuites: resolute\nComponents: main\nSigned-By: /usr/share/keyrings/waydroid.gpg", text)
+        self.assertIn("Suites: stable", text)
+        self.assertIn("Architectures: arm64", text)
+        self.assertNotIn("ports.ubuntu.com", text)
+        self.assertNotIn("off.invalid", text)
+        self.assertEqual(dropped, ["https://example.invalid/apt noble"])
+        self.assertEqual(len(kept), 2)
+
     def test_unreviewed_application_removal_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "Unreviewed"):
             plans.parse_plan("Remv personal-application [1]\nInst gnome-shell (50.1 Ubuntu [arm64])")
