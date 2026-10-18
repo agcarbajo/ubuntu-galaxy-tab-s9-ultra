@@ -29,6 +29,17 @@ mkdir -p "$staging" "$out"
 cp -a "$src/." "$staging/"
 cp "$control" "$staging/DEBIAN/control"
 rm -f "$staging/DEBIAN/control-resolute"
+# The Resolute package replaces the Noble one during the release migration.
+# A lower or equal version makes APT keep the old package or remove it as a
+# downgrade it refuses, taking the board integration with it.
+if [ "$suite" = resolute ]; then
+	noble_version=$(awk '/^Version:/ {print $2}' "$src/DEBIAN/control")
+	resolute_version=$(awk '/^Version:/ {print $2}' "$src/DEBIAN/control-resolute")
+	dpkg --compare-versions "$resolute_version" gt "$noble_version" || {
+		echo "control-resolute ($resolute_version) must be newer than the Noble control ($noble_version)" >&2
+		exit 1
+	}
+fi
 if [ "$suite" = resolute ]; then
     rm -rf -- "$staging/usr/share/wireplumber/main.lua.d"
 else
