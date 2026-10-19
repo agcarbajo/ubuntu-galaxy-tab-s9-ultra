@@ -1,0 +1,54 @@
+--- a/plugins/power/gsd-power-manager.c
++++ b/plugins/power/gsd-power-manager.c
+@@ -23,6 +23,7 @@
+ #include "config.h"
+ 
+ #include <stdlib.h>
++#include <math.h>
+ #include <string.h>
+ #include <glib/gi18n.h>
+ #include <libupower-glib/upower.h>
+@@ -178,6 +179,7 @@
+         gdouble                  ambient_norm_value;
+         gint64                   ambient_update_last_time;
+         gint64                   ambient_set_last_time;
++        gdouble                  ambient_target_last;
+ 
+         /* Power Profiles */
+         GDBusProxy              *power_profiles_proxy;
+@@ -1383,6 +1385,8 @@
+                            active ? light_claimed_cb : light_released_cb,
+                            manager);
+ 
++        /* A reclaimed sensor must deliver its first target again. */
++        manager->ambient_set_last_time = 0;
+         manager->light_claimed = !!active;
+ }
+ 
+@@ -2978,6 +2982,7 @@
+                         manager->ambient_accumulator = 100.f / GSD_AMBIENT_NORMALIZE_CONSTANT;
+ 
+                 manager->ambient_norm_required = FALSE;
++                manager->ambient_set_last_time = 0;
+         }
+ 
+         /* time-weighted constant for moving average */
+@@ -3003,9 +3008,17 @@
+         g_debug ("Calculated new target brightness from ambient: %.1f%%",
+                  manager->ambient_accumulator);
+ 
+-        if (current_time - manager->ambient_set_last_time >= GSD_AMBIENT_SEND_UPDATE_INTERVAL) {
++        /* Keep integrating every sample, but do not chase ambient sensor noise.
++         * Compare against the last sent target so gradual real changes accumulate.
++         * Normalization/reclaim invalidates that target; preserve the rate limit.
++         */
++        if (current_time - manager->ambient_set_last_time >= GSD_AMBIENT_SEND_UPDATE_INTERVAL &&
++            (manager->ambient_set_last_time == 0 ||
++             fabs (manager->ambient_accumulator - manager->ambient_target_last) >=
++             MAX (1.0, manager->ambient_target_last * 0.05))) {
+                 shell_brightness_set_auto_target (manager,
+                                                   manager->ambient_accumulator / 100.0);
++                manager->ambient_target_last = manager->ambient_accumulator;
+                 manager->ambient_set_last_time = current_time;
+         }
+ }

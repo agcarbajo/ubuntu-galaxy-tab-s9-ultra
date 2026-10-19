@@ -31,7 +31,9 @@ enumeration and service activation below are not physical acceptance.
   regressions pass; intermittent physical repetition still needs a typing trial.
 - PM8xxx RTC is built in. Ubuntu keeps its own UTC/raw-counter anchor without
   writing Android's RTC. A subsequent real reboot logged successful restoration
-  from the continuing counter. Full shutdown/offline acceptance is pending.
+  from the continuing counter. The owner confirmed correct time before re-enabling Wi-Fi after a full
+  shutdown on 2026-10-19. The following boot logged restoration from the PMIC
+  counter, boot ID 2f0d5ea9-2d86-4549-b41b-2f48cafc4513.
 - The selected accepted root's boot set is published through the original base
   filesystem's canonical Ubuntu path. Android boot sets are preserved. The new
   Android APK also prioritizes this selected root over stale shared-storage sets.
@@ -176,3 +178,85 @@ Owner acceptance update (2026-10-19): the full five-second USB-C disconnect,
 reconnect, HDMI selection/listening and return-to-speakers cycle works with the
 packaged audio8 service. No new reboot or suspend test is implied. The internal
 microphone node is present in both profiles; no voice sample was retained.
+
+2026-10-19 physical checks: corrected signed Dualboot 1.0.0 installed on SM-X910
+with Android 16, stayed open and obtained owner-granted root. Its UI showed
+One UI 8 and Ubuntu 26.04.1; the owner returned through the app successfully.
+New Ubuntu boot: 05f763e4-ebb0-42de-ba2c-a5efce2b8675, kernel 7.2.9-dirty. The
+boot-capture service reported linux-unchanged, confirming all images still match
+the saved current Ubuntu set. The owner confirmed OSK haptics both at GDM's
+initial login and in a separate administrator prompt. All requested keyboard
+contexts now have explicit listening/touch acceptance, with the enabled option.
+
+The previous-system row is visible in Companion Updates and shows about 89 GiB;
+the owner confirmed it without deleting anything. The physical cover typing
+trial did not reproduce stuck repeats; the owner explicitly cannot confirm the
+intermittent fault has disappeared. Treat that result as provisional.
+
+Temporary Chrome Beta was removed via a strict one-package APT plan, preserving
+Chrome stable and the browser alternative. Package check/audit is clean. Beta
+remains excluded from ZIP dependencies and build-root contents.
+
+Automatic-brightness issue #8 was reproduced on this unit with the setting
+enabled: 90 one-second samples, 79 backlight changes and 36 direction reversals
+after warm-up, raw levels 939..1017 / 2047, light 81..90 lux under owner-stable
+lighting. The initial disabled preference was restored. The archive GNOME daemon
+is 50.0-1ubuntu1; the Noble-only redundant-write patch is not part of Resolute.
+A controlled manual-backlight experiment then measured approximately 81 lux at
+20%, 82 at 50%, 85 at 70%, and 81 after returning to 20%. This is a small panel
+influence, not sufficient evidence for a proprietary compensation-message fix.
+The initial manual raw brightness (561) and disabled ambient preference were
+restored. No sensor calibration or proprietary message was changed.
+
+The GNOME 50 correction adds target hysteresis: send the smoothed target only
+after a change of at least 5% relative to the last sent target, with a minimum
+one percentage point. Every sample still advances the existing EWMA and time
+state; slow real changes accumulate relative to the last applied target.
+Manual normalization/dimming and sensor reclaim invalidate the previous target.
+The compiled real-callback regression fails on unmodified Ubuntu 50.0 and passes
+with the patch: stable-room noise, strong dark/bright steps, slow drift, reset,
+disabled control and invalid readings. Physical post-install results are
+recorded below. This changes neither GNOME's smoothing constant nor sensor sampling.
+
+The exact Ubuntu 50.0-1ubuntu1 source is rebuilt as 50.0-1ubuntu1+gts9u1, paired
+with its common package. Resolute now selects the pair for clean builds and
+update payloads; locked prebuilt selections must include the exact same pair.
+Noble retains its separate GNOME 46 redundant-write patch and Mutter 46 package.
+Port and Companion versions, ZIP and published/draft release assets are unchanged.
+
+The real ARM64 Debian build completed compilation, installation, stripping and
+dependency/control generation. Emulated tar failed at the final dh_builddeb
+archive with ENOSYS; native dpkg-deb successfully packed the prepared Debian
+trees. The builder now skips only that emulated archive operation and uses native
+dpkg-deb after Debian's binary target. Its override target was smoke-tested.
+This is the same native-extraction workaround already needed by sensor builds.
+
+Both packages were installed after SHA-256 verification and a strict two-package,
+zero-removal APT plan. Original archive packages and root-only logs are retained
+in /root/gts9u-ambient-20261019. Only the user power daemon was reloaded, through
+a temporary runtime override which was removed immediately; the running binary
+matches the installed package (SHA-256
+de7fca7572d6756911c2f9dbf769bc1fd217c773ddc9046d8630c9c07bf9d717).
+The owner did not need a reboot or a session restart.
+
+The exact 90-second reproduction now records one backlight change and zero
+direction reversals after warm-up, versus 79 and 36 before. Lux noise remains
+comparable (83..92 versus 81..90). Filtered session-bus capture confirms an
+initial target 0.666667, one adjusted target 0.632566, then -1 on disabling.
+Thus the improvement is not a dead controller. The original disabled preference
+and raw manual brightness 561 were restored. In a separate real-light response
+test the owner confirmed that brightness adapts and subsequently stabilizes.
+
+Package SHA-256:
+- gnome-settings-daemon_50.0-1ubuntu1+gts9u1_arm64.deb:
+  29adf1f4588f433740beb0ce687e964619f5a6aa88eebd32fc799c5e0bb71efd
+- gnome-settings-daemon-common_50.0-1ubuntu1+gts9u1_all.deb:
+  efc883e0ff0641b3f92cb0352c00b9bf52f2d0ed23408000c8d2eeb6129b26f6
+
+
+The 75-second real-light trial measured 5..90 lux and raw backlight 20..852;
+after illumination was restored, its last 31 seconds stayed at 748 without
+changes. The owner confirmed adaptation and stabilization. Both test runs
+restored ambient-enabled=false and manual brightness 561. The service is active,
+with zero restarts and its original manual-start/stop protections restored.
+No full GNOME integration suite or battery-runtime benchmark is implied.

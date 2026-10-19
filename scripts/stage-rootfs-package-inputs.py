@@ -44,7 +44,8 @@ def stage(source, manifest, destination, suite, include_npu):
     required = {'libssc', 'hexagonrpcd', 'iio-sensor-proxy', 'libfprint-2-2', camera,
         'libspa-0.2-libcamera-gts9u', 'ubuntu-gts9u-device', 'ubuntu-gts9u-companion',
         'fastfetch', 'v4l2-relayd-gts9u', 'fprintd', 'libpam-fprintd',
-        'ubuntu-gts9u-fingerprint-firmware'}
+        'ubuntu-gts9u-fingerprint-firmware',
+        'gnome-settings-daemon', 'gnome-settings-daemon-common'}
     if suite == 'resolute':
         required.add('libfprint-2-tod1')
     if include_npu:
@@ -57,6 +58,9 @@ def stage(source, manifest, destination, suite, include_npu):
             (REPO / 'packaging/ubuntu-gts9u-companion/DEBIAN/control').read_text(), re.M)[1],
         'fprintd': (REPO / 'packaging/fprintd' / ('version-resolute' if suite == 'resolute' else 'version')).read_text().strip()}
     expected['libpam-fprintd'] = expected['fprintd']
+    expected['gnome-settings-daemon'] = ('50.0-1ubuntu1+gts9u1' if suite == 'resolute'
+                                         else '46.0-1ubuntu1.24.04.1+gts9u1')
+    expected['gnome-settings-daemon-common'] = expected['gnome-settings-daemon']
     for name, version in expected.items():
         if selected[name][1] != version:
             raise ValueError('Local package version does not match the source recipe: ' + name)

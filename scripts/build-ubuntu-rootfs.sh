@@ -31,7 +31,7 @@ case "$suite" in
 		camera_builder=$repo/scripts/build-resolute-camera-packages.sh
 		fingerprint_tod_package=libfprint-2-tod1
 		fprintd_version=$(cat "$repo/packaging/fprintd/version-resolute")
-		gnome_local_packages=
+		gnome_local_packages='gnome-settings-daemon gnome-settings-daemon-common'
 		;;
 	*) echo "unsupported rootfs suite: $suite" >&2; exit 2 ;;
 esac
@@ -292,18 +292,24 @@ if [ "$fingerprint_missing" = 1 ] || \
 	printf '%s\n' "$fingerprint_fingerprint" > "$fingerprint_stamp"
 fi
 
-if [ "$suite" = noble ]; then
 # Cache the patched GNOME ambient controller by source inputs, not filename.
-power_stamp=$base/out/packages/.gts9u-gnome-power-inputs.sha256
+case "$suite" in
+    noble) power_version=46.0-1ubuntu1.24.04.1+gts9u1
+           power_patch=skip-unchanged-ambient-brightness.patch ;;
+    resolute) power_version=50.0-1ubuntu1+gts9u1
+              power_patch=ambient-target-hysteresis.patch ;;
+esac
+power_stamp=$base/out/packages/.gts9u-gnome-power-$suite-inputs.sha256
 power_fingerprint=$(sha256sum "$repo/scripts/build-gnome-power-package.sh" \
-    "$repo/packaging/gnome-settings-daemon/skip-unchanged-ambient-brightness.patch" | sha256sum | awk '{print $1}')
-if [ ! -f "$base/out/packages/gnome-settings-daemon_46.0-1ubuntu1.24.04.1+gts9u1_arm64.deb" ] || \
-   [ ! -f "$base/out/packages/gnome-settings-daemon-common_46.0-1ubuntu1.24.04.1+gts9u1_all.deb" ] || \
+    "$repo/packaging/gnome-settings-daemon/$power_patch" | sha256sum | awk '{print $1}')
+if [ ! -f "$base/out/packages/gnome-settings-daemon_${power_version}_arm64.deb" ] || \
+   [ ! -f "$base/out/packages/gnome-settings-daemon-common_${power_version}_all.deb" ] || \
    [ "$(cat "$power_stamp" 2>/dev/null || true)" != "$power_fingerprint" ]; then
     bash "$repo/scripts/build-gnome-power-package.sh" >/dev/null
     printf '%s\n' "$power_fingerprint" > "$power_stamp"
 fi
 
+if [ "$suite" = noble ]; then
 mutter_version=46.2-1ubuntu0.24.04.16+gts9u1
 mutter_stamp=$base/out/packages/.gts9u-mutter-inputs.sha256
 mutter_fingerprint=$(sha256sum "$repo/scripts/build-mutter-package.sh" \
@@ -451,6 +457,7 @@ for pkg in libssc hexagonrpcd iio-sensor-proxy \
 	$camera_package libspa-0.2-libcamera-gts9u \
 	ubuntu-gts9u-device galaxy-companion ubuntu-gts9u-companion fastfetch v4l2-relayd-gts9u \
     $gnome_local_packages $npu_package; do
+	case "$pkg" in gnome-settings-daemon|gnome-settings-daemon-common) continue ;; esac
 	deb=$(ls -t "$base"/out/packages/${pkg}_*.deb 2>/dev/null | head -1 || true)
 	if [ -z "$deb" ]; then
 		echo "missing local package: $pkg" >&2
@@ -459,6 +466,10 @@ for pkg in libssc hexagonrpcd iio-sensor-proxy \
 	cp "$deb" "$stage_debs/"
 	echo "local package: ${deb##*/}"
 done
+
+# Keep the suite's exact daemon/common pair together, independently of cache mtimes.
+cp "$base/out/packages/gnome-settings-daemon_${power_version}_arm64.deb" \
+    "$base/out/packages/gnome-settings-daemon-common_${power_version}_all.deb" "$stage_debs/"
 
 # This exact matched pair was checked above. Do not pick each half separately
 # by file mtime: a cached daemon/PAM from different builds can break all of APT.

@@ -81,12 +81,18 @@ class UpgradeBuildInputsTests(unittest.TestCase):
         self.assertIn('fingerprint_tod_package=libfprint-2-tod1', source)
         self.assertIn('camera_builder=$repo/scripts/build-resolute-camera-packages.sh', source)
         self.assertIn('fprintd_version=$(cat "$repo/packaging/fprintd/version-resolute")', source)
-        self.assertIn('if [ "$suite" = noble ]; then\n# Cache the patched GNOME', source)
+        self.assertIn('resolute) power_version=50.0-1ubuntu1+gts9u1', source)
+        self.assertIn('power_patch=ambient-target-hysteresis.patch', source)
+        self.assertIn('if [ "$suite" = noble ]; then\nmutter_version=46.', source)
         self.assertIn('$gnome_local_packages', source)
 
     def test_all_project_extensions_retain_gnome50_support(self):
         extensions = list(REPO.glob("packaging/ubuntu-gts9u-*/usr/share/gnome-shell/extensions/*"))
-        self.assertEqual(len(extensions), 5)
+        companion = list((REPO / 'external/galaxy-companion').glob(
+            'packaging/galaxy-companion/usr/share/gnome-shell/extensions/*'))
+        self.assertTrue(extensions)
+        self.assertTrue(companion, 'Initialize the pinned Companion submodule')
+        extensions += companion
         for extension in extensions:
             with self.subTest(extension=extension.name):
                 metadata = json.loads((extension / "metadata.json").read_text())

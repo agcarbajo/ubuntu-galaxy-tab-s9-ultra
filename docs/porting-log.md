@@ -8408,3 +8408,72 @@ listing still contains port #1/#3/#8/#9/#10 and no Companion issues. #8/#9 bodie
 were reviewed again; no comments or closures were sent. EF-DX925/other models,
 other-unit fingerprint provisioning and the automatic-brightness reproduction
 remain limited as described in the follow-up record.
+
+The owner completed a full power-off with Wi-Fi disabled, then confirmed the
+clock was correct before enabling Wi-Fi. New boot ID:
+2f0d5ea9-2d86-4549-b41b-2f48cafc4513. The RTC unit succeeded and logged restoration
+from the continuing PMIC counter; the packaged hotplug service was active,
+speaker/Mic nodes were available, and PipeWire had zero restarts.
+
+Before the authorized Android round trip, all four saved Android images were
+hashed against the retained original, partition sizes/by-partlabel targets and
+Android v4/DTBO/AVB metadata were checked, and the current Ubuntu set was copied
+root-only and hash-verified in /root/gts9u-android-roundtrip-20261019/ubuntu-backup.
+The owner explicitly authorized writing the Android boot set and rebooting.
+The switch helper additionally checks vendor DTBs, verifies every destination
+and only reboots on full read-back equality. Android boot/physical APK results
+are pending; the unrelated SM-F926B ADB recovery device must not be operated.
+
+
+2026-10-19 — Physical follow-up and automatic-brightness reproduction
+
+The corrected signed Dualboot APK stayed open on the SM-X910 running Android 16,
+obtained owner-granted root, displayed Ubuntu 26.04.1 and returned to that system.
+Boot capture reported linux-unchanged. The owner also confirmed GDM initial-login
+and administrator-dialog keyboard vibration, the previous-installation removal
+row (~89 GiB), and no repeats during a short cover typing trial. The intermittent
+cover fault remains provisional. Chrome Beta was removed alone; stable and the
+default browser were preserved. The disabled temporary OSK diagnostic extension
+was removed by deleting its two known files and its empty directory.
+
+Automatic brightness was then reproduced under stable owner-provided light:
+90 one-second samples; after warm-up, 79 brightness changes and 36 reversals,
+939..1017/2047 raw backlight, 81..90 lux. Controlled manual brightness at 20%,
+50%, 70%, 20% produced means 81, 82.14, 84.71, 80.71 lux. This shows a small
+panel influence, not proof requiring an undocumented sensor message. Both tests
+restored the original disabled ambient setting and manual brightness 561.
+
+A GNOME 50 target-hysteresis patch is being built from exact Ubuntu source
+50.0-1ubuntu1. It retains the existing EWMA and every sample, requiring a 5%
+relative target change (minimum one percentage point), with first-target resets
+on normalization and reclaim. The compiled callback test fails on the original
+and passes with noise, dark/bright steps, slow drift and disabled/reset paths.
+The suite build, exact paired rootfs selection and locked update inputs now
+include GNOME 50.0-1ubuntu1+gts9u1. Physical deployment/retest is still pending.
+
+
+GNOME 50 deployment completed with archive packages retained root-only in
+/root/gts9u-ambient-20261019. Compilation, install, strip and Debian control
+metadata succeeded; emulated tar then failed ENOSYS at dh_builddeb. Native
+Linux dpkg-deb packed the prepared ARM64/common trees successfully. The builder
+now uses Debian's binary target with only dh_builddeb overridden to no-op,
+followed by native packing; the override target was smoke-tested successfully.
+The compiled source snapshot is 7aa054cd1b20bdf19a8b8cab303ae1d1f782f7547c67fa72b110ff84d817dfe1.
+Package hashes are recorded in the follow-up document. The installed and
+running power binary both hash to de7fca7572d6756911c2f9dbf769bc1fd217c773ddc9046d8630c9c07bf9d717.
+APT installed only daemon/common, with zero removals; audit/check passed.
+Only the power daemon was reloaded, and its temporary runtime override was
+removed. Normal RefuseManualStart/Stop flags are restored; zero service restarts.
+
+The exact 90-second stable-light test improved from 79 changes/36 reversals to
+one change/zero reversals after warm-up, with similar lux noise (83..92).
+Filtered session-bus capture contains initial target 0.666667, one correction
+0.632566, then -1 when disabled. A separate 75-second physical light-change
+trial covered 5..90 lux and backlight 20..852/2047. After the owner restored
+lighting, the last 31 seconds stayed at raw brightness 748 with no changes.
+The owner explicitly confirmed adaptation and subsequent stabilization.
+Both tests restored ambient-enabled=false and the original manual value 561.
+The real compiled callback regression and all eleven build-input regressions
+pass. Companion physical-validation docs were pushed as adb811e8eec9b5cc1d06d0a8732cc4b0ef6f5d2d;
+the port pin follows that commit. No project version, ZIP or release asset was
+changed or published.

@@ -10,13 +10,25 @@ hardware matrix to Resolute. See the
 
 **Resolute follow-up, 2026-10-18:** the owner confirmed S Pen battery reporting,
 Switch Pro inputs in Eden, and OSK vibration in both an application and the lock
-screen. The owner also confirmed sound through both internal speakers and an
+screen, plus correct time before Wi-Fi after a full power-off. The owner
+also confirmed sound through both internal speakers and an
 HDMI capture device after refreshing stale desktop-portal realtime limits.
 Browser playback pauses when changing output and must be resumed. USB-C resume
-and HDMI hotplug persistence still need checks. A combined UCM
+still needs checks. HDMI unplug/replug and return to speakers work with the
+packaged hotplug helper. A combined UCM
 profile temporarily regressed internal audio to Dummy Output; independent HDMI
 and HiFi profiles restored the speakers/microphone and survived reboot. See the
 [follow-up record](resolute-followup-20261018.md); the old ZIP is not regenerated.
+
+**2026-10-19 acceptance:** the signed Android Dualboot app opens on One UI 8 /
+Android 16 and successfully returns to the selected Ubuntu 26.04 installation.
+OSK haptics also work at initial GDM login and administrator authentication.
+The previous-system removal row displays about 89 GiB without deleting it.
+Short cover typing did not reproduce repeats; intermittent behavior remains
+provisional. GNOME 50 automatic-brightness hysteresis reduced 79 backlight
+changes / 36 reversals to one change / zero reversals in the same 90-second
+stable-light test. The owner confirmed adaptation to changed illumination and
+subsequent stabilization. Original manual/automatic settings were restored.
 
 Last updated: 2026-09-28, after the Ubuntu boot-set synchronization;
 fingerprint optical acceptance and speaker listening validation remain pending.

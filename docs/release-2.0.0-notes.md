@@ -7,9 +7,11 @@
 - S Pen battery level in GNOME Settings.
 - Built-in Switch Pro and PlayStation controller drivers.
 - HDMI audio output, touch-keyboard vibration and keyboard-cover input fixes.
-- Hardware-clock restoration.
+- Hardware-clock restoration and steadier automatic brightness.
 - Fingerprint fixes for GNOME 50 and reduced background Bluetooth work.
 
-<!-- Working draft only. Do not publish against the old ZIP. HDMI hotplug, GDM/polkit OSK haptics,
-     full power-off timekeeping and Android round-trip acceptance remain pending.
+<!-- Working draft only. Do not publish against the old ZIP. GDM/polkit OSK haptics,
+     Android round trip, HDMI reconnect and full power-off timekeeping are
+     owner-confirmed. Intermittent cover repeats remain provisional; USB-C resume,
+     DS4 physical inputs and other-device reports are not fully validated.
      Chrome 155 has a separate verified Nintendo Bluetooth report-length bug. -->
