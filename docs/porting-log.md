@@ -8517,3 +8517,11 @@ See release-2.0.0-validation.md for artifact provenance and physical limits.
 Galaxy Companion v1.0.0 was published as stable/latest with GitHub asset
 digests matching the local DEB and physically accepted APK; public download
 links returned HTTP 200.
+
+Port v2.0.0 was then published as stable/latest with six assets. Every GitHub
+asset digest matches the exported file and checksum manifest; the ZIP and
+prerequisite transition-package URLs return HTTP 200. The actual pinned
+Companion release reader detects v2.0.0, exactly one installation ZIP, its
+authenticated SHA-256/size, format-2 support, update-guide link and new APK
+link. Both repositories' latest-release endpoints return the intended stable
+versions, v2.0.0 and v1.0.0. Publication did not alter the tablet.
