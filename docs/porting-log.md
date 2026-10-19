@@ -8525,3 +8525,12 @@ Companion release reader detects v2.0.0, exactly one installation ZIP, its
 authenticated SHA-256/size, format-2 support, update-guide link and new APK
 link. Both repositories' latest-release endpoints return the intended stable
 versions, v2.0.0 and v1.0.0. Publication did not alter the tablet.
+
+The owner subsequently requested the release title "2.0.0" and removal of the
+standalone DEBs from the port release. Both prerequisites remain inside the
+unchanged installation ZIP. For the pre-migration step on 1.3.0, their standalone
+downloads now live together in the Galaxy Companion v1.0.0 release; its checksum
+manifest includes the unchanged transition package. README points there. The
+port release now contains only the installation ZIP, split ZIP, validation
+report and their checksum manifest. ZIP bytes, package versions and release
+tags were not changed.

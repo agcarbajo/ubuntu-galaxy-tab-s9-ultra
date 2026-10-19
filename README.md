@@ -130,7 +130,7 @@ Liked the project? you might want to buy me a coffee, I'll be very grateful!
 ### From 1.3.0 (Ubuntu 24.04)
 
 1. Download [Galaxy Companion 1.0.0](https://github.com/agcarbajo/galaxy-companion/releases/download/v1.0.0/galaxy-companion_1.0.0_all.deb)
-   and the [Tab Companion transition package](https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/releases/download/v2.0.0/ubuntu-gts9u-companion_1.0.0_all.deb).
+   and the [Tab Companion transition package](https://github.com/agcarbajo/galaxy-companion/releases/download/v1.0.0/ubuntu-gts9u-companion_1.0.0_all.deb).
    In the folder containing both files, run:
 
    ```sh
