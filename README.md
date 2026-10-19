@@ -129,17 +129,18 @@ Liked the project? you might want to buy me a coffee, I'll be very grateful!
 
 ### From 1.3.0 (Ubuntu 24.04)
 
-1. Download [Galaxy Companion 1.0.0](https://github.com/agcarbajo/galaxy-companion/releases/download/v1.0.0/galaxy-companion_1.0.0_all.deb)
-   and the [Tab Companion transition package](https://github.com/agcarbajo/galaxy-companion/releases/download/v1.0.0/ubuntu-gts9u-companion_1.0.0_all.deb).
-   In the folder containing both files, run:
+1. Download the [2.0.0 ZIP](https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/releases/download/v2.0.0/ubuntu-26.04-sm-x910-v2.0.0.zip).
+   In its download folder, extract and install only the two prerequisite packages:
 
    ```sh
-   sudo apt-get install ./galaxy-companion_1.0.0_all.deb ./ubuntu-gts9u-companion_1.0.0_all.deb
+   d=$(mktemp -d)
+   unzip -j ubuntu-26.04-sm-x910-v2.0.0.zip 'UPDATE/debs/galaxy-companion_1.0.0_all.deb' 'UPDATE/debs/ubuntu-gts9u-companion_1.0.0_all.deb' -d "$d"
+   sudo apt-get install "$d/galaxy-companion_1.0.0_all.deb" "$d/ubuntu-gts9u-companion_1.0.0_all.deb"
    ```
 
-2. Close Tab Companion and open **Galaxy Companion → Updates → Check for updates**.
-   Download and prepare **2.0.0**, authenticate, save your work, then select
-   **Restart and install**. For a downloaded ZIP, use **Install from a ZIP** instead.
+2. Close Tab Companion and open **Galaxy Companion → Updates → Install from a ZIP**.
+   Select the same **2.0.0 ZIP**, prepare the update and authenticate. Save your
+   work, then select **Restart and install**.
 3. Keep the charger connected and allow the migration to finish. It preserves
    your files, settings and shared home, and retains the previous system for
    recovery. The copy needs free space for the existing system plus **24 GiB**.
@@ -150,7 +151,9 @@ Liked the project? you might want to buy me a coffee, I'll be very grateful!
 The 1.3.0 updater included the format-2 bridge, but still used Tab Companion's
 state and handoff conventions. Install the two packages first to use the
 current migration entry point and status handling. This step updates the app,
-not Ubuntu or the boot images.
+not Ubuntu or the boot images. The empty transition package is only needed for
+this older installation's package-name compatibility; it is already included
+inside the ZIP and is not a separate Galaxy Companion release download.
 
 ### From 1.2.0 or earlier
 

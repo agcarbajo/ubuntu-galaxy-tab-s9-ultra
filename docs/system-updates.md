@@ -13,8 +13,8 @@ profile; its state lives in `/var/lib/galaxy-companion-update/`
 
 The 2.0.0 combined ZIP contains the TWRP clean installer and a separate,
 non-destructive migration payload. Follow the [README upgrade guide](../README.md#updating-an-existing-installation):
-install Galaxy Companion 1.0.0 and its transition package on 1.3.0 before the
-Ubuntu upgrade. Older versions first install the published 1.3.0 bridge using
+extract Galaxy Companion 1.0.0 and its transition package from the ZIP and
+install them on 1.3.0 before the Ubuntu upgrade. Older versions first install the published 1.3.0 bridge using
 `update-to-latest.py --bridge`. The original 1.3.0 application had a format-2
 handoff but used Tab Companion's state directory and environment convention;
 the supported entry point for this release is the current application.
@@ -71,9 +71,10 @@ For a downloaded ZIP, install Galaxy Companion 1.0.0 first on
 the existing 1.3.0 system (`galaxy-companion_<version>_all.deb` together with
 the transitional `ubuntu-gts9u-companion_<version>_all.deb`), then close and
 reopen the application. This updates the app/updater, not the OS or boot
-images. Both packages are also included in the combined ZIP; they are supplied
-separately because an older installed updater cannot accept the local
-migration protocol before its own code is updated.
+images. Extract both packages from `UPDATE/debs/` inside the combined ZIP as
+shown in the README: the older installed updater needs its own code updated
+before accepting the migration. The empty transition package is not distributed
+as a standalone Galaxy Companion release asset.
 
 ```sh
 sudo apt-get install ./galaxy-companion_<version>_all.deb ./ubuntu-gts9u-companion_<version>_all.deb

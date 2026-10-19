@@ -8534,3 +8534,14 @@ manifest includes the unchanged transition package. README points there. The
 port release now contains only the installation ZIP, split ZIP, validation
 report and their checksum manifest. ZIP bytes, package versions and release
 tags were not changed.
+
+The owner then removed standalone checksum manifests and the validation JSON
+from the public releases, and requested keeping the transition package out of
+Galaxy Companion releases too. README now extracts the two prerequisites
+directly from UPDATE/debs in the unchanged 2.0.0 ZIP before installing them on
+1.3.0. The documented unzip command was executed: exactly two packages were
+extracted and both hashes match the already tested prerequisite pair. Current
+release assets are the two ZIPs for the port and the APK/DEB for Companion.
+Validation evidence remains retained locally and in this repository. Clean
+installation assets passed the image/installer/module/package/identity checks;
+a destructive physical clean installation of this exact ZIP was not performed.
