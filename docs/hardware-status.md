@@ -1,4 +1,10 @@
-# SM-X910 hardware status under Ubuntu 24.04
+# SM-X910 hardware status
+
+**2.0.0 release validation, 2026-10-19:** Ubuntu 26.04 / GNOME 50 / Linux
+7.2.9 is the current release baseline. The accepted physical checks are recorded
+below and in the [Resolute follow-up](resolute-followup-20261018.md). The older
+Ubuntu 24.04 matrix remains historical evidence; it is not a claim that every
+peripheral and recovery path was retested on 26.04.
 
 **Experimental 26.04 branch, 2026-10-18:** the migration's initramfs dispatcher
 failure was repaired and Ubuntu 26.04.1 / GNOME 50.1 / Linux 7.2.9 completed

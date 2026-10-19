@@ -8493,3 +8493,27 @@ matching root/modules/boot and warns against restoring a retired system.
 The fingerprint table is concise and working on the tested SM-X910, with
 per-device provisioning and missing second-unit acceptance stated separately.
 Both release note bodies use short bullets and link the update guide/new APK.
+
+The final 2.0.0 combined ZIP is 1,779,226,698 bytes, SHA-256
+1a824ea3c2f33b38fad0ec15b755f0b492bfe2c5318d0794c03302cdd0840612.
+Its immutable source snapshot is b39d227113cc8decffb795cba86250bfcb1c1955,
+tree SHA-256 06c4227245b78ec3e724953b0a39e3337fc8dbcf328df2fd49fd4a1db8f6262f.
+All 20 Companion suites, nine selected port suites, actual vmlinux/module
+alignment, APK signing and the combined structural validator pass. The clean
+image and update payload contain the exact same package versions. D-Bus
+generated a machine ID during offline installation; it was cleared in the
+distribution copy and the final mounted image passed the identity/data audit.
+The four boot images remain byte-identical to the physically accepted set.
+
+The published 1.3.0 ZIP was authenticated and extracted without tablet data.
+The README prerequisite pair installed into its disposable clone with zero
+removals, and the current migration entry imported under Noble. The complete
+frozen transaction for the exact final ZIP then passed: 1,571 package installs,
+16 reviewed obsolete/replaced removals, all 19 release packages protected,
+clean APT/dpkg checks, exact installed versions, original root and shared home
+retained, protected identity unchanged. Full emulated test logs and fixtures
+remain under /root/gts9u-publish-20261019; no tablet partitions were written.
+See release-2.0.0-validation.md for artifact provenance and physical limits.
+Galaxy Companion v1.0.0 was published as stable/latest with GitHub asset
+digests matching the local DEB and physically accepted APK; public download
+links returned HTTP 200.
