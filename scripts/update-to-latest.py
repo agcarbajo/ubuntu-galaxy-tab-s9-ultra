@@ -32,11 +32,11 @@ def fetch(url, limit):
     return data
 
 
-def update(core, bundle, repair=False):
-    tag = bundle.current().get('tag') if repair else None
+def update(core, bundle, repair=False, bridge=False):
+    tag = 'v1.3.0' if bridge else bundle.current().get('tag') if repair else None
     if repair and not tag:
         raise ValueError('This installation has no recorded GitHub build. Repair is unavailable.')
-    release = bundle.release(tag) if repair else bundle.release()
+    release = bundle.release(tag) if tag else bundle.release()
     state = bundle.release_state(release)
     if not repair and state in ('current', 'older'):
         print('You already have the latest published version or a newer build.')
@@ -49,7 +49,19 @@ def update(core, bundle, repair=False):
     if input('Are you ready? Type y to update [y/N]: ').strip().lower() != 'y':
         print('Cancelled. No update was prepared.')
         return
-    core.main(['--repair'] if repair else ['--latest'])
+    if bridge:
+        # Older installations need the published same-suite bridge before a
+        # format-2 distribution upgrade. Keep its GitHub digest authentication.
+        with tempfile.TemporaryDirectory(prefix='gts9u-bridge-') as directory:
+            archive = Path(directory) / release['name']
+            bundle.download(release, archive)
+            manifest = bundle.inspect(archive)
+            if (manifest.get('tag') != 'v1.3.0' or manifest.get('version') != '1.3.0'
+                    or manifest.get('suite') != 'noble' or manifest.get('format') != 1):
+                raise ValueError('The bridge must be the official Noble 1.3.0 update')
+            core.main(['--zip', str(archive)])
+    else:
+        core.main(['--repair'] if repair else ['--latest'])
     if core.status().get('state') != 'ready':
         raise RuntimeError('Update preparation did not complete; not restarting.')
     print('Update ready. Restarting to install...')
@@ -58,7 +70,9 @@ def update(core, bundle, repair=False):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--repair', action='store_true', help='Reinstall the recorded build with the current updater backend')
+    action = parser.add_mutually_exclusive_group()
+    action.add_argument('--repair', action='store_true', help='Reinstall the recorded build with the current updater backend')
+    action.add_argument('--bridge', action='store_true', help='Install the published Noble 1.3.0 bridge before upgrading older systems')
     args = parser.parse_args(argv)
     if os.geteuid() != 0:
         raise SystemExit('Run this script with sudo.')
@@ -86,7 +100,7 @@ def main(argv=None):
         sys.path.insert(0, directory)
         core = importlib.import_module('galaxy_companion.update_core')
         bundle = importlib.import_module('galaxy_companion.update_bundle')
-        update(core, bundle, repair=args.repair)
+        update(core, bundle, repair=args.repair, bridge=args.bridge)
 
 
 if __name__ == '__main__':

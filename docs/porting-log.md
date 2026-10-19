@@ -8477,3 +8477,19 @@ The real compiled callback regression and all eleven build-input regressions
 pass. Companion physical-validation docs were pushed as adb811e8eec9b5cc1d06d0a8732cc4b0ef6f5d2d;
 the port pin follows that commit. No project version, ZIP or release asset was
 changed or published.
+
+
+2026-10-19 — Owner authorized publication of port 2.0.0 and Companion 1.0.0.
+
+README now documents the prerequisite current Companion/transition pair on
+1.3.0 and a first hop to published Noble 1.3.0 for older installations. The
+legacy launcher gained an explicit --bridge action: select the authenticated
+stable v1.3.0 asset, verify its format/suite/version, prepare, then restart only
+on ready. Ten launcher regressions pass on Linux. The original published 1.3.0
+source already understood format 2 but used Tab Companion's old state/handoff
+namespace; the supported current entry avoids those differences. README
+recovery now distinguishes base from selected slot, preserves backups, checks
+matching root/modules/boot and warns against restoring a retired system.
+The fingerprint table is concise and working on the tested SM-X910, with
+per-device provisioning and missing second-unit acceptance stated separately.
+Both release note bodies use short bullets and link the update guide/new APK.

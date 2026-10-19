@@ -1,46 +1,40 @@
-# Ubuntu 24.04 LTS for Samsung Galaxy Tab S9 Ultra Wi-Fi
+# Ubuntu 26.04 LTS for Samsung Galaxy Tab S9 Ultra Wi-Fi
 
 <img width="4000" height="2252" alt="20260911_124542" src="https://github.com/user-attachments/assets/80a44675-d588-43b5-b86d-514cd7875800" />
 
-Ubuntu 24.04 LTS arm64 for the Samsung Galaxy Tab S9 Ultra Wi-Fi
-(`SM-X910`, `gts9uwifi`), running GNOME 46 on Wayland and upstream Linux
-7.2-rc3.
+Ubuntu 26.04 LTS arm64 for the Samsung Galaxy Tab S9 Ultra Wi-Fi
+(`SM-X910`, `gts9uwifi`), with GNOME 50 on Wayland and Linux 7.2.9.
 
-The `upgrade/ubuntu-26.04-gnome50` branch builds an experimental combined
-Ubuntu 26.04/GNOME 50/Linux 7.2.9 installation/update ZIP. Its physical hardware
-acceptance is separate from the Ubuntu 24.04 table below. An unpublished local
-migration needs Companion 1.5.8 first; see the
-[upgrade assessment](docs/upgrade-26.04-assessment.md) and
-[local ZIP instructions](docs/system-updates.md#trying-the-local-ubuntu-2604-zip).
+Upgrading from Ubuntu 24.04? Follow [Updating an existing installation](#updating-an-existing-installation) to retain your files and settings.
 
 ## Hardware compatibility
 
 | Component | Status | Summary |
 |---|---:|---|
 | Display | ✅ | Native 2960×1848 at 120 Hz |
-| Desktop | ✅ | GNOME 46, Wayland and GDM |
+| Desktop | ✅ | GNOME 50, Wayland and GDM |
 | GPU | ✅ | Adreno 740 hardware acceleration, up to 719 MHz |
 | Touchscreen | ✅ | Goodix multitouch |
 | S Pen writing | ✅ | Hover, pressure, tilt, side button and palm rejection |
 | S Pen dock | ✅ | Insertion, orientation and charging |
 | S Pen BLE | ✅ | Pairing, battery, air gestures and pointer mode |
-| [Galaxy Companion](https://github.com/agcarbajo/galaxy-companion) | ✅ | Device settings, fingerprint, dual boot and system updates (formerly Tab Companion, now its own project) |
+| [Galaxy Companion](https://github.com/agcarbajo/galaxy-companion) | ✅ | Device settings, dual boot and updates |
 | Keyboard cover | ✅ | EF-DX920 tested |
 | Cover switch | ✅ | Suspend on close and wake on open |
 | Power and volume buttons | ✅ | Power, wake and volume controls |
 | Wi-Fi | ✅ | WCN7850 / ath12k |
 | Bluetooth | ✅ | Controller, audio and S Pen BLE |
 | Speakers and microphones | ✅ | All four speakers and microphones work fine |
-| Vibration / haptics | ✅ | On-screen keyboard feedback |
+| Vibration / haptics | ✅ | On-screen keyboard, including login and lock screen |
 | Motion sensors | ✅ | Rotation, accelerometer, gyroscope and compass |
 | Battery telemetry | ✅ | Charge, voltage, current and temperature |
 | USB-PD/PPS charging | ✅ | Up to 25 W measured into the battery |
 | Suspend / resume | ✅ | Deep sleep and reliable storage recovery |
 | microSD | ✅ | Read and write storage works normally |
 | USB host | ✅ | HID and storage, powered or unpowered |
-| USB-C DisplayPort | ✅ | External video output |
+| USB-C DisplayPort | ✅ | External video and HDMI audio |
 | Cameras and flash | ✅ | Four cameras, full field of view, autofocus and flash |
-| Fingerprint reader | 🟡 | Login, enrolment and recognition on the development tablet; other units need the self-provisioning fix (not in 1.3.0, see Known issues) |
+| Fingerprint reader | ✅ | Login, enrolment and recognition |
 | Ambient light sensor | ✅ | Automatic screen brightness |
 | NPU | ✅ | Hardware acceleration support |
 | Virtual machines | 🟡 | Gunyah host support; guest VMs still in development |
@@ -52,8 +46,10 @@ migration needs Companion 1.5.8 first; see the
 The evidence and technical limitations for every component are documented in
 [hardware-status.md](docs/hardware-status.md).
 
-This table describes the current source tree; previously published installation
-ZIPs may not include the latest changes.
+This table records behavior on the development SM-X910. The fingerprint runtime
+and calibration are provisioned from each tablet; a second unit has not yet
+been physically validated. Other cover models and display-resume combinations
+still need testing; see Known issues.
 
 ## Galaxy Companion
 <img width="2164" height="1764" alt="Screenshot from 2026-08-20 04-02-55" src="https://github.com/user-attachments/assets/df7cddca-46e8-438a-bcb8-be713cc93bed" />
@@ -91,13 +87,13 @@ split the UFS first.
    Download Mode key combination stops at a teal *Reboot Device - D2* screen
    that never enumerates over USB: remove the screen lock first.
 2. **Root with Magisk** (only if you want dual boot).
-3. Get `ubuntu-24.04-sm-x910-vX.X.X.zip` from the [latest release](https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/releases/latest). `gts9u-split.zip` and `Dualboot-vX.X.X.apk` only if you want dual boot.
+3. Get `ubuntu-26.04-sm-x910-v2.0.0.zip` from the [latest release](https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/releases/latest). `gts9u-split.zip` and the [new Android Dualboot APK](https://github.com/agcarbajo/galaxy-companion/releases/download/v1.0.0/galaxy-companion-dualboot_1.0.0.apk) are only needed for dual boot.
 4. **[TWRP](https://github.com/rainbowdashh/android_device_samsung_gts9u/releases/tag/V2)** and **a `vbmeta` with AVB verification disabled** ([the one published alongside TWRP](https://xdaforums.com/attachments/vbmeta-1-tar.6077784/)). Flash both files in the AP slot using Odin or Heimdall (you will need to reboot again to download mode between flashes).
 5. After flashing both files from step 4 reboot to TWRP. **Don't let One UI boot** or TWRP will be overwritten with the stock recovery and you will need to flash the files again.
 
 ### Ubuntu on the whole tablet
 
-1. From TWRP just flash the installation ZIP (`ubuntu-24.04-sm-x910-v1.2.0.zip`) using a microSD, external USB storage or sideload. **Don't flash it from internal storage** as it will get wiped.
+1. From TWRP just flash the installation ZIP (`ubuntu-26.04-sm-x910-v2.0.0.zip`) using a microSD, external USB storage or sideload. **Don't flash it from internal storage** as it will get wiped.
 2. Reboot and enjoy!
 
 ### Ubuntu beside Android
@@ -110,14 +106,18 @@ split the UFS first.
    keys on its next boot.
 2. Reboot to TWRP (Reboot > Recovery).
 3. Wipe > Format Data.
-4. Flash the installation ZIP (`ubuntu-24.04-sm-x910-v1.2.0.zip`).
+4. Flash the installation ZIP (`ubuntu-26.04-sm-x910-v2.0.0.zip`).
 5. Reboot and enjoy! (see below for how to reboot to Android).
 
 ### Switching systems
 
 From **Ubuntu**, just use the toggle that you should see on quick settings or from the Galaxy Companion app under the Dualboot tab.
 
-From **Android**, install the `Dualboot-vX.X.X.apk` app and give it root access, then reboot from the app or add the toggle to quick settings.
+From **Android**, **uninstall the old Dualboot app first**, then install the
+[new Galaxy Companion Dualboot APK](https://github.com/agcarbajo/galaxy-companion/releases/download/v1.0.0/galaxy-companion-dualboot_1.0.0.apk)
+and grant it root access. Open it and choose **Restart** for Ubuntu 26.04.
+The quick-settings tile is also available. Uninstalling the old app does not
+remove Ubuntu or its files.
 
 Both One UI and LineageOS have been tested in dual boot with Ubuntu and they work fine.
 
@@ -127,48 +127,83 @@ Liked the project? you might want to buy me a coffee, I'll be very grateful!
 
 ## Updating an existing installation
 
-Starting with v1.1.0, open **Galaxy Companion → Updates** (Tab Companion →
-Updates on older installations) to update the complete port. For v1.0.0 installations without the updater, run:
+### From 1.3.0 (Ubuntu 24.04)
+
+1. Download [Galaxy Companion 1.0.0](https://github.com/agcarbajo/galaxy-companion/releases/download/v1.0.0/galaxy-companion_1.0.0_all.deb)
+   and the [Tab Companion transition package](https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/releases/download/v2.0.0/ubuntu-gts9u-companion_1.0.0_all.deb).
+   In the folder containing both files, run:
+
+   ```sh
+   sudo apt-get install ./galaxy-companion_1.0.0_all.deb ./ubuntu-gts9u-companion_1.0.0_all.deb
+   ```
+
+2. Close Tab Companion and open **Galaxy Companion → Updates → Check for updates**.
+   Download and prepare **2.0.0**, authenticate, save your work, then select
+   **Restart and install**. For a downloaded ZIP, use **Install from a ZIP** instead.
+3. Keep the charger connected and allow the migration to finish. It preserves
+   your files, settings and shared home, and retains the previous system for
+   recovery. The copy needs free space for the existing system plus **24 GiB**.
+4. For dual boot, **uninstall the old Android Dualboot app**, install the
+   [new APK](https://github.com/agcarbajo/galaxy-companion/releases/download/v1.0.0/galaxy-companion-dualboot_1.0.0.apk)
+   and grant root. It returns to the selected Ubuntu 26 installation.
+
+The 1.3.0 updater included the format-2 bridge, but still used Tab Companion's
+state and handoff conventions. Install the two packages first to use the
+current migration entry point and status handling. This step updates the app,
+not Ubuntu or the boot images.
+
+### From 1.2.0 or earlier
+
+First install the published **1.3.0 bridge**, then follow the steps above.
+This command also works on installations without the Updates page; it asks
+for confirmation before preparing the bridge and restarting:
 
 ```sh
-d=$(mktemp -d) && curl -fL https://raw.githubusercontent.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/main/scripts/update-to-latest.py -o "$d/update.py" && sudo python3 "$d/update.py"
+d=$(mktemp -d) && curl -fL https://raw.githubusercontent.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/main/scripts/update-to-latest.py -o "$d/update.py" && sudo python3 "$d/update.py" --bridge
 ```
 
-Updates preserve your data and settings. See [system updates](docs/system-updates.md)
-for local ZIP installation, repair and troubleshooting.
-
-If an older updater returns to the desktop still showing **Ready to restart**,
-use the command above to load the current updater. To reinstall your recorded
-build, add `--repair` after `"$d/update.py"`. This preserves your data and settings.
+**Do not flash the TWRP installer to upgrade while preserving data.** It is for
+clean installations and replaces Ubuntu's filesystem. See
+[system updates](docs/system-updates.md) for details and troubleshooting.
 
 ### If Ubuntu no longer boots after an update
 
-The updater keeps everything it needs to go back. From TWRP with `adb shell`:
+Start TWRP and connect ADB. Mount the Ubuntu partition **read-only** to inspect
+it (`linuxroot` for a split installation, `userdata` otherwise):
 
-1. Mount the Ubuntu root: `mkdir /u && mount /dev/block/by-name/linuxroot /u`
-   (use `userdata` instead of `linuxroot` on a tablet that was never split).
-2. Read what happened: `/u/var/lib/galaxy-companion-update/status.json`
-   (`tab-companion-update` on an installation that still ran Tab Companion) and
-   `/u/var/log/apt/term.log`.
-3. Put the previous boot images back. The set that booted before the update is
-   in `/u/var/lib/galaxy-companion-update/transaction/backup/` (or the
-   last-known-good Ubuntu set in `/u/var/lib/gts9u-boot-sets/ubuntu/`):
-   `for p in boot init_boot vendor_boot dtbo; do dd if=/u/var/lib/gts9u-boot-sets/ubuntu/$p.img of=/dev/block/by-name/$p bs=4M; done; sync`
-4. If packages were left half-installed, finish them from the booted Ubuntu
-   (SSH or a terminal): `sudo dpkg --configure -a && sudo apt-get check`.
+```sh
+mkdir -p /u
+mount -o ro,noload /dev/block/by-name/linuxroot /u
+```
 
-Reflashing the installation ZIP also works, but erases Ubuntu's data.
+- After migration, `/u/.gts9u-root/selected` identifies the active slot. Its root
+  is `/u/.gts9u-root/slots/<id>/root`; inspect its
+  `var/lib/galaxy-companion-update/status.json`. The previous system remains
+  at `/u`, and its matching boot backup is in
+  `/u/.gts9u-root/slots/<id>/backup/`.
+- Without a migrated slot, inspect
+  `/u/var/lib/galaxy-companion-update/status.json` (or `tab-companion-update`
+  on older installations) and the transaction's `backup/` directory.
+- Restore **matching root, boot images and modules** together. Check backup
+  hashes, partition sizes and complete write readback before restarting.
+  Restoring only an old kernel while leaving a new slot selected is not a
+  recovery. Never restore the old system's boot set if
+  `.gts9u-root/previous-system-removed` exists.
+
+Keep the original installation, slot directory and backups intact while
+recovering. See [migration recovery](docs/recovery-26.04-bootloop-20261018.md)
+for the boot layout and diagnosis. Do not use the clean installer unless you
+intend to erase Ubuntu. If packages need repair, run `sudo dpkg --configure -a`
+and `sudo apt-get check` only after booting the correct Ubuntu installation.
 
 ## Known issues
 
-- **The fingerprint reader only works on the development tablet so far.**
-  Release 1.3.0 ships without the per-unit secure runtime and with that
-  unit's factory calibration, so other tablets never see the reader
-  ([#8](https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/issues/8), [#9](https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/issues/9)). The next build provisions both from each
-  tablet's own partitions at boot; this is written but not yet validated on a
-  second unit.
+- **Fingerprint on other units:** per-device runtime/calibration provisioning is
+  included and works on the development SM-X910; confirmation on a second unit
+  remains pending ([#8](https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/issues/8),
+  [#9](https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/issues/9)).
 - **EF-DX925 keyboard backlight and Fn+F12 stay dark** ([#8](https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/issues/8)): the
-  MAX77816 booster was left at 3.3 V. The next kernel raises it to Samsung's
+  MAX77816 booster was left at 3.3 V. The kernel raises it to Samsung's
   5.14 V for the DX915/DX925, untested here without that cover.
 - Regarding the official cover keyboard, as I said, only EF-DX920 cover keyboard has been tested. EF-DX900, EF-DX910, EF-DX915 and
 EF-DX925 are untested as I don't have them, so they might not work.
@@ -195,7 +230,7 @@ EF-DX925 are untested as I don't have them, so they might not work.
 ```text
 kernel/       Device tree, drivers, patches and kernel configuration
 packaging/    Debian packages installed in the Ubuntu image
-android/      The Dualboot app, which switches systems from the Android side
+external/     Galaxy Companion submodule, including the Android Dualboot app
 configs/      System configuration, service overlays and the TWRP installers
 scripts/      Reproducible build and validation tools
 docs/         Detailed documentation and engineering history

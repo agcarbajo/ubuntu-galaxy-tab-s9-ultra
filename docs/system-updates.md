@@ -11,13 +11,13 @@ transitional package). Everything device-specific comes from the `gts9uwifi`
 profile; its state lives in `/var/lib/galaxy-companion-update/`
 (`/var/lib/tab-companion-update/` while Tab Companion was installed).
 
-> The experimental Ubuntu 26.04/GNOME 50/Linux 7.2.9 v1.4.0 ZIP contains
-> both the normal TWRP clean installer and the non-destructive update payload.
-> Local release migration requires Galaxy Companion 0.9.0 or later: its normal
-> ZIP action explicitly confirms the complete file's SHA-256 and hands off to the
-> backend the ZIP carries. GitHub authentication remains unchanged. The final exact-ZIP inactive-root transaction passes; physical boot,
-> peripherals and recovery remain unvalidated. See the
-> [26.04 upgrade assessment](upgrade-26.04-assessment.md).
+The 2.0.0 combined ZIP contains the TWRP clean installer and a separate,
+non-destructive migration payload. Follow the [README upgrade guide](../README.md#updating-an-existing-installation):
+install Galaxy Companion 1.0.0 and its transition package on 1.3.0 before the
+Ubuntu upgrade. Older versions first install the published 1.3.0 bridge using
+`update-to-latest.py --bridge`. The original 1.3.0 application had a format-2
+handoff but used Tab Companion's state directory and environment convention;
+the supported entry point for this release is the current application.
 
 Tab Companion 1.3 adds an **Updates** page for the complete Ubuntu port, not
 just the application. Release v1.1.0 is the first release with the update
@@ -67,7 +67,7 @@ their first update.
 
 ## Trying the local Ubuntu 26.04 ZIP
 
-For an unpublished trial ZIP, install Galaxy Companion 0.9.0 or later first on
+For a downloaded ZIP, install Galaxy Companion 1.0.0 first on
 the existing 1.3.0 system (`galaxy-companion_<version>_all.deb` together with
 the transitional `ubuntu-gts9u-companion_<version>_all.deb`), then close and
 reopen the application. This updates the app/updater, not the OS or boot
@@ -80,7 +80,7 @@ sudo apt-get install ./galaxy-companion_<version>_all.deb ./ubuntu-gts9u-compani
 ```
 
 Use **Galaxy Companion → Updates → Install from a ZIP → Choose file** and select
-`ubuntu-26.04-sm-x910-v1.4.0.zip`. Review the migration warning and SHA-256, then
+`ubuntu-26.04-sm-x910-v2.0.0.zip`. Review the migration warning and SHA-256, then
 confirm preparation and authenticate. Save your work before **Restart and
 install**. The privileged copied archive must match the confirmed digest; a
 changed file is rejected before backend execution. GitHub updates still use the

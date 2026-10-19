@@ -101,6 +101,28 @@ class LauncherTests(TestCase):
         self.core.main.assert_not_called()
         run.assert_not_called()
 
+    def test_bridge_downloads_authenticated_same_suite_release_before_prepare(self):
+        self.bundle.release.return_value = {'tag': 'v1.3.0', 'name': 'bridge.zip'}
+        self.bundle.inspect.return_value = {'tag': 'v1.3.0', 'version': '1.3.0',
+                                           'suite': 'noble', 'format': 1}
+        with patch('builtins.input', return_value='y'), patch.object(launcher.subprocess, 'run') as run:
+            launcher.update(self.core, self.bundle, bridge=True)
+        self.bundle.release.assert_called_once_with('v1.3.0')
+        self.bundle.download.assert_called_once()
+        self.assertEqual(self.core.main.call_args.args[0][0], '--zip')
+        self.assertTrue(self.core.main.call_args.args[0][1].endswith('/bridge.zip'))
+        run.assert_called_once_with(['systemctl', 'reboot'], check=True)
+
+    def test_wrong_bridge_manifest_never_prepares_or_reboots(self):
+        self.bundle.release.return_value = {'tag': 'v1.3.0', 'name': 'bridge.zip'}
+        self.bundle.inspect.return_value = {'tag': 'v2.0.0', 'version': '2.0.0',
+                                           'suite': 'resolute', 'format': 2}
+        with patch('builtins.input', return_value='y'), patch.object(launcher.subprocess, 'run') as run:
+            with self.assertRaisesRegex(ValueError, 'official Noble'):
+                launcher.update(self.core, self.bundle, bridge=True)
+        self.core.main.assert_not_called()
+        run.assert_not_called()
+
 
 if __name__ == '__main__':
     main()

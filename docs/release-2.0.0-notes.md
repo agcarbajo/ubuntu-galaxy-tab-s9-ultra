@@ -1,17 +1,12 @@
-# Ubuntu 2.0.0 — draft notes
-
 - Ubuntu 26.04 LTS with GNOME 50.
-- Linux 7.2.9 and updated device integration.
-- Galaxy Companion 1.0.0, with a separate signed Android Dualboot app.
-- Safer Ubuntu upgrades, recovery of the previous system and an option to reclaim its disk space.
-- S Pen battery level in GNOME Settings.
-- Built-in Switch Pro and PlayStation controller drivers.
-- HDMI audio output, touch-keyboard vibration and keyboard-cover input fixes.
-- Hardware-clock restoration and steadier automatic brightness.
-- Fingerprint fixes for GNOME 50 and reduced background Bluetooth work.
+- Linux 7.2.9 and Galaxy Companion 1.0.0.
+- S Pen battery in Settings and Bluetooth controller support.
+- HDMI audio and touch-keyboard vibration at login and on the lock screen.
+- Keyboard-cover, fingerprint, clock and automatic-brightness fixes.
+- Safer upgrades, previous-system cleanup and fewer background Bluetooth queries.
 
-<!-- Working draft only. Do not publish against the old ZIP. GDM/polkit OSK haptics,
-     Android round trip, HDMI reconnect and full power-off timekeeping are
-     owner-confirmed. Intermittent cover repeats remain provisional; USB-C resume,
-     DS4 physical inputs and other-device reports are not fully validated.
-     Chrome 155 has a separate verified Nintendo Bluetooth report-length bug. -->
+**Upgrading from 1.3.0 or earlier:** follow the [update guide](https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra#updating-an-existing-installation) first to preserve your data.
+
+**Android dual boot:** uninstall the old Dualboot app, then install the [new APK](https://github.com/agcarbajo/galaxy-companion/releases/download/v1.0.0/galaxy-companion-dualboot_1.0.0.apk) and grant root.
+
+<!-- gts9u-update-format: 2 -->

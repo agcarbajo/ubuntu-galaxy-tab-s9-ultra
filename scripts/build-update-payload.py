@@ -145,7 +145,7 @@ def main():
         metadata.update(source_suites=["noble", "resolute"], update_kind="distribution",
             backend_file="UPDATE/updater.pyz", backend_entry_protocol=1,
             backend_strategy="official-release-backend-v1", recovery="full-system-root-v1",
-            minimum_local_updater_version="1.5.8")
+            minimum_local_updater_version="1.0.0")
     (out / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
     # The legacy bootstrap is Galaxy Companion's updater with this device's
     # profile embedded: update-to-latest.py runs it on installations that
