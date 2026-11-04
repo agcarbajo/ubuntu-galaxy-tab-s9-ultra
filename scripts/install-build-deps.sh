@@ -6,10 +6,11 @@ set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 
 apt-get update
+qemu_user_package=$(bash "$(dirname "$0")/select-qemu-user-package.sh")
 apt-get install -y --no-install-recommends \
 	mmdebstrap \
 	debootstrap \
-	qemu-user-static \
+	"$qemu_user_package" \
 	binfmt-support \
 	arch-test \
 	apt-utils \

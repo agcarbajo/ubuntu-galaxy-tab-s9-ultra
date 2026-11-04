@@ -18,6 +18,7 @@
 set -euo pipefail
 
 repo=$(cd "$(dirname "$0")/.." && pwd)
+source "$repo/scripts/rootfs-build-lib.sh"
 base=${UBUNTU_WORKDIR:-/root/ubuntu-gts9u}
 rootfs=${ROOTFS_DIR:-$base/rootfs}
 overlay=${OVERLAY_OUT_DIR:-$base/out/rootfs-overlay}
@@ -77,6 +78,7 @@ fi
 # Filesystem geometry
 # ---------------------------------------------------------------------------
 
+unmount_rootfs "$rootfs"
 content_mb=$(( $(du -sm --apparent-size "$rootfs" | cut -f1) \
 	+ $(du -sm --apparent-size "$overlay" | cut -f1) ))
 image_mb=$(( content_mb + slack_mb ))
@@ -138,6 +140,7 @@ tar -C "$rootfs" --numeric-owner --acls \
 echo 'merging the firmware and module overlay'
 tar -C "$overlay" --numeric-owner -cf - . \
 	| tar -C "$mnt" --numeric-owner -xf -
+normalize_image_root "$mnt"
 
 # /boot is part of the root filesystem here, so the fstab entry for the
 # microSD boot partition would fail at every boot.  The root entry has to name
@@ -175,6 +178,7 @@ e2fsck -fp "$out" || {
 	rc=$?
 	[ "$rc" -le 1 ] || { echo "e2fsck rejected the finished image ($rc)" >&2; exit 1; }
 }
+verify_image_root "$out"
 
 echo '=== image ==='
 stat -c '%n %s bytes' "$out"

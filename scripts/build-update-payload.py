@@ -9,8 +9,26 @@ import shutil
 import subprocess
 import tempfile
 import tarfile
-import zipapp
+import zipfile
 from pathlib import Path
+
+
+def create_bootstrap(source, target):
+    """Write a deterministic zipapp without converting UTC mtimes to local time."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with target.open("wb") as output:
+        output.write(b"#!/usr/bin/env python3\n")
+        with zipfile.ZipFile(output, "w") as archive:
+            for file in sorted(source.rglob("*")):
+                directory = file.is_dir()
+                name = file.relative_to(source).as_posix() + ("/" if directory else "")
+                entry = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+                entry.create_system = 3
+                entry.external_attr = ((0o40755 if directory else 0o100644) << 16)
+                if directory:
+                    entry.external_attr |= 0x10
+                archive.writestr(entry, b"" if directory else file.read_bytes())
+    target.chmod(0o755)
 
 
 def validate_package_ownership(debs):
@@ -175,10 +193,7 @@ def main():
             "os.environ['GALAXY_COMPANION_DEVICES_DIR'] = _profiles\n"
             "from galaxy_companion.update_core import main\n"
             "try:\n    main()\nexcept Exception as e:\n    print(e, file=sys.stderr)\n    sys.exit(1)\n")
-        for file in app.rglob("*"):
-            os.utime(file, (315532800, 315532800))
-        a.bootstrap.parent.mkdir(parents=True, exist_ok=True)
-        zipapp.create_archive(app, a.bootstrap, interpreter="/usr/bin/env python3")
+        create_bootstrap(app, a.bootstrap)
     print("Update payload:", out)
 
 
