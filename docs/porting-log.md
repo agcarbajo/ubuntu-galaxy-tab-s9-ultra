@@ -8571,3 +8571,16 @@ The real ext4 fixture requires Linux root and is explicitly skipped on macOS;
 the build-host CI runs it on a disposable Ubuntu runner. A full rootfs/kernel
 build, resulting installation/update packages and physical tablet acceptance
 are not established by these focused checks. No tablet was accessed.
+
+### Noble package version follow-up
+
+The Noble derivative still used `~24.04.8+gts9u53`, which sorts below the
+current archive's `~24.04.9`. I updated its default binary version to
+`1:1.94.7+tod1-0ubuntu5~24.04.9+gts9u54` and the paired Noble device minimum.
+The Noble device package becomes `2.90.1`, retaining a version below the
+Resolute migration package. The source commit, patches and Resolute library
+version stay pinned. A focused native dpkg comparison checks archive ordering,
+paired dependency and the Noble-to-Resolute package order. A full library/device
+package rebuild and APT installation simulation remain pending. This is the
+bounded version correction from A5 of issue 13, not a claim that future archive
+versions are handled automatically.
