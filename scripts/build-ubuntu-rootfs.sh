@@ -11,6 +11,7 @@
 set -euo pipefail
 
 repo=$(cd "$(dirname "$0")/.." && pwd)
+source "$repo/scripts/rootfs-build-lib.sh"
 base=${UBUNTU_WORKDIR:-/root/ubuntu-gts9u}
 rootfs=${ROOTFS_DIR:-$base/rootfs}
 profile=${GTS9U_PROFILE:-desktop}
@@ -626,6 +627,7 @@ if [ "${RESUME_ROOTFS:-0}" = 1 ]; then
 		SYSTEMD_OFFLINE=1 "$hooks/chroot-setup.sh" "$rootfs"
 	fi
 else
+	unmount_rootfs "$rootfs"
 	rm -rf -- "$rootfs"
 	mkdir -p "$rootfs" "$base"
 
@@ -645,6 +647,7 @@ else
 		"deb $mirror $suite-updates main restricted universe multiverse" \
 		"deb $mirror $suite-security main restricted universe multiverse"
 fi
+unmount_rootfs "$rootfs"
 
 # ---------------------------------------------------------------------------
 # Kernel modules and optional development key
@@ -690,6 +693,6 @@ echo '=== rootfs summary ==='
 # Keep it outside /etc: this is release metadata, not a user preference.
 printf '%s' "$packages" | tr ',[:space:]' '\n' | sed '/^$/d' | sort -u \
 	> "$rootfs/usr/lib/gts9u-required-packages.txt"
-du -sh "$rootfs"
+du -sh --one-file-system "$rootfs" || echo 'rootfs size summary unavailable' >&2
 chroot "$rootfs" dpkg-query -f '${binary:Package}\n' -W | wc -l | \
 	sed 's/^/packages installed: /'

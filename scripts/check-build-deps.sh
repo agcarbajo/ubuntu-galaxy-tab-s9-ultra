@@ -16,7 +16,11 @@ need() {
 
 echo '=== rootfs construction ==='
 need mmdebstrap 'apt install mmdebstrap'
-need qemu-aarch64-static 'apt install qemu-user-static'
+if command -v qemu-aarch64-static >/dev/null 2>&1; then
+	need qemu-aarch64-static 'apt install qemu-user-static'
+else
+	need qemu-aarch64 'apt install qemu-user-binfmt (or its HWE provider)'
+fi
 need dpkg-deb 'apt install dpkg'
 need msgfmt 'apt install gettext (flashlight tile translations)'
 need glib-compile-resources 'apt install libglib2.0-dev-bin (Tab Companion resources)'

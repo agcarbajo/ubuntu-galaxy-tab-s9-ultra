@@ -8545,3 +8545,42 @@ release assets are the two ZIPs for the port and the APK/DEB for Companion.
 Validation evidence remains retained locally and in this repository. Clean
 installation assets passed the image/installer/module/package/identity checks;
 a destructive physical clean installation of this exact ZIP was not performed.
+
+## 2026-11-03: build-host portability and rootfs assembly (#13)
+
+I reproduced the bootstrap ZIP failure with a synthetic application under
+`PST8PDT`: the old writer raises `ZIP does not support timestamps before 1980`.
+The bootstrap now writes explicit ZIP dates and permissions, without changing
+the host timezone. Its archive bytes and execution agree under UTC, Pacific,
+Hawaii and Japan time. This changes the build tool, not the updater protocol.
+
+I also selected a concrete QEMU APT candidate before dependency installation;
+`qemu-user-static` remains first when available, with binfmt providers as
+fallbacks. The dependency report accepts the corresponding aarch64 executable.
+
+The rootfs builder now retries transient proc/sys/dev unmount failures and
+refuses to continue with a remaining mount, including before deleting a
+previous tree or copying it into an image. The size summary stays informational.
+After both tar streams, the image builder restores the root inode to 0:0 and
+0755, then independently checks inode 2 in the finished ext4 image with debugfs.
+The test uses synthetic staging metadata and a temporary 32 MiB loop image.
+
+Local macOS checks: four APT-selection cases, four mount-cleanup cases, the
+four-timezone executable bootstrap test, shell syntax and diff checks pass.
+The real ext4 fixture requires Linux root and is explicitly skipped on macOS;
+the build-host CI runs it on a disposable Ubuntu runner. A full rootfs/kernel
+build, resulting installation/update packages and physical tablet acceptance
+are not established by these focused checks. No tablet was accessed.
+
+### Noble package version follow-up
+
+The Noble derivative still used `~24.04.8+gts9u53`, which sorts below the
+current archive's `~24.04.9`. I updated its default binary version to
+`1:1.94.7+tod1-0ubuntu5~24.04.9+gts9u54` and the paired Noble device minimum.
+The Noble device package becomes `2.90.1`, retaining a version below the
+Resolute migration package. The source commit, patches and Resolute library
+version stay pinned. A focused native dpkg comparison checks archive ordering,
+paired dependency and the Noble-to-Resolute package order. A full library/device
+package rebuild and APT installation simulation remain pending. This is the
+bounded version correction from A5 of issue 13, not a claim that future archive
+versions are handled automatically.

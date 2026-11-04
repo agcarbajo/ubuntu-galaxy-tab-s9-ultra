@@ -372,6 +372,25 @@ Two numbers in that script are deliberate and connected:
   both. The budget was raised from 4096 to 4608 MiB deliberately for that; empty
   space costs almost nothing in the ZIP, where 256 MiB of slack measured 784 KB.
 
+### Build-host regression checks
+
+The QEMU selector keeps the static package on Noble and selects an available
+concrete binfmt provider when that name is virtual. The update bootstrap uses
+explicit 1980 ZIP dates so the host timezone cannot push entries into 1979.
+Rootfs proc/sys/dev mounts must be gone before image assembly; the final image
+root is independently verified as 0:0 / 0755 after both tar streams.
+
+Run the focused checks without a tablet:
+
+```sh
+python3 scripts/test-build-host-tools.py
+python3 scripts/test-update-bootstrap.py
+sudo python3 scripts/test-rootfs-build.py  # Linux: disposable ext4 loop fixture
+```
+
+These are build-tool regressions; they do not replace a full image build or
+physical installation/update acceptance.
+
 ## Validation order
 
 1. `systemd` reaches `multi-user.target` with a persistent journal.
