@@ -117,6 +117,48 @@ zip_has() {
 for file in boot.img init_boot.img vendor_boot.img dtbo.img vbmeta.img; do
     zip_has "$file" || abort "ZIP is missing $file"
 done
+zip_has SHA256SUMS || abort "ZIP is missing SHA256SUMS"
+
+# The manifest, read once, so each boot image can be hashed back after it is
+# written.  It has to come from the manifest and not from the ZIP member
+# itself: hashing the member again would agree with a member that is
+# truncated, and call a half-written kernel good.
+BOOT_SUMS=/tmp/gts9u-boot-sums
+unzip -p "$ZIPFILE" SHA256SUMS > "$BOOT_SUMS" 2>/dev/null || \
+    abort "cannot read the ZIP's SHA256SUMS"
+[ -s "$BOOT_SUMS" ] || abort "the ZIP's SHA256SUMS is empty"
+
+# --- boot image verification (extracted verbatim by scripts/test-boot-image-verification.sh)
+image_sha() {
+    awk -v name="$1" '$NF == name { print $1; found = 1 } END { exit !found }' \
+        "$BOOT_SUMS"
+}
+
+# Read a boot partition back and hash all of it.
+#
+# `unzip -p ... | dd of=...` only ever checked dd's status, and dd reports
+# success over a stream that never arrived: a member TWRP's ziptool cannot
+# read, or a ZIP truncated in transfer, produces nothing, dd exits 0, and the
+# installer prints "Images written." over a partially written kernel.  The
+# root filesystem has been read back and hashed since v0.18; the four boot
+# images and vbmeta were not.
+#
+# Every image is built to exactly its partition size -- make-twrp-zip.py
+# refuses to package one that is not, and the sizes are asserted against the
+# tablet's own partitions above -- so the whole device is the image and no
+# byte count has to survive mksh's 32-bit arithmetic.
+verify_written_image() {  # $1 = partition name, $2 = device just written
+    expected="$(image_sha "$1.img")" || abort "SHA256SUMS has no entry for $1.img"
+    [ "${#expected}" -eq 64 ] || abort "malformed digest for $1.img in SHA256SUMS"
+    sync
+    # Best effort: read from storage rather than from the page cache that
+    # still holds what dd just wrote.  Not every recovery kernel allows it.
+    echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true
+    actual="$(sha256sum "$2" | cut -d' ' -f1)"
+    [ "$actual" = "$expected" ] || \
+        abort "$1 reads back differently from the image in the ZIP"
+}
+# --- end boot image verification
 
 BOOT_SETS_DIR=/var/lib/gts9u-boot-sets
 SUPER_MOUNT=/tmp/gts9u-super
@@ -520,11 +562,14 @@ for part in boot init_boot vendor_boot dtbo; do
     ui_print "Writing $part..."
     unzip -p "$ZIPFILE" "$part.img" | \
         dd of="$target" bs=4M || abort "failed to write $part"
+    ui_print "Verifying $part..."
+    verify_written_image "$part" "$target"
 done
 
 if [ "$SKIP_VBMETA" -eq 0 ]; then
     unzip -p "$ZIPFILE" vbmeta.img | \
         dd of="$VBMETA_TARGET" bs=4M || abort "failed to write vbmeta"
+    verify_written_image vbmeta "$VBMETA_TARGET"
 fi
 
 if [ "$HAS_ROOTFS_OVERLAY" -eq 1 ]; then

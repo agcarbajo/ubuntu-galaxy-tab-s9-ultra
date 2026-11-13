@@ -304,6 +304,27 @@ if [ -n "$zip" ] && [ -f "$zip" ]; then
 		else
 			fail 'the installer does not verify the root filesystem it writes'
 		fi
+
+		# `unzip -p | dd` checks only dd's status, and dd succeeds over a
+		# stream that never arrived: a member ziptool cannot read, or a ZIP
+		# truncated in transfer, leaves "Images written." printed over a
+		# partially written kernel.  The root filesystem has been read back
+		# since v0.18; these four and vbmeta are the rest of it.
+		# One call for the boot/init_boot/vendor_boot/dtbo loop and one for
+		# vbmeta; the definition does not count, and neither do comments.
+		verified=$(printf '%s\n' "$installer" | sed 's/#.*//' | \
+			grep -c 'verify_written_image [^(]' || true)
+		if [ "$verified" -ge 2 ]; then
+			pass 'the installer hashes back every boot image it writes'
+		else
+			fail "the installer verifies only $verified of its boot image writes"
+		fi
+		if printf '%s\n' "$installer" | grep -q 'image_sha() {' && \
+			printf '%s\n' "$installer" | grep -q '"\$BOOT_SUMS"'; then
+			pass 'the expected digests come from the ZIP manifest'
+		else
+			fail 'the installer does not take the boot digests from SHA256SUMS'
+		fi
 		if printf '%s\n' "$installer" | grep -q 'the ZIP is stored on the installation target'; then
 			pass 'the installer refuses to run from the partition it overwrites'
 		else
