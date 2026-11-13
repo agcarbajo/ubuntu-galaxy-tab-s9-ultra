@@ -15,9 +15,26 @@ mirror=${UBUNTU_MIRROR:-http://ports.ubuntu.com/ubuntu-ports}
 libfprint_commit=bebe8565cd7e2c89c0b0c5e6ee7353b80d6a51e1
 quic_teec_commit=736419e25a2036aac3292a10a93e394a90750ca3
 qcbor_commit=4ace4620d549f22c1163c5b00d3ae0c0dae1d207
+# The local version has to outrank the archive's for as long as the patch set
+# is valid, because APT installs the staged .deb and the archive's candidate in
+# one transaction and refuses the whole thing as a downgrade otherwise.
+#
+# Anchoring the local version to one archive revision -- `...0ubuntu5~24.04.8`
+# plus a `+gts9uN` suffix -- loses that race every time the archive publishes
+# an SRU: `~24.04.8+gts9u53` is below `~24.04.9`, which is what killed a build
+# mid-mmdebstrap, and `~24.04.9+gts9u54` would be below `~24.04.10` the next
+# time.  Naming the *next* upstream revision with a `~` suffix instead is the
+# usual Debian idiom for a local build and ends the treadmill: `~` sorts before
+# everything, so `0ubuntu6~gts9u54` beats every `0ubuntu5` SRU there can be and
+# still loses to a genuine `0ubuntu6`, which is exactly when the patch set has
+# to be rebased by hand anyway.  The rootfs hook says so in one line when that
+# day comes, instead of leaving the reason under mmdebstrap's PIPE teardown.
+#
+# Raise the `gts9uN` suffix whenever packaging/libfprint changes; the part
+# before it only moves when upstream's revision does.
 case "$suite" in
-  noble) default_version=1:1.94.7+tod1-0ubuntu5~24.04.9+gts9u54 ;;
-  resolute) default_version=1:1.95.1+tod1-0ubuntu2+gts9u2 ;;
+  noble) default_version=1:1.94.7+tod1-0ubuntu6~gts9u54 ;;
+  resolute) default_version=1:1.95.1+tod1-0ubuntu3~gts9u2 ;;
   *) echo "unsupported libfprint build suite: $suite" >&2; exit 2 ;;
 esac
 package_version=${LIBFPRINT_EL721_VERSION:-$default_version}

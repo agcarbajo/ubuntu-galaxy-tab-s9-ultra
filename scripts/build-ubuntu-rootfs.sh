@@ -493,7 +493,16 @@ cat > "$hooks/local-packages.sh" <<HOOK
 set -eu
 target="\$1"
 mkdir -p "\$target/tmp/local-debs"
-cp $stage_debs/*.deb "\$target/tmp/local-debs/"
+cp "$stage_debs"/*.deb "\$target/tmp/local-debs/"
+
+# APT installs the staged .deb and the archive's candidate in one transaction,
+# so a local libfprint that does not outrank the archive makes it refuse the
+# whole lot as a downgrade.  That failure used to reach the owner as
+# mmdebstrap's "signal PIPE" teardown noise half an hour into a build, with the
+# real reason nowhere in it.  Say it here instead, before the install.
+. "$repo/scripts/rootfs-build-lib.sh"
+assert_libfprint_outranks_archive "\$target"
+
 # Install one local transaction so APT resolves both dependency order and the
 # archive camera packages replaced by our ABI-matched builds.  Plain dpkg
 # cannot remove an already installed package that a local .deb Conflicts with.

@@ -32,6 +32,36 @@ unmount_rootfs() {
     done
 }
 
+assert_libfprint_outranks_archive() {
+    # One APT transaction installs the staged .deb together with the archive's
+    # candidate, and refuses all of it as a downgrade if the local libfprint is
+    # not the newer of the two.  The versions are compared before the install
+    # so the reason is one line in the build log instead of mmdebstrap's PIPE
+    # teardown noise, which is how it surfaced the last time the archive moved.
+    local target=$1 staged='' version candidate entry
+    # A glob, not `ls | head`: under `pipefail` a glob that matches nothing
+    # makes the pipeline fail and `set -e` would take the build down here.
+    for entry in "$target"/tmp/local-debs/libfprint-2-2_*.deb; do
+        if [ -e "$entry" ]; then staged=$entry; break; fi
+    done
+    [ -n "$staged" ] || return 0
+    version=$(dpkg-deb -f "$staged" Version) || return 1
+    candidate=$(chroot "$target" apt-cache policy libfprint-2-2 2>/dev/null |
+        awk '$1 == "Candidate:" { value = $2 } END { print value }') || candidate=''
+    if [ -z "$candidate" ] || [ "$candidate" = '(none)' ]; then
+        return 0
+    fi
+    if dpkg --compare-versions "$version" gt "$candidate"; then
+        return 0
+    fi
+    echo "the staged libfprint-2-2 ($version) does not outrank the archive" >&2
+    echo "candidate ($candidate), so APT would refuse the local transaction as" >&2
+    echo "a downgrade.  Upstream's revision has moved on: rebase" >&2
+    echo "packaging/libfprint and name the next revision in" >&2
+    echo "scripts/build-libfprint-el721.sh." >&2
+    return 1
+}
+
 normalize_image_root() {
     # Both tar streams contain './' and can replace the image root's metadata
     # with that of a staging directory owned by the build user.

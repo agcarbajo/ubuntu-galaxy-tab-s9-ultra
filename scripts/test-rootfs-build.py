@@ -57,6 +57,51 @@ class MountCleanup(unittest.TestCase):
                                       directory, check=False).returncode, 0)
 
 
+class LocalPackageOrdering(unittest.TestCase):
+    """The rootfs hook refuses a libfprint the archive would overtake.
+
+    APT installs the staged .deb and the archive candidate in one transaction
+    and rejects all of it as a downgrade, which reached the owner as
+    mmdebstrap's PIPE teardown noise instead of a reason.
+    """
+
+    def guard(self, staged_version, candidate, present=True):
+        with tempfile.TemporaryDirectory() as directory:
+            debs = Path(directory) / "tmp/local-debs"
+            debs.mkdir(parents=True)
+            if present:
+                (debs / "libfprint-2-2_x_arm64.deb").write_text("not a real archive")
+            # The fakes read their answers from names of their own: the
+            # function under test declares `staged` and `candidate` local, and
+            # bash's dynamic scoping would hand those to anything it calls.
+            return shell(r'''
+                fake_deb_version=$3; fake_archive_version=$4
+                dpkg-deb() { printf '%s\n' "$fake_deb_version"; }
+                chroot() { printf 'libfprint-2-2:\n  Installed: (none)\n  Candidate: %s\n  Version table:\n' "$fake_archive_version"; }
+                assert_libfprint_outranks_archive "$2"
+            ''', directory, staged_version, candidate, check=False)
+
+    def test_a_newer_local_build_is_accepted(self):
+        result = self.guard("1:1.95.1+tod1-0ubuntu3~gts9u2", "1:1.95.1+tod1-0ubuntu2.1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_an_overtaken_local_build_stops_the_hook_with_both_versions(self):
+        result = self.guard("1:1.94.7+tod1-0ubuntu5~24.04.8+gts9u53",
+                            "1:1.94.7+tod1-0ubuntu5~24.04.9")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("does not outrank", result.stderr)
+        self.assertIn("24.04.8+gts9u53", result.stderr)
+        self.assertIn("24.04.9", result.stderr)
+
+    def test_an_equal_version_is_refused_too(self):
+        result = self.guard("1:1.95.1+tod1-0ubuntu2", "1:1.95.1+tod1-0ubuntu2")
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_nothing_staged_or_no_candidate_is_not_an_error(self):
+        self.assertEqual(self.guard("1:2", "1:1", present=False).returncode, 0)
+        self.assertEqual(self.guard("1:1", "(none)").returncode, 0)
+
+
 class ImageRoot(unittest.TestCase):
     @unittest.skipUnless(sys.platform == "linux" and os.geteuid() == 0,
                          "temporary loop-mounted ext4 fixture requires Linux root")

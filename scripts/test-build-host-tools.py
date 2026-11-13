@@ -71,20 +71,51 @@ class QemuPackages(unittest.TestCase):
 
 
 class LibfprintVersion(unittest.TestCase):
+    """The local derivative has to outrank every SRU of the revision it names.
+
+    Asserting it against one archive version is how the pin went stale 47
+    times: the archive moved, the comparison in the test moved with it, and
+    the next build was the one that found out.  These compare against the
+    whole family instead, so they hold for any SRU the archive ever ships.
+    """
+
+    SUITES = (
+        ("noble", "control", "1:1.94.7+tod1-0ubuntu5"),
+        ("resolute", "control-resolute", "1:1.95.1+tod1-0ubuntu2"),
+    )
+
+    def ordered(self, higher, lower):
+        self.assertEqual(0, subprocess.run(
+            ["dpkg", "--compare-versions", higher, "gt", lower]).returncode,
+            f"{higher} must outrank {lower}")
+
     @unittest.skipUnless(shutil.which("dpkg"), "Debian version comparison requires dpkg")
-    def test_noble_derivative_outweighs_the_archive_and_stays_paired(self):
+    def test_each_derivative_outranks_every_archive_sru_and_stays_pinned(self):
         repo = SELECTOR.resolve().parents[1]
         builder = (repo / "scripts/build-libfprint-el721.sh").read_text()
-        version = re.search(r"noble\) default_version=([^ ;]+)", builder)[1]
-        archive = "1:1.94.7+tod1-0ubuntu5~24.04.9"
-        subprocess.run(["dpkg", "--compare-versions", version, "gt", archive], check=True)
-        control = (repo / "packaging/ubuntu-gts9u-device/DEBIAN/control").read_text()
-        self.assertIn("libfprint-2-2 (>= " + version + ")", control)
-        noble = re.search(r"^Version: (.+)$", control, re.M)[1]
-        resolute = (repo / "packaging/ubuntu-gts9u-device/DEBIAN/control-resolute").read_text()
-        newer = re.search(r"^Version: (.+)$", resolute, re.M)[1]
-        subprocess.run(["dpkg", "--compare-versions", noble, "gt", "2.90"], check=True)
-        subprocess.run(["dpkg", "--compare-versions", newer, "gt", noble], check=True)
+        for suite, control_name, archive in self.SUITES:
+            version = re.search(suite + r"\) default_version=([^ ;]+)", builder)[1]
+            for sru in (archive, archive + ".1", archive + ".9", archive + "+x",
+                        archive + "~24.04.9", archive + "~24.04.10",
+                        archive + "~24.04.99", archive + "~26.04.1"):
+                self.ordered(version, sru)
+            # ...and still lose to a genuine new upstream revision, which is
+            # the one case that has to stop the build for a human rebase.
+            self.assertIn("~gts9u", version)
+            self.ordered(version.split("~gts9u")[0], version)
+            control = (repo / "packaging/ubuntu-gts9u-device/DEBIAN" / control_name).read_text()
+            self.assertIn("libfprint-2-2 (>= " + version + ")", control,
+                          f"the {suite} device package must require what it builds")
+
+    @unittest.skipUnless(shutil.which("dpkg"), "Debian version comparison requires dpkg")
+    def test_the_resolute_device_package_replaces_the_noble_one(self):
+        repo = SELECTOR.resolve().parents[1]
+        noble = re.search(r"^Version: (.+)$", (
+            repo / "packaging/ubuntu-gts9u-device/DEBIAN/control").read_text(), re.M)[1]
+        resolute = re.search(r"^Version: (.+)$", (
+            repo / "packaging/ubuntu-gts9u-device/DEBIAN/control-resolute").read_text(), re.M)[1]
+        self.ordered(noble, "2.90")
+        self.ordered(resolute, noble)
 
 
 if __name__ == "__main__":
