@@ -23,6 +23,26 @@ class ReleaseSuiteGuardTests(unittest.TestCase):
                  'RELEASE_VERSION': 'not-a-version', **environment},
             text=True, capture_output=True)
 
+    def test_a_build_with_no_provenance_stops_before_the_first_stage(self):
+        # Built from a snapshot with no BUILD-SOURCE.json, the manifest used
+        # to print an empty port_revision after a complete build: the one
+        # field that says what the ZIP was made from, lost in silence.
+        with tempfile.TemporaryDirectory() as temporary:
+            tree = Path(temporary) / 'snapshot'
+            (tree / 'scripts').mkdir(parents=True)
+            for name in ('build-release.sh',):
+                (tree / 'scripts' / name).write_bytes((REPO / 'scripts' / name).read_bytes())
+            (tree / 'VERSION').write_text('9.9.9' + chr(10))
+            base = Path(temporary) / 'work'
+            base.mkdir()
+            result = subprocess.run(['bash', str(tree / 'scripts/build-release.sh')],
+                env={**os.environ, 'UBUNTU_WORKDIR': str(base)},
+                text=True, capture_output=True)
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertIn('no provenance for this build', result.stderr)
+            self.assertIn('snapshot-build-source.py', result.stderr)
+            self.assertEqual(list(base.iterdir()), [])
+
     def test_an_ordinary_resolute_release_needs_no_migration_backend(self):
         # Resolute required one unconditionally while the only Resolute
         # release in existence was the one that carried Noble installations

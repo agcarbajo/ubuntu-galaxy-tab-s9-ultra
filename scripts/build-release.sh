@@ -45,6 +45,17 @@ export UBUNTU_SUITE="$suite"
 	echo "invalid release version: $version" >&2
 	exit 2
 }
+# A release has to say which revision it was built from.  The manifest falls
+# back to `git -C "$repo" rev-parse HEAD` when there is no BUILD-SOURCE.json,
+# and that prints nothing at all when the build runs from an immutable
+# snapshot -- which is the recommended way to build.  An empty port_revision
+# is precisely the line the manifest exists for, and it was only noticed after
+# a complete build, so the check is here instead of at step 7.
+if [ ! -f "$repo/BUILD-SOURCE.json" ] && ! git -C "$repo" rev-parse HEAD >/dev/null 2>&1; then
+	echo "no provenance for this build: $repo has neither BUILD-SOURCE.json nor a git checkout" >&2
+	echo 'freeze the tree with scripts/snapshot-build-source.py --output <path> and build from it' >&2
+	exit 2
+fi
 profile=${GTS9U_PROFILE:-desktop}
 artifacts=${ARTIFACTS_DIR:-$repo/artifacts}
 
