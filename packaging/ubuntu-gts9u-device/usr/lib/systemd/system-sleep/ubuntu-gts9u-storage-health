@@ -1,0 +1,84 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+#
+# Say out loud when the internal storage did not come back from suspend.
+#
+# On this board the UFS PHY sometimes fails to calibrate on resume: the
+# controller never re-enables, every read and write to /dev/sda fails, and
+# ext4 drops the root filesystem to read-only to protect it.  The tablet keeps
+# running, which is the confusing part -- the desktop is there, the pointer
+# moves, and then nothing can be saved, applications fail to start one by one,
+# and a shell answers "Input/output error" for a file that is plainly there.
+# The owner is left to work that out from a wall of kernel messages, and the
+# only way out is a forced restart.
+#
+# This does not fix the resume failure.  It names it, within a second of the
+# resume that caused it, and leaves a flag in /run that anything else can read.
+#
+# It has to keep working on a tablet whose disk has just died, so it reads only
+# procfs and sysfs, writes only to /run (tmpfs), decides with shell builtins,
+# and treats every external command as optional: a binary that is not already
+# in the page cache cannot be loaded any more.
+set -u
+
+# The four paths the bench redirects; nothing else here leaves this script.
+FLAG=${GTS9U_STORAGE_FLAG:-/run/gts9u-storage-failed}
+MOUNTS=${GTS9U_STORAGE_MOUNTS:-/proc/mounts}
+EXT4=${GTS9U_STORAGE_EXT4:-/sys/fs/ext4}
+SESSIONS=${GTS9U_STORAGE_SESSIONS:-/run/user}
+MESSAGE='Internal storage did not come back from sleep. Nothing can be saved until you restart.'
+
+[ "${1:-}" = post ] || exit 0
+
+root_options=''
+while read -r _device mount _type options _rest; do
+	[ "$mount" = / ] && root_options=$options
+done < "$MOUNTS"
+
+broken=''
+case ",$root_options," in
+	*,ro,*)         broken='the root filesystem is mounted read-only' ;;
+	*emergency_ro*) broken='ext4 put the root filesystem into emergency read-only mode' ;;
+esac
+
+# errors_count keeps its total after the first failure, and it lives in sysfs,
+# so it still answers when nothing can be read from the disk itself.
+if [ -z "$broken" ]; then
+	for counter in "$EXT4"/*/errors_count; do
+		[ -r "$counter" ] || continue
+		read -r count < "$counter" || continue
+		case "$count" in
+			''|0) continue ;;
+		esac
+		device=${counter%/errors_count}
+		broken="ext4 recorded $count errors on ${device##*/}"
+		break
+	done
+fi
+
+if [ -z "$broken" ]; then
+	rm -f -- "$FLAG" 2>/dev/null
+	exit 0
+fi
+
+printf '%s\n' "$broken" > "$FLAG" 2>/dev/null || true
+logger -p daemon.err -t ubuntu-gts9u-storage-health "$broken; $MESSAGE" 2>/dev/null || true
+
+# Best effort, and only that: tell whoever is logged in, in their own session.
+# The uid is the name of the directory, so this needs neither /etc/passwd nor
+# the desktop-user helper, both of which are on the filesystem that just died.
+for bus in "$SESSIONS"/*/bus; do
+	[ -S "$bus" ] || continue
+	uid=${bus#"$SESSIONS"/}
+	uid=${uid%/bus}
+	case "$uid" in
+		''|*[!0-9]*) continue ;;
+	esac
+	[ "$uid" -ge 1000 ] 2>/dev/null || continue
+	DBUS_SESSION_BUS_ADDRESS="unix:path=$bus" \
+		setpriv --reuid "$uid" --regid "$uid" --clear-groups \
+		notify-send --urgency=critical --icon=drive-harddisk-symbolic \
+		'Storage stopped responding' "$MESSAGE" 2>/dev/null || true
+done
+
+exit 0

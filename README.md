@@ -205,13 +205,33 @@ and `sudo apt-get check` only after booting the correct Ubuntu installation.
   included and works on the development SM-X910; confirmation on a second unit
   remains pending ([#8](https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/issues/8),
   [#9](https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/issues/9)).
+  If the reader is not detected on yours, run
+
+  ```sh
+  sudo gts9u-fingerprint-check
+  ```
+
+  and paste its whole output into the issue. It reports the five stages that
+  have to agree -- the platform device, the provisioning, the two services,
+  libfprint's driver and what fprintd offers -- and names the first one that
+  is not satisfied. It reads only; it provisions nothing and writes nothing,
+  and it carries no account, template or serial number.
 - **EF-DX925 keyboard backlight and Fn+F12 stay dark** ([#8](https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/issues/8)): the
   MAX77816 booster was left at 3.3 V. The kernel raises it to Samsung's
   5.14 V for the DX915/DX925, untested here without that cover.
 - Regarding the official cover keyboard, as I said, only EF-DX920 cover keyboard has been tested. EF-DX900, EF-DX910, EF-DX915 and
 EF-DX925 are untested as I don't have them, so they might not work.
 - Guest virtual machines remain under development; initial Gunyah host support is included.
-- Sometimes returning from deep suspend might need a hard reset.
+- **Deep suspend can lose the internal storage until you restart.** Measured
+  on 2026-11-13 while it was happening: on resume the UFS PHY fails to
+  calibrate (`Failed to calibrate PHY: -110`), the controller never re-enables,
+  and ext4 drops the root filesystem to read-only. The desktop keeps running,
+  which is what makes it confusing, but nothing can be saved and a restart is
+  the only way out. The tablet now says so instead of leaving you to read the
+  kernel log: a notification within a second of the resume, and the reason in
+  `/run/gts9u-storage-failed`. The fault itself is not fixed; it is the same
+  one upstream reports for `spm_lvl = 5` on SM8550, and
+  [docs/resume-recovery.md](docs/resume-recovery.md) records what is known.
 
 ## Documentation
 

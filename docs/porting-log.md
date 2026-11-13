@@ -8844,3 +8844,115 @@ assembled from scratch, so the clean-install image is the accepted 2.0.0 root
 plus the three upgraded packages, not a fresh mmdebstrap run; a published
 release should be built from a fresh rootfs. The generic initramfs path
 remains over budget.
+
+## 2026-11-13: open issues, the resume fault in the act, and Companion 1.0.1
+
+### What the open reports actually say
+
+Of the nine open issues, two are requests to support other tablets (#1, #10)
+and one is documentation about One UI blocking Download Mode (#3). The rest
+are this port on this model: the fingerprint reader not being detected (#8,
+#9), no Wi-Fi and a slow or stuck first boot on 2.0.0 (#11, confirmed by a
+second owner), auto-brightness oscillating and the camera stopping (#8), and
+the build-host series already merged here (#13, #14). Galaxy Companion has no
+open issue and one pull request, which is merged below.
+
+### The suspend fault, caught while it was happening
+
+The tablet was in the fault during this session, so the resume is in the
+journal for the first time instead of being the part that is always missing.
+The UFS PHY fails to calibrate on resume, the controller never re-enables, and
+ext4 drops the root to `rw,noatime,emergency_ro`. Nine full regulator and
+clock cycles inside that one resume all timed out, so it is not a transient;
+the upstream fix whose log matches line for line is already in this kernel;
+and `spm_lvl = 5` is forced by `ufs-qcom` for every sm8550 because its drvdata
+declares `no_phy_retention`. The evidence, what it rules out and the two
+mitigations worth a week of use each are in `docs/resume-recovery.md`.
+
+The port cannot fix it from userspace, so it now says it instead of leaving
+the owner to read a wall of kernel messages:
+`usr/lib/systemd/system-sleep/ubuntu-gts9u-storage-health` runs on every
+resume, writes the reason to `/run/gts9u-storage-failed` and raises a
+notification in the owner's session. It recognises the state this fault
+actually leaves -- `emergency_ro` in a mount line that still says `rw`, which
+a plain read-only test misses -- and ext4's error counter. It reads only
+procfs and sysfs and writes only to tmpfs, because by then nothing new can be
+loaded from the disk. `scripts/test-storage-health.sh` drives it under dash
+with that exact mount line and six other states.
+
+### Fingerprint: make the failure legible
+
+Both reports say only that the reader is not detected, which fits every stage
+of a chain that is five stages long, and the one diagnostic that exists --
+`ubuntu-gts9u-fingerprint-provision --check` -- is under `/usr/libexec` and so
+has never been on anyone's PATH. `gts9u-fingerprint-check` is now a command:
+it prints the platform device and the kernel lines about it, the provisioning
+report, the state and logs of both services, libfprint's TOD driver, what
+fprintd offers, and a verdict naming the first stage that is not satisfied.
+It reads only, and carries no account, template or serial number.
+`scripts/test-fingerprint-check.sh` fakes a unit in each broken state and
+checks the verdict names that stage and, when two are broken, the earlier one.
+The README now tells the owners of #8 and #9 to run it and paste the output.
+
+This does not claim to fix their readers. It replaces "not detected" with the
+one line that says where to look.
+
+### Galaxy Companion 1.0.1
+
+Pull request #1 is merged: `GLib.idle_add(self.sample)` re-armed itself
+forever because `sample()` returns `SOURCE_CONTINUE`, and S Pen pairing is now
+`PartOf=bluetooth.service` so a bluetoothd restart recreates its proxies.
+
+Two more, both of which every tablet sees. The app's weekly check of its own
+updates required a `SHA256SUMS` asset; the published 1.0.0 release has only
+the `.deb` and the APK, so `latest()` raised on every run and the home page
+has been reading "Couldn't check for updates" ever since -- reproduced on the
+tablet against the live API. GitHub publishes a SHA-256 for every asset, so
+that is the fallback now: SHA256SUMS still wins, a release with neither is
+refused, and the download and the root-side helper still verify the package.
+Re-uploading SHA256SUMS to the existing v1.0.0 release would fix it for
+everyone immediately, without waiting for 1.0.1.
+
+And the docked S Pen panel drew its pen at a fixed 1050 logical pixels, three
+quarters of this tablet's 1480 px long edge. It is a share of that edge now,
+capped, so the panel is a card in both orientations.
+
+The port's update check itself is fine: `release()` and `release_state()` run
+on the tablet and return `current` against v2.0.0.
+
+### RTC: measured, not yet fixed
+
+`timedatectl` reports the RTC as 1970-01-18 03:24:49 with `since_epoch` of
+1,481,089 -- the PMIC counter with no offset applied. `rtc-pm8xxx` supports
+three ways to have a real wall clock: `allow-set-time`, an nvmem cell named
+`offset`, or `qcom,uefi-rtc-info`. This port's DTS sets none of them, so the
+offset is zero, Linux never persists the time to the RTC, and only
+`systemd-timesyncd` -- its saved clock file at boot, then NTP -- makes the
+clock right. That is exactly the reported behaviour: right when the network
+comes up, wrong when it does not.
+
+The upstream sm8550 boards wire the offset to a PMK8550 SDAM cell, which is
+also where Qualcomm's firmware keeps it, so wiring it would give Linux and
+Android one shared clock. It is not done here because the cell's address on
+this unit has not been read: on a healthy boot, read SDAM2 around 0xbc and
+check whether the value there plus the counter is Android's time before
+changing any DTS. A wrong address would set a confidently wrong clock.
+
+### Battery: the mechanism is the drift
+
+`ubuntu-gts9u-battery-capacity` persists the SM5714's learned `capacity_max`
+(700..1000) across boots in `/var/lib/ubuntu-gts9u-battery`. Android keeps its
+own learned value in its own storage, so the two systems scale the same raw
+state of charge by slightly different numbers, which is what "sometimes a bit
+more, sometimes a bit less than Android" is. Nothing is changed here on that
+basis: the measurement that would settle it is to read `capacity` and
+`device/capacity_max` immediately before and after switching to Android.
+
+### Not addressed
+
+The Wi-Fi regression in #11 and the camera and auto-brightness reports in #8
+are not reproducible on the development unit, which has Wi-Fi, camera and
+brightness working on this same build; the Wi-Fi MAC helper degrades to a
+no-op on every failure, so it cannot be the cause. They need the reporters'
+journals, and the fingerprint command above is the pattern to follow if they
+stay open.

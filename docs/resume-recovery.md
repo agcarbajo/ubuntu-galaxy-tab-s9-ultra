@@ -1,5 +1,86 @@
 # Resume failure and recovery, 2026-09-09
 
+## The failure caught in the act, 2026-11-13
+
+The tablet was in the fault while it was being used for this work, so for the
+first time the resume itself is in the journal rather than missing from it.
+Suspend was ordinary and clean. The whole fault is on the way back:
+
+```
+PM: suspend entry (deep)                                       20:00:11
+Filesystems sync: 0.086 seconds
+... 73 seconds asleep ...
+qcom-qmp-ufs-phy 1d80000.phy: phy initialization timed-out
+ufshcd-qcom 1d84000.ufshc: Failed to calibrate PHY: -110
+ufshcd-qcom 1d84000.ufshc: Enabling the controller failed
+ufshcd-qcom 1d84000.ufshc: ufshcd_host_reset_and_restore: Host init failed -5
+ufs_device_wlun 0:0:0:49488: ufshcd_wl_resume failed: -5
+ufs_device_wlun 0:0:0:49488: PM: dpm_run_callback(): scsi_bus_resume returns -5
+sd 0:0:0:0: [sda] tag#26 UNKNOWN(0x2003) Result: hostbyte=0x07
+I/O error, dev sda, sector 1054046096 op 0x0:(READ)
+```
+
+The timeout is in `qmp_ufs_phy_calibrate()`, polling `PCS_READY` after the
+SerDes start. What follows is a consequence: every read and write to `/dev/sda`
+fails, ext4 leaves the root mounted `rw,noatime,emergency_ro`, and the session
+stays up without being able to save anything. The PCIe and Wi-Fi resumed
+normally in the same cycle, so this is the UFS PHY alone.
+
+Three things this rules out:
+
+- **It is not a transient PLL lock.** `ufshcd` retried the host reset three
+  times, each retry calling the power-up sequence three times, so the PHY
+  regulators and clocks were cycled nine times inside that one resume and
+  every calibration timed out. A retry loop would add nothing.
+- **It is not the missing upstream fix.** The log is line for line the one in
+  commit 7bac656 ("scsi: ufs: qcom: Power off the PHY if it was already
+  powered on in ufs_qcom_power_up_sequence()"), which is in this kernel: the
+  `if (phy->power_count) phy_power_off(phy);` it adds is in the tree. Its
+  `phy_exit()` is not, because the later power-up refactor removed it along
+  with the driver's `.exit` operation, so there is nothing to restore.
+- **It is not a configuration this port chose.** `ufs-qcom` sets
+  `spm_lvl = UFS_PM_LVL_5` for every `qcom,sm8550-ufshc`, because its drvdata
+  declares `no_phy_retention = true`: device powered down and link off on
+  every system suspend, which is what makes resume re-calibrate the PHY at
+  all. Lowering `spm_lvl` to 3 would leave the link in hibern8, and on a board
+  that cannot retain the PHY the hibern8 exit fails and lands in this same
+  recovery path -- which is what the milos backport reports.
+
+What is still open is why the calibration itself does not complete on this
+board, intermittently. The two board patches already in the tree
+(`qmp-ufs-assert-pcs-reset-before-calibration-gts9u.patch` and
+`qmp-ufs-reset-serdes-before-power-down-gts9u.patch`) were candidates for
+exactly this and are shipped in the default build although their own headers
+say to keep them out until an offline-root resume test passes. Neither has
+been validated, and the fault predates both.
+
+Two things to try next, in this order, both of which an owner can run for days
+because the fault is intermittent and no single boot proves anything:
+
+1. **Light sleep instead of deep.** `echo s2idle | sudo tee /sys/power/mem_sleep`
+   keeps the rails up and never tears the PHY down, at a real cost in standby
+   battery. It is the only mitigation that needs no rebuild, and it is how to
+   tell a PHY teardown fault from everything else: if the storage survives a
+   week of s2idle and dies on the first deep sleep, the teardown is the cause.
+2. **Slow the UFS down.** The sm8150 ports carry a one-line DTS patch that
+   lowers `freq-table-hz` from 300 MHz to 201.5 MHz for the same class of UFS
+   failures. This board's node specifies no `freq-table-hz` at all -- the
+   kernel says `freq-table-hz property not specified` on every boot -- so
+   there is a table to add rather than a value to change, and it needs a DTB
+   rebuild and a flash.
+
+Until one of them is accepted, the port does the one thing it can do without
+a kernel change: say so. `ubuntu-gts9u-storage-health` runs on every resume,
+recognises the `emergency_ro` state (the mount line still says `rw`, so a
+plain read-only test misses it) and ext4's error counter, writes the reason to
+`/run/gts9u-storage-failed` and raises a notification in the owner's session.
+It reads only procfs and sysfs and writes only to tmpfs, because by then
+nothing can be loaded from the disk.
+
+The capture is `work/ufs-20261113/resume-failure.log`, kept outside the
+repository with the other private evidence.
+
+
 ## Recurrence on Ubuntu 26.04 / Linux 7.2.9, 2026-10-19
 
 The owner observed repeated `I/O error, dev sda` reads and journald

@@ -19,6 +19,9 @@ jobs:
           persist-credentials: false
       - name: Check shell syntax
         run: |
+          bash -n scripts/test-fingerprint-check.sh scripts/test-storage-health.sh
+          sh -n packaging/ubuntu-gts9u-device/usr/lib/systemd/system-sleep/ubuntu-gts9u-storage-health
+          bash -n packaging/ubuntu-gts9u-device/usr/bin/gts9u-fingerprint-check
           bash -n scripts/rootfs-build-lib.sh scripts/select-qemu-user-package.sh scripts/install-build-deps.sh scripts/check-build-deps.sh scripts/build-ufs-image.sh scripts/build-ubuntu-rootfs.sh scripts/build-release.sh scripts/build-libfprint-el721.sh scripts/validate-bundle.sh scripts/test-boot-image-verification.sh
           # TWRP runs the installer with mksh, and /sbin/sh is not bash.
           sh -n configs/twrp/ubuntu-update-binary
@@ -30,6 +33,10 @@ jobs:
         run: python3 scripts/test-release-suite-guard.py
       - name: Test mount cleanup, the local package order and a temporary ext4 image
         run: sudo python3 scripts/test-rootfs-build.py
+      - name: Test the fingerprint check and the post-resume storage check
+        run: |
+          bash scripts/test-fingerprint-check.sh
+          bash scripts/test-storage-health.sh
       - name: Test the installer's boot image read-back
         run: |
           sudo apt-get update

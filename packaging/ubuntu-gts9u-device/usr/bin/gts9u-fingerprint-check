@@ -1,0 +1,125 @@
+#!/bin/bash
+# Why the fingerprint reader is not working on this tablet, in one command.
+#
+# The reader works on the development unit and the two open reports say it is
+# "not detected" on theirs (#8, #9), which is the one sentence that fits every
+# possible cause: the platform device missing, the provisioning service never
+# running, a partition it reads not being there, the secure transport failing,
+# or fprintd simply not being told.  Each of those leaves a different trace,
+# and they are in five different places, so nobody pastes all five.
+#
+# This prints all of them, with a verdict naming the first stage that is not
+# satisfied.  It reads; it provisions nothing, starts nothing and writes
+# nothing outside its own output.  The provisioning report it embeds is the
+# same `--check` the helper has always had, which is under /usr/libexec and so
+# was never on anyone's PATH.
+set -uo pipefail
+
+# The three paths the bench redirects; everything else it fakes on PATH.
+PROVISION=${GTS9U_FP_PROVISION:-/usr/libexec/ubuntu-gts9u-fingerprint-provision}
+DEVICE=${GTS9U_FP_DEVICE:-/sys/bus/platform/devices/egis-el721}
+TOD_DIR=${GTS9U_FP_TOD_DIR:-/usr/lib/aarch64-linux-gnu/libfprint-2/tod-1}
+
+section() { printf '\n== %s\n' "$1"; }
+verdict=''
+fault() { [ -n "$verdict" ] || verdict=$1; }
+
+if [ "$(id -u)" != 0 ]; then
+	echo 'gts9u-fingerprint-check: run this with sudo; the provisioned state is root-only' >&2
+	exit 2
+fi
+
+echo 'Galaxy Tab S9 Ultra fingerprint check'
+printf '  date: %s\n' "$(date -Is)"
+
+section 'this tablet'
+printf '  model:   %s\n' "$(tr -d '\0' < /proc/device-tree/model 2>/dev/null)"
+printf '  kernel:  %s\n' "$(uname -r)"
+if [ -r /usr/lib/gts9u-release.json ]; then
+	printf '  release: %s\n' "$(tr -d '\n\t ' < /usr/lib/gts9u-release.json)"
+else
+	printf '  release: unknown (no /usr/lib/gts9u-release.json)\n'
+fi
+printf '  device package: %s\n' \
+	"$(dpkg-query -W -f '${Version}' ubuntu-gts9u-device 2>/dev/null || echo 'not installed')"
+
+section 'kernel driver'
+if [ -d "$DEVICE" ]; then
+	echo "  $DEVICE: present"
+else
+	echo "  $DEVICE: ABSENT"
+	echo '  Without it both fingerprint services are skipped by their own condition.'
+	fault 'the EL721 platform device is not there, so the driver did not register it'
+fi
+printf '  /dev/esfp0: %s\n' "$([ -e /dev/esfp0 ] && echo present || echo absent)"
+echo '  kernel messages:'
+journalctl -k -b --no-pager 2>/dev/null |
+	grep -iE 'el721|egis|esfp0|qcomtee|spss' | tail -12 | sed 's/^/    /' ||
+	echo '    (none)'
+
+section 'provisioning'
+if [ -x "$PROVISION" ]; then
+	"$PROVISION" --check 2>&1 | sed 's/^/  /'
+else
+	echo "  $PROVISION is missing; the device package is incomplete"
+	fault 'the provisioning helper is not installed'
+fi
+
+section 'services'
+for unit in ubuntu-gts9u-fingerprint-provision ubuntu-gts9u-fingerprint-secure fprintd; do
+	printf '  %-34s %s / %s' "$unit" \
+		"$(systemctl is-enabled "$unit" 2>&1)" "$(systemctl is-active "$unit" 2>&1)"
+	result=$(systemctl show -p Result --value "$unit" 2>/dev/null)
+	[ -n "$result" ] && printf ' (result: %s)' "$result"
+	printf '\n'
+	case "$result" in
+		''|success) ;;
+		*) fault "$unit did not finish: $result" ;;
+	esac
+done
+echo '  last provisioning log:'
+journalctl -b -u ubuntu-gts9u-fingerprint-provision --no-pager 2>/dev/null |
+	tail -12 | sed 's/^/    /' || echo '    (none)'
+echo '  last secure-transport log:'
+journalctl -b -u ubuntu-gts9u-fingerprint-secure --no-pager 2>/dev/null |
+	tail -12 | sed 's/^/    /' || echo '    (none)'
+
+section 'libfprint and fprintd'
+for package in libfprint-2-2 libfprint-2-tod1 fprintd libpam-fprintd; do
+	printf '  %-18s %s\n' "$package" \
+		"$(dpkg-query -W -f '${Version}' "$package" 2>/dev/null || echo 'not installed')"
+done
+if [ -d "$TOD_DIR" ]; then
+	printf '  TOD drivers: %s\n' "$(ls "$TOD_DIR" 2>/dev/null | tr '\n' ' ')"
+	ls "$TOD_DIR" 2>/dev/null | grep -qi el721 ||
+		fault 'the EL721 TOD driver is not installed next to libfprint'
+else
+	echo "  $TOD_DIR: absent"
+	fault 'libfprint has no TOD driver directory, so no external driver can load'
+fi
+echo '  devices fprintd offers:'
+if command -v busctl >/dev/null 2>&1; then
+	devices=$(busctl --system call net.reactivated.Fprint /net/reactivated/Fprint/Manager \
+		net.reactivated.Fprint.Manager GetDevices 2>&1)
+	printf '    %s\n' "$devices"
+	case "$devices" in
+		*'/net/reactivated/Fprint/Device/'*) ;;
+		*) fault 'fprintd is running but offers no device' ;;
+	esac
+else
+	echo '    busctl is not installed'
+fi
+
+section 'verdict'
+if [ -n "$verdict" ]; then
+	echo "  First stage that is not satisfied: $verdict"
+else
+	echo '  Every stage above reports what a working reader reports.'
+	echo '  If enrolment still fails, the sensor answered but matching did not:'
+	echo '  say so in the issue and attach this output plus `fprintd-enroll` output.'
+fi
+echo
+echo '  Paste this whole output into'
+echo '  https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/issues/9'
+echo '  It is the five places that have to agree, and it names no personal data:'
+echo '  no account, no fingerprint template and no serial number.'
