@@ -1,5 +1,14 @@
 # SM-X910 hardware status
 
+**2026-10-19 storage-resume recurrence:** the owner observed UFS read errors
+and a read-only root after cover sleep on Linux 7.2.9. Authorized TWRP journal
+recovery and free-block summary correction completed; a forced read-only fsck
+then returned zero. The owner confirmed boot and desktop unlock; verified SSH,
+GDM, read/write root and a file write/fsync/readback also passed. Deep suspend
+remains provisional; the precise
+resume failure and its kernel fix are still under investigation. See
+[recovery evidence](resume-recovery.md).
+
 **2.0.0 release validation, 2026-10-19:** Ubuntu 26.04 / GNOME 50 / Linux
 7.2.9 is the current release baseline. The accepted physical checks are recorded
 below and in the [Resolute follow-up](resolute-followup-20261018.md). The older

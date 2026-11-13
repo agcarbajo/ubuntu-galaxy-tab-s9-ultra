@@ -1,5 +1,45 @@
 # Resume failure and recovery, 2026-09-09
 
+## Recurrence on Ubuntu 26.04 / Linux 7.2.9, 2026-10-19
+
+The owner observed repeated `I/O error, dev sda` reads and journald
+`Read-only file system` errors after opening the cover. The saved system
+journal ends at entry to deep suspend; it does not contain the initial
+controller/PHY resume failure. The precise failing sequence is still unknown.
+The accepted kernel source already contains the board-specific PCS assertion
+and TX pull-down patches described below; reapplying them is not a new fix.
+
+With explicit owner approval, recovery ran in TWRP on the identified SM-X910.
+The unmounted `linuxroot` partition first passed the five read-only fsck phases
+apart from unreplayed journal state and optional extent optimizations. A
+hash-verified backup of its first 4 MiB was retained privately; this is not a
+whole-filesystem backup. Journal-only replay succeeded. A subsequent read-only
+check found a free-block summary discrepancy of 589 blocks. After separate
+authorization, preen corrected that summary. The final forced read-only check
+returned zero, with no remaining count errors or recovery flag. Optional
+extent optimizations were declined. No boot images were written and no root
+slot or owner data was deleted. The owner subsequently confirmed Ubuntu boot
+and desktop unlock. SSH returned with the expected host key; the selected
+26.04 root was mounted `rw,noatime`, GDM was active, and a temporary file
+write/fsync/readback under `/var/tmp` succeeded and was removed. This boot has
+no matching kernel storage errors. Its running GNU build ID
+`c70af389c9c7df41a8626562cc549295c359a7a4` matches the accepted build, as do
+the installed Image.gz, configuration and DTB hashes. The current boot also
+records an ordinary successful deep-sleep exit; this demonstrates the
+intermittent nature of the problem, not a fix. A bounded 30-minute diagnostic
+sleep inhibitor was used and explicitly stopped at the end of checks, without
+changing permanent sleep policy.
+
+Incident captures are private under `work/resume-20261019/`. Recovery's
+`last_kmsg` belongs to Android and must not be cited as the failed Linux boot.
+Do not repeat real-root suspend merely to reproduce this fault. A kernel fix
+and repeat physical acceptance remain pending; neither filesystem repair nor
+the earlier short sleep tests establishes reliable deep suspend.
+
+The sections below record historical investigations and builds. In particular,
+the former opt-in PCS policy was superseded: the current staging script enables
+it by default following the later kernel validation.
+
 Automatic brightness was validated by changing the room lighting, and the
 owner confirmed that it still worked after a power-button suspend. That
 cycle nevertheless exposed an intermittent **storage resume failure**.

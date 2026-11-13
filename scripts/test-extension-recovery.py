@@ -1,13 +1,49 @@
 from pathlib import Path
 import ast
 import runpy
+import os
+import tempfile
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 class RecoveryTests(unittest.TestCase):
+    def test_packaged_dropin_covers_all_shell_modes(self):
+        units = ROOT / 'packaging/ubuntu-gts9u-device/usr/lib/systemd/user'
+        dropin = units / 'org.gnome.Shell@.service.d/90-gts9u-extension-recovery.conf'
+        self.assertIn('ExecStopPost=-/usr/libexec/ubuntu-gts9u-extension-failure %n', dropin.read_text())
+        for mode in ('wayland', 'x11'):
+            self.assertFalse((units / f'org.gnome.Shell@{mode}.service.d/90-gts9u-extension-recovery.conf').exists())
+
+    def test_modes_remove_only_false_failure_markers(self):
+        helper = runpy.run_path(str(ROOT / 'packaging/ubuntu-gts9u-device/usr/libexec/ubuntu-gts9u-extension-failure'))
+        for mode in ('wayland', 'x11', 'ubuntu', 'gdm', 'gnome', 'ubuntu-xorg'):
+            unit = f'org.gnome.Shell@{mode}.service'
+            for result, active, keep in (('success', 200, False), ('timeout', 200, False),
+                                         ('timeout', 0, True), ('signal', 200, True),
+                                         ('core-dump', 200, True), ('oom-kill', 200, True)):
+                with self.subTest(mode=mode, result=result, active=active), tempfile.TemporaryDirectory() as tmp:
+                    marker = Path(tmp) / 'gnome-shell-disable-extensions'
+                    marker.touch()
+                    response = SimpleNamespace(returncode=0, stdout=f'Result={result}\nExecMainStartTimestampMonotonic=100\nActiveEnterTimestampMonotonic={active}\n')
+                    with patch.dict(os.environ, {'XDG_RUNTIME_DIR': tmp, 'SERVICE_RESULT': result}), \
+                         patch('sys.argv', ['helper', unit]), patch('subprocess.run', return_value=response) as run:
+                        helper['main']()
+                    self.assertEqual(marker.exists(), keep)
+                    self.assertIn(unit, run.call_args.args[0])
+
+    def test_rejects_other_units(self):
+        helper = runpy.run_path(str(ROOT / 'packaging/ubuntu-gts9u-device/usr/libexec/ubuntu-gts9u-extension-failure'))
+        for unit in ('other.service', 'org.gnome.Shell@.service', '--all',
+                     'org.gnome.Shell@ubuntu.service/other'):
+            with self.subTest(unit=unit), patch('sys.argv', ['helper', unit]), \
+                 patch('subprocess.run') as run, self.assertRaises(SystemExit):
+                helper['main']()
+            run.assert_not_called()
+
     def test_stop_timeout_is_not_an_extension_crash(self):
         helper = runpy.run_path(str(ROOT / 'packaging/ubuntu-gts9u-device/usr/libexec/ubuntu-gts9u-extension-failure'))
         check = helper['should_disable']

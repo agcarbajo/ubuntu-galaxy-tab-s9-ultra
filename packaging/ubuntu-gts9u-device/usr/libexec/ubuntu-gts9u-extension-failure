@@ -1,5 +1,6 @@
 #!/usr/bin/python3
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -24,7 +25,10 @@ def should_disable(properties):
 
 def main():
     unit = sys.argv[1]
-    if unit not in ('org.gnome.Shell@wayland.service', 'org.gnome.Shell@x11.service'):
+    # GNOME 46 used display-server instances (wayland/x11); GNOME 50 uses
+    # session modes (ubuntu/gdm/gnome). Match only this Shell template rather
+    # than silently missing new modes or accepting arbitrary systemd units.
+    if not re.fullmatch(r'org\.gnome\.Shell@[A-Za-z0-9_-]+\.service', unit):
         raise SystemExit('Expected a GNOME Shell session unit')
     result = subprocess.run(['systemctl', '--user', 'show', unit,
         '--property=Result,ExecMainStatus,ExecMainStartTimestampMonotonic,ActiveEnterTimestampMonotonic'],

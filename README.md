@@ -29,7 +29,7 @@ Upgrading from Ubuntu 24.04? Follow [Updating an existing installation](#updatin
 | Motion sensors | ✅ | Rotation, accelerometer, gyroscope and compass |
 | Battery telemetry | ✅ | Charge, voltage, current and temperature |
 | USB-PD/PPS charging | ✅ | Up to 25 W measured into the battery |
-| Suspend / resume | ✅ | Deep sleep and reliable storage recovery |
+| Suspend / resume | ⚠️ | Intermittent storage failure after deep sleep; under investigation |
 | microSD | ✅ | Read and write storage works normally |
 | USB host | ✅ | HID and storage, powered or unpowered |
 | USB-C DisplayPort | ✅ | External video and HDMI audio |

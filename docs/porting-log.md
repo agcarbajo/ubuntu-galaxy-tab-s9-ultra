@@ -8546,6 +8546,56 @@ Validation evidence remains retained locally and in this repository. Clean
 installation assets passed the image/installer/module/package/identity checks;
 a destructive physical clean installation of this exact ZIP was not performed.
 
+## 2026-10-19: storage failure after cover sleep; filesystem recovery
+
+The owner supplied a photo showing repeated internal-storage read errors and
+journald read-only failures after cover sleep on the released 7.2.9 kernel.
+The preserved system journal stops at deep-suspend entry, so the initial UFS
+resume failure is not captured. Existing PCS-reset and TX pull-down patches
+are already present in the accepted source; the cause remains unproven.
+
+With explicit authorization and correct SM-X910 serial verification, TWRP
+read-only fsck completed all five phases. A private, hash-verified first-4-MiB
+metadata-region backup preceded journal-only replay. The subsequent check
+found a 589-block free-space summary discrepancy; separately authorized preen
+corrected it. Final forced read-only fsck returned zero, without further count
+errors or journal recovery flag. Optional extent optimizations were not made.
+No images were flashed, root slots removed or owner files deleted. Reboot to
+the current Ubuntu succeeded: the owner confirmed desktop unlock, SSH identity
+was verified, GDM was active, root was read/write and a `/var/tmp` file
+write/fsync/readback passed. The running build ID and installed kernel/config/
+DTB hashes match the accepted build. Current-boot kernel logs contain no
+matching storage errors; one successful ordinary deep-sleep exit was already
+recorded before diagnostics. A temporary 30-minute sleep inhibitor protected
+the investigation without changing permanent sleep policy. A validated
+future kernel fix remains pending because the initial failing resume is not
+present in the saved journal. Details and capture locations are in
+`docs/resume-recovery.md`. README now marks suspend as provisional instead of
+claiming reliable storage recovery. No package, public version, ZIP or release
+was changed by this recovery.
+
+## 2026-10-26: missing Flashlight/Dualboot controls and GNOME 50 recovery
+
+Both installed extensions were enabled individually but blocked by GNOME's
+global extension switch. Reactivating it restored both controls without
+closing the session; the owner confirmed their appearance. Historical boot
+`001094dc1b0d47c69a30165ccdfd2290` shows a real Shell SIGSEGV on October 23,
+then the recovery service disabling extensions. A preceding GPU lockup is
+observed but not proven causal; no matching saved native crash report was
+available. The native crash is not claimed fixed.
+
+The packaged timeout safeguard separately missed GNOME 50's mode-based Shell
+units. Device 2.92 now installs its drop-in on the Shell template and accepts
+valid mode instances, retaining safety for genuine crashes. Five regressions
+passed; the built arm64 package and its transferred hash matched, and APT
+selected one upgrade with zero removals. Installation completed, user-manager
+reload showed the new helper on the active `@ubuntu` unit, and temporary-marker
+checks against live readiness timestamps passed. Both extensions remain ACTIVE
+with GDM running. No session replacement, reboot or boot-image write occurred.
+Public versions/releases remain unchanged. Package hashes, source snapshot,
+native-crash limits and pending next-session acceptance are recorded in
+`docs/gnome-extension-recovery.md`.
+
 ## 2026-11-03: build-host portability and rootfs assembly (#13)
 
 I reproduced the bootstrap ZIP failure with a synthetic application under
@@ -8585,7 +8635,7 @@ package rebuild and APT installation simulation remain pending. This is the
 bounded version correction from A5 of issue 13, not a claim that future archive
 versions are handled automatically.
 
-## 2026-11-14: review of the build-host series, and 26.04 as the only target (#13, #14)
+## 2026-11-13: review of the build-host series, and 26.04 as the only target (#13, #14)
 
 Reviewed PR #14 against `main` at `ab32401`, which it already applies to
 cleanly, and ran its three suites on the build host (`Ubuntu-24.04` WSL,
@@ -8635,8 +8685,9 @@ upstream revision with a `~` suffix instead —
 `1:1.94.7+tod1-0ubuntu6~gts9u54` and `1:1.95.1+tod1-0ubuntu3~gts9u2` — verified
 greater than the bare revision, `.1`, `.9`, `+x`, `~24.04.9`, `~24.04.10`,
 `~24.04.99` and `~26.04.1`, and still less than the next real revision. The
-device packages become `2.90.1` (Noble) and `2.91.1` (Resolute), keeping
-Resolute above Noble. The remaining case, a genuine new upstream revision, is
+device packages become `2.92` (Noble) and `2.93` (Resolute), keeping Resolute
+above Noble and above the 2.92 Resolute package that the GNOME 50 recovery fix
+had already installed on the tablet, so APT still sees an upgrade. The remaining case, a genuine new upstream revision, is
 now named before the install: the rootfs hook compares the staged .deb with
 the chroot's candidate and prints both versions, tested under bash and dash
 since the hook runs under `/bin/sh`.

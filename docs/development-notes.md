@@ -136,6 +136,13 @@ does not intrude into it.
   also reports global/individual disables correctly and clears them only when
   the user explicitly enables its tile. `python3 scripts/test-extension-recovery.py`
   covers the helper and Companion state transitions.
+  On 2026-10-26, GNOME 50 exposed a coverage gap: its Shell service instances
+  use session modes (`@ubuntu`, `@gdm`), not the old `@wayland`/`@x11` names.
+  Device 2.93 for Resolute (2.92 for Noble) moves the drop-in to the template
+  and generalizes strict instance validation; the build that was installed and
+  measured on the tablet carried the number 2.92. The reported recurrence itself followed a real startup SIGSEGV,
+  whose native cause remains unknown; genuine-crash recovery stays enabled.
+  See [the current evidence and limits](gnome-extension-recovery.md).
 - **External-display configuration had three independent state-ordering
   failures.** The HJW 32-inch HDMI monitor reproduced continuous
   `drmModeAtomicCommit: Invalid argument` until GNOME reverted its temporary
