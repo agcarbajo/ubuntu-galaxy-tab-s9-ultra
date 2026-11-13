@@ -8733,3 +8733,101 @@ Nothing was written and the tablet was not rebooted.
 Not established here: a full rootfs, kernel or package build; an APT
 installation simulation; a physical clean installation or update of a ZIP built
 from this tree; and any behaviour on a Questing or later build host.
+
+## 2026-11-13: GNOME 50 recovery integrated, and a 26.04 update build
+
+The GNOME 50 extension-recovery correction described in
+`docs/gnome-extension-recovery.md` existed only as an uncommitted working tree
+on top of this revision. It is integrated here. Measured on the tablet before
+integrating: the active Shell unit is `org.gnome.Shell@ubuntu.service`, it
+carries `/usr/libexec/ubuntu-gts9u-extension-failure` in its `ExecStopPost`
+through the template drop-in, and both installed files are byte-identical by
+SHA-256 to the two committed here, so what is in git is what was validated.
+The old `@wayland.service.d` and `@x11.service.d` directories survive on the
+tablet, now empty, because dpkg removed their files on the 2.92 upgrade.
+
+The device package is renumbered to 2.93 on Resolute and 2.92 on Noble: this
+revision also carries the libfprint pin from issue 13, and the 2.92 built for
+the recovery fix is already installed, so APT needs a higher version to see an
+upgrade at all.
+
+The Caps Lock LED work in the other working tree was already committed; only
+its Android-side comparison script was missing, and it is added. No fork has
+anything ahead of this branch: measured through the compare API, jstockdale is
+0 ahead / 68 behind, hychian 0 / 55, RobiiAragon the two commits of PR 14.
+Roughly ten late-September porting-log entries (S24 USB-host resets, the
+CHGCNTL6 discharge-limit candidate, the 2026-09-30 audio and extension
+recovery) exist only in that older working tree, whose base is 25 commits
+behind; their code is either already here or, by their own text, rejected and
+removed, so they are deliberately not merged into this series.
+
+### The libfprint pin and the release it belongs to
+
+Taking the pin off the archive's treadmill has a consequence that only a build
+shows: the libfprint of an older release no longer satisfies the new minimum.
+Measured on the tablet, installed `1:1.95.1+tod1-0ubuntu2+gts9u2` is below the
+new `1:1.95.1+tod1-0ubuntu3~gts9u2`, so the device package and the libfprint
+build have to travel in the same payload. libfprint was therefore rebuilt for
+this build rather than reused, and the payload carries both.
+
+The staged-versus-archive guard was driven against a real chroot for the first
+time here, which showed that `apt-cache policy` reports the installed version
+as the candidate once it leads: on a rootfs that already has the local build,
+the guard sees equal versions. Equality is still refused -- it leaves APT free
+to install the archive's build, which has no EL721 driver -- but it now says
+that, instead of claiming upstream's revision has moved on.
+
+### The update build, and what it proves
+
+An ordinary Resolute release was built from this revision (`git archive` of
+a28ac22 plus the pinned Companion submodule; `snapshot-build-source.py` cannot
+run against a Windows worktree, so the snapshot manifest was written with the
+same algorithm). Reused from the accepted 2.0.0 build: the kernel output, the
+rootfs, the overlay and the boot images. Rebuilt: the device package, the
+libfprint pair, the hardware package, the payload and the ZIP.
+
+- `ubuntu-gts9u-device_2.93_arm64.deb` differs from the published 2.91 in
+  exactly three ways: the drop-in path, the version and the libfprint minimum.
+- The payload's metadata is `update_kind=port`, `source_suites=["resolute"]`,
+  format 2, with no migration backend -- the ordinary Resolute release that
+  `build-release.sh` refused to build before this series.
+- `ubuntu-26.04-sm-x910-v2.0.1~test1.zip`, 201,414,261 bytes, SHA-256
+  `2088212013bf87b0fe4dad9a0c34c811009936f49f86b2457381b92574e9404d`, passes
+  `validate-update-zip.py`, which is Galaxy Companion's own `inspect`.
+- Run on the tablet against the transferred file with the *installed* Companion
+  library, `inspect` accepts it and `dpkg --compare-versions` ranks the tag
+  above the installed 2.0.0, so the app's update-from-file path takes it.
+- Its four boot images are byte-identical by SHA-256 to the set saved in
+  `/var/lib/gts9u-boot-sets/ubuntu/`, so this update rewrites the same boot
+  bytes it finds. The kernel is unchanged by this series.
+- An APT dry run on the tablet over the payload's 19 packages selects four
+  upgrades, no new packages and no removals, and takes both libfprint packages
+  from `local-deb`, which is the pin working against the archive on hardware.
+
+The version is `2.0.1~test1` deliberately: it outranks 2.0.0 and loses to any
+real 2.1.0, and `VERSION` stays at 2.0.0 because nothing is published here.
+
+### What this build does not establish
+
+The ZIP was never applied: no package was installed, no partition written and
+no reboot performed on the tablet. The rootfs was reused rather than rebuilt,
+so no clean-install image was produced.
+
+The full installation ZIP could not be built, for a reason that predates this
+series. `build-release.sh` step 4 regenerates the initramfs through
+`make-initramfs.sh`, and on Resolute that output is 11,340,479 bytes against
+an init_boot payload budget of 8,314,880: the udev hook pulls in
+`libsystemd-shared-259.so`, 5,058,568 bytes in the rootfs, which the released
+2.0.0 initramfs does not contain. The initramfs-tools configuration in the
+reused rootfs is identical to the accepted 2.0.0 one, so this is reproducible
+from the released configuration, not an artifact of reuse. The 2.0.0 release
+therefore did not take its init_boot from this path: it was given one through
+`INITRAMFS_INPUT`, a variable nothing in the repository sets, holding a
+compatible initramfs close to `out/migration-initramfs.lz4`. So a plain
+`build-release.sh` on Resolute cannot currently produce a clean-install ZIP,
+and the documented flow does not say how 2.0.0's init_boot was made. Nothing
+here fixes that; a prune-hook change or a documented input would need a
+physical boot to accept it.
+
+`build-release.sh` reports this failure correctly: `make-initramfs.sh` exits 1
+and the assignment in `build-ufs-image.sh` propagates it, both measured.
