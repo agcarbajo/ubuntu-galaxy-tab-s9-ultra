@@ -8671,6 +8671,14 @@ That device version is above every committed branch (`main` has 2.91), so the
 tablet carries a package built from work that is not in git; a release built
 from this tree will not replace it until the version passes 2.92.
 
+The one assumption behind hashing the whole device was then checked on the
+tablet itself, read-only. `/var/lib/gts9u-boot-sets/ubuntu/` still holds the
+images the installer wrote, so each saved image was compared with the partition
+it was written to: `boot`, `init_boot`, `vendor_boot` and `dtbo` all match in
+size and in SHA-256, device against file. A whole-partition hash therefore is
+the image's hash on real hardware, which is what the read-back compares.
+Nothing was written and the tablet was not rebooted.
+
 Not established here: a full rootfs, kernel or package build; an APT
 installation simulation; a physical clean installation or update of a ZIP built
 from this tree; and any behaviour on a Questing or later build host.
