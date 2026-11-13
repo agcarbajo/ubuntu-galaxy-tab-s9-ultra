@@ -9,7 +9,7 @@ repo=$(cd "$(dirname "$0")/.." && pwd)
 base=${UBUNTU_WORKDIR:-/root/ubuntu-gts9u}
 src=$repo/packaging/ubuntu-gts9u-device
 out=${DEB_OUT_DIR:-$base/out/packages}
-suite=${UBUNTU_SUITE:-noble}
+suite=${UBUNTU_SUITE:-resolute}
 
 test -f "$src/DEBIAN/control"
 case "$suite" in

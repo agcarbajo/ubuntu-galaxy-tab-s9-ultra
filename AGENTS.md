@@ -2,9 +2,13 @@
 
 ## Project scope
 
-This repository builds Ubuntu 24.04 arm64 with GNOME 46 on Wayland for the
+This repository builds Ubuntu 26.04 arm64 with GNOME 50 on Wayland for the
 Samsung Galaxy Tab S9 Ultra Wi-Fi (`SM-X910`, `gts9uwifi`). It is not Ubuntu
 Touch despite any parent-directory name.
+
+Every build is 26.04: `UBUNTU_SUITE` defaults to `resolute` throughout, and
+24.04 (`noble`) is only for rebuilding a 1.x release, with
+`--update-format 1`.
 
 Keep changes within the existing architecture:
 

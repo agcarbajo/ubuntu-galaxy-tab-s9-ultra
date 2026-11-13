@@ -9,7 +9,7 @@ base=${UBUNTU_WORKDIR:-/root/ubuntu-gts9u}
 buildroot=${BUILDROOT_DIR:-$base/buildroot}
 out=${DEB_OUT_DIR:-$base/out/packages}
 input=$repo/packaging/libfprint
-suite=${UBUNTU_SUITE:-noble}
+suite=${UBUNTU_SUITE:-resolute}
 mirror=${UBUNTU_MIRROR:-http://ports.ubuntu.com/ubuntu-ports}
 
 libfprint_commit=bebe8565cd7e2c89c0b0c5e6ee7353b80d6a51e1

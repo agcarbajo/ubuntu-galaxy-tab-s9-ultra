@@ -332,6 +332,18 @@ Everything runs as root inside `wsl.exe -d Ubuntu-24.04`, based in
 `/root/ubuntu-gts9u`. No script accepts a block device or writes to a
 partition.
 
+Every build is **Ubuntu 26.04 (Resolute)**: that is what `UBUNTU_SUITE`
+defaults to in all eleven build scripts, and what `build-update-payload.py`
+assumes along with update format 2. Noble is still reachable with
+`UBUNTU_SUITE=noble` for a rebuild of a 1.x release, which also needs
+`--update-format 1`; nothing produces a 24.04 release by accident any more.
+
+`MIGRATION_BACKEND` is what tells a Resolute release to carry Noble
+installations across, as 2.0.0 did. An ordinary 26.04 release leaves it unset
+and is published as `update_kind=port` with Resolute as its only source suite,
+which a 1.3.0 tablet declines rather than half-applies. Setting it to a path
+that does not exist still stops the build before the first stage.
+
 | Step | Script | Produces |
 |---|---|---|
 | 0 | `install-build-deps.sh` / `check-build-deps.sh` | a checked build environment |

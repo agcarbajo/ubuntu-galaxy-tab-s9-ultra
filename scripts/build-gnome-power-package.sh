@@ -5,7 +5,7 @@ repo=$(cd "$(dirname "$0")/.." && pwd)
 base=${UBUNTU_WORKDIR:-/root/ubuntu-gts9u}
 buildroot=${BUILDROOT_DIR:-$base/buildroot}
 out=${DEB_OUT_DIR:-$base/out/packages}
-suite=${UBUNTU_SUITE:-noble}
+suite=${UBUNTU_SUITE:-resolute}
 case "$suite" in
     noble)
         source_version=46.0-1ubuntu1.24.04.1

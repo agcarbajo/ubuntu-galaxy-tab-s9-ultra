@@ -58,8 +58,10 @@ def main():
     p.add_argument("--base", type=Path, required=True)
     p.add_argument("--version", required=True)
     p.add_argument("--bootstrap", type=Path, required=True)
-    p.add_argument("--update-format", type=int, choices=(1, 2), default=1)
-    p.add_argument("--suite", choices=("noble", "resolute"), default="noble")
+    # Every build is Ubuntu 26.04 now; Noble stays selectable for a rebuild of
+    # a 1.x release, which also has to ask for the older payload format.
+    p.add_argument("--update-format", type=int, choices=(1, 2), default=2)
+    p.add_argument("--suite", choices=("noble", "resolute"), default="resolute")
     p.add_argument("--migration-backend", type=Path)
     p.add_argument("--rootfs", type=Path)
     p.add_argument("--output", type=Path)
@@ -74,7 +76,9 @@ def main():
     expected_version = "24.04" if a.suite == "noble" else "26.04"
     if not re.search(r'^ID=ubuntu$', os_release, re.M) or not re.search(
             r'^VERSION_ID="' + re.escape(expected_version) + '"$', os_release, re.M):
-        raise SystemExit("Refusing update payload: this builder only supports Ubuntu 24.04/Noble by default; rootfs does not match the selected suite")
+        raise SystemExit("Refusing update payload: the staged rootfs is not the Ubuntu "
+                         + expected_version + " the selected suite (" + a.suite + ") "
+                         "describes; build the rootfs for that suite or pass --suite")
     if a.suite == "resolute" and a.update_format != 2:
         raise SystemExit("Resolute requires update format 2 and the published 1.3.0 bridge")
     if a.migration_backend and (a.suite != "resolute" or a.update_format != 2

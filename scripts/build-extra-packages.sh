@@ -13,7 +13,7 @@ repo=$(cd "$(dirname "$0")/.." && pwd)
 base=${UBUNTU_WORKDIR:-/root/ubuntu-gts9u}
 buildroot=${BUILDROOT_DIR:-$base/buildroot}
 out=${DEB_OUT_DIR:-$base/out/packages}
-suite=${UBUNTU_SUITE:-noble}
+suite=${UBUNTU_SUITE:-resolute}
 mirror=${UBUNTU_MIRROR:-http://ports.ubuntu.com/ubuntu-ports}
 
 fastfetch_ver=${FASTFETCH_VERSION:-2.66.0}

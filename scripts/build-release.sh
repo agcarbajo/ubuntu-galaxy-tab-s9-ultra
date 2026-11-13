@@ -14,19 +14,32 @@ set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
 base=${UBUNTU_WORKDIR:-/root/ubuntu-gts9u}
 version=${RELEASE_VERSION:-$(tr -d '[:space:]' < "$repo/VERSION")}
-suite=${UBUNTU_SUITE:-noble}
+suite=${UBUNTU_SUITE:-resolute}
 migration_backend=${MIGRATION_BACKEND:-}
 case "$suite" in
 	noble) ubuntu_version=24.04; update_format=1 ;;
 	resolute)
 		ubuntu_version=26.04; update_format=2
-		if [ -z "$migration_backend" ] || [ ! -f "$migration_backend" ]; then
-			echo 'Resolute requires the tested release-specific migration backend' >&2
+		# Resolute used to require the migration backend unconditionally,
+		# because the only Resolute release there had ever been was the one
+		# that carried 1.3.0 installations across from Noble.  Every release
+		# is Resolute now, and an ordinary 26.04 port release has no
+		# distribution to migrate: without a backend the payload is an
+		# update_kind=port release whose source_suites is Resolute alone, so a
+		# Noble tablet refuses it instead of half-taking it.  Naming a backend
+		# that is not there is still always a mistake.
+		if [ -n "$migration_backend" ] && [ ! -f "$migration_backend" ]; then
+			echo "MIGRATION_BACKEND is set to '$migration_backend', which is not a file" >&2
 			exit 2
 		fi
 		;;
 	*) echo "unsupported release suite: $suite" >&2; exit 2 ;;
 esac
+if [ -n "$migration_backend" ]; then
+	echo "building a $ubuntu_version release that migrates Noble installations"
+else
+	echo "building an ordinary $ubuntu_version port release (no distribution migration)"
+fi
 export UBUNTU_SUITE="$suite"
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
 	echo "invalid release version: $version" >&2

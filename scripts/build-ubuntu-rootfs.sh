@@ -15,7 +15,7 @@ source "$repo/scripts/rootfs-build-lib.sh"
 base=${UBUNTU_WORKDIR:-/root/ubuntu-gts9u}
 rootfs=${ROOTFS_DIR:-$base/rootfs}
 profile=${GTS9U_PROFILE:-desktop}
-suite=${UBUNTU_SUITE:-noble}
+suite=${UBUNTU_SUITE:-resolute}
 export UBUNTU_SUITE="$suite"
 case "$suite" in
 	noble)

@@ -21,7 +21,7 @@ base=${UBUNTU_WORKDIR:-/root/ubuntu-gts9u}
 buildroot=${BUILDROOT_DIR:-$base/buildroot}
 out=${DEB_OUT_DIR:-$base/out/packages}
 patches=$repo/packaging/sensors
-suite=${UBUNTU_SUITE:-noble}
+suite=${UBUNTU_SUITE:-resolute}
 mirror=${UBUNTU_MIRROR:-http://ports.ubuntu.com/ubuntu-ports}
 
 libssc_ver=${LIBSSC_VERSION:-0.4.4}

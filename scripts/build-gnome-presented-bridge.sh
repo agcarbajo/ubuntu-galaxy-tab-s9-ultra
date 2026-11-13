@@ -7,7 +7,7 @@ buildroot=${BUILDROOT_DIR:-$base/buildroot}
 source=$repo/packaging/gnome-presented-bridge
 stage=$buildroot/tmp/gts9u-presented-bridge
 out=${PRESENTED_BRIDGE_OUT_DIR:-$base/out/gnome-presented-bridge}
-case "${UBUNTU_SUITE:-noble}" in
+case "${UBUNTU_SUITE:-resolute}" in
     noble) api=14 ;;
     resolute) api=18 ;;
     *) echo 'unsupported Ubuntu suite for presented bridge' >&2; exit 2 ;;

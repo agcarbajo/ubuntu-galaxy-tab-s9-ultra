@@ -5,7 +5,7 @@ repo=$(cd "$(dirname "$0")/.." && pwd)
 base=${UBUNTU_WORKDIR:-/root/ubuntu-gts9u}
 out=${DEB_OUT_DIR:-$base/out/packages}
 cache=$base/cache/fprintd-matched
-suite=${UBUNTU_SUITE:-noble}
+suite=${UBUNTU_SUITE:-resolute}
 case "$suite" in
     noble)
         version=$(cat "$repo/packaging/fprintd/version")
