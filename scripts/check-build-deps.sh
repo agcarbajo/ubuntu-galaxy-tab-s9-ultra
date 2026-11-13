@@ -49,8 +49,32 @@ need unzip 'apt install unzip'
 echo '=== aarch64 emulation ==='
 if [ -e /proc/sys/fs/binfmt_misc/qemu-aarch64 ]; then
 	echo 'OK    binfmt qemu-aarch64 registered'
+	# The registration alone is not the whole story.  mmdebstrap execs the
+	# interpreter *inside* the arm64 chroot, so a dynamically linked one has
+	# to find its x86-64 shared libraries there and does not.  Noble registers
+	# a symlink to the static build; Questing and later dropped that package
+	# and `qemu-user-binfmt` registers the dynamic emulator from `qemu-user`.
+	# Report it here rather than let the rootfs build die inside a chroot.
+	interpreter=$(awk '$1 == "interpreter" { print $2 }' \
+		/proc/sys/fs/binfmt_misc/qemu-aarch64)
+	flags=$(awk '$1 == "flags:" { print $2 }' \
+		/proc/sys/fs/binfmt_misc/qemu-aarch64)
+	if [ -n "$interpreter" ] && command -v file >/dev/null 2>&1; then
+		if file -bL "$interpreter" 2>/dev/null | grep -q 'static'; then
+			printf 'OK    %-20s %s (flags %s)\n' 'static interpreter' \
+				"$interpreter" "${flags:-none}"
+		else
+			printf 'WARN  %-20s %s (flags %s)\n' 'dynamic interpreter' \
+				"$interpreter" "${flags:-none}"
+			echo '      mmdebstrap runs this inside the arm64 chroot, where its'
+			echo '      libraries are absent.  Install a static build if the'
+			echo '      archive still has one, or build the rootfs in a'
+			echo '      container that carries the host libraries.'
+		fi
+	fi
 else
-	echo 'MISS  binfmt qemu-aarch64 (apt install binfmt-support qemu-user-static)'
+	echo 'MISS  binfmt qemu-aarch64 (apt install binfmt-support and the package'
+	echo '      scripts/select-qemu-user-package.sh picks for this host)'
 	missing=$((missing + 1))
 fi
 

@@ -14,17 +14,40 @@ SELECTOR = Path(__file__).with_name("select-qemu-user-package.sh")
 
 
 class QemuPackages(unittest.TestCase):
-    def select(self, candidates):
+    # A real `apt-cache policy` prints the candidate near the top and keeps
+    # going: installed version, pin, then a version table with one or two
+    # lines per pocket.  The fake prints a tail of its own for the same reason
+    # -- a parser that stops reading at the candidate closes the pipe under
+    # apt-cache, and the selector used to die of the resulting SIGPIPE with
+    # the answer already in hand.  TEST_POLICY_TAIL makes that tail long
+    # enough to fill the pipe buffer, which turns the race into a certainty.
+    def select(self, candidates, tail=4):
         with tempfile.TemporaryDirectory() as directory:
             command = Path(directory) / "apt-cache"
-            command.write_text("#!/usr/bin/env python3\nimport os,json,sys\n"
-                               "candidate=json.loads(os.environ['TEST_CANDIDATES']).get(sys.argv[2])\n"
-                               "if candidate: print('  Candidate: '+candidate)\n")
+            command.write_text(
+                "#!/usr/bin/env python3\n"
+                "import os,json,sys\n"
+                "candidate=json.loads(os.environ['TEST_CANDIDATES']).get(sys.argv[2])\n"
+                "if candidate is None: sys.exit(0)\n"
+                "print(sys.argv[2]+':')\n"
+                "print('  Installed: (none)')\n"
+                "print('  Candidate: '+candidate)\n"
+                "print('  Version table:')\n"
+                "for line in range(int(os.environ['TEST_POLICY_TAIL'])):\n"
+                "    print('     1:8.2.2+ds-0ubuntu1.%d 500' % line)\n"
+                "    print('        500 http://ports.ubuntu.com/ubuntu-ports noble/universe arm64 Packages')\n")
             command.chmod(0o755)
             env = dict(os.environ, PATH=directory + os.pathsep + os.environ["PATH"],
-                       TEST_CANDIDATES=json.dumps(candidates))
+                       TEST_CANDIDATES=json.dumps(candidates),
+                       TEST_POLICY_TAIL=str(tail))
             return subprocess.run(["bash", str(SELECTOR)], env=env, text=True,
                                   capture_output=True)
+
+    def test_a_long_policy_listing_does_not_sigpipe_the_selector(self):
+        result = self.select({"qemu-user-static": "1:8.2"}, tail=20000)
+        self.assertEqual(result.returncode, 0,
+                         f"selector exited {result.returncode}: {result.stderr}")
+        self.assertEqual(result.stdout.strip(), "qemu-user-static")
 
     def test_noble_keeps_the_static_package(self):
         result = self.select({"qemu-user-static": "1:8.2", "qemu-user-binfmt": "1:8.2"})
