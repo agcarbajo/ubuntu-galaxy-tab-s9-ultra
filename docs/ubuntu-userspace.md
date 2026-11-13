@@ -397,6 +397,18 @@ after both tar streams. The staged libfprint is compared against the archive
 candidate before the local APT transaction, so an overtaken pin is one line in
 the log instead of mmdebstrap's PIPE teardown.
 
+The device package's libfprint minimum and the libfprint build move together,
+in the same release. Naming the next upstream revision takes the pin off the
+archive's treadmill, but it also means the libfprint of an *older* release no
+longer satisfies the new minimum: on a tablet running 2.0.0, the installed
+`1:1.95.1+tod1-0ubuntu2+gts9u2` is below `1:1.95.1+tod1-0ubuntu3~gts9u2`. So a
+release built from this tree has to carry the rebuilt `libfprint-2-2` and
+`libfprint-2-tod1` in the same payload as the device package. That is what the
+payload's local-deb selection does by construction -- it is the set installed
+in the staged rootfs, and the builder refuses a selection whose versions do
+not match it -- so the pairing cannot be forgotten, but a hand-made payload
+carrying only the device package would be refused by APT on the tablet.
+
 Run the focused checks without a tablet:
 
 ```sh

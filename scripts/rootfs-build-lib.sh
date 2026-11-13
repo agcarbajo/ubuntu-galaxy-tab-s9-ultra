@@ -54,6 +54,19 @@ assert_libfprint_outranks_archive() {
     if dpkg --compare-versions "$version" gt "$candidate"; then
         return 0
     fi
+    # `apt-cache policy` names the installed version as the candidate when it
+    # is the newer of the two, so a rootfs that already carries the local build
+    # reports the staged version back here.  That is still refused: equal
+    # versions leave APT free to install the archive's build, which has no
+    # EL721 driver, and nothing in the log would say so.
+    if [ "$version" = "$candidate" ]; then
+        echo "the staged libfprint-2-2 ($version) has exactly APT's candidate" >&2
+        echo "version, which leaves APT free to install the archive build, which" >&2
+        echo "carries no EL721 driver.  Raise the gts9uN suffix in" >&2
+        echo "scripts/build-libfprint-el721.sh -- or, if this rootfs already has" >&2
+        echo "the local build installed, assemble the rootfs from scratch." >&2
+        return 1
+    fi
     echo "the staged libfprint-2-2 ($version) does not outrank the archive" >&2
     echo "candidate ($candidate), so APT would refuse the local transaction as" >&2
     echo "a downgrade.  Upstream's revision has moved on: rebase" >&2

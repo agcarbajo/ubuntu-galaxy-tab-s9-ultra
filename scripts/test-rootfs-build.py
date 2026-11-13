@@ -93,9 +93,15 @@ class LocalPackageOrdering(unittest.TestCase):
         self.assertIn("24.04.8+gts9u53", result.stderr)
         self.assertIn("24.04.9", result.stderr)
 
-    def test_an_equal_version_is_refused_too(self):
+    def test_an_equal_version_is_refused_for_its_own_reason(self):
+        # Measured while driving the guard against a real chroot: apt-cache
+        # reports the installed version as the candidate once it leads, so the
+        # equal case is reachable and must not be reported as a moved archive.
         result = self.guard("1:1.95.1+tod1-0ubuntu2", "1:1.95.1+tod1-0ubuntu2")
         self.assertNotEqual(result.returncode, 0)
+        self.assertIn("exactly APT's candidate", result.stderr)
+        self.assertIn("EL721", result.stderr)
+        self.assertNotIn("revision has moved on", result.stderr)
 
     def test_nothing_staged_or_no_candidate_is_not_an_error(self):
         self.assertEqual(self.guard("1:2", "1:1", present=False).returncode, 0)
