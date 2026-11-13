@@ -8777,57 +8777,70 @@ the guard sees equal versions. Equality is still refused -- it leaves APT free
 to install the archive's build, which has no EL721 driver -- but it now says
 that, instead of claiming upstream's revision has moved on.
 
-### The update build, and what it proves
+### The build, and what it proves
 
-An ordinary Resolute release was built from this revision (`git archive` of
-a28ac22 plus the pinned Companion submodule; `snapshot-build-source.py` cannot
-run against a Windows worktree, so the snapshot manifest was written with the
-same algorithm). Reused from the accepted 2.0.0 build: the kernel output, the
-rootfs, the overlay and the boot images. Rebuilt: the device package, the
-libfprint pair, the hardware package, the payload and the ZIP.
+A complete release was built from this revision -- the one ZIP that installs
+from nothing in TWRP and updates an installation, which is the only kind this
+port publishes. The source was `git archive` of a28ac22 plus the pinned
+Companion submodule, since `snapshot-build-source.py` cannot run against a
+Windows worktree; the snapshot manifest was written with the same algorithm.
+Reused from the accepted 2.0.0 build: the kernel output, the rootfs, the
+overlay and the early-boot runtime. Rebuilt: the device package, the libfprint
+pair, the hardware package, the Android v4 bundle, the root filesystem image,
+the payload and the ZIP.
 
+`build-release.sh` needed `INITRAMFS_INPUT`, which is how 2.0.0 got its
+`init_boot` and which nothing in the repository sets. Without it the build
+stops in step 4: `update-initramfs` in a 26.04 rootfs produces 11,340,479
+bytes against the 8,314,880 `init_boot` leaves after mkbootimg's header and
+the padded AVB footer, because udev's hook pulls in `libsystemd-shared-259.so`
+(5,058,568 bytes in the rootfs) and the prune hook does not remove it. The
+initramfs-tools configuration here is identical to the accepted 2.0.0 rootfs,
+so that overflow is reproducible from the published configuration and is not
+an artifact of reusing a rootfs. It is now written down in
+`docs/ubuntu-userspace.md`, and `make-initramfs.sh` names the variable in its
+own error instead of only suggesting fewer modules. Bringing the generic path
+back under the budget would change the early-boot runtime, so it needs a
+physical boot to accept and is not attempted here.
+
+- `ubuntu-26.04-sm-x910-v2.0.1.zip`, 1,770,916,945 bytes, SHA-256
+  `5ca3139ec013309fb23bfd8d995e78ca823bfce6dd392fed626de4953c8ecdb1`, with the
+  TWRP installer, the five boot images, a 5,529,141,248-byte root filesystem
+  image (`aaa61c97b985a66747ccc026a1774218cb407824c90474f14e69eb8cbe9d7f0b`)
+  and the 19-package update payload.
+- `validate-bundle.sh` passes every check, including the ones added in this
+  series: that the packaged installer hashes back every boot image it writes
+  and takes the expected digests from the ZIP's own manifest.
+- `validate-update-zip.py`, which is Galaxy Companion's own `inspect`, passes.
+- The rebuilt bundle reproduced the published boot images **bit for bit**: all
+  five SHA-256 digests equal the 2.0.0 ones, and the four stored in
+  `/var/lib/gts9u-boot-sets/ubuntu/` on the tablet. Same kernel, same
+  initramfs, deterministic packing. So this release rewrites the same boot
+  bytes it finds, and nothing in this series touches the kernel.
 - `ubuntu-gts9u-device_2.93_arm64.deb` differs from the published 2.91 in
   exactly three ways: the drop-in path, the version and the libfprint minimum.
 - The payload's metadata is `update_kind=port`, `source_suites=["resolute"]`,
   format 2, with no migration backend -- the ordinary Resolute release that
   `build-release.sh` refused to build before this series.
-- `ubuntu-26.04-sm-x910-v2.0.1~test1.zip`, 201,414,261 bytes, SHA-256
-  `2088212013bf87b0fe4dad9a0c34c811009936f49f86b2457381b92574e9404d`, passes
-  `validate-update-zip.py`, which is Galaxy Companion's own `inspect`.
-- Run on the tablet against the transferred file with the *installed* Companion
-  library, `inspect` accepts it and `dpkg --compare-versions` ranks the tag
-  above the installed 2.0.0, so the app's update-from-file path takes it.
-- Its four boot images are byte-identical by SHA-256 to the set saved in
-  `/var/lib/gts9u-boot-sets/ubuntu/`, so this update rewrites the same boot
-  bytes it finds. The kernel is unchanged by this series.
-- An APT dry run on the tablet over the payload's 19 packages selects four
-  upgrades, no new packages and no removals, and takes both libfprint packages
-  from `local-deb`, which is the pin working against the archive on hardware.
 
-The version is `2.0.1~test1` deliberately: it outranks 2.0.0 and loses to any
-real 2.1.0, and `VERSION` stays at 2.0.0 because nothing is published here.
+The same payload was measured on the tablet from an interim update-only ZIP
+before the complete one existed: Companion's *installed* library accepted it
+through `inspect`, `dpkg --compare-versions` ranked its tag above the
+installed 2.0.0, and an APT dry run over the 19 packages selected four
+upgrades, no new packages and no removals, taking both libfprint packages from
+`local-deb`. That last line is the pin working against the archive on
+hardware, which is what A5 of issue 13 was about.
+
+`VERSION` moves to 2.0.1 so the tree and the artifact agree. The release is
+not published and not tagged: today's confusion started with a tablet carrying
+a device package no branch produced, and a built ZIP whose version exists
+nowhere in git would be the same mistake one level up.
 
 ### What this build does not establish
 
-The ZIP was never applied: no package was installed, no partition written and
-no reboot performed on the tablet. The rootfs was reused rather than rebuilt,
-so no clean-install image was produced.
-
-The full installation ZIP could not be built, for a reason that predates this
-series. `build-release.sh` step 4 regenerates the initramfs through
-`make-initramfs.sh`, and on Resolute that output is 11,340,479 bytes against
-an init_boot payload budget of 8,314,880: the udev hook pulls in
-`libsystemd-shared-259.so`, 5,058,568 bytes in the rootfs, which the released
-2.0.0 initramfs does not contain. The initramfs-tools configuration in the
-reused rootfs is identical to the accepted 2.0.0 one, so this is reproducible
-from the released configuration, not an artifact of reuse. The 2.0.0 release
-therefore did not take its init_boot from this path: it was given one through
-`INITRAMFS_INPUT`, a variable nothing in the repository sets, holding a
-compatible initramfs close to `out/migration-initramfs.lz4`. So a plain
-`build-release.sh` on Resolute cannot currently produce a clean-install ZIP,
-and the documented flow does not say how 2.0.0's init_boot was made. Nothing
-here fixes that; a prune-hook change or a documented input would need a
-physical boot to accept it.
-
-`build-release.sh` reports this failure correctly: `make-initramfs.sh` exits 1
-and the assignment in `build-ufs-image.sh` propagates it, both measured.
+Nothing was applied: no package installed, no partition written, no reboot,
+and the ZIP was not flashed from TWRP. The rootfs was reused rather than
+assembled from scratch, so the clean-install image is the accepted 2.0.0 root
+plus the three upgraded packages, not a fresh mmdebstrap run; a published
+release should be built from a fresh rootfs. The generic initramfs path
+remains over budget.

@@ -368,6 +368,25 @@ not fit in `init_boot`. Those two errors are found here rather than on the
 tablet, and they live in one place so the UFS image and the microSD one cannot
 diverge on exactly that.
 
+**A Resolute release needs `INITRAMFS_INPUT`,** and that is how the published
+2.0.0 `init_boot` was made, although nothing in the repository sets it. The
+generic path above no longer fits: `update-initramfs` in a 26.04 rootfs
+produces 11,340,479 bytes against the 8,314,880 that `init_boot` leaves after
+mkbootimg's header and the padded AVB footer, because udev's hook pulls in
+`libsystemd-shared-259.so`, 5,058,568 bytes in the rootfs, and the prune hook
+does not remove it. So the accepted early-boot runtime is named on the command
+line:
+
+```sh
+INITRAMFS_INPUT=$WORKDIR/initramfs.lz4 bash scripts/build-release.sh
+```
+
+`build-ufs-image.sh` checks that input exactly as it checks its own output --
+legacy-LZ4 magic and `check-visible-boot-initramfs.py` -- so the wrong file is
+refused on the host instead of producing a tablet that does not boot. Bringing
+the generic path back under the budget is a separate job: it changes the
+early-boot runtime, which needs a physical boot to accept.
+
 `build-ufs-image.sh` produces the filesystem alone: no GPT, with `/boot`
 inside, with the firmware overlay already integrated, labelled `UBTS9U_UFS`,
 and reserving enough descriptor blocks (`-E resize=`) for the first boot to

@@ -54,7 +54,9 @@ limit=$((8388608 - 4096 - 69632))
 echo "initramfs: $size bytes (init_boot budget $limit)" >&2
 if [ "$size" -gt "$limit" ]; then
 	echo 'initramfs does not fit init_boot minus its AVB footer' >&2
-	echo 'reduce MODULES or move modules to the boot partition' >&2
+	echo 'reduce MODULES, move modules to the boot partition, or give the' >&2
+	echo 'image builder an accepted initramfs through INITRAMFS_INPUT, which' >&2
+	echo 'is how the published releases got theirs: docs/ubuntu-userspace.md' >&2
 	exit 1
 fi
 
