@@ -2,7 +2,11 @@ name: Build host regressions
 on:
   workflow_dispatch:
   pull_request:
-    paths: ['scripts/**', '.github/workflows/build-host-regressions.yml']
+    paths:
+      - 'scripts/**'
+      - 'configs/twrp/**'
+      - 'packaging/ubuntu-gts9u-device/DEBIAN/**'
+      - '.github/workflows/build-host-regressions.yml'
 permissions:
   contents: read
 jobs:
@@ -14,10 +18,20 @@ jobs:
         with:
           persist-credentials: false
       - name: Check shell syntax
-        run: bash -n scripts/rootfs-build-lib.sh scripts/select-qemu-user-package.sh scripts/install-build-deps.sh scripts/check-build-deps.sh scripts/build-ufs-image.sh scripts/build-ubuntu-rootfs.sh
+        run: |
+          bash -n scripts/rootfs-build-lib.sh scripts/select-qemu-user-package.sh scripts/install-build-deps.sh scripts/check-build-deps.sh scripts/build-ufs-image.sh scripts/build-ubuntu-rootfs.sh scripts/build-release.sh scripts/build-libfprint-el721.sh scripts/validate-bundle.sh scripts/test-boot-image-verification.sh
+          # TWRP runs the installer with mksh, and /sbin/sh is not bash.
+          sh -n configs/twrp/ubuntu-update-binary
       - name: Test QEMU package selection and timezone-independent bootstrap
         run: |
           python3 scripts/test-build-host-tools.py
           python3 scripts/test-update-bootstrap.py
-      - name: Test mount cleanup and a temporary ext4 image
+      - name: Test the release suite selection
+        run: python3 scripts/test-release-suite-guard.py
+      - name: Test mount cleanup, the local package order and a temporary ext4 image
         run: sudo python3 scripts/test-rootfs-build.py
+      - name: Test the installer's boot image read-back
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends mksh
+          bash scripts/test-boot-image-verification.sh
