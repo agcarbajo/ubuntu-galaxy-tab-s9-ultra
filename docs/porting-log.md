@@ -8584,3 +8584,93 @@ paired dependency and the Noble-to-Resolute package order. A full library/device
 package rebuild and APT installation simulation remain pending. This is the
 bounded version correction from A5 of issue 13, not a claim that future archive
 versions are handled automatically.
+
+## 2026-11-14: review of the build-host series, and 26.04 as the only target (#13, #14)
+
+Reviewed PR #14 against `main` at `ab32401`, which it already applies to
+cleanly, and ran its three suites on the build host (`Ubuntu-24.04` WSL,
+Python 3.12.3, as root): 5 + 1 + 5 cases pass, the ext4 fixture included —
+it is not skipped there, it loops a real 32 MiB image in 0.15 s. Every
+`scripts/test-*.py` was run on `origin/main` and on the PR branch and the
+failure sets are identical, so the PR introduces no regression; those
+failures are environmental (missing arguments, no Gst, and
+`galaxy_companion` absent until `git submodule update --init`).
+
+**A1 was broken on every host, including this one.** `select-qemu-user-package.sh`
+read the candidate through `awk '... { print $2; exit }'`. `apt-cache policy`
+prints eleven lines for a package it knows, so awk closed the pipe, apt-cache
+died of SIGPIPE, and `pipefail` made 141 the pipeline's status: the selector
+exited 141 with the answer already in hand, and `set -e` in
+`install-build-deps.sh` turned that into an `apt-get` that never ran.
+Measured here: `bash scripts/select-qemu-user-package.sh` printed nothing and
+returned 141; the same script reading the policy into a variable prints
+`qemu-user-static` and returns 0. The regression test drives the fake
+apt-cache with a 40000-line listing and fails against the old one-liner.
+
+Questing's `qemu-user-binfmt` carries `Provides: qemu-user-static` with
+`Breaks`/`Replaces` on the old real package, and is registration-only: the
+emulator comes from `qemu-user`, which is dynamically linked. mmdebstrap execs
+the interpreter inside the arm64 chroot, where its libraries are absent, so
+`check-build-deps.sh` now reports which interpreter binfmt registered and
+whether it is static. On this host that is
+`/usr/libexec/qemu-binfmt/aarch64-binfmt-P`, a symlink to the static build,
+flags `POF`. A rootfs build on a Questing or later host has not been
+attempted and is the one part of A1 still unproven.
+
+**A2 is confirmed and the fix is sound.** The old writer raises
+`ZIP does not support timestamps before 1980` under `America/Los_Angeles` and
+succeeds under `UTC`; the new one produces the same SHA-256 under UTC,
+`America/Los_Angeles`, `Pacific/Honolulu` and `Asia/Tokyo`, the zipapp runs,
+and its entries are stamped 1980-01-01 with explicit modes.
+
+**A3 did not affect the shipped image.** `/` on the development tablet reads
+`0:0 0755`. The bug is build-host dependent, so the assertion is still worth
+having.
+
+**A5 bought one SRU.** `dpkg --compare-versions` shows
+`~24.04.9+gts9u54` below `~24.04.10`, the same way `~24.04.8+gts9u53` was below
+`~24.04.9`; Resolute's `0ubuntu2+gts9u2` was already below a plain
+`0ubuntu2.1`, and that is now the pin that matters. Both suites name the next
+upstream revision with a `~` suffix instead —
+`1:1.94.7+tod1-0ubuntu6~gts9u54` and `1:1.95.1+tod1-0ubuntu3~gts9u2` — verified
+greater than the bare revision, `.1`, `.9`, `+x`, `~24.04.9`, `~24.04.10`,
+`~24.04.99` and `~26.04.1`, and still less than the next real revision. The
+device packages become `2.90.1` (Noble) and `2.91.1` (Resolute), keeping
+Resolute above Noble. The remaining case, a genuine new upstream revision, is
+now named before the install: the rootfs hook compares the staged .deb with
+the chroot's candidate and prints both versions, tested under bash and dash
+since the hook runs under `/bin/sh`.
+
+**A4 is implemented, which PR #14 does not cover.** The installer writes
+`boot`, `init_boot`, `vendor_boot`, `dtbo` and `vbmeta` with
+`unzip -p | dd` and checks only dd's status. Each is now hashed back against
+the ZIP's `SHA256SUMS` — never against the member, which would agree with a
+truncated member — over the whole device, since every image is built to exactly
+its partition size. Confirmed on the tablet:
+`boot` and `vendor_boot` 100663296 bytes, `init_boot` 8388608, `dtbo`
+16777216, `vbmeta` 131072, matching `IMAGES` in `make-twrp-zip.py` exactly.
+`scripts/test-boot-image-verification.sh` extracts the installer's own block by
+its markers and drives it under mksh: ten assertions pass, including that dd
+still reports success over an empty stream and that the read-back catches it.
+`validate-bundle.sh` passes the new installer and fails `main`'s.
+
+**Every build is 26.04 from here.** Eleven build scripts and
+`build-update-payload.py` still defaulted to Noble and update format 1: 2.0.0
+was only 26.04 because `UBUNTU_SUITE` was exported by hand. Resolute is the
+default now, and `build-release.sh` no longer demands `MIGRATION_BACKEND` for
+every Resolute release — that rule dates from the single release that carried
+1.3.0 installations across, and an ordinary port release publishes
+`update_kind=port` with Resolute as its only source suite, which a Noble
+tablet declines rather than half-applies. A named backend file that does not
+exist still stops the build before the first stage.
+
+Read-only on the tablet over SSH, no writes and no reboot: `/` ownership,
+partition sizes through `/dev/disk/by-partlabel/`, installed
+`libfprint-2-2 1:1.95.1+tod1-0ubuntu2+gts9u2` and `ubuntu-gts9u-device 2.92`.
+That device version is above every committed branch (`main` has 2.91), so the
+tablet carries a package built from work that is not in git; a release built
+from this tree will not replace it until the version passes 2.92.
+
+Not established here: a full rootfs, kernel or package build; an APT
+installation simulation; a physical clean installation or update of a ZIP built
+from this tree; and any behaviour on a Questing or later build host.

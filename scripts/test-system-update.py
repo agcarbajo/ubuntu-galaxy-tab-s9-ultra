@@ -578,9 +578,13 @@ class PackagingTests(unittest.TestCase):
                          "out/rootfs-overlay/etc/modules-load.d"):
                 (base / path).mkdir(parents=True)
             (base / "rootfs/usr/lib/gts9u-required-packages.txt").write_text("python3\n")
-            (base / "rootfs/etc/os-release").write_text('ID=ubuntu\nVERSION_ID="24.04"\n')
+            # The fixture is Resolute because that is what the builder now
+            # defaults to and what every release is.  The Noble path keeps its
+            # coverage in test-release-suite-guard.py, which asks for it by
+            # name along with the format-1 payload.
+            (base / "rootfs/etc/os-release").write_text('ID=ubuntu\nVERSION_ID="26.04"\n')
             (base / "rootfs/etc/apt/sources.list.d/ubuntu.sources").write_text(
-                "Suites: noble noble-updates noble-backports\nSuites: noble-security\n")
+                "Suites: resolute resolute-updates resolute-backports\nSuites: resolute-security\n")
             (base / "rootfs/boot/config-test").write_text("CONFIG_TEST=y\n")
             (base / "out/kernel-gts9uwifi/kernel.release").write_text("test\n")
             (base / "out/kernel-gts9uwifi/sm8550-samsung-gts9uwifi.dtb").write_bytes(b"test dtb")

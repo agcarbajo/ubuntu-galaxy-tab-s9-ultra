@@ -387,18 +387,31 @@ Two numbers in that script are deliberate and connected:
 ### Build-host regression checks
 
 The QEMU selector keeps the static package on Noble and selects an available
-concrete binfmt provider when that name is virtual. The update bootstrap uses
-explicit 1980 ZIP dates so the host timezone cannot push entries into 1979.
-Rootfs proc/sys/dev mounts must be gone before image assembly; the final image
-root is independently verified as 0:0 / 0755 after both tar streams.
+concrete binfmt provider when that name is virtual; it reads `apt-cache
+policy` whole instead of through a pipeline, because an early-exiting parser
+killed apt-cache with SIGPIPE and `pipefail` made that the selector's own exit
+status. The update bootstrap uses explicit 1980 ZIP dates so the host timezone
+cannot push entries into 1979. Rootfs proc/sys/dev mounts must be gone before
+image assembly; the final image root is independently verified as 0:0 / 0755
+after both tar streams. The staged libfprint is compared against the archive
+candidate before the local APT transaction, so an overtaken pin is one line in
+the log instead of mmdebstrap's PIPE teardown.
 
 Run the focused checks without a tablet:
 
 ```sh
 python3 scripts/test-build-host-tools.py
 python3 scripts/test-update-bootstrap.py
-sudo python3 scripts/test-rootfs-build.py  # Linux: disposable ext4 loop fixture
+python3 scripts/test-release-suite-guard.py
+bash scripts/test-boot-image-verification.sh   # needs mksh, no root
+sudo python3 scripts/test-rootfs-build.py      # Linux: disposable ext4 loop fixture
 ```
+
+`test-boot-image-verification.sh` extracts the installer's own verification
+block by its markers and drives it under mksh, so it tests the shipped code
+rather than a copy: an installer that loses those markers fails the bench, and
+`validate-bundle.sh` fails any bundle whose packaged installer has lost the
+verification itself.
 
 These are build-tool regressions; they do not replace a full image build or
 physical installation/update acceptance.
