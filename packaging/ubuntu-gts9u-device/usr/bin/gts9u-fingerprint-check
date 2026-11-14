@@ -15,10 +15,9 @@
 # was never on anyone's PATH.
 set -uo pipefail
 
-# The three paths the bench redirects; everything else it fakes on PATH.
+# The paths the bench redirects; everything else it fakes on PATH.
 PROVISION=${GTS9U_FP_PROVISION:-/usr/libexec/ubuntu-gts9u-fingerprint-provision}
 DEVICE=${GTS9U_FP_DEVICE:-/sys/bus/platform/devices/egis-el721}
-TOD_DIR=${GTS9U_FP_TOD_DIR:-/usr/lib/aarch64-linux-gnu/libfprint-2/tod-1}
 
 section() { printf '\n== %s\n' "$1"; }
 verdict=''
@@ -107,14 +106,19 @@ for package in libfprint-2-2 libfprint-2-tod1 fprintd libpam-fprintd; do
 	printf '  %-18s %s\n' "$package" \
 		"$(dpkg-query -W -f '${Version}' "$package" 2>/dev/null || echo 'not installed')"
 done
-if [ -d "$TOD_DIR" ]; then
-	printf '  TOD drivers: %s\n' "$(ls "$TOD_DIR" 2>/dev/null | tr '\n' ' ')"
-	ls "$TOD_DIR" 2>/dev/null | grep -qi el721 ||
-		fault 'the EL721 TOD driver is not installed next to libfprint'
-else
-	echo "  $TOD_DIR: absent"
-	fault 'libfprint has no TOD driver directory, so no external driver can load'
-fi
+# The EL721 driver is compiled into this port's libfprint; it is not a TOD
+# plug-in, so there is no directory to look for.  What can go wrong is the
+# archive's libfprint replacing the port's -- same package name, no driver --
+# which is what an APT upgrade does when the local version is overtaken.
+libfprint_version=$(dpkg-query -W -f '${Version}' libfprint-2-2 2>/dev/null || echo '')
+case "$libfprint_version" in
+	*gts9u*) echo "  libfprint is this port's build" ;;
+	'') fault 'libfprint-2-2 is not installed' ;;
+	*)
+		echo "  libfprint-2-2 $libfprint_version is the archive's build: it has no EL721 driver"
+		fault "the archive's libfprint replaced this port's, so there is no EL721 driver"
+		;;
+esac
 echo '  devices fprintd offers:'
 if command -v busctl >/dev/null 2>&1; then
 	devices=$(busctl --system call net.reactivated.Fprint /net/reactivated/Fprint/Manager \
@@ -139,5 +143,5 @@ fi
 echo
 echo '  Paste this whole output into'
 echo '  https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/issues/9'
-echo '  It is the five places that have to agree, and it names no personal data:'
+echo '  It is the six stages that have to agree, and it names no personal data:'
 echo '  no account, no fingerprint template and no serial number.'

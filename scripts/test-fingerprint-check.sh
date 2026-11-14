@@ -28,14 +28,13 @@ mkfake() {  # $1 = name, rest = body
 }
 
 reset() {  # a tablet where every stage is satisfied
-	rm -rf "$W/bin" "$W/device" "$W/tod" "$W/provision" "$W/state"
-	mkdir -p "$W/bin" "$W/device" "$W/tod" "$W/state/firmware"
+	rm -rf "$W/bin" "$W/device" "$W/provision" "$W/state"
+	mkdir -p "$W/bin" "$W/device" "$W/state/firmware"
 	# A unit that read its own calibration out of its own EFS.
 	printf 'calibration' > "$W/state/firmware/calib.dat"
 	printf '#!/bin/sh\necho "EL721 provisioning status"\necho "  device node: present"\n' \
 		> "$W/provision"
 	chmod +x "$W/provision"
-	: > "$W/tod/libfprint-tod-el721.so"
 	mkfake id 'echo 0'
 	mkfake date 'echo 2026-11-13T00:00:00+01:00'
 	mkfake systemctl 'case "$1" in
@@ -44,7 +43,8 @@ reset() {  # a tablet where every stage is satisfied
   show) echo success ;;
 esac'
 	mkfake journalctl 'echo "kernel: egis-el721 el721: X916 secure companion ready"'
-	mkfake dpkg-query 'echo 1.2.3'
+	# every package at this port's own build, as an installed tablet has them
+	mkfake dpkg-query 'echo 1:1.95.1+tod1-0ubuntu3~gts9u3'
 	mkfake busctl 'echo "ao 1 \"/net/reactivated/Fprint/Device/0\""'
 }
 
@@ -52,7 +52,6 @@ run() {
 	PATH="$W/bin:/usr/bin:/bin" \
 	GTS9U_FP_PROVISION="$W/provision" \
 	GTS9U_FP_DEVICE="$W/device" \
-	GTS9U_FP_TOD_DIR="$W/tod" \
 	GTS9U_FP_STATE="$W/state" \
 		bash "$COMMAND" 2>&1
 }
@@ -94,12 +93,14 @@ case "$out" in
 esac
 
 echo
-echo '== 4. libfprint has no EL721 TOD driver =='
+echo '== 4. the archive libfprint replaced the port one =='
+# Same package name, no EL721 driver inside: what an APT upgrade leaves
+# behind when the archive's version overtakes the local one.
 reset
-rm -f "$W/tod"/*.so
+mkfake dpkg-query 'echo 1:1.95.1+tod1-0ubuntu2.1'
 out=$(verdict)
 case "$out" in
-	*'EL721 TOD driver is not installed'*) ok 'a missing TOD driver is named' ;;
+	*"archive's libfprint replaced this port's"*) ok 'an archive libfprint is named' ;;
 	*) bad "unexpected verdict: $out" ;;
 esac
 
@@ -127,11 +128,11 @@ esac
 
 echo
 echo '== 7. the first unsatisfied stage wins =='
-# Both the device and the TOD driver are missing: the verdict must name the
+# Both the device and the calibration are missing: the verdict must name the
 # one that comes first, because fixing a later stage cannot help.
 reset
 rmdir "$W/device"
-rm -f "$W/tod"/*.so
+rm -f "$W/state/firmware/calib.dat"
 out=$(verdict)
 case "$out" in
 	*'EL721 platform device is not there'*) ok 'the earliest stage is the verdict' ;;
