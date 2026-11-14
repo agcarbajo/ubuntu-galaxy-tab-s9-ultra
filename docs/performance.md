@@ -58,9 +58,17 @@ appended to `boot` leaves the live DT unchanged: ABL uses `vendor_boot` here.
 The appended-only test was rolled back to the original boot image.
 
 `kernel/dts/gts9u-performance.dtso` adds only the two OPP nodes.
-`scripts/stage-performance-overlay.sh` embeds it in a small built-in board
-helper. Its `core_initcall` applies the overlay to Linux's live tree, after
-OF initialization and before cpufreq and DRM can consume their OPP tables.
+`kernel/dts/gts9u-ufs-ice.dtso` is the same mechanism used for storage: it
+lists the UFS inline crypto engine's core clock with the UFS controller's
+clocks and gives each UFS OPP a rate for it, because the bootloader leaves
+that clock at 19.2 MHz and the engine then caps every UFS transfer near
+300 MB/s. The measurement behind it, and why the top rate is 201.5 MHz and
+not Samsung's 403 MHz, is in `docs/performance-2.1.0.md`.
+`scripts/stage-performance-overlay.sh` embeds both in a small built-in board
+helper. Its `core_initcall` applies them to Linux's live tree as two separate
+transactions, after OF initialization and before cpufreq, DRM and the UFS
+host can read the properties they change; one failing does not cost the
+board the other.
 It runs only for `samsung,gts9uwifi`. No firmware RPC, memory ownership change,
 Gunyah hook, reserved-memory modification or bootloader DT replacement occurs.
 The full board DTS also records the OPPs for a future unpinned build.
@@ -228,8 +236,9 @@ On the build host, using a known-good base DTB:
 bash scripts/test-performance-overlay.sh /path/to/validated-base.dtb
 ```
 
-This checks OPP properties, repeat application and staging, and that every
-other node/property is unchanged. No device is written by that test.
+This checks OPP properties, the UFS clock list and that every UFS OPP still
+has one rate per clock, repeat and reordered application, staging, and that
+every other node/property is unchanged. No device is written by that test.
 
 On the tablet:
 
