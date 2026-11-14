@@ -17,13 +17,24 @@ COUNTER = Path('/sys/class/rtc/rtc0/since_epoch')
 
 
 def restore_value(anchor, counter):
-    delta = counter - anchor['counter']
-    if delta < 0 or delta > 10 * 366 * 86400:
-        raise ValueError('RTC counter reset or implausible elapsed time')
-    value = anchor['utc'] + delta
-    if value < 1735689600:
+    """The UTC to set, and how it was reached: 'counter' or 'anchor'.
+
+    The PMIC counter is monotonic across both operating systems, so the
+    anchor plus its advance is the real time.  It restarts, though -- a
+    battery pull, a PMIC reset, and the forced restarts this board needs
+    after a storage resume failure are all candidates -- and then the delta
+    is negative or absurd.  That used to raise, the unit failed, and the
+    tablet sat in 1970 until a network arrived: every certificate expired,
+    APT refused its own archive and the clock was out by fifty-six years.
+    The last known time is out by however long the tablet was off, which is
+    the better of the two wrongs and the one systemd itself falls back to.
+    """
+    if anchor['utc'] < 1735689600:
         raise ValueError('No trusted UTC anchor')
-    return value
+    delta = counter - anchor['counter']
+    if 0 <= delta <= 10 * 366 * 86400:
+        return anchor['utc'] + delta, 'counter'
+    return anchor['utc'], 'anchor'
 
 
 def main():
@@ -39,10 +50,22 @@ def main():
         if not STATE.exists():
             print('UTC anchor will be saved after the first network synchronization')
             return
-        value = restore_value(json.loads(STATE.read_text()), counter)
+        try:
+            value, how = restore_value(json.loads(STATE.read_text()), counter)
+        except (ValueError, KeyError, TypeError) as error:
+            # Never fail the boot over the clock: without this the unit went
+            # down and nothing else tried.
+            print('No usable UTC anchor (%s); leaving the clock to the network'
+                  % error)
+            return
         time.clock_settime(time.CLOCK_REALTIME, value)
         RESTORED.touch()
-        print('Restored UTC from the continuing PMIC counter')
+        if how == 'counter':
+            print('Restored UTC from the continuing PMIC counter')
+        else:
+            print('The PMIC counter restarted; restored the last known UTC '
+                  '(%s) instead of leaving the tablet in 1970'
+                  % time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(value)))
     elif args.save:
         synced = subprocess.check_output(['timedatectl', 'show', '-p', 'NTPSynchronized', '--value'], text=True).strip() == 'yes'
         if not synced and not RESTORED.exists():

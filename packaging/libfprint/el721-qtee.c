@@ -628,11 +628,21 @@ load_ta (El721Qtee *session, const gchar *directory, const gchar *basename,
 const gchar *
 el721_qtee_firmware_directory (void)
 {
+  /* Probe the calibration, not a TA.  The TAs are the same on every SM-X910,
+   * so dualfp.b00 told us nothing about whether this tablet had been read:
+   * a unit whose provisioning failed got the packaged directory, which is the
+   * development unit's calibration, and nothing anywhere said so -- the
+   * reader then enrols and never recognises a finger. */
   g_autofree gchar *probe = g_build_filename (EL721_PROVISIONED_FIRMWARE,
-                                              "dualfp.b00", NULL);
+                                              "calib.dat", NULL);
 
   if (g_file_test (probe, G_FILE_TEST_IS_REGULAR))
     return EL721_PROVISIONED_FIRMWARE;
+
+  g_warning ("el721: this tablet has no provisioned calibration, so %s is in "
+             "use -- that is the development unit's calibration and it will "
+             "not recognise fingerprints here. Run `sudo gts9u-fingerprint-check` "
+             "to see which stage failed.", EL721_PACKAGED_FIRMWARE);
   return EL721_PACKAGED_FIRMWARE;
 }
 

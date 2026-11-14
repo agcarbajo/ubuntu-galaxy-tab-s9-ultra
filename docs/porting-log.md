@@ -8956,3 +8956,114 @@ brightness working on this same build; the Wi-Fi MAC helper degrades to a
 no-op on every failure, so it cannot be the cause. They need the reporters'
 journals, and the fingerprint command above is the pattern to follow if they
 stay open.
+
+## 2026-11-14: the open reports, attacked rather than triaged
+
+Six faults that other owners see and this unit does not. The rule followed
+here was to find the mechanism rather than ask for logs: a report that says
+"it does not work" is the end of a conversation, and every fault below turned
+out to be visible from this side once it was looked for.
+
+### Fingerprint: two ways to end up on another unit's calibration
+
+`calib.dat` is this tablet's factory calibration, read from its own `sec_efs`.
+The packaged firmware directory carries the development unit's copy, and
+`el721_qtee_firmware_directory()` fell back to it whenever the provisioned
+directory was not there -- by probing `dualfp.b00`, a TA that is identical on
+every SM-X910, so the probe could not tell a provisioned tablet from an
+unprovisioned one. A reader calibrated for a different sensor enrols and never
+recognises a finger, which is exactly what #8 and #9 describe, and nothing in
+the system said a word about it.
+
+Two things put a tablet there, both fixed:
+
+- `provision()` collected the firmware, then the Android runtime, then
+  installed both from one staging directory. A runtime failure -- `super`
+  unmountable, no Android any more, a layout the parser does not know -- threw
+  the staging away, including the calibration it had just read from this
+  tablet's own EFS. The firmware half is installed now even when the runtime
+  half fails, the provenance records that the runtime is incomplete, and the
+  unit still reports failure so the owner sees it.
+- the calibration was looked for at exactly `biometrics/meta/egis_calibration_data.bin`.
+  One name, one path, one One UI version. It is a search now: the canonical
+  path first, then `egis_calibration*.bin` and `*calibration_data*.bin`
+  anywhere under `biometrics/`, with the size limit still enforced, symlinks
+  and directories refused, and the path that was used recorded.
+
+The driver now probes `calib.dat` instead, and warns through `g_warning` when
+it falls back, naming `gts9u-fingerprint-check`. That command reports the
+calibration as a stage of its own and makes it the verdict when it is missing,
+because no later stage can help while the reader is calibrated for another
+sensor. `scripts/test-fingerprint-provision.py` covers both fixes, including
+the case that used to lose the calibration.
+
+### A slow boot and a Wi-Fi that stops: three measured causes
+
+`systemd-analyze` on this unit: 59.3 s of userspace boot, and
+`ubuntu-gts9u-sensors-resume.service` alone takes 45.7 s of it. It is a
+oneshot wanted by `multi-user.target`, so the target waited for its whole
+discovery loop -- 45 attempts two seconds apart -- although it is ordered
+*after* the display manager precisely because nothing waits for it. It is
+`Type=simple` now: the loop runs in the background and the target is reached
+when it starts. That is most of a minute off every boot, on every unit.
+
+`NetworkManager-wait-online` took 18.1 s here with a working Wi-Fi. On a
+tablet whose Wi-Fi does not come up it waits out its full timeout on every
+boot, which is the other half of #11's report -- no Wi-Fi *and* a boot that
+takes forever. A drop-in caps it at ten seconds; nothing in this desktop
+needs the network before the greeter.
+
+The Wi-Fi sleep hook bound the card back with a single write. WCN7850 can
+still be powering its MHI stack up when the hook runs, and one refused write
+left the tablet with no Wi-Fi until the next reboot -- "Wi-Fi has stopped
+working, boots are hit or miss". It retries five times a second apart now,
+says which attempt worked, and when it gives up it says what that means.
+`scripts/test-ath12k-sleep.sh` drives a card that answers late, one that never
+answers, and the ordinary paths.
+
+### Deep suspend: not fixed, but not repeated
+
+The UFS PHY fault is unchanged and not fixable from here; `docs/resume-recovery.md`
+has the evidence. What is new is that the tablet stops offering it a second
+chance. `ubuntu-gts9u-sleep-mode` reads the previous boot's kernel log on
+startup, and if it ends in `Failed to calibrate PHY` or `ufshcd_wl_resume
+failed` it selects `s2idle` -- which never tears the PHY down -- and remembers
+that in `/var/lib/ubuntu-gts9u/force-light-sleep`. The hook that sees the
+failure cannot write anything by then, which is why the evidence is read on
+the next boot instead. A tablet that has never seen the fault keeps deep
+sleep, because light sleep costs real standby battery, and the owner can go
+back by removing the marker.
+
+### The clock, where it actually broke
+
+The port already keeps its own anchor -- the PMIC's monotonic counter paired
+with a known UTC -- rather than writing the RTC that Android shares; Samsung
+keeps its offset in encrypted `/data`, so there is nothing to share. Verified
+healthy on this unit: anchor `counter=1480483 utc=1794682698.9`, counter
+`1487724`, and 1794682698.9 + 7241 is the current time to the second.
+
+The hole was the other branch. When the counter restarts -- a battery pull, a
+PMIC reset, or one of the forced restarts this board needs after a storage
+resume failure -- `restore_value()` raised, the unit failed, and the tablet
+sat in 1970 until a network arrived: every certificate expired, APT refusing
+its own archive. That is "sometimes it has the right time and sometimes it
+does not". It now falls back to the last known UTC, which is wrong by the time
+the tablet was off rather than by fifty-six years, and says so. An anchor that
+was never trustworthy is still refused.
+
+### Battery: the mechanism is understood and nothing is changed
+
+`capacity_max` is the SM5714's learned full-charge scale, and the port already
+persists Ubuntu's across boots. Android learns its own in its own storage, so
+the two scale the same raw charge by slightly different numbers and differ by
+a point or two. Matching Android exactly would mean reading Android's learned
+value out of encrypted `/data`. This is left as it is on purpose.
+
+### Camera and automatic brightness: examined, not changed
+
+The camera relays already restart on failure, carry the conditions that stop a
+root restart-loop before the first-boot wizard, and depend on the desktop
+user's PipeWire graph through a drop-in written at boot; nothing in that chain
+is wrong from here. The brightness hysteresis is a measured value from this
+unit, and widening it blind would trade a reported wobble for a sluggish
+screen on every tablet. Both stay as they are, deliberately.

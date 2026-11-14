@@ -65,6 +65,24 @@ else
 	fault 'the provisioning helper is not installed'
 fi
 
+section 'calibration'
+# The one file that must come from this tablet.  Everything else in that
+# directory is the same on every SM-X910.
+PROVISIONED=${GTS9U_FP_STATE:-/var/lib/ubuntu-gts9u/fingerprint}
+if [ -f "$PROVISIONED/firmware/calib.dat" ]; then
+	echo "  this tablet's calibration: provisioned"
+	if [ -f "$PROVISIONED/provenance.json" ]; then
+		grep -o '"from": "[a-z_]*:[^"]*"' "$PROVISIONED/provenance.json" |
+			grep -E 'sec_efs|efs' | head -2 | sed 's/^/    read /'
+	fi
+else
+	echo "  this tablet's calibration: MISSING"
+	echo '  The driver falls back to the packaged directory, which carries another'
+	echo "  tablet's calibration: it enrols and never recognises a finger here."
+	echo '  This is the fault to fix first.'
+	fault 'this tablet has no calibration of its own, so the packaged (foreign) one is in use'
+fi
+
 section 'services'
 for unit in ubuntu-gts9u-fingerprint-provision ubuntu-gts9u-fingerprint-secure fprintd; do
 	printf '  %-34s %s / %s' "$unit" \

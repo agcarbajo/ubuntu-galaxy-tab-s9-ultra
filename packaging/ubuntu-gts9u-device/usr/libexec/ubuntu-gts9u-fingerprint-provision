@@ -58,6 +58,9 @@ LEGACY_RUNTIME = Path('/var/lib/ubuntu-gts9u/android-secnvm-root')
 PACKAGED_FIRMWARE = Path('/usr/lib/firmware/gts9u/fingerprint')
 PACKAGED_LIBS = Path('/usr/lib/ubuntu-gts9u/fingerprint')
 PACKAGED_SHIM = PACKAGED_LIBS / 'liblog_capture.so'
+# The platform device the driver publishes; a constant so the bench can point
+# it somewhere that exists.
+DEVICE_NODE = Path('/sys/bus/platform/devices/egis-el721')
 NVM_DIRS = (Path('/mnt/vendor/persist'), Path('/mnt/vendor/spunvm'))
 BY_LABEL = Path('/dev/disk/by-partlabel')
 # spdaemon reads the firmware name from a path relative to its working
@@ -76,6 +79,14 @@ OPTICAL_MAX = 4 * 1024 * 1024
 EFS_PARTITIONS = ('sec_efs', 'efs')
 EFS_CALIBRATION = 'biometrics/meta/egis_calibration_data.bin'
 EFS_OPTICAL = 'biometrics/meta/egoptbds.dat'
+# The canonical paths first, then a search of the same directory tree.  One
+# hard-coded path is the difference between a unit calibrating itself and
+# silently running on the development unit's calibration, which is what the
+# packaged fallback is, and no One UI version has been seen here but this one.
+EFS_CALIBRATION_PATTERNS = (EFS_CALIBRATION,
+                            'biometrics/**/egis_calibration*.bin',
+                            'biometrics/**/*calibration_data*.bin')
+EFS_OPTICAL_PATTERNS = (EFS_OPTICAL, 'biometrics/**/egoptbds*.dat')
 
 # Runtime files, relative to the runtime root, and where Android keeps them.
 # The bootstrap Bionic copies exist on every Android 10+ system image for
@@ -389,19 +400,21 @@ def collect_firmware(stage, report):
         if not (BY_LABEL / label).is_block_device():
             continue
         with Mount(label, None, 'ro,noload') as root:
-            source = root / EFS_CALIBRATION
-            if not source.is_file():
+            source = efs_candidate(root, EFS_CALIBRATION_PATTERNS, CALIBRATION_MAX)
+            if source is None:
                 continue
             copy_into(source, firmware / 'calib.dat', 0o600)
             check_size(firmware / 'calib.dat', CALIBRATION_MAX, 'calib.dat')
-            report['sources']['calib.dat'] = {'from': label + ':' + EFS_CALIBRATION,
-                                              'sha256': sha256(firmware / 'calib.dat')}
-            optical = root / EFS_OPTICAL
-            if optical.is_file():
+            report['sources']['calib.dat'] = {
+                'from': label + ':' + source.relative_to(root).as_posix(),
+                'sha256': sha256(firmware / 'calib.dat')}
+            optical = efs_candidate(root, EFS_OPTICAL_PATTERNS, OPTICAL_MAX)
+            if optical is not None:
                 copy_into(optical, firmware / 'egoptbds.dat', 0o600)
                 check_size(firmware / 'egoptbds.dat', OPTICAL_MAX, 'egoptbds.dat')
-                report['sources']['egoptbds.dat'] = {'from': label + ':' + EFS_OPTICAL,
-                                                     'sha256': sha256(firmware / 'egoptbds.dat')}
+                report['sources']['egoptbds.dat'] = {
+                    'from': label + ':' + optical.relative_to(root).as_posix(),
+                    'sha256': sha256(firmware / 'egoptbds.dat')}
             calibrated = label
             break
     if calibrated is None:
@@ -418,6 +431,26 @@ def collect_firmware(stage, report):
                                              'warning': 'not from this unit; One UI keeps it under '
                                                         '/data/vendor/biometrics/meta'}
         report['warnings'].append('egoptbds.dat taken from the packaged firmware, not from this unit')
+
+
+def efs_candidate(root, patterns, limit):
+    """The first plausible file under a mounted EFS, or None.
+
+    Only regular files inside the mount are accepted, and only up to the size
+    the caller allows, so a renamed directory or a stray symlink cannot turn
+    into a calibration.
+    """
+    for pattern in patterns:
+        for path in sorted(root.glob(pattern)):
+            if not path.is_file() or path.is_symlink():
+                continue
+            try:
+                size = path.stat().st_size
+            except OSError:
+                continue
+            if 0 < size <= limit:
+                return path
+    return None
 
 
 def apex_payload(image_root, relative, stage, name):
@@ -615,7 +648,7 @@ def install(stage, report):
 def provision(force=False, want_runtime=True):
     if os.geteuid() != 0:
         raise ProvisionError('root required')
-    if not (Path('/sys/bus/platform/devices/egis-el721').exists()):
+    if not DEVICE_NODE.exists():
         log('no EL721 platform device; nothing to provision')
         return 0
     state = current_state()
@@ -630,17 +663,36 @@ def provision(force=False, want_runtime=True):
     if state['provenance']:
         report['sources'].update(state['provenance'].get('sources', {}))
     STATE.mkdir(mode=0o700, parents=True, exist_ok=True)
+    runtime_failure = None
     with tempfile.TemporaryDirectory(dir=STATE, prefix='.staging-') as staging:
         stage = Path(staging)
         if need_firmware:
             collect_firmware(stage, report)
         if need_runtime:
-            collect_runtime(stage, report)
+            try:
+                collect_runtime(stage, report)
+            except (ProvisionError, OSError, subprocess.CalledProcessError) as error:
+                # Install the firmware anyway.  It is this unit's own TAs and,
+                # above all, its own calibration; throwing it away because the
+                # Android runtime could not be read leaves the driver on the
+                # packaged set, which is the development unit's calibration,
+                # and nothing anywhere says so.  A tablet whose `super` cannot
+                # be mounted -- no Android installed any more, a layout this
+                # parser does not know -- lands exactly there.
+                runtime_failure = error
+                report['runtime_complete'] = False
+                report['warnings'].append(
+                    'the Android runtime could not be read from this tablet: %s' % error)
+                shutil.rmtree(stage / 'runtime', ignore_errors=True)
         install(stage, report)
     for warning in report['warnings']:
         log('warning: ' + warning)
     log('provisioned: firmware=%s runtime=%s complete=%s'
         % (need_firmware, need_runtime, report['runtime_complete']))
+    if runtime_failure is not None:
+        raise ProvisionError(
+            "this tablet's own fingerprint firmware is installed, but its Android "
+            'runtime is not, so the reader cannot start: %s' % runtime_failure)
     return 0
 
 
@@ -656,7 +708,7 @@ def check():
     is written."""
     state = current_state()
     lines = ['EL721 provisioning status']
-    lines.append('  device node: %s' % ('present' if Path('/sys/bus/platform/devices/egis-el721').exists() else 'absent'))
+    lines.append('  device node: %s' % ('present' if DEVICE_NODE.exists() else 'absent'))
     for label in ('apnhlos', 'sec_efs', 'efs', 'super'):
         lines.append('  partition %-8s %s' % (label, 'present' if (BY_LABEL / label).is_block_device() else 'MISSING'))
     lines.append('  provisioned firmware: %s' % ('yes' if state['firmware'] else 'no'))

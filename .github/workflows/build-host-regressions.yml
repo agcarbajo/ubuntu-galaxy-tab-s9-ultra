@@ -20,6 +20,9 @@ jobs:
       - name: Check shell syntax
         run: |
           bash -n scripts/test-fingerprint-check.sh scripts/test-storage-health.sh
+          bash -n scripts/test-ath12k-sleep.sh scripts/test-sleep-mode.sh
+          sh -n packaging/ubuntu-gts9u-device/usr/libexec/ubuntu-gts9u-sleep-mode
+          sh -n packaging/ubuntu-gts9u-device/usr/lib/systemd/system-sleep/ubuntu-gts9u-ath12k-sleep
           sh -n packaging/ubuntu-gts9u-device/usr/lib/systemd/system-sleep/ubuntu-gts9u-storage-health
           bash -n packaging/ubuntu-gts9u-device/usr/bin/gts9u-fingerprint-check
           bash -n scripts/rootfs-build-lib.sh scripts/select-qemu-user-package.sh scripts/install-build-deps.sh scripts/check-build-deps.sh scripts/build-ufs-image.sh scripts/build-ubuntu-rootfs.sh scripts/build-release.sh scripts/build-libfprint-el721.sh scripts/validate-bundle.sh scripts/test-boot-image-verification.sh
@@ -37,6 +40,12 @@ jobs:
         run: |
           bash scripts/test-fingerprint-check.sh
           bash scripts/test-storage-health.sh
+      - name: Test provisioning, the Wi-Fi sleep hook, the sleep state and the clock
+        run: |
+          sudo python3 scripts/test-fingerprint-provision.py
+          bash scripts/test-ath12k-sleep.sh
+          bash scripts/test-sleep-mode.sh
+          python3 scripts/test-rtc-time.py
       - name: Test the installer's boot image read-back
         run: |
           sudo apt-get update

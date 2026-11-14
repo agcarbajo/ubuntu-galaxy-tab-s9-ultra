@@ -1,0 +1,77 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+#
+# Pick the sleep state this tablet uses, and stop the UFS resume fault from
+# happening a second time.
+#
+# Deep suspend on this board sometimes comes back without the internal
+# storage: the UFS PHY fails to calibrate, the controller never re-enables and
+# ext4 drops the root filesystem to read-only until a forced restart.  The
+# cause is upstream's -- `ufs-qcom` declares `no_phy_retention` for every
+# SM8550 and so forces `spm_lvl = 5`, tearing the PHY down on every system
+# suspend -- and nothing here fixes it.
+#
+# `s2idle` never tears it down.  It costs real standby battery, which is why
+# it is not the default: a tablet that has never seen the fault keeps deep
+# sleep.  But a tablet that *has* seen it has already told us something about
+# its own hardware, and the second occurrence is pure loss.  So the first
+# failure is remembered and this tablet uses light sleep from then on.
+#
+# The hook that sees the failure cannot write anything -- by then the disk is
+# gone -- so the evidence is read here, on the next boot, out of the previous
+# boot's kernel log.
+#
+# The owner decides in the end: remove the marker to go back to deep sleep,
+# create it to stay on light sleep for good.
+#
+#   sudo rm /var/lib/ubuntu-gts9u/force-light-sleep     # deep sleep again
+#   sudo touch /var/lib/ubuntu-gts9u/force-light-sleep  # light sleep always
+set -u
+
+STATE=${GTS9U_SLEEP_STATE:-/var/lib/ubuntu-gts9u}
+MARKER=$STATE/force-light-sleep
+MEM_SLEEP=${GTS9U_SLEEP_MEM_SLEEP:-/sys/power/mem_sleep}
+JOURNAL=${GTS9U_SLEEP_JOURNAL:-journalctl}
+
+# The two lines the fault leaves behind, and nothing else does.
+SIGNATURE='Failed to calibrate PHY|ufshcd_wl_resume failed'
+
+note() { logger -t ubuntu-gts9u-sleep-mode "$1" 2>/dev/null || true; }
+
+select_s2idle() {
+	[ -w "$MEM_SLEEP" ] || return 1
+	case " $(cat "$MEM_SLEEP" 2>/dev/null) " in
+		*' [s2idle] '*) return 0 ;;        # already chosen
+		*s2idle*) ;;
+		*) note 'this kernel offers no s2idle state'; return 1 ;;
+	esac
+	printf 's2idle\n' > "$MEM_SLEEP" 2>/dev/null || return 1
+	return 0
+}
+
+if [ -e "$MARKER" ]; then
+	if select_s2idle; then
+		note 'light sleep selected: this tablet has lost its storage on resume before'
+	else
+		note 'could not select light sleep'
+	fi
+	exit 0
+fi
+
+# Nothing remembered yet: did the previous boot end in the fault?
+previous=$("$JOURNAL" -k -b -1 --no-pager 2>/dev/null | grep -cE "$SIGNATURE") || previous=0
+case "$previous" in
+	''|0)
+		exit 0 ;;
+esac
+
+mkdir -p "$STATE" 2>/dev/null || true
+if : > "$MARKER" 2>/dev/null; then
+	note "the previous boot lost its storage on resume ($previous kernel messages);"' remembering light sleep'
+else
+	note 'the previous boot lost its storage on resume, but the marker could not be written'
+fi
+if select_s2idle; then
+	note 'light sleep selected for this boot'
+fi
+exit 0

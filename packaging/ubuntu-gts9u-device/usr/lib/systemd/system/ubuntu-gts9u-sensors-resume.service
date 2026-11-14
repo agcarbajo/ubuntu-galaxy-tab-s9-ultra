@@ -12,11 +12,18 @@ After=display-manager.service
 ConditionPathExists=/usr/bin/ssccli
 
 [Service]
-Type=oneshot
+# Deliberately not oneshot.  SSC discovery allows 45 attempts two seconds
+# apart, and as a oneshot wanted by multi-user.target that wait was part of
+# the boot: measured on the development unit, this single service took 45.7 s
+# of a 59.3 s userspace boot, and nothing waits for it to finish -- it is
+# ordered after the display manager precisely because the desktop is already
+# there.  As Type=simple the target is reached as soon as it starts, and the
+# recovery goes on in the background.
+Type=simple
 ExecStartPre=/bin/sleep 2
 ExecStart=/usr/libexec/ubuntu-gts9u-sensors-resume
-# SSC discovery is slow: the loop allows 45 attempts two seconds apart.
-TimeoutStartSec=210
+# The loop ends itself; this only stops a wedged run from living forever.
+RuntimeMaxSec=210
 
 [Install]
 WantedBy=multi-user.target

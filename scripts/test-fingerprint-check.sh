@@ -28,8 +28,10 @@ mkfake() {  # $1 = name, rest = body
 }
 
 reset() {  # a tablet where every stage is satisfied
-	rm -rf "$W/bin" "$W/device" "$W/tod" "$W/provision"
-	mkdir -p "$W/bin" "$W/device" "$W/tod"
+	rm -rf "$W/bin" "$W/device" "$W/tod" "$W/provision" "$W/state"
+	mkdir -p "$W/bin" "$W/device" "$W/tod" "$W/state/firmware"
+	# A unit that read its own calibration out of its own EFS.
+	printf 'calibration' > "$W/state/firmware/calib.dat"
 	printf '#!/bin/sh\necho "EL721 provisioning status"\necho "  device node: present"\n' \
 		> "$W/provision"
 	chmod +x "$W/provision"
@@ -51,6 +53,7 @@ run() {
 	GTS9U_FP_PROVISION="$W/provision" \
 	GTS9U_FP_DEVICE="$W/device" \
 	GTS9U_FP_TOD_DIR="$W/tod" \
+	GTS9U_FP_STATE="$W/state" \
 		bash "$COMMAND" 2>&1
 }
 
@@ -111,7 +114,19 @@ case "$out" in
 esac
 
 echo
-echo '== 6. the first unsatisfied stage wins =='
+echo '== 6. no calibration of this tablet =='
+# The packaged directory is another unit's calibration: the reader enrols and
+# never recognises a finger, and before this the only sign was silence.
+reset
+rm -f "$W/state/firmware/calib.dat"
+out=$(verdict)
+case "$out" in
+	*'no calibration of its own'*) ok 'a foreign calibration is named as the fault' ;;
+	*) bad "unexpected verdict: $out" ;;
+esac
+
+echo
+echo '== 7. the first unsatisfied stage wins =='
 # Both the device and the TOD driver are missing: the verdict must name the
 # one that comes first, because fixing a later stage cannot help.
 reset
@@ -124,7 +139,7 @@ case "$out" in
 esac
 
 echo
-echo '== 7. it refuses to run without root =='
+echo '== 8. it refuses to run without root =='
 reset
 mkfake id 'echo 1000'
 out=$(run)

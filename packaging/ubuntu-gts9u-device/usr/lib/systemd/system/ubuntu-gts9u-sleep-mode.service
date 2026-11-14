@@ -1,0 +1,17 @@
+[Unit]
+Description=Select this tablet's sleep state after a storage resume failure
+Documentation=file:///usr/share/doc/ubuntu-gts9u-device/README.md
+# The evidence is the previous boot's kernel log, so this needs the journal
+# to be open, and it must run before anything can suspend.
+After=systemd-journald.service local-fs.target
+Before=suspend.target sleep.target
+ConditionPathExists=/sys/power/mem_sleep
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/ubuntu-gts9u-sleep-mode
+TimeoutStartSec=30
+
+[Install]
+WantedBy=multi-user.target

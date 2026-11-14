@@ -7,8 +7,15 @@
 # second lid cycle can start soon after the first one completes.
 set -eu
 
-driver=/sys/bus/pci/drivers/ath12k_wifi7_pci
-state=/run/ubuntu-gts9u-ath12k-sleep.bdf
+driver=${GTS9U_ATH12K_DRIVER:-/sys/bus/pci/drivers/ath12k_wifi7_pci}
+devices=${GTS9U_ATH12K_DEVICES:-/sys/bus/pci/devices}
+state=${GTS9U_ATH12K_STATE:-/run/ubuntu-gts9u-ath12k-sleep.bdf}
+# The bind is a single shot no longer.  WCN7850 can still be powering its MHI
+# stack up when the hook runs, and one refused write left the tablet with no
+# Wi-Fi until the next reboot -- which is what "Wi-Fi has stopped working,
+# boots are hit or miss" looks like from the outside (#8, #11).
+attempts=${GTS9U_ATH12K_ATTEMPTS:-5}
+pause=${GTS9U_ATH12K_PAUSE:-1}
 
 case "${1:-}" in
     pre)
@@ -32,13 +39,20 @@ case "${1:-}" in
             ????\:??\:??.?) ;;
             *) logger -t ubuntu-gts9u-ath12k-sleep 'invalid saved PCIe device'; exit 1 ;;
         esac
-        if [ "$(readlink -f "/sys/bus/pci/devices/$bdf/driver" 2>/dev/null)" = "$driver" ] ||
-           printf '%s' "$bdf" > "$driver/bind"; then
-            rm -f -- "$state"
-            logger -t ubuntu-gts9u-ath12k-sleep "bound $bdf after suspend"
-        else
-            logger -t ubuntu-gts9u-ath12k-sleep "failed to bind $bdf"
-            exit 1
-        fi
+        attempt=1
+        while [ "$attempt" -le "$attempts" ]; do
+            if [ "$(readlink -f "$devices/$bdf/driver" 2>/dev/null)" = "$driver" ] ||
+               printf '%s' "$bdf" > "$driver/bind" 2>/dev/null; then
+                rm -f -- "$state"
+                logger -t ubuntu-gts9u-ath12k-sleep \
+                    "bound $bdf after suspend (attempt $attempt)"
+                exit 0
+            fi
+            attempt=$((attempt + 1))
+            [ "$attempt" -le "$attempts" ] && sleep "$pause"
+        done
+        logger -t ubuntu-gts9u-ath12k-sleep \
+            "failed to bind $bdf after $attempts attempts; Wi-Fi stays down until reboot"
+        exit 1
         ;;
 esac

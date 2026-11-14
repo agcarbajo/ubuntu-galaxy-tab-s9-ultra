@@ -211,11 +211,30 @@ and `sudo apt-get check` only after booting the correct Ubuntu installation.
   sudo gts9u-fingerprint-check
   ```
 
-  and paste its whole output into the issue. It reports the five stages that
-  have to agree -- the platform device, the provisioning, the two services,
-  libfprint's driver and what fprintd offers -- and names the first one that
-  is not satisfied. It reads only; it provisions nothing and writes nothing,
-  and it carries no account, template or serial number.
+  and paste its whole output into the issue. It reports the six stages that
+  have to agree -- the platform device, this tablet's own calibration, the
+  provisioning, the two services, libfprint's driver and what fprintd offers
+  -- and names the first one that is not satisfied. It reads only; it
+  provisions nothing and writes nothing, and it carries no account, template
+  or serial number.
+
+  Two faults behind that report are fixed in this release. A tablet whose
+  Android runtime could not be read used to lose the calibration it had
+  already taken from its own EFS, and a tablet that keeps that calibration
+  anywhere but one exact path was never read at all; either way the driver
+  fell back to the packaged firmware, which is the development unit's
+  calibration -- the reader then enrols and never recognises a finger, with
+  nothing anywhere saying so. It now says so.
+- **A slow first boot, and no Wi-Fi** ([#11](https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/issues/11),
+  [#8](https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/issues/8)): two
+  measured causes are fixed in this release. The sensor recovery held
+  `multi-user.target` for its whole discovery loop -- 45.7 s of a 59.3 s
+  userspace boot on the development unit -- and now runs in the background,
+  where nothing waits for it. And the Wi-Fi sleep hook bound the card back
+  with a single write: a card still powering up refused it and the tablet had
+  no Wi-Fi until the next reboot, so it now retries. A tablet whose Wi-Fi
+  does not come up at all also waited out `NetworkManager-wait-online` on
+  every boot; that wait is capped at ten seconds.
 - **EF-DX925 keyboard backlight and Fn+F12 stay dark** ([#8](https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/issues/8)): the
   MAX77816 booster was left at 3.3 V. The kernel raises it to Samsung's
   5.14 V for the DX915/DX925, untested here without that cover.
@@ -232,6 +251,12 @@ EF-DX925 are untested as I don't have them, so they might not work.
   `/run/gts9u-storage-failed`. The fault itself is not fixed; it is the same
   one upstream reports for `spm_lvl = 5` on SM8550, and
   [docs/resume-recovery.md](docs/resume-recovery.md) records what is known.
+
+  What the tablet does now is refuse to walk into it twice: the next boot
+  after a storage resume failure selects light sleep (`s2idle`), which never
+  tears the UFS PHY down, and remembers that choice. It costs standby
+  battery, so a tablet that has never seen the fault keeps deep sleep. To go
+  back: `sudo rm /var/lib/ubuntu-gts9u/force-light-sleep`.
 
 ## Documentation
 
