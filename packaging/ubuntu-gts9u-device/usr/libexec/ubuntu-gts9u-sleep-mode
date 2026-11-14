@@ -6,10 +6,10 @@
 #
 # Deep suspend on this board sometimes comes back without the internal
 # storage: the UFS PHY fails to calibrate, the controller never re-enables and
-# ext4 drops the root filesystem to read-only until a forced restart.  The
-# cause is upstream's -- `ufs-qcom` declares `no_phy_retention` for every
-# SM8550 and so forces `spm_lvl = 5`, tearing the PHY down on every system
-# suspend -- and nothing here fixes it.
+# ext4 drops the root filesystem to read-only until a forced restart.  Or the
+# panel never comes back at all.  The cause is upstream's -- `ufs-qcom`
+# declares `no_phy_retention` for every SM8550 and so forces `spm_lvl = 5`,
+# tearing the PHY down on every system suspend -- and nothing here fixes it.
 #
 # `s2idle` never tears it down.  It costs real standby battery, which is why
 # it is not the default: a tablet that has never seen the fault keeps deep
@@ -17,9 +17,18 @@
 # its own hardware, and the second occurrence is pure loss.  So the first
 # failure is remembered and this tablet uses light sleep from then on.
 #
-# The hook that sees the failure cannot write anything -- by then the disk is
-# gone -- so the evidence is read here, on the next boot, out of the previous
-# boot's kernel log.
+# The evidence cannot be the kernel log.  Measured on 2026-11-14: the journal
+# of a boot that died this way ends at "PM: suspend entry (deep)", because the
+# lines that describe the failure are logged after the disk is gone.  What
+# does survive is the marker ubuntu-gts9u-storage-health writes before every
+# suspend and removes after every resume that found the storage healthy.  If
+# it is still there at boot, the last suspend never ended well.
+#
+# That alone would also convict a battery that ran flat while the tablet
+# slept.  The marker carries the PMIC counter, which keeps counting while the
+# tablet is off, and the charge at the moment of suspending, so a suspend that
+# began with charge to spare and was cut short within two days is a failed
+# resume, and anything else is left alone.
 #
 # The owner decides in the end: remove the marker to go back to deep sleep,
 # create it to stay on light sleep for good.
@@ -29,12 +38,15 @@
 set -u
 
 STATE=${GTS9U_SLEEP_STATE:-/var/lib/ubuntu-gts9u}
-MARKER=$STATE/force-light-sleep
+CHOICE=$STATE/force-light-sleep
+MARKER=$STATE/suspend-in-progress
 MEM_SLEEP=${GTS9U_SLEEP_MEM_SLEEP:-/sys/power/mem_sleep}
-JOURNAL=${GTS9U_SLEEP_JOURNAL:-journalctl}
+COUNTER=${GTS9U_SLEEP_COUNTER:-/sys/class/rtc/rtc0/since_epoch}
 
-# The two lines the fault leaves behind, and nothing else does.
-SIGNATURE='Failed to calibrate PHY|ufshcd_wl_resume failed'
+# A suspend that began with at least this much charge did not end because the
+# battery ran out, as long as it was cut short within this many seconds.
+MIN_CAPACITY=20
+MAX_ASLEEP=172800
 
 note() { logger -t ubuntu-gts9u-sleep-mode "$1" 2>/dev/null || true; }
 
@@ -49,27 +61,55 @@ select_s2idle() {
 	return 0
 }
 
-if [ -e "$MARKER" ]; then
+is_number() {
+	case "$1" in
+		''|*[!0-9]*) return 1 ;;
+	esac
+	return 0
+}
+
+# Did the last suspend of the previous boot end in a restart instead of a
+# resume, for a reason that was not the battery?
+failed_resume() {
+	[ -f "$MARKER" ] || return 1
+	began='' capacity=''
+	read -r began capacity < "$MARKER" || true
+	rm -f -- "$MARKER" 2>/dev/null       # one verdict per marker
+	now=''
+	[ -r "$COUNTER" ] && read -r now < "$COUNTER"
+	if ! is_number "$began" || ! is_number "$capacity" || ! is_number "$now"; then
+		note 'a suspend never ended, but its marker cannot be read; ignoring it'
+		return 1
+	fi
+	if [ "$capacity" -lt "$MIN_CAPACITY" ]; then
+		note "a suspend never ended, but it began at $capacity% charge; the battery may simply have run out"
+		return 1
+	fi
+	if [ "$now" -lt "$began" ] || [ $((now - began)) -gt "$MAX_ASLEEP" ]; then
+		note 'a suspend never ended, but too long ago to tell a failed resume from a flat battery'
+		return 1
+	fi
+	note "the last suspend began at $capacity% charge and ended in a restart $((now - began)) s later, not in a resume"
+	return 0
+}
+
+if [ -e "$CHOICE" ]; then
+	rm -f -- "$MARKER" 2>/dev/null
 	if select_s2idle; then
-		note 'light sleep selected: this tablet has lost its storage on resume before'
+		note 'light sleep selected: this tablet has failed to resume from deep sleep before'
 	else
 		note 'could not select light sleep'
 	fi
 	exit 0
 fi
 
-# Nothing remembered yet: did the previous boot end in the fault?
-previous=$("$JOURNAL" -k -b -1 --no-pager 2>/dev/null | grep -cE "$SIGNATURE") || previous=0
-case "$previous" in
-	''|0)
-		exit 0 ;;
-esac
+failed_resume || exit 0
 
 mkdir -p "$STATE" 2>/dev/null || true
-if : > "$MARKER" 2>/dev/null; then
-	note "the previous boot lost its storage on resume ($previous kernel messages);"' remembering light sleep'
+if : > "$CHOICE" 2>/dev/null; then
+	note 'remembering light sleep for this tablet; remove '"$CHOICE"' to go back to deep sleep'
 else
-	note 'the previous boot lost its storage on resume, but the marker could not be written'
+	note 'light sleep could not be remembered: the marker could not be written'
 fi
 if select_s2idle; then
 	note 'light sleep selected for this boot'

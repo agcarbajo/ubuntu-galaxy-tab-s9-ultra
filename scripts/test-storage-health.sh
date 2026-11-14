@@ -38,6 +38,9 @@ run() {  # $@ = the hook's arguments
 	GTS9U_STORAGE_MOUNTS="$W/mounts" \
 	GTS9U_STORAGE_EXT4="$W/ext4" \
 	GTS9U_STORAGE_SESSIONS="$W/user" \
+	GTS9U_STORAGE_MARKER="$W/marker" \
+	GTS9U_STORAGE_COUNTER="$W/pmic" \
+	GTS9U_STORAGE_BATTERY="$W/capacity" \
 		dash "$HOOK" "$@" 2>&1
 }
 
@@ -98,12 +101,37 @@ run post > /dev/null
 	|| ok 'the flag is cleared when storage is back'
 
 echo
-echo '== 6. it does nothing on the way into suspend =='
-mounts 'rw,noatime,emergency_ro'
+echo '== 6. on the way into suspend it leaves a marker and nothing else =='
+# The marker is the only evidence that survives a resume that never happens:
+# the journal of such a boot ends at "PM: suspend entry".
+mounts 'rw,relatime'
+rm -f "$W/marker" "$W/flag"
+printf '1486800\n' > "$W/pmic"
+printf '61\n' > "$W/capacity"
 : > "$W/calls"
 run pre > /dev/null
-[ -e "$W/flag" ] && bad 'the pre hook wrote the flag' || ok 'the pre hook is a no-op'
+[ "$(cat "$W/marker" 2>/dev/null)" = '1486800 61' ] \
+	&& ok 'the marker carries the PMIC counter and the charge' \
+	|| bad "marker is: $(cat "$W/marker" 2>/dev/null)"
+[ -e "$W/flag" ] && bad 'the pre hook raised the failure flag' || ok 'no failure flag on the way in'
 [ -s "$W/calls" ] && bad 'the pre hook notified the owner' || ok 'the pre hook stays quiet'
+
+echo
+echo '== 6b. a healthy resume removes the marker =='
+mounts 'rw,relatime'
+printf '1486800 61\n' > "$W/marker"
+run post > /dev/null
+[ -e "$W/marker" ] && bad 'the marker survived a healthy resume' \
+	|| ok 'nothing is left for the next boot to find'
+
+echo
+echo '== 6c. a resume without storage leaves the marker where it is =='
+mounts 'rw,noatime,emergency_ro'
+printf '1486800 61\n' > "$W/marker"
+run post > /dev/null
+[ "$(cat "$W/marker" 2>/dev/null)" = '1486800 61' ] \
+	&& ok 'the evidence of the failed resume is kept' \
+	|| bad 'the marker was removed after a failed resume'
 
 echo
 echo '== 7. a session that is not a real uid is skipped =='

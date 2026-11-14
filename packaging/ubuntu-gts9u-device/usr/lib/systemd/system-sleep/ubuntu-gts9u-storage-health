@@ -1,7 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: MIT
 #
-# Say out loud when the internal storage did not come back from suspend.
+# Say out loud when the internal storage did not come back from suspend, and
+# leave evidence of a suspend that never ended.
 #
 # On this board the UFS PHY sometimes fails to calibrate on resume: the
 # controller never re-enables, every read and write to /dev/sda fails, and
@@ -12,23 +13,50 @@
 # The owner is left to work that out from a wall of kernel messages, and the
 # only way out is a forced restart.
 #
-# This does not fix the resume failure.  It names it, within a second of the
-# resume that caused it, and leaves a flag in /run that anything else can read.
+# This does not fix the resume failure.  After a resume it names it, within a
+# second, and leaves a flag in /run that anything else can read.
 #
-# It has to keep working on a tablet whose disk has just died, so it reads only
-# procfs and sysfs, writes only to /run (tmpfs), decides with shell builtins,
-# and treats every external command as optional: a binary that is not already
-# in the page cache cannot be loaded any more.
+# Before a suspend it writes a marker to disk, and removes it after a resume
+# that found the storage healthy.  That is the only evidence of the fault that
+# survives it: measured on 2026-11-14, the journal of a boot that died this
+# way ends at "PM: suspend entry (deep)", because the lines that describe the
+# failure are logged after the disk they would be written to is gone.  A marker
+# still there at the next boot means the last suspend never ended well, and
+# ubuntu-gts9u-sleep-mode decides what to make of it.
+#
+# The post half has to keep working on a tablet whose disk has just died, so
+# it reads only procfs and sysfs, writes only to /run (tmpfs), decides with
+# shell builtins, and treats every external command as optional: a binary
+# that is not already in the page cache cannot be loaded any more.
 set -u
 
-# The four paths the bench redirects; nothing else here leaves this script.
+# The paths the bench redirects; nothing else here leaves this script.
 FLAG=${GTS9U_STORAGE_FLAG:-/run/gts9u-storage-failed}
 MOUNTS=${GTS9U_STORAGE_MOUNTS:-/proc/mounts}
 EXT4=${GTS9U_STORAGE_EXT4:-/sys/fs/ext4}
 SESSIONS=${GTS9U_STORAGE_SESSIONS:-/run/user}
+MARKER=${GTS9U_STORAGE_MARKER:-/var/lib/ubuntu-gts9u/suspend-in-progress}
+COUNTER=${GTS9U_STORAGE_COUNTER:-/sys/class/rtc/rtc0/since_epoch}
+BATTERY=${GTS9U_STORAGE_BATTERY:-/sys/class/power_supply/sm5714-battery/capacity}
 MESSAGE='Internal storage did not come back from sleep. Nothing can be saved until you restart.'
 
-[ "${1:-}" = post ] || exit 0
+case "${1:-}" in
+	pre)
+		# "<PMIC counter> <battery percent>": when the suspend began on the one
+		# clock that keeps counting while the tablet is off, and how much charge
+		# there was, so the next boot can tell a resume that failed from a
+		# battery that simply ran out.  The kernel syncs filesystems on its way
+		# into suspend, which is what puts this on the disk.
+		counter=0
+		capacity=0
+		[ -r "$COUNTER" ] && read -r counter < "$COUNTER"
+		[ -r "$BATTERY" ] && read -r capacity < "$BATTERY"
+		printf '%s %s\n' "$counter" "$capacity" > "$MARKER" 2>/dev/null || true
+		exit 0
+		;;
+	post) ;;
+	*) exit 0 ;;
+esac
 
 root_options=''
 while read -r _device mount _type options _rest; do
@@ -57,7 +85,8 @@ if [ -z "$broken" ]; then
 fi
 
 if [ -z "$broken" ]; then
-	rm -f -- "$FLAG" 2>/dev/null
+	# This suspend ended well: there is nothing for the next boot to find.
+	rm -f -- "$FLAG" "$MARKER" 2>/dev/null
 	exit 0
 fi
 
