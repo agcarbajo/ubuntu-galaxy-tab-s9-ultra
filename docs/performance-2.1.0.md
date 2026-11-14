@@ -115,6 +115,42 @@ Seven units started at 7.0 s finish together around 14 s -- accounts-daemon
 7.5 s, udisks2 7.6 s, snapd.seeded 6.9 s, logind 4.2 s -- which is what a
 shared wait looks like rather than seven slow programs.
 
+## PID 1 keeps time like a metronome
+
+Between 9.1 s and 12.7 s of that boot, systemd logs one completed job every
+130 to 140 ms: 9.135, 9.264, 9.404, 9.550, 9.698, 9.817, 9.950 ... 11.955,
+12.225, 12.375, 12.512, 12.655. Twenty-five jobs in three and a half seconds,
+evenly spaced, while seven daemons that started at 7.0 s all wait for their
+turn. With some 250 units to bring up, that pace *is* the boot; it is also
+where the unexplained gaps come from -- a unit whose dependencies are met
+still waits for PID 1 to reach it -- and why `polkit` and `hostnamed`, asked
+for over the bus at about 10 s, are not even started until 12 s.
+
+Two obvious causes were measured on the idle tablet with
+`scripts/diagnostics/unit-start-probe.sh` and neither is it:
+
+| | ms per transient unit | ms per cgroup create+remove | fixed CPU job |
+|---|---|---|---|
+| as it idles (`schedutil`) | 54-62 | 14 | 502 ms |
+| expedited RCU | 43 | 16 | — |
+| `performance` governor | 62 | — | 291 ms |
+
+Expedited RCU buys about 30% on a unit start and nothing on the cgroup
+operations. The governor changes nothing for a unit start, so PID 1 is not
+waiting for a core to speed up -- but it makes CPU-bound work 1.7 times
+faster, which matters for the Python helpers this port runs during boot, and
+the port's own CPU boost is ordered after `power-profiles-daemon`, at the very
+end. Starting the boot under `performance` and handing over to the profile
+daemon afterwards is a candidate with a measurement behind it.
+
+What is left unexplained is the 14 ms a cgroup takes to create and remove,
+unchanged by expedited RCU, on a kernel where that is normally well under a
+millisecond; and the fact that an idle tablet needs 55 ms to start a unit that
+does nothing. That is kernel-side, it is where the next measurement goes
+(`perf trace` on PID 1, and the cgroup controllers this kernel enables), and
+it is the single thing most likely to change the boot by seconds rather than
+by a unit at a time.
+
 ## Idle, measured at the greeter, 2026-11-14
 
 Twenty seconds on the login screen, nobody touching the tablet, three minutes
