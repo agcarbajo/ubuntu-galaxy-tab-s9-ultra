@@ -268,6 +268,7 @@ EF-DX925 are untested as I don't have them, so they might not work.
 | [Galaxy Companion](docs/tab-companion.md) | The settings application, now in its own repository and pinned here as the `external/galaxy-companion` submodule |
 | [System updates](docs/system-updates.md) | GitHub and local ZIP updates, current-build repair and the updater for older installations |
 | [Ubuntu userspace](docs/ubuntu-userspace.md) | Root filesystem and desktop integration |
+| [Boot and runtime performance](docs/performance-2.1.0.md) | What the boot spends its time on, measured, and what is being done about it |
 | [Fingerprint reader](docs/fingerprint-reader.md) | Working EL721/UDFPS integration, validation evidence and maintenance constraints |
 | [Gunyah virtual machines](docs/gunyah.md) | Host-driver architecture, current validation and tablet test procedure |
 | [Development notes](docs/development-notes.md) | Durable technical conclusions and rejected approaches |
