@@ -58,6 +58,62 @@ instead of 59 s. The greeter may or may not move, depending on whether GDM was
 itself waiting behind `multi-user.target`; `systemd-analyze critical-chain`
 and a search for `Found ordering cycle` in the journal will say which.
 
+## Idle, measured at the greeter, 2026-11-14
+
+Twenty seconds on the login screen, nobody touching the tablet, three minutes
+after boot. Wakeups are voluntary context switches per second; the probe is
+`scripts/diagnostics/idle-probe.sh`.
+
+| Process | Wakeups/s | CPU |
+|---|---|---|
+| `gnome-shell --mode=gdm` | 130.5 | 7.8% |
+| `dbus-daemon --system` | 22.6 | 0.8% |
+| `ubuntu-gts9u-fingerprint-ui` | 20.1 | 0.7% |
+| `iio-sensor-proxy` | — | 1.5% |
+| `kworker ufs_clkscaling_0` | 12.8 | 0.1% |
+
+The system bus carried 491 messages in those twenty seconds, and 234 of them
+are one conversation repeated 39 times: the Shell's fingerprint overlay calls
+`Pulse` on `io.github.agcarbajo.Gts9uFingerprintUI` twice a second, and for
+each one the broker asks the bus who the caller is (`GetConnectionUnixUser`),
+asks logind for the seat's active session and for all of that session's
+properties, and resolves two names on the way (`GetNameOwner`, 78 times).
+
+That heartbeat is the visible end of the real cost. The overlay runs a 50 ms
+timer for as long as the extension is enabled -- `_startPanelPoll()` in
+`enable()`, stopped only in `disable()` -- and every tick, twenty times a
+second, inside the compositor's main loop, it synchronises the on-screen
+keyboard, decides whether to pulse, reads the panel's `fod_mode` from sysfs,
+and reads the fingerprint lease file with a *synchronous* `load_contents`.
+`_uiAllowed` is true whenever the built-in panel exists and the session is
+active, so this is not a lock-screen cost: it runs on the unlocked desktop
+too, for the whole session. A compositor that wakes 130 times a second with
+nothing on screen changing is where an idle tablet's battery goes, and a
+synchronous file read on that loop is a frame that can arrive late.
+
+What it is for is real: the kernel raises no event when the panel enters
+fingerprint high-brightness mode, and the overlay has to cover the screen
+within a frame or two of it. So the fix is not to remove the poll but to stop
+paying for it when nothing can happen:
+
+- poll at 20 Hz only while a fingerprint operation can be in flight -- the
+  lease file exists, the panel is in HBM, a hide is pending, or shortly after
+  any of those -- and otherwise let the directory monitor the overlay already
+  has (`_startVisualMonitor`, on `/run/gts9u-fingerprint`) wake it the moment
+  a lease appears;
+- make the availability lease last longer than two seconds, or renew it on
+  the events that can invalidate it (session change, keyboard covering the
+  target) instead of every 500 ms;
+- in the broker, keep the logind proxies instead of resolving them on every
+  pulse, and replace its own 250 ms tick with a single timer armed for the
+  moment the lease expires.
+
+None of this is done yet, on purpose. This is the code that makes fingerprint
+unlock work, its timings were measured on the panel, and a change here has to
+be accepted with a finger on the reader, on the lock screen and in a polkit
+prompt, before and after. The expected gain is the Shell back near idle; the
+measurement that proves it is this same table.
+
 ## Candidates, not yet done
 
 Boot:
