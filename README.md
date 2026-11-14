@@ -234,7 +234,7 @@ and `sudo apt-get check` only after booting the correct Ubuntu installation.
   with a single write: a card still powering up refused it and the tablet had
   no Wi-Fi until the next reboot, so it now retries. A tablet whose Wi-Fi
   does not come up at all also waited out `NetworkManager-wait-online` on
-  every boot; that wait is capped at ten seconds.
+  every boot; that wait is capped at twenty seconds.
 - **EF-DX925 keyboard backlight and Fn+F12 stay dark** ([#8](https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/issues/8)): the
   MAX77816 booster was left at 3.3 V. The kernel raises it to Samsung's
   5.14 V for the DX915/DX925, untested here without that cover.

@@ -52,11 +52,68 @@ continues behind it.
   it cost 18.1 s here; with Wi-Fi broken it costs its whole timeout on every
   boot, which is half of what #11 reports.
 
-Expected after both, to be confirmed on the next healthy boot: `multi-user.target`
-lands near the next longest wanted unit, so roughly 20-25 s of userspace
-instead of 59 s. The greeter may or may not move, depending on whether GDM was
-itself waiting behind `multi-user.target`; `systemd-analyze critical-chain`
-and a search for `Found ordering cycle` in the journal will say which.
+Measured on the tablet with both changes applied as temporary drop-ins, same
+day, cold boot against cold boot:
+
+| | Before | After |
+|---|---|---|
+| kernel | 3.694 s | 3.318 s |
+| `graphical.target` | 63.806 s | **29.401 s** |
+| userspace, "startup finished" | 63.809 s | 37.738 s |
+| `power-profiles-daemon` and the CPU boost start | ~63 s | 32.6 s |
+| GDM starts / greeter session opens | 19.3 s / 23.0 s | 18.8 s / 21.1 s |
+
+So the desktop's services are all up half a minute sooner, the performance
+profile and the CPU boost with them, and the login screen appears when it did
+before -- it never waited for the sensor recovery. The recovery itself still
+succeeds in the background: `SSC ready after attempt 1`, 15 s after it starts.
+No ordering cycle was logged on either boot.
+
+The same measurement corrected the second change. A ten-second cap made
+`NetworkManager-wait-online` *fail* on this unit, whose Wi-Fi takes 15 to 18 s
+to associate; it is twenty seconds now, and a timeout there is no longer a
+failed unit.
+
+## What the login screen waits for
+
+`scripts/diagnostics/boot-timeline.sh` and `boot-blockers.sh` exist because
+`blame` and `critical-chain` could not answer this. Monotonic seconds, kernel
+included:
+
+```
+ 6.96  basic.target
+ 7.00  dbus.service starts            up  9.14   (2.1 s)
+ 7.11  panel-coldboot-recover starts  up  9.95   (2.8 s; userspace frozen 7.17-9.00)
+ 9.55  NetworkManager starts          up 14.05   (4.5 s)
+14.85  network.target
+17.07  systemd-user-sessions starts   up 18.28
+18.84  gdm starts                     up 21.04
+```
+
+GDM is ordered after `systemd-user-sessions`, which is ordered after
+`network.target`, which waits for NetworkManager to be *up*. So the login
+screen is held by the network daemon's start, and three things stretch it:
+
+- **The panel recovery freezes userspace.** `ubuntu-gts9u-panel-coldboot-recover`
+  runs a `pm_test` suspend cycle to wake the DDIC before GDM may start, and
+  from 7.17 s to 9.00 s every process on the tablet is frozen. That is where
+  dbus's 2.1 s start comes from. It is necessary; whether it has to be a full
+  freeze, and whether it could run before the burst at 7.0 s rather than in
+  the middle of it, is the question.
+- **NetworkManager waits 2.4 s for hostnamed.** Its log is silent from 9.95 s
+  to 12.31 s, and the next line is `hostname: using hostnamed`.
+  `systemd-hostnamed` is bus-activated and did not start until 12.2 s. A
+  static hostname in NetworkManager's configuration, or hostnamed started
+  early, would take that out of the greeter's path.
+- **2.2 s that nothing explains yet.** Every unit `systemd-user-sessions` is
+  ordered after was up at 14.85 s and it did not begin until 17.07 s. No
+  daemon-reload ran then (the one from `ubuntu-gts9u-desktop-user` is at
+  21.2 s, 651 ms, right as the greeter session opens, which is its own small
+  cost). A bootchart is the next measurement.
+
+Seven units started at 7.0 s finish together around 14 s -- accounts-daemon
+7.5 s, udisks2 7.6 s, snapd.seeded 6.9 s, logind 4.2 s -- which is what a
+shared wait looks like rather than seven slow programs.
 
 ## Idle, measured at the greeter, 2026-11-14
 
@@ -121,9 +178,15 @@ Boot:
 1. **`ubuntu-gts9u-audio-session@1000`, 19.8 s.** `Type=oneshot` with a 150 s
    timeout, after the user manager and the ADSP. Find out what it waits for
    and whether anything needs its completion before the desktop is usable.
-2. **`ubuntu-gts9u-pogo-firmware`, 14.6 s.** A firmware update for a keyboard
-   cover that may not even be attached. It should cost nothing when no cover
-   is present, and nothing waits for it when one is.
+2. **`ubuntu-gts9u-pogo-firmware` is not a candidate**, and it was nearly
+   broken by treating it as one. On an ordinary boot it takes 50 ms
+   (`controller already on V37`). The 14.6 s boot was a real reflash from V34,
+   which is what the controller is on after a trip through Android, and
+   `panel-coldboot-recover` is ordered after it on purpose: the writer holds
+   the controller lock and must finish before userspace is frozen. So a boot
+   that follows Android pays about 14 s before the login screen, by design.
+   Making this unit `Type=simple`, as was done for the sensor recovery, would
+   have let the freeze start in the middle of a flash.
 3. **`ubuntu-gts9u-desktop-user`, 8.9 s.** The camera relays and the audio
    session are ordered after it, so this one is genuinely on the path; what
    takes nine seconds inside it is the question.
