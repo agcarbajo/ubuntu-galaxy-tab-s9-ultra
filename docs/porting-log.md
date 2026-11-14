@@ -9067,3 +9067,49 @@ user's PipeWire graph through a drop-in written at boot; nothing in that chain
 is wrong from here. The brightness hysteresis is a measured value from this
 unit, and widening it blind would trade a reported wobble for a sluggish
 screen on every tablet. Both stay as they are, deliberately.
+
+## 2026-11-14, later: the same changes, tried on the tablet
+
+The tablet came back from the forced restart with a clean ext4, no errors
+counted and the clock restored to the second from the PMIC anchor. Having it
+back changed three things that had only been reasoned about.
+
+**The failed-resume detector could never have fired.** It looked for the UFS
+fault in the previous boot's kernel log, and that log ends at
+`PM: suspend entry (deep)`: the failure is logged after the disk it would be
+written to is gone. It now relies on a marker the sleep hook writes before
+every suspend -- the PMIC counter and the charge -- and removes after a
+healthy resume, so a marker found at boot is a suspend that ended in a
+restart. A suspend that began under 20% charge, or was cut short more than two
+days later, is not counted, so a flat battery is not a resume failure. Tried
+on the hardware: the hook wrote `1491928 100` and removed it after a resume.
+
+**The fingerprint check accused a reader that works.** On this unit it named
+"no TOD driver directory" as the fault. The EL721 driver is compiled into this
+port's libfprint; there is no such directory. The stage now checks that the
+installed libfprint is the port's build rather than the archive's, and on the
+tablet it reports every stage satisfied.
+
+**The boot changes were measured rather than estimated.** `graphical.target`
+went from 63.8 s to 29.4 s with the sensor recovery in the background; the
+login screen stays at about 21 s, because it never waited for it. The cap on
+`NetworkManager-wait-online` had to move from ten seconds to twenty: this
+unit's Wi-Fi takes 15 to 18 s to associate and the unit was failing on every
+boot. A change to the pogo firmware unit was made and reverted when the
+ordering showed the panel recovery depends on it finishing. All of that, the
+timeline of what the login screen does wait for, and the idle measurements,
+are in `docs/performance-2.1.0.md`.
+
+An interim build carries everything above: `ubuntu-26.04-sm-x910-v2.0.4.zip`,
+1,750,352,700 bytes, SHA-256
+`cd08f26612a153c9717da95bcbca53714e668d484f53f6da9feb466954258f6f`, from
+revision b2f6e52, with device 2.96, libfprint `~gts9u3` and Galaxy Companion
+1.0.1. Both validators pass, and the copy on the tablet has the same hash and
+is accepted by the installed Companion library as newer than 2.0.0. The
+number stays below 2.1.0 on purpose. It has not been installed.
+
+Two failures of the build host belong here because they cost the afternoon.
+Emptying Windows' TEMP removed the directory WSL keeps its swap disk in; WSL
+then ran without swap and the next heavy build took the VM down. And the WSL
+disk only grows: each build takes several gigabytes of C: that only an
+elevated `Optimize-VHD` gives back.
