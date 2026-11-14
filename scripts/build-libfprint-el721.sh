@@ -33,8 +33,8 @@ qcbor_commit=4ace4620d549f22c1163c5b00d3ae0c0dae1d207
 # Raise the `gts9uN` suffix whenever packaging/libfprint changes; the part
 # before it only moves when upstream's revision does.
 case "$suite" in
-  noble) default_version=1:1.94.7+tod1-0ubuntu6~gts9u54 ;;
-  resolute) default_version=1:1.95.1+tod1-0ubuntu3~gts9u2 ;;
+  noble) default_version=1:1.94.7+tod1-0ubuntu6~gts9u55 ;;
+  resolute) default_version=1:1.95.1+tod1-0ubuntu3~gts9u3 ;;
   *) echo "unsupported libfprint build suite: $suite" >&2; exit 2 ;;
 esac
 package_version=${LIBFPRINT_EL721_VERSION:-$default_version}
