@@ -126,30 +126,101 @@ where the unexplained gaps come from -- a unit whose dependencies are met
 still waits for PID 1 to reach it -- and why `polkit` and `hostnamed`, asked
 for over the bus at about 10 s, are not even started until 12 s.
 
-Two obvious causes were measured on the idle tablet with
-`scripts/diagnostics/unit-start-probe.sh` and neither is it:
+Three obvious causes were measured on the idle tablet with
+`scripts/diagnostics/unit-start-probe.sh`, and none of them is it:
 
-| | ms per transient unit | ms per cgroup create+remove | fixed CPU job |
-|---|---|---|---|
-| as it idles (`schedutil`) | 54-62 | 14 | 502 ms |
-| expedited RCU | 43 | 16 | â€” |
-| `performance` governor | 62 | â€” | 291 ms |
+| | ms per transient unit | fixed CPU job |
+|---|---|---|
+| as it idles (`schedutil`) | 54-62 | 502 ms |
+| expedited RCU | 43 | — |
+| `performance` governor | 62 | 291 ms |
 
-Expedited RCU buys about 30% on a unit start and nothing on the cgroup
-operations. The governor changes nothing for a unit start, so PID 1 is not
-waiting for a core to speed up -- but it makes CPU-bound work 1.7 times
-faster, which matters for the Python helpers this port runs during boot, and
-the port's own CPU boost is ordered after `power-profiles-daemon`, at the very
-end. Starting the boot under `performance` and handing over to the profile
-daemon afterwards is a candidate with a measurement behind it.
+Expedited RCU buys about 30% on a unit start. The governor changes nothing
+for a unit start, so PID 1 is not waiting for a core to speed up, although it
+makes CPU-bound work 1.7 times faster.
 
-What is left unexplained is the 14 ms a cgroup takes to create and remove,
-unchanged by expedited RCU, on a kernel where that is normally well under a
-millisecond; and the fact that an idle tablet needs 55 ms to start a unit that
-does nothing. That is kernel-side, it is where the next measurement goes
-(`perf trace` on PID 1, and the cgroup controllers this kernel enables), and
-it is the single thing most likely to change the boot by seconds rather than
-by a unit at a time.
+That last number suggested starting the boot under `performance` and handing
+over to the profile daemon afterwards. It was tried, with a unit that set the
+governor before `sysinit.target`, and it does not pay: GDM started at 19.26 s
+against 18.84 s without it. The boot is not waiting for the CPU. The unit was
+removed and this is not a candidate any more.
+
+An earlier version of this section also said that a cgroup takes 14 ms to
+create and remove on this kernel, and called that the most promising lead.
+That was wrong. The probe timed `mkdir` and `rmdir` as two spawned programs,
+and the same pair on a tmpfs costs 9.6 ms: it was measuring process creation.
+The kernel itself is not slow at this -- a system call costs 230 to 330 ns and
+a fork and exec 0.9 ms -- and its configuration carries none of the debugging
+options that would make it so.
+
+So the pace is still unexplained: an idle tablet needs about 55 ms to start a
+unit that does nothing, and during boot PID 1 completes a job every 135 ms.
+What is ruled out is the CPU frequency, RCU, cgroup operations and a debug
+kernel. What is not yet measured is PID 1 itself during those seconds
+(`perf trace -p 1`, or `strace -c`, across a boot), and the storage it reads
+from, which the next section shows was running at a fraction of its speed.
+
+## Storage: the UFS was running at a quarter of its speed
+
+The tablet's storage is a UFS 4.0 part (`KLUGGARHHD-B0G1`) and the link comes
+up in HS-G4 on two lanes, which is good for well over 1 GB/s. It delivered
+about 300 MB/s, whatever was asked of it: 128 KiB, 1 MiB or 16 MiB requests,
+one reader or eight, through the page cache or around it, with the
+controller's clock scaling on or off. A ceiling that flat is not the flash.
+
+John Stockdale had already found it on his SM-X710 and reported the same
+figure for the Ultra in issue #13: the inline crypto engine sits in the path
+of every UFS transfer, encrypted or not, and the bootloader leaves its core
+clock on the 19.2 MHz crystal. Nothing in this kernel raises it.
+
+`/sys/kernel/debug/clk/gcc_ufs_phy_ice_core_clk_src/clk_rate` on this tablet
+read 19200000. The tablet's kernel accepts modules signed with its build
+tree's key, so the claim could be tested without a flash: a module of thirty
+lines (`scripts/diagnostics/ufs-ice-rate/`) asks the clock framework for
+another rate on the running system. Measured on 2026-11-15, same boot, one
+step after another, the root filesystem mounted throughout:
+
+| ICE clock | read, 1 reader | read, 4 readers | 4 KiB random, median | write | 1.75 GB file, SHA-256 |
+|---|---|---|---|---|---|
+| 19.2 MHz, as booted | 275 MB/s | 307 MB/s | 115 µs | 296 MB/s | 5.9 s, correct |
+| 100 MHz | 671 MB/s | 1210 MB/s | 102 µs | 1138 MB/s | 2.3 s, correct |
+| 201.5 MHz | 705 MB/s | 1270 MB/s | 102 µs | 1565 MB/s | 2.4 s, correct |
+| 403 MHz | 708 MB/s | 1269 MB/s | 100 µs | 1552 MB/s | 2.4 s, correct |
+
+Reads are direct, 1 MiB at a time, from the root partition; the write is a
+1 GiB file in 4 MiB pieces, synced; the last column reads the 2.0.4 ZIP with
+a cold page cache and hashes it, which is both a figure and the check that a
+faster clock still returns the right bytes. No I/O error was logged.
+
+So: four times the sequential read, five times the write, and small random
+reads unchanged, because those were never limited by the engine.
+
+The three rates are the corners of Samsung's own clock table. Whether the top
+one earns its place was measured separately, with deeper queues and another
+region of the partition (rates compare within a table, not across the two):
+
+| ICE clock | 1 reader | 4 | 8 | 16 |
+|---|---|---|---|---|
+| 100 MHz | 441 | 665 | 953 | 1226 MB/s |
+| 201.5 MHz | 445 | 665 | 978 | 1329 MB/s |
+| 403 MHz | 443 | 666 | 982 | 1324 MB/s |
+
+403 MHz buys nothing on an HS-G4 link, and it is the one rate that needs the
+CX rail at nominal, which nothing in this tree votes for; it holds today only
+because the rail is left at its maximum. 201.5 MHz is therefore the top rate
+in the fix. A build that brings the link up in HS-G5 would have to revisit it.
+
+The fix is a kernel change and is **not in any build yet**. It is on the
+local branch `perf/ufs-ice-clock`: a second built-in overlay,
+`kernel/dts/gts9u-ufs-ice.dtso`, lists the clock with the UFS controller's
+own and gives each UFS OPP a rate for it, 100 MHz at the lowest and 201.5 MHz
+at the other two, so the controller's existing clock scaling carries it. Its
+test passes against the pinned DTB. It needs a kernel build, a flash and a
+boot before it can be called done, and what it does to the boot time is not
+known until then: the boot is mostly small reads, which this does not change,
+and partly large ones, which it does.
+
+`scripts/diagnostics/ufs-throughput.sh` repeats the measurement on any unit.
 
 ## Idle, measured at the greeter, 2026-11-14
 
@@ -231,20 +302,22 @@ Boot:
    an edge, silently. Check the journal for what it dropped and whether any
    other unit in this package does the same.
 5. **`fstrim` at boot**, 6.9 s, on a UFS that does not need it then.
+6. **The UFS inline crypto engine clock**, above: measured, written, tested
+   against the pinned DTB, waiting for a kernel build and a boot.
 
 Runtime, where the measurement comes first:
 
-6. What is actually running on an idle desktop, and what wakes the CPU:
+7. What is actually running on an idle desktop, and what wakes the CPU:
    `powertop --time=60`, `systemd-cgtop -b -n 10`, `turbostat` if it works
    here, and the port's own services under `systemd-cgls`.
-7. The hardware daemon, the sensor bridge and the Companion hardware service
+8. The hardware daemon, the sensor bridge and the Companion hardware service
    each hold a one-second timer; an idle tablet should not be sampling
    anything at 1 Hz. Galaxy Companion 1.0.1 already removed a Bluetooth idle
    source that re-armed itself forever -- that class of bug is worth hunting
    for deliberately rather than waiting for it to show up as battery drain.
-8. Thermals and clocks under a sustained load, against the Android baseline
+9. Thermals and clocks under a sustained load, against the Android baseline
    the port already recorded for the Galaxy frequencies.
-9. Memory: zram is on; measure what it buys and what the desktop actually
+10. Memory: zram is on; measure what it buys and what the desktop actually
    uses after a fresh login.
 
 Nothing in this list is a change yet. Each one needs the same treatment as the

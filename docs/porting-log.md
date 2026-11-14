@@ -9113,3 +9113,41 @@ Emptying Windows' TEMP removed the directory WSL keeps its swap disk in; WSL
 then ran without swap and the next heavy build took the VM down. And the WSL
 disk only grows: each build takes several gigabytes of C: that only an
 elevated `Optimize-VHD` gives back.
+
+## 2026-11-15: the storage was running at a quarter of its speed
+
+Looking for what makes the boot slow turned up something larger than the
+boot. Sequential reads from the internal UFS stopped at about 300 MB/s
+whatever the request size, the number of readers or the path, on a UFS 4.0
+part with the link up in HS-G4 on two lanes. John Stockdale had reported the
+same ceiling and its cause in issue #13: the inline crypto engine is in the
+path of every transfer and the bootloader leaves its core clock at 19.2 MHz.
+
+The clock framework's debugfs confirmed the rate on this tablet, and because
+the running kernel loads modules signed with its build tree's key, the cure
+could be tried without a flash. A thirty-line module asked for another rate
+on the live system, step by step, with a known 1.75 GB file read back and
+hashed at each step:
+
+| ICE clock | read, 1 reader | read, 4 readers | write |
+|---|---|---|---|
+| 19.2 MHz | 275 MB/s | 307 MB/s | 296 MB/s |
+| 100 MHz | 671 MB/s | 1210 MB/s | 1138 MB/s |
+| 201.5 MHz | 705 MB/s | 1270 MB/s | 1565 MB/s |
+| 403 MHz | 708 MB/s | 1269 MB/s | 1552 MB/s |
+
+Every hash was right and no I/O error was logged. Small random reads did not
+change; they were never limited by the engine.
+
+The permanent fix is a kernel change, written and tested against the pinned
+DTB but kept on the local branch `perf/ufs-ice-clock` until a kernel carrying
+it has booted: a second built-in overlay that adds the clock to the UFS
+controller's and a rate for it to each UFS OPP. It stops at 201.5 MHz rather
+than Samsung's 403 MHz, which measured no faster on this link at any queue
+depth and is the only rate that depends on a voltage nobody votes for.
+
+Two entries in `docs/performance-2.1.0.md` were corrected in the same pass.
+Booting under the `performance` governor was tried and does not help (GDM at
+19.26 s against 18.84 s). And the claim that a cgroup takes 14 ms to create
+on this kernel was a measurement of two spawned programs, not of the kernel;
+it is withdrawn there with the numbers that show it.
