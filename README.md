@@ -87,13 +87,13 @@ split the UFS first.
    Download Mode key combination stops at a teal *Reboot Device - D2* screen
    that never enumerates over USB: remove the screen lock first.
 2. **Root with Magisk** (only if you want dual boot).
-3. Get `ubuntu-26.04-sm-x910-v2.0.0.zip` from the [latest release](https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/releases/latest). `gts9u-split.zip` and the [new Android Dualboot APK](https://github.com/agcarbajo/galaxy-companion/releases/download/v1.0.0/galaxy-companion-dualboot_1.0.0.apk) are only needed for dual boot.
+3. Get the installation ZIP (`ubuntu-26.04-sm-x910-v<version>.zip`) from the [latest release](https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/releases/latest). `gts9u-split.zip` and the [new Android Dualboot APK](https://github.com/agcarbajo/galaxy-companion/releases/download/v1.0.0/galaxy-companion-dualboot_1.0.0.apk) are only needed for dual boot.
 4. **[TWRP](https://github.com/rainbowdashh/android_device_samsung_gts9u/releases/tag/V2)** and **a `vbmeta` with AVB verification disabled** ([the one published alongside TWRP](https://xdaforums.com/attachments/vbmeta-1-tar.6077784/)). Flash both files in the AP slot using Odin or Heimdall (you will need to reboot again to download mode between flashes).
 5. After flashing both files from step 4 reboot to TWRP. **Don't let One UI boot** or TWRP will be overwritten with the stock recovery and you will need to flash the files again.
 
 ### Ubuntu on the whole tablet
 
-1. From TWRP just flash the installation ZIP (`ubuntu-26.04-sm-x910-v2.0.0.zip`) using a microSD, external USB storage or sideload. **Don't flash it from internal storage** as it will get wiped.
+1. From TWRP just flash the installation ZIP using a microSD, external USB storage or sideload. **Don't flash it from internal storage** as it will get wiped.
 2. Reboot and enjoy!
 
 ### Ubuntu beside Android
@@ -106,7 +106,7 @@ split the UFS first.
    keys on its next boot.
 2. Reboot to TWRP (Reboot > Recovery).
 3. Wipe > Format Data.
-4. Flash the installation ZIP (`ubuntu-26.04-sm-x910-v2.0.0.zip`).
+4. Flash the installation ZIP.
 5. Reboot and enjoy! (see below for how to reboot to Android).
 
 ### Switching systems
@@ -127,7 +127,15 @@ Liked the project? you might want to buy me a coffee, I'll be very grateful!
 
 ## Updating an existing installation
 
+### From 2.0.0 or later (Ubuntu 26.04)
+
+Open **Galaxy Companion → Updates**. It checks for a newer build, downloads it
+and installs it after a restart, keeping your files and settings.
+
 ### From 1.3.0 (Ubuntu 24.04)
+
+The move to Ubuntu 26.04 is done by the 2.0.0 ZIP. Later versions then arrive
+through Galaxy Companion as above.
 
 1. Download the [2.0.0 ZIP](https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/releases/download/v2.0.0/ubuntu-26.04-sm-x910-v2.0.0.zip).
    In its download folder, extract and install only the two prerequisite packages:
@@ -157,9 +165,11 @@ inside the ZIP and is not a separate Galaxy Companion release download.
 
 ### From 1.2.0 or earlier
 
-First install the published **1.3.0 bridge**, then follow the steps above.
-This command also works on installations without the Updates page; it asks
-for confirmation before preparing the bridge and restarting:
+The 2.0.0 ZIP only accepts an installation that is already on 1.3.0, so the
+steps above do not work directly. First install the published **1.3.0
+bridge** with this command, then follow them. It also works on installations
+without the Updates page, and asks for confirmation before preparing the
+bridge and restarting:
 
 ```sh
 d=$(mktemp -d) && curl -fL https://raw.githubusercontent.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/main/scripts/update-to-latest.py -o "$d/update.py" && sudo python3 "$d/update.py" --bridge
@@ -201,62 +211,21 @@ and `sudo apt-get check` only after booting the correct Ubuntu installation.
 
 ## Known issues
 
-- **Fingerprint on other units:** per-device runtime/calibration provisioning is
-  included and works on the development SM-X910; confirmation on a second unit
-  remains pending ([#8](https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/issues/8),
-  [#9](https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/issues/9)).
-  If the reader is not detected on yours, run
+- **Fingerprint on other units** is unconfirmed ([#8](https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/issues/8),
+  [#9](https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/issues/9)). If the reader is not detected on yours,
+  run this and paste its whole output into the issue:
 
   ```sh
   sudo gts9u-fingerprint-check
   ```
 
-  and paste its whole output into the issue. It reports the six stages that
-  have to agree -- the platform device, this tablet's own calibration, the
-  provisioning, the two services, libfprint's driver and what fprintd offers
-  -- and names the first one that is not satisfied. It reads only; it
-  provisions nothing and writes nothing, and it carries no account, template
-  or serial number.
-
-  Two faults behind that report are fixed in this release. A tablet whose
-  Android runtime could not be read used to lose the calibration it had
-  already taken from its own EFS, and a tablet that keeps that calibration
-  anywhere but one exact path was never read at all; either way the driver
-  fell back to the packaged firmware, which is the development unit's
-  calibration -- the reader then enrols and never recognises a finger, with
-  nothing anywhere saying so. It now says so.
-- **A slow first boot, and no Wi-Fi** ([#11](https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/issues/11),
-  [#8](https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/issues/8)): two
-  measured causes are fixed in this release. The sensor recovery held
-  `multi-user.target` for its whole discovery loop -- 45.7 s of a 59.3 s
-  userspace boot on the development unit -- and now runs in the background,
-  where nothing waits for it. And the Wi-Fi sleep hook bound the card back
-  with a single write: a card still powering up refused it and the tablet had
-  no Wi-Fi until the next reboot, so it now retries. A tablet whose Wi-Fi
-  does not come up at all also waited out `NetworkManager-wait-online` on
-  every boot; that wait is capped at twenty seconds.
-- **EF-DX925 keyboard backlight and Fn+F12 stay dark** ([#8](https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/issues/8)): the
-  MAX77816 booster was left at 3.3 V. The kernel raises it to Samsung's
-  5.14 V for the DX915/DX925, untested here without that cover.
-- Regarding the official cover keyboard, as I said, only EF-DX920 cover keyboard has been tested. EF-DX900, EF-DX910, EF-DX915 and
-EF-DX925 are untested as I don't have them, so they might not work.
-- Guest virtual machines remain under development; initial Gunyah host support is included.
-- **Deep suspend can lose the internal storage until you restart.** Measured
-  on 2026-11-13 while it was happening: on resume the UFS PHY fails to
-  calibrate (`Failed to calibrate PHY: -110`), the controller never re-enables,
-  and ext4 drops the root filesystem to read-only. The desktop keeps running,
-  which is what makes it confusing, but nothing can be saved and a restart is
-  the only way out. The tablet now says so instead of leaving you to read the
-  kernel log: a notification within a second of the resume, and the reason in
-  `/run/gts9u-storage-failed`. The fault itself is not fixed; it is the same
-  one upstream reports for `spm_lvl = 5` on SM8550, and
-  [docs/resume-recovery.md](docs/resume-recovery.md) records what is known.
-
-  What the tablet does now is refuse to walk into it twice: the next boot
-  after a storage resume failure selects light sleep (`s2idle`), which never
-  tears the UFS PHY down, and remembers that choice. It costs standby
-  battery, so a tablet that has never seen the fault keeps deep sleep. To go
-  back: `sudo rm /var/lib/ubuntu-gts9u/force-light-sleep`.
+- **Deep suspend** can occasionally leave the internal storage read-only until a restart.
+  After the first time, the tablet switches to light sleep by itself.
+- **Fast charging** stays at about 15 W with chargers or cables limited to 3 A
+  ([#13](https://github.com/agcarbajo/ubuntu-galaxy-tab-s9-ultra/issues/13)).
+- **Speakers** play at a conservative volume: the amplifiers' protection DSP is not enabled yet.
+- **Keyboard covers:** only the EF-DX920 has been tested. EF-DX900, EF-DX910, EF-DX915 and EF-DX925 might not work.
+- **Guest virtual machines** remain under development; initial Gunyah host support is included.
 
 ## Documentation
 
