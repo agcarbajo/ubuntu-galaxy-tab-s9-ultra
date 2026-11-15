@@ -9191,3 +9191,19 @@ revision 6103678, with device 2.97, libfprint `~gts9u3` and Galaxy Companion
 the same hash and the installed Companion reads it as 2.0.5 for `gts9uwifi`
 on `resolute`. Its kernel is the accepted one, so the storage clock change is
 not in it. It has not been installed, and nothing has been published.
+
+**Installed.** The owner installed 2.0.5 from Galaxy Companion's update from
+file. The tablet reports release 2.0.5, device 2.97, Galaxy Companion 1.0.1;
+the console hold runs from the package; `gts9u-fingerprint-check` reports all
+six stages as a working reader's. The first boot after the update reached the
+login screen at 19.3 s, the boot capture having to read every saved set once;
+the second reached it at **14.3 s**, against 30.1 s on 2.0.0, with the greeter
+session open at 10.2 s and `graphical.target` at 26.7 s.
+
+One thing went wrong on the way and is worth keeping. A reboot was sent to
+the tablet to take that second measurement on the belief that nobody was
+logged in; the owner was, with the update manager running. The reboot did not
+happen, by luck rather than by design, and the helper that sent it had also
+accepted the *old* boot as the new one because it only looked at the uptime.
+It now refuses when there is a session on the screen, a package tool running
+or a block inhibitor, and recognises a new boot by its boot ID.

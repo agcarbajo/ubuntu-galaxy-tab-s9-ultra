@@ -229,6 +229,26 @@ The middle column is the packaged unit, installed by hand, on the stock
 storage clock: it is what the device package alone delivers. The third had
 the experiment's holder and the ICE clock set by a module at 4.6 s.
 
+Installed for real, from the interim 2.0.5 build (device 2.97, Galaxy
+Companion with the hash cache, stock kernel and storage clock), second boot
+after the update:
+
+| | 2.0.0 as shipped | 2.0.5 installed |
+|---|---|---|
+| GDM starts | 19.0 s | 9.7 s |
+| greeter session opens | 22.0 s | **10.2 s** |
+| the login screen is there | 30.1 s | **14.3 s** |
+| `graphical.target` | 46 - 66 s | 26.7 s |
+
+That is better than the unit installed by hand because the rest of the round
+is in it too. The first boot after the update was slower (13.5 s and 19.3 s):
+the boot capture had no hashes remembered yet and read every saved set once,
+4.6 s, immediately before the login screen. With them remembered it reads the
+four partitions and finishes at 9.6 s -- but it still takes 2.8 s of wall
+time for 226 MB and 0.3 s of CPU, because it reads while the disk is at its
+ceiling, and it ends within 30 ms of `network.target`, the other thing the
+login screen waits for. So the storage clock is now the next second or two.
+
 The boot was healthy in both: Wi-Fi associated, the panel recovery ran, the
 sensors came up. One line is new and harmless: `iio-sensor-proxy` is now
 started before the sensor hub exists, exits, and is started again by the
