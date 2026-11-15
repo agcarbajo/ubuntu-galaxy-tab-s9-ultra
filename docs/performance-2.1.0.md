@@ -233,12 +233,18 @@ Installed for real, from the interim 2.0.5 build (device 2.97, Galaxy
 Companion with the hash cache, stock kernel and storage clock), second boot
 after the update:
 
-| | 2.0.0 as shipped | 2.0.5 installed |
-|---|---|---|
-| GDM starts | 19.0 s | 9.7 s |
-| greeter session opens | 22.0 s | **10.2 s** |
-| the login screen is there | 30.1 s | **14.3 s** |
-| `graphical.target` | 46 - 66 s | 26.7 s |
+| | 2.0.0 as shipped | 2.0.5 installed | 2.0.6 installed |
+|---|---|---|---|
+| GDM starts | 19.0 s | 9.7 s | 8.9 s |
+| greeter session opens | 22.0 s | **10.2 s** | **9.0 s** |
+| the login screen is there | 30.1 s | **14.3 s** | **13.2 s** |
+| `graphical.target` | 46 - 66 s | 26.7 s | 25.2 s |
+
+2.0.6 is 2.0.5 with the kernel that scales the storage clock (below). Its
+column is the fourth boot after installing it; the three before reached the
+login screen at 15.1 s (the first after the update), 13.7 s and 14.1 s. So
+the storage clock is worth about a second here, less than the 2.5 s the
+experiment with the module suggested.
 
 That is better than the unit installed by hand because the rest of the round
 is in it too. The first boot after the update was slower (13.5 s and 19.3 s):
@@ -248,6 +254,18 @@ four partitions and finishes at 9.6 s -- but it still takes 2.8 s of wall
 time for 226 MB and 0.3 s of CPU, because it reads while the disk is at its
 ceiling, and it ends within 30 ms of `network.target`, the other thing the
 login screen waits for. So the storage clock is now the next second or two.
+
+"With them remembered" turned out to be true only on some boots, and the
+2.0.6 boots showed it: the capture used 0.27 s of CPU on one and 0.6 s on the
+next two, and the cache file was rewritten during a boot in which nothing had
+changed. The key that says which file a hash belongs to included the device
+number, and this root filesystem is the 35th partition of its disk: such
+partitions get their numbers in the order they are found, which is not the
+same at every boot. Galaxy Companion 1437f5c keys on the filesystem's id
+instead. That fix is not in 2.0.6; what it is worth is small, because even a
+capture that reads nothing it should not still takes two seconds of wall
+time at that point of the boot, and that, not the hashing, is what is left
+to look at there.
 
 The boot was healthy in both: Wi-Fi associated, the panel recovery ran, the
 sensors came up. One line is new and harmless: `iio-sensor-proxy` is now

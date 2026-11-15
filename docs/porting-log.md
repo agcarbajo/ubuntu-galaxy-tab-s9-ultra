@@ -9230,3 +9230,13 @@ time. The ICE clock is 100 MHz at rest and 201.5 MHz under load. Sequential
 writes went from 296 to 1587 MB/s; sequential reads from a flat 300 MB/s to
 424 MB/s with one reader and 1329 MB/s with sixteen; a 1.75 GB file reads
 back and hashes correctly in 1.4 s instead of 5.9 s. Nothing is published.
+
+On 2.0.6 the login screen is there at 13.2 s (fourth boot; 15.1, 13.7 and
+14.1 s before it), the greeter session at 9.0 s and `graphical.target` at
+25.2 s: about a second better than 2.0.5.
+
+The same boots exposed a defect in the hash cache added to Galaxy Companion
+that morning. Its key included the device number, which is not stable for
+this root filesystem (`sda35`, numbered from the shared pool in probing
+order), so on some boots every saved image was read again. Companion 1437f5c
+uses the filesystem's id; the port pins it. It is not in the installed build.
