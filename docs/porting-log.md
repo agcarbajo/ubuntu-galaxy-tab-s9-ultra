@@ -9182,3 +9182,12 @@ partitions; a switch still reads everything.
 
 The tablet was left as it was found: stock packages, no experiment unit, no
 module loaded.
+
+An interim build carries the console hold and the Companion change:
+`ubuntu-26.04-sm-x910-v2.0.5.zip`, 1,748,976,399 bytes, SHA-256
+`32d2fb34f4290e3445e604619a69f1ab491b2ee825232e2b1221f8beb4be3143`, from
+revision 6103678, with device 2.97, libfprint `~gts9u3` and Galaxy Companion
+1.0.1 at b2c192e. The static validation passes, the copy on the tablet has
+the same hash and the installed Companion reads it as 2.0.5 for `gts9uwifi`
+on `resolute`. Its kernel is the accepted one, so the storage clock change is
+not in it. It has not been installed, and nothing has been published.

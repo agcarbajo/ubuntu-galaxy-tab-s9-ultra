@@ -410,11 +410,13 @@ Boot:
 5. **`fstrim` at boot**, 6.9 s, on a UFS that does not need it then.
 6. **The UFS inline crypto engine clock**, above: measured, written, tested
    against the pinned DTB, waiting for a kernel build and a boot.
-7. **`wireplumber` at the login screen.** Three instances between 23 and 40 s
-   of the old boot, 5.5 CPU-seconds in one of them, while the greeter's shell
-   is starting. Find out which sessions start it and why it is restarted.
-
-Runtime, where the measurement comes first:
+7. **`wireplumber` at the login screen: explained, not a fault.** The three
+   instances are the owner's lingering user manager (12 s), the greeter's
+   own (13 s), and one restart by `ubuntu-gts9u-audio-session@1000`, which
+   finds the session built before the ADSP sound card existed and rebuilds
+   it once (`HiFi card and output ready`, 2.2 s later). On the fast boot the
+   restarted instance costs 0.35 s of CPU. The 5.5 CPU-seconds seen on the
+   slow boot were not reproduced and are not worth chasing until they are.
 
 8. What is actually running on an idle desktop, and what wakes the CPU:
    `powertop --time=60`, `systemd-cgtop -b -n 10`, `turbostat` if it works
