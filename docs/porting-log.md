@@ -9207,3 +9207,26 @@ happen, by luck rather than by design, and the helper that sent it had also
 accepted the *old* boot as the new one because it only looked at the uptime.
 It now refuses when there is a session on the screen, a package tool running
 or a block inhibitor, and recognises a new boot by its boot ID.
+
+## 2026-11-15, night: the storage clock, in a kernel that boots
+
+The kernel change went from a branch to the tablet. It was built
+incrementally in the tree the accepted 7.2.9 kernel came from, after that
+tree was shown to still hold that kernel byte for byte, so the new image is
+the accepted one plus the overlay: same release, configuration, signing key
+and ABL-facing DTB. Of the five boot images only `boot.img` changed.
+
+Fifty-nine of the sixty-three modules came out different, which looked like
+trouble and was not: their code is identical and only their BTF moved with
+the kernel's. The build carries the new set, and seven of them loaded into
+the old kernel on the tablet without complaint, so the two builds accept each
+other's modules and the previous `boot.img` alone is a complete way back. It
+was kept ready, checked against the tablet's partitions, and not needed.
+
+The interim 2.0.6 (`ubuntu-26.04-sm-x910-v2.0.6.zip`, 1,746,689,394 bytes,
+SHA-256 `c5f682392e11b5ced112a1c0c98893bebd6dc37e1042e59c4e4e3489691ba008`,
+from revision 2612720) was installed from Galaxy Companion and booted first
+time. The ICE clock is 100 MHz at rest and 201.5 MHz under load. Sequential
+writes went from 296 to 1587 MB/s; sequential reads from a flat 300 MB/s to
+424 MB/s with one reader and 1329 MB/s with sixteen; a 1.75 GB file reads
+back and hashes correctly in 1.4 s instead of 5.9 s. Nothing is published.

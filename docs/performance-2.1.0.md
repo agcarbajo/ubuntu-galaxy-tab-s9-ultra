@@ -317,15 +317,38 @@ CX rail at nominal, which nothing in this tree votes for; it holds today only
 because the rail is left at its maximum. 201.5 MHz is therefore the top rate
 in the fix. A build that brings the link up in HS-G5 would have to revisit it.
 
-The fix is a kernel change and is **not in any build yet**. It is on the
-local branch `perf/ufs-ice-clock`: a second built-in overlay,
+The fix is a kernel change: a second built-in overlay,
 `kernel/dts/gts9u-ufs-ice.dtso`, lists the clock with the UFS controller's
 own and gives each UFS OPP a rate for it, 100 MHz at the lowest and 201.5 MHz
-at the other two, so the controller's existing clock scaling carries it. Its
-test passes against the pinned DTB. It needs a kernel build, a flash and a
-boot before it can be called done. What it is worth at boot was measured with
-the module instead, and is in the table of the previous section: nothing as
-long as PID 1 was the bottleneck, about 2.5 s once the console no longer is.
+at the other two, so the controller's existing clock scaling carries it.
+
+It was built incrementally in the tree the accepted 7.2.9 kernel came from,
+after checking that tree still produced that kernel byte for byte. The
+result has the same release, configuration, signing key and ABL-facing DTB;
+only `boot.img` differs among the boot images. The modules were rebuilt with
+it and differ from the accepted ones in their BTF alone, never in code; the
+build ships them with the kernel, as every release does, and loading seven
+of them into the *old* kernel on the tablet showed that a kernel and modules
+from the two builds accept each other, which is what makes writing back the
+previous `boot.img` a complete way back.
+
+Installed as the interim 2.0.6 and booted, 2026-11-15, with
+`scripts/diagnostics/ufs-throughput.sh`:
+
+| | 2.0.5, ICE clock at 19.2 MHz | 2.0.6 |
+|---|---|---|
+| sequential read, 1 reader | about 300 MB/s at any depth | 424 MB/s |
+| 4 readers | | 668 MB/s |
+| 8 readers | | 990 MB/s |
+| 16 readers | | 1329 MB/s |
+| sequential write, 1 GiB | 296 MB/s | **1587 MB/s** |
+| 4 KiB random read, median | 115 µs | 105 µs |
+| 1.75 GB file read back and hashed | 5.9 s | 1.4 s, correct |
+
+The clock follows the controller as intended: 100 MHz with the link at rest
+in HS-G1, 201.5 MHz under load in HS-G4, back to 100 MHz eight seconds
+later. No I/O error was logged, and Wi-Fi, the sensors, the cameras and the
+fingerprint check were as before.
 
 `scripts/diagnostics/ufs-throughput.sh` repeats the measurement on any unit.
 
@@ -428,8 +451,8 @@ Boot:
    an edge, silently. Check the journal for what it dropped and whether any
    other unit in this package does the same.
 5. **`fstrim` at boot**, 6.9 s, on a UFS that does not need it then.
-6. **The UFS inline crypto engine clock**, above: measured, written, tested
-   against the pinned DTB, waiting for a kernel build and a boot.
+6. **The UFS inline crypto engine clock**, above: done, in the kernel since
+   the interim 2.0.6. HS-G5 is the next step there, and a separate one.
 7. **`wireplumber` at the login screen: explained, not a fault.** The three
    instances are the owner's lingering user manager (12 s), the greeter's
    own (13 s), and one restart by `ubuntu-gts9u-audio-session@1000`, which
