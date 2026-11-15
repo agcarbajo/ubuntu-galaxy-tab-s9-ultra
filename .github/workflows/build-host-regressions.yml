@@ -46,6 +46,8 @@ jobs:
           bash scripts/test-ath12k-sleep.sh
           bash scripts/test-sleep-mode.sh
           python3 scripts/test-rtc-time.py
+      - name: Test the console hold unit and the enablement list
+        run: python3 scripts/test-console-hold.py
       - name: Test the installer's boot image read-back
         run: |
           sudo apt-get update

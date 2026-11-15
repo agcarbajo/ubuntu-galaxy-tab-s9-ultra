@@ -1,0 +1,28 @@
+[Unit]
+Description=Keep the console device open so that closing it never restarts the serial port
+Documentation=file:///usr/share/doc/ubuntu-gts9u-device/README.md
+# /dev/console is the serial port here (console=ttyMSM0), and until the serial
+# getty starts, at the end of the boot, nobody keeps that port open.  Plymouth
+# asks PID 1 for status output, and PID 1 opens /dev/console, writes one line
+# and closes it again for every job.  Each of those is then the last close of
+# the port, which shuts the UART down and takes 134 ms: 91 of them, measured,
+# 12.2 s with PID 1 blocked, on the way to the login screen.
+#
+# One descriptor held open from the first moments of userspace makes every
+# other open and close ordinary.  No default dependencies, and no conflict
+# with shutdown.target: the same thing happens to the stop jobs once the getty
+# has gone, so this stays until the very end.
+DefaultDependencies=no
+Before=plymouth-start.service sysinit.target
+ConditionPathExists=/dev/console
+
+[Service]
+Type=exec
+# Opened, never read: input meant for the serial getty still reaches it.
+StandardInput=file:/dev/console
+StandardOutput=null
+StandardError=null
+ExecStart=/usr/bin/sleep infinity
+
+[Install]
+WantedBy=sysinit.target

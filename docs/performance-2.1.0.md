@@ -52,8 +52,12 @@ continues behind it.
   it cost 18.1 s here; with Wi-Fi broken it costs its whole timeout on every
   boot, which is half of what #11 reports.
 
-Measured on the tablet with both changes applied as temporary drop-ins, same
-day, cold boot against cold boot:
+- **The console is held open** (`ubuntu-gts9u-console-hold.service`), which
+  is the change that moves the login screen: from 30 s to 16 s. Its own
+  section, below, has the mechanism and the measurement.
+
+The first two, measured on the tablet as temporary drop-ins, same day, cold
+boot against cold boot:
 
 | | Before | After |
 |---|---|---|
@@ -132,7 +136,7 @@ Three obvious causes were measured on the idle tablet with
 | | ms per transient unit | fixed CPU job |
 |---|---|---|
 | as it idles (`schedutil`) | 54-62 | 502 ms |
-| expedited RCU | 43 | — |
+| expedited RCU | 43 | â€” |
 | `performance` governor | 62 | 291 ms |
 
 Expedited RCU buys about 30% on a unit start. The governor changes nothing
@@ -153,12 +157,95 @@ The kernel itself is not slow at this -- a system call costs 230 to 330 ns and
 a fork and exec 0.9 ms -- and its configuration carries none of the debugging
 options that would make it so.
 
-So the pace is still unexplained: an idle tablet needs about 55 ms to start a
-unit that does nothing, and during boot PID 1 completes a job every 135 ms.
-What is ruled out is the CPU frequency, RCU, cgroup operations and a debug
-kernel. What is not yet measured is PID 1 itself during those seconds
-(`perf trace -p 1`, or `strace -c`, across a boot), and the storage it reads
-from, which the next section shows was running at a fraction of its speed.
+None of that was the cause, and neither was the storage. The cause is in the
+next section, and it was found by asking the kernel what PID 1 was doing
+rather than by guessing what could be slow.
+
+## The login screen was waiting for a serial port
+
+A sampler started in the first moments of userspace showed the odd part
+first: between 10 and 20 s of the boot the tablet is *idle*. Under one core
+in use out of eight, the disk at rest, nothing blocked on I/O. A boot that
+waits while the machine has nothing to do is waiting for a clock.
+
+`ftrace` on PID 1 alone (`raw_syscalls` and `sched_switch` with
+`set_event_pid`, from an early unit, which costs next to nothing) then gave
+the whole answer in one boot:
+
+```
+ 8.9332 s    0.05 ms  openat  (AT_FDCWD, "/dev/console", O_WRONLY|O_NOCTTY|O_CLOEXEC) = 111
+ 8.9332 s    0.00 ms  ioctl   (111, TCGETS2)
+ 8.9332 s    0.00 ms  ioctl   (111, TIOCGWINSZ)
+ 8.9332 s    0.01 ms  writev  (111, ..., 5) = 107
+ 8.9332 s  134.83 ms  close   (111)
+```
+
+(The trace records numbers; the flags and requests are decoded here, and
+the device is named from them and from what the fix does.) That is systemd
+printing one status line -- `[  OK  ] Started ...` -- and taking 135 ms to
+close the console afterwards. It happens for every job: 91
+such calls between 8.5 s and 21.5 s, **12.24 s in which PID 1 does nothing
+else**, and nothing in the boot can move while PID 1 is inside a system call.
+That is the metronome, and its period is the close.
+
+Three things have to line up for it, and on this tablet they do:
+
+- The kernel command line ends in `console=ttyMSM0,115200n8`, so
+  `/dev/console` is the serial port.
+- Plymouth, when its splash comes up (6.3 s), sends PID 1 `SIGRTMIN+20`:
+  show status. That overrides `systemd.show_status=false`, which is on the
+  command line and is why none of this was expected. It sends `SIGRTMIN+21`
+  when it hands over to the greeter, which is where the metronome stops.
+- Until the serial getty starts, at the very end of the boot, nobody keeps
+  that port open. So each of PID 1's closes is the *last* close, the UART is
+  shut down, and shutting this one down takes 134 ms. (Some of the following
+  opens pay the same again to start it.)
+
+With the getty running the same open, write and close take under a tenth of a
+millisecond, which is also why none of the measurements made on the idle
+tablet ever saw it.
+
+The fix is the smallest thing that removes the third condition:
+`ubuntu-gts9u-console-hold.service` keeps one descriptor on `/dev/console`
+open from before Plymouth starts. It is a `sleep` with the device as its
+standard input; it reads nothing, so the getty still gets its input. It has
+no default dependencies and does not conflict with `shutdown.target`, because
+the stop jobs print too, after the getty has gone.
+
+Cold boot against cold boot on the development tablet, 2026-11-15:
+
+| | as shipped | console held open | and the UFS ICE clock raised |
+|---|---|---|---|
+| GDM starts | 19.0 s | 11.2 s | 9.4 s |
+| greeter session opens | 22.0 s | **12.2 s** | **9.6 s** |
+| greeter shell registers its display (the login screen is there) | 30.1 s | **16.2 s** | **13.8 s** |
+| PID 1 blocked in `close`/`open` of the console | 12.2 s | 0 | 0 |
+| shutdown, from logind's announcement to the journal's last line | 11.5 - 31.5 s | 9.0 s | |
+
+The first column is the stock boot; three more boots with nothing changed
+but the storage clock landed in the same place (GDM starting at 18.0 to
+19.7 s, the login screen at 28.7 to 31.0 s).
+The middle column is the packaged unit, installed by hand, on the stock
+storage clock: it is what the device package alone delivers. The third had
+the experiment's holder and the ICE clock set by a module at 4.6 s.
+
+The boot was healthy in both: Wi-Fi associated, the panel recovery ran, the
+sensors came up. One line is new and harmless: `iio-sensor-proxy` is now
+started before the sensor hub exists, exits, and is started again by the
+port's own sensor recovery, as it always was; the sensors are up at 15 s
+instead of 28 s.
+
+It also settles what the storage fix is worth at boot, which the previous
+round could not: nothing while PID 1 was the bottleneck (the login session
+opened at 21.7 s with it and 22.0 s without), and about 2.5 s once it is not
+-- the stretch from 8.4 to 12 s is then the disk at 100% and half the boot
+stalled on it.
+
+The unit start that takes 55 ms on an idle tablet is a different, smaller
+thing and is still open. PID 1 makes about 4,750 system calls for one
+transient unit, nearly all of them systemd walking every unit directory for
+drop-ins one path component at a time. That is systemd's own cost, not this
+port's.
 
 ## Storage: the UFS was running at a quarter of its speed
 
@@ -182,10 +269,10 @@ step after another, the root filesystem mounted throughout:
 
 | ICE clock | read, 1 reader | read, 4 readers | 4 KiB random, median | write | 1.75 GB file, SHA-256 |
 |---|---|---|---|---|---|
-| 19.2 MHz, as booted | 275 MB/s | 307 MB/s | 115 µs | 296 MB/s | 5.9 s, correct |
-| 100 MHz | 671 MB/s | 1210 MB/s | 102 µs | 1138 MB/s | 2.3 s, correct |
-| 201.5 MHz | 705 MB/s | 1270 MB/s | 102 µs | 1565 MB/s | 2.4 s, correct |
-| 403 MHz | 708 MB/s | 1269 MB/s | 100 µs | 1552 MB/s | 2.4 s, correct |
+| 19.2 MHz, as booted | 275 MB/s | 307 MB/s | 115 Âµs | 296 MB/s | 5.9 s, correct |
+| 100 MHz | 671 MB/s | 1210 MB/s | 102 Âµs | 1138 MB/s | 2.3 s, correct |
+| 201.5 MHz | 705 MB/s | 1270 MB/s | 102 Âµs | 1565 MB/s | 2.4 s, correct |
+| 403 MHz | 708 MB/s | 1269 MB/s | 100 Âµs | 1552 MB/s | 2.4 s, correct |
 
 Reads are direct, 1 MiB at a time, from the root partition; the write is a
 1 GiB file in 4 MiB pieces, synced; the last column reads the 2.0.4 ZIP with
@@ -216,11 +303,30 @@ local branch `perf/ufs-ice-clock`: a second built-in overlay,
 own and gives each UFS OPP a rate for it, 100 MHz at the lowest and 201.5 MHz
 at the other two, so the controller's existing clock scaling carries it. Its
 test passes against the pinned DTB. It needs a kernel build, a flash and a
-boot before it can be called done, and what it does to the boot time is not
-known until then: the boot is mostly small reads, which this does not change,
-and partly large ones, which it does.
+boot before it can be called done. What it is worth at boot was measured with
+the module instead, and is in the table of the previous section: nothing as
+long as PID 1 was the bottleneck, about 2.5 s once the console no longer is.
 
 `scripts/diagnostics/ufs-throughput.sh` repeats the measurement on any unit.
+
+### Who reads at boot
+
+The same sampler recorded what each process had read from storage, second by
+second. The boot reads about 1 GB before 20 s, and one program accounts for
+half of it: `galaxy-companion-boot-capture`, 518 MB in the ninth second.
+
+It saves the running Linux's boot partitions as its dual-boot set, and to
+know whether they changed it hashed them -- and every image of every saved
+set, Linux's and Android's, at every boot. Only the partitions have to be
+read. Galaxy Companion now keeps each saved image's hash with the identity of
+the file it belonged to (device, inode, size, modification and change time)
+and reads an image again only when it is no longer that file; a switch still
+reads everything it writes or relies on. That is a change in the Companion
+repository, covered by its dual-boot tests.
+
+The second is not the port's: a Proton VPN unit on the development tablet
+(`me.proton.vpn.split_tunneling.service`) fails and is restarted several
+times during the boot, a Python start and 128 MB of reads each time.
 
 ## Idle, measured at the greeter, 2026-11-14
 
@@ -304,20 +410,23 @@ Boot:
 5. **`fstrim` at boot**, 6.9 s, on a UFS that does not need it then.
 6. **The UFS inline crypto engine clock**, above: measured, written, tested
    against the pinned DTB, waiting for a kernel build and a boot.
+7. **`wireplumber` at the login screen.** Three instances between 23 and 40 s
+   of the old boot, 5.5 CPU-seconds in one of them, while the greeter's shell
+   is starting. Find out which sessions start it and why it is restarted.
 
 Runtime, where the measurement comes first:
 
-7. What is actually running on an idle desktop, and what wakes the CPU:
+8. What is actually running on an idle desktop, and what wakes the CPU:
    `powertop --time=60`, `systemd-cgtop -b -n 10`, `turbostat` if it works
    here, and the port's own services under `systemd-cgls`.
-8. The hardware daemon, the sensor bridge and the Companion hardware service
+9. The hardware daemon, the sensor bridge and the Companion hardware service
    each hold a one-second timer; an idle tablet should not be sampling
    anything at 1 Hz. Galaxy Companion 1.0.1 already removed a Bluetooth idle
    source that re-armed itself forever -- that class of bug is worth hunting
    for deliberately rather than waiting for it to show up as battery drain.
-9. Thermals and clocks under a sustained load, against the Android baseline
+10. Thermals and clocks under a sustained load, against the Android baseline
    the port already recorded for the Galaxy frequencies.
-10. Memory: zram is on; measure what it buys and what the desktop actually
+11. Memory: zram is on; measure what it buys and what the desktop actually
    uses after a fresh login.
 
 Nothing in this list is a change yet. Each one needs the same treatment as the

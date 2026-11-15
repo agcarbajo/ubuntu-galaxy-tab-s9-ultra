@@ -33,6 +33,7 @@ ubuntu-gts9u-root-maintenance.timer:timers.target
 ubuntu-gts9u-root-health-boot.service:multi-user.target
 ubuntu-gts9u-sleep-mode.service:multi-user.target
 ubuntu-gts9u-rtc-time.service:sysinit.target
+ubuntu-gts9u-console-hold.service:sysinit.target
 ubuntu-gts9u-rtc-anchor.timer:timers.target
 '
 

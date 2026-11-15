@@ -9151,3 +9151,34 @@ Booting under the `performance` governor was tried and does not help (GDM at
 19.26 s against 18.84 s). And the claim that a cgroup takes 14 ms to create
 on this kernel was a measurement of two spawned programs, not of the kernel;
 it is withdrawn there with the numbers that show it.
+
+## 2026-11-15, later: the boot was waiting for a serial port
+
+The login screen appeared 30 s after power-on and no single unit explained
+it. Sampling the first forty seconds showed why the usual tools could not:
+from 10 to 20 s the tablet is idle, under one core in use and the disk at
+rest, while PID 1 completes one job every 135 ms.
+
+Tracing PID 1's system calls with ftrace during a boot found the 135 ms. It
+is `close()` on `/dev/console`. Plymouth asks systemd for status output when
+its splash comes up (`SIGRTMIN+20`, which overrides `systemd.show_status=false`
+on the command line); `/dev/console` is the serial port, because the command
+line ends in `console=ttyMSM0`; and until the serial getty starts nobody else
+holds that port, so every status line is an open, a 107-byte write and a
+close that shuts the UART down. Ninety-one of them, 12.24 s with PID 1
+blocked.
+
+`ubuntu-gts9u-console-hold.service` keeps one descriptor on `/dev/console`
+open from before Plymouth starts until the very end of shutdown. Measured
+with the packaged unit installed by hand: the greeter session opens at 12.2 s
+instead of 22.0 s and the login screen is there at 16.2 s instead of 30.1 s;
+with the storage clock raised as well, 9.6 s and 13.8 s. Shutdown went from
+between 11 and 31 s to 9 s. Device package 2.97 (2.96 for noble).
+
+The same sampler showed Galaxy Companion's boot capture reading 518 MB at
+every boot to hash saved boot sets that had not changed. It now remembers
+each saved image's hash against the file's identity and reads only the
+partitions; a switch still reads everything.
+
+The tablet was left as it was found: stock packages, no experiment unit, no
+module loaded.
