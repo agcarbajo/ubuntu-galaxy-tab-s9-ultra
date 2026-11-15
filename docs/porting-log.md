@@ -9240,3 +9240,24 @@ that morning. Its key included the device number, which is not stable for
 this root filesystem (`sda35`, numbered from the shared pool in probing
 order), so on some boots every saved image was read again. Companion 1437f5c
 uses the filesystem's id; the port pins it. It is not in the installed build.
+
+## 2026-11-15: the 2.1.0 candidate
+
+`ubuntu-26.04-sm-x910-v2.1.0.zip`, 1,770,555,091 bytes, SHA-256
+`ee898fd0c93766cb04e86837e079574c6396dca05882722f9d3f8a8d8c330f8b`, from
+revision dde87e4. It is what the development tablet has been running as the
+interim 2.0.6 under its real number: its five boot images are byte-identical
+to that build's, the hardware package carries the sixty modules built with
+that kernel, the device package is 2.97 and Galaxy Companion is 1.0.1 at
+00afc77, with the hash cache keyed on the filesystem. The static validation
+passes, 41 checks and no failure.
+
+It is an ordinary 26.04 port release. It carries no migration backend, so its
+payload names Resolute as its only source and a tablet still on Ubuntu 24.04
+refuses it; such a tablet crosses with the 2.0.0 ZIP first, which the README
+now says. The rootfs input is the one 2.0.0 was built from, with this
+release's packages installed over it, as for every interim build since.
+
+What has been exercised on hardware is the update from Galaxy Companion, on
+one tablet. A clean installation of this ZIP from TWRP has not been tried.
+Nothing is published: no tag, no release, no reply on any issue.
